@@ -20,6 +20,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             platform/requirements.txt
+            platform/requirements-test.txt
             requirements-desktop-build.txt
 
       - uses: actions/setup-node@v4
@@ -31,7 +32,7 @@ jobs:
       - name: Install pinned dependencies
         run: >-
           python -m pip install
-          -r platform/requirements.txt
+          -r platform/requirements-test.txt
           -r requirements-desktop-build.txt
 
       - name: Install locked frontend dependencies

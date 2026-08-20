@@ -1,7 +1,7 @@
 {
-  "release_id": "0.1.1",
-  "backend_version": "0.1.1",
-  "frontend_version": "0.1.1",
+  "release_id": "0.1.2",
+  "backend_version": "0.1.2",
+  "frontend_version": "0.1.2",
   "migration_head": "0009_upload_policy_governance",
   "compose_images": {
     "api": "email-platform-api:local",

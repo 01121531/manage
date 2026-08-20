@@ -15,6 +15,7 @@ def workflow_errors(text: str) -> list[str]:
         "actions/setup-node@v4",
         "node-version: \"22\"",
         "npm ci",
+        "platform/requirements-test.txt",
         "./scripts/quality_gate.ps1",
         "./build.ps1",
         "verify_desktop_package.py --exe",
