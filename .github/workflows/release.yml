@@ -120,6 +120,10 @@ jobs:
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: true
 
+      - name: Summarize Trivy findings
+        if: always()
+        run: python scripts/report_trivy_sarif.py supply-chain/${{ matrix.name }}.trivy.sarif
+
       - name: Login to GitHub Container Registry after scan
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:

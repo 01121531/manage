@@ -111,6 +111,11 @@ def validate_supply_chain(
         errors.append("security workflow is missing the Trivy image gate")
     else:
         errors.extend(_trivy_errors(security_trivy, label="security"))
+    security_summary = _step(security_container, "Summarize Trivy findings")
+    if security_summary.get("if") != "always()" or "report_trivy_sarif.py" not in str(
+        security_summary.get("run", "")
+    ):
+        errors.append("security Trivy findings must be safely summarized on failure")
 
     release_jobs = _mapping(release.get("jobs"))
     quality = _mapping(release_jobs.get("release-quality-gate"))
@@ -140,11 +145,17 @@ def validate_supply_chain(
         errors.append("release workflow is missing the Trivy gate")
     else:
         errors.extend(_trivy_errors(release_trivy, label="release"))
+    release_summary = _step(container, "Summarize Trivy findings")
+    if release_summary.get("if") != "always()" or "report_trivy_sarif.py" not in str(
+        release_summary.get("run", "")
+    ):
+        errors.append("release Trivy findings must be safely summarized on failure")
 
     ordered_steps = (
         "Build local release candidate",
         "Generate Syft SPDX SBOM",
         "Trivy HIGH/CRITICAL release gate",
+        "Summarize Trivy findings",
         "Login to GitHub Container Registry after scan",
         "Push the exact scanned image",
         "Keyless-sign image and attach Syft SBOM",

@@ -129,6 +129,10 @@ jobs:
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: true
 
+      - name: Summarize Trivy findings
+        if: always()
+        run: python scripts/report_trivy_sarif.py supply-chain/${{ matrix.name }}.trivy.sarif
+
       - name: Upload Trivy report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

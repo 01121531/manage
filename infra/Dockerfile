@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a AS runtime
+FROM python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,8 +10,8 @@ WORKDIR /app
 
 # Keep the runtime image non-root.  No source or build secret is copied into
 # the image; all credentials are supplied by the deployment secret manager.
-RUN groupadd --system --gid 10001 platform \
-    && useradd --system --uid 10001 --gid platform --create-home platform \
+RUN addgroup -S -g 10001 platform \
+    && adduser -S -D -u 10001 -G platform -h /home/platform platform \
     && mkdir -p /app/platform \
     && chown -R platform:platform /app
 
