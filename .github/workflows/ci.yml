@@ -75,13 +75,13 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            platform/requirements.txt
+            platform/requirements-test.txt
             requirements-desktop-build.txt
 
       - name: Install platform and pinned desktop build dependencies
         run: >-
           python -m pip install
-          -r platform/requirements.txt
+          -r platform/requirements-test.txt
           -r requirements-desktop-build.txt
 
       - name: Build and inspect platform-only Windows EXE

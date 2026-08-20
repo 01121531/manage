@@ -29,6 +29,7 @@ def verification_errors() -> list[str]:
     steps = release.get("steps", [])
     serialized = "\n".join(str(step) for step in steps)
     for required in (
+        "platform/requirements-test.txt",
         "requirements-desktop-build.txt",
         "./build.ps1",
         "verify_desktop_package.py --exe",
