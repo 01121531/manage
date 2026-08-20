@@ -72,6 +72,33 @@ class Phase6RehearsalTests(unittest.TestCase):
                 write_evidence(evidence_path, tampered)
             self.assertFalse(evidence_path.exists())
 
+    def test_verifier_binds_evidence_to_expected_release_commit(self) -> None:
+        commit = "c" * 40
+        evidence = run_rehearsal(commit)
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_path = Path(directory) / "phase6-evidence.json"
+            write_evidence(evidence_path, evidence)
+            self.assertEqual(
+                verify_evidence(evidence_path, expected_commit=commit),
+                evidence,
+            )
+            with self.assertRaises(RehearsalError):
+                verify_evidence(evidence_path, expected_commit="d" * 40)
+            with self.assertRaises(RehearsalError):
+                verify_evidence(evidence_path, expected_commit="not-a-commit")
+            self.assertEqual(
+                main(
+                    [
+                        "verify",
+                        "--input",
+                        str(evidence_path),
+                        "--expected-commit",
+                        "d" * 40,
+                    ]
+                ),
+                1,
+            )
+
     def test_failed_run_invalidates_stale_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             evidence_path = Path(directory) / "phase6-evidence.json"

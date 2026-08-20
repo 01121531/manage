@@ -934,7 +934,9 @@ def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def verify_evidence(path: Path) -> dict[str, Any]:
+def verify_evidence(
+    path: Path, *, expected_commit: str | None = None
+) -> dict[str, Any]:
     try:
         raw = path.read_bytes()
     except OSError as error:
@@ -945,7 +947,13 @@ def verify_evidence(path: Path) -> dict[str, Any]:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RehearsalError("evidence JSON is invalid") from error
-    return _validate_evidence(value)
+    evidence = _validate_evidence(value)
+    if expected_commit is not None:
+        if _COMMIT_PATTERN.fullmatch(expected_commit) is None:
+            raise RehearsalError("expected commit is invalid")
+        if evidence["source_commit"] != expected_commit:
+            raise RehearsalError("evidence commit does not match release")
+    return evidence
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -956,6 +964,7 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--commit", required=True)
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--input", type=Path, required=True)
+    verify_parser.add_argument("--expected-commit")
     return parser
 
 
@@ -970,7 +979,9 @@ def main(arguments: list[str] | None = None) -> int:
             write_evidence(options.output, evidence)
             verified = evidence
         else:
-            verified = verify_evidence(options.input)
+            verified = verify_evidence(
+                options.input, expected_commit=options.expected_commit
+            )
     except (RehearsalError, OSError):
         if output is not None:
             output.unlink(missing_ok=True)

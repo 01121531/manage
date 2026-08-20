@@ -19,7 +19,7 @@ Release manifest:
 - Provenance attestation evidence:
 - CodeQL Python result:
 - CodeQL JavaScript/TypeScript result:
-- Phase 6 CI rehearsal evidence and payload SHA-256 (preflight only):
+- Phase 6 CI rehearsal evidence, file SHA-256 and payload SHA-256 (preflight only):
 - Target-environment pilot evidence:
 - Signed by:
 - Reviewer role:

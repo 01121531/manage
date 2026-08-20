@@ -52,6 +52,14 @@ jobs:
         shell: pwsh
         run: ./scripts/quality_gate.ps1
 
+      - name: Upload Phase 6 CI rehearsal evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase6-ci-rehearsal-${{ github.sha }}
+          path: release/evidence/phase6-ci-rehearsal.json
+          if-no-files-found: error
+          retention-days: 90
+
   verified-container-release:
     needs: release-quality-gate
     runs-on: ubuntu-latest
@@ -258,6 +266,25 @@ jobs:
           path: release/assets/supply-chain
           merge-multiple: true
 
+      - name: Download Phase 6 CI rehearsal evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: phase6-ci-rehearsal-${{ github.sha }}
+          path: release/assets
+
+      - name: Verify Phase 6 evidence commit and integrity
+        shell: pwsh
+        run: |
+          $evidence = "release/assets/phase6-ci-rehearsal.json"
+          python scripts/phase6_rehearsal.py verify `
+            --input $evidence `
+            --expected-commit "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "Phase 6 evidence verification failed." }
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $evidence).Hash.ToLowerInvariant()
+          "$digest  phase6-ci-rehearsal.json" | Set-Content `
+            -LiteralPath "release/assets/phase6-ci-rehearsal.json.sha256" `
+            -Encoding ascii
+
       - name: Create immutable container release manifest
         shell: pwsh
         run: >-
@@ -296,6 +323,8 @@ jobs:
           release/assets/email-platform-windows.exe
           release/assets/update-manifest.json
           release/assets/container-release-manifest.json
+          release/assets/phase6-ci-rehearsal.json
+          release/assets/phase6-ci-rehearsal.json.sha256
           release/assets/supply-chain/api.spdx.json
           release/assets/supply-chain/web.spdx.json
           release/assets/supply-chain/edge.spdx.json

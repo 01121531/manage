@@ -14,13 +14,18 @@ Run and verify it from the repository root:
 ```powershell
 $commit = (git rev-parse HEAD).Trim()
 python scripts/phase6_rehearsal.py run --output release/evidence/phase6-ci-rehearsal.json --commit $commit
-python scripts/phase6_rehearsal.py verify --input release/evidence/phase6-ci-rehearsal.json
+python scripts/phase6_rehearsal.py verify --input release/evidence/phase6-ci-rehearsal.json --expected-commit $commit
 ```
 
 The writer removes stale output before starting, publishes through a same-directory
 temporary file plus `os.replace`, and then verifies the closed schema and canonical
 payload SHA-256. Any failed or tampered check returns a non-zero exit code. The CI
 workflow uploads the resulting JSON as `phase6-ci-rehearsal-<commit>`.
+
+For a semantic-version Tag release, the publishing job downloads that exact
+commit-bound artifact, verifies it again with `--expected-commit`, and publishes
+both the JSON and its file `SHA-256` manifest as GitHub Release assets. Missing,
+modified, or cross-commit evidence blocks publication.
 
 ## Evidence boundary
 
