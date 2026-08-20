@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+build/
+dist/
+release/
+*.spec
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/playwright-report/
+frontend/test-results/
+.doc_qa*/
+.platform_qa/

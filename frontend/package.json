@@ -1,0 +1,32 @@
+{
+  "name": "email-platform-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "generate:api": "python ../scripts/export_openapi.py --output openapi.json && openapi-typescript openapi.json -o src/generated/openapi.ts",
+    "check:api": "python ../scripts/verify_openapi_client.py",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.1.0",
+    "antd": "^6.1.0",
+    "oidc-client-ts": "^3.3.0",
+    "openapi-fetch": "0.17.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}

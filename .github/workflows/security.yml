@@ -1,0 +1,47 @@
+name: Security Gate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+
+jobs:
+  security-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python dependencies
+        run: python -m pip install -r platform/requirements.txt pip-audit
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Secret scan
+        run: python scripts/secret_scan.py
+
+      - name: Verify release manifest
+        run: python scripts/verify_release_manifest.py
+
+      - name: Verify signoff template
+        run: python scripts/verify_signoff_template.py
+
+      - name: Python dependency audit
+        run: pip-audit -r platform/requirements.txt
+
+      - name: Frontend dependency audit
+        working-directory: frontend
+        run: npm audit --audit-level=high --omit=dev

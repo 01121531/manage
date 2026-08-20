@@ -1,0 +1,365 @@
+import asyncio
+import unittest
+from datetime import timedelta
+
+import httpx
+from sqlalchemy import select
+
+from platform.app import create_app
+from platform.bootstrap import create_user_with_device
+from platform.config import Settings
+from platform.mail_connectors import MailCodeMessage, MailboxAccess
+from platform.mail_worker import process_mail_session
+from platform.models import AuditEvent, MailSession, Mailbox, Task, utc_now
+
+
+class FakeMailConnector:
+    def __init__(self) -> None:
+        self.messages: list[MailCodeMessage] = []
+        self.watermark_calls = 0
+        self.find_calls = 0
+
+    def current_watermark(self, mailbox: MailboxAccess) -> str | None:
+        self.watermark_calls += 1
+        return self.messages[-1].watermark if self.messages else None
+
+    def find_code_after(
+        self, mailbox: MailboxAccess, watermark: str | None
+    ) -> MailCodeMessage | None:
+        self.find_calls += 1
+        baseline = int(watermark or "0")
+        for message in self.messages:
+            if int(message.watermark) > baseline:
+                return message
+        return None
+
+
+class MailSessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.connector = FakeMailConnector()
+        self.app = create_app(
+            Settings(
+                app_name="mail-test-platform",
+                environment="test",
+                database_url="sqlite+pysqlite:///:memory:",
+                jwt_hmac_secret="mail-test-hmac-secret-that-is-not-production",
+                mail_session_ttl_seconds=300,
+            ),
+            mail_connectors={"fake": self.connector},
+        )
+        self.password = "mail-test-account-password"
+        self.identity = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-mail",
+            email="mail-owner@example.test",
+            password=self.password,
+            device_name="mail-device",
+        )
+        with self.app.state.session_factory() as db:
+            db.add(
+                Mailbox(
+                    tenant_id="tenant-mail",
+                    email_masked="m***@example.test",
+                    connector_type="fake",
+                    secret_ref="vault://mailboxes/mail-owner",
+                )
+            )
+            db.commit()
+
+    def tearDown(self) -> None:
+        self.app.state.engine.dispose()
+
+    def request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+        async def run() -> httpx.Response:
+            transport = httpx.ASGITransport(app=self.app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                return await client.request(method, path, **kwargs)
+
+        return asyncio.run(run())
+
+    def login(self, identity=None, *, email=None, password=None) -> str:
+        identity = identity or self.identity
+        response = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            json={
+                "tenant_id": "tenant-mail",
+                "email": email or "mail-owner@example.test",
+                "password": password or self.password,
+                "device_id": identity.device_id,
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["access_token"]
+
+    @staticmethod
+    def bearer(token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}"}
+
+    def create_task(self, token: str) -> str:
+        response = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(token),
+            json={"type": "mail_code", "idempotency_key": "mail-task-1"},
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()["id"]
+
+    def create_session(self, token: str, task_id: str) -> httpx.Response:
+        return self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/mail-sessions",
+            headers=self.bearer(token),
+        )
+
+    def test_session_response_never_exposes_mailbox_secret(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token)
+        response = self.create_session(token, task_id)
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(
+            set(response.json()),
+            {"id", "trace_id", "email_masked", "status", "expires_at"},
+        )
+        task = self.request(
+            "GET", f"/api/v1/tasks/{task_id}", headers=self.bearer(token)
+        )
+        self.assertEqual(response.json()["trace_id"], task.json()["trace_id"])
+        for forbidden in ("secret_ref", "password", "body", "credential"):
+            self.assertNotIn(forbidden, response.text.lower())
+
+    def test_old_watermark_is_ignored_and_code_is_one_time(self) -> None:
+        self.connector.messages.append(
+            MailCodeMessage(message_id="old", watermark="1", code="111111")
+        )
+        token = self.login()
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201)
+        session_id = session.json()["id"]
+
+        waiting = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(waiting.status_code, 200)
+        self.assertEqual(waiting.json(), {"status": "waiting", "code": None})
+
+        self.connector.messages.append(
+            MailCodeMessage(message_id="new", watermark="2", code="222222")
+        )
+        consumed = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(consumed.json(), {"status": "consumed", "code": "222222"})
+        consumed_again = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(
+            consumed_again.json(), {"status": "consumed", "code": None}
+        )
+
+    def test_worker_mode_delivers_code_without_api_polling_connector(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        self.connector.messages.append(
+            MailCodeMessage(message_id="old", watermark="1", code="111111")
+        )
+        token = self.login()
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        self.assertEqual(session.json()["status"], "initializing")
+        self.assertEqual(self.connector.watermark_calls, 0)
+        self.assertEqual(self.connector.find_calls, 0)
+        session_id = session.json()["id"]
+
+        initialized = process_mail_session(
+            self.app.state.session_factory,
+            session_id,
+            connectors={"fake": self.connector},
+        )
+        self.assertEqual(initialized, "initialized")
+
+        waiting = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(waiting.status_code, 200, waiting.text)
+        self.assertEqual(waiting.json(), {"status": "waiting", "code": None})
+        self.assertEqual(self.connector.find_calls, 0)
+
+        self.connector.messages.append(
+            MailCodeMessage(message_id="new", watermark="2", code="222222")
+        )
+        delivered = process_mail_session(
+            self.app.state.session_factory,
+            session_id,
+            connectors={"fake": self.connector},
+        )
+        self.assertEqual(delivered, "code_ready")
+        self.assertEqual(self.connector.find_calls, 1)
+
+        consumed = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(consumed.json(), {"status": "consumed", "code": "222222"})
+        consumed_again = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(consumed_again.json(), {"status": "consumed", "code": None})
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNotNone(persisted)
+            self.assertIsNone(persisted.delivered_code)
+
+    def test_cross_user_cannot_read_session(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        session_id = session.json()["id"]
+        other_identity = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-mail",
+            email="other-mail-owner@example.test",
+            password="other-mail-account-password",
+            device_name="other-mail-device",
+        )
+        other_token = self.login(
+            other_identity,
+            email="other-mail-owner@example.test",
+            password="other-mail-account-password",
+        )
+        response = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(other_token),
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_expired_session_has_explicit_status(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        session_id = session.json()["id"]
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNotNone(persisted)
+            persisted.expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+        response = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/code",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(response.json(), {"status": "expired", "code": None})
+
+    def test_unconfigured_connector_returns_503(self) -> None:
+        self.app.state.mail_connectors = {}
+        token = self.login()
+        task_id = self.create_task(token)
+        response = self.create_session(token, task_id)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "service_unavailable")
+        self.assertIn("not configured", response.json()["error"]["message"])
+
+    def test_mail_audit_does_not_store_code_or_secret(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        self.connector.messages.append(
+            MailCodeMessage(message_id="new", watermark="1", code="987654")
+        )
+        self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session.json()['id']}/code",
+            headers=self.bearer(token),
+        )
+        with self.app.state.session_factory() as db:
+            events = list(db.scalars(select(AuditEvent)))
+        event_text = "\n".join(
+            f"{event.event_type} {event.details_json}" for event in events
+        )
+        for forbidden in ("987654", "vault://mailboxes/mail-owner", "secret_ref", "body"):
+            self.assertNotIn(forbidden, event_text)
+
+    def test_closed_task_revokes_mail_session_and_blocks_recreation(self) -> None:
+        token = self.login()
+        headers = self.bearer(token)
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+
+        closed = self.request(
+            "POST", f"/api/v1/tasks/{task_id}/close", headers=headers
+        )
+        self.assertEqual(closed.status_code, 200, closed.text)
+        self.assertEqual(closed.json()["status"], "closed")
+        code = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session.json()['id']}/code",
+            headers=headers,
+        )
+        self.assertEqual(code.json(), {"status": "revoked", "code": None})
+        blocked = self.create_session(token, task_id)
+        self.assertEqual(blocked.status_code, 409, blocked.text)
+        self.assertEqual(blocked.json()["error"]["code"], "conflict")
+
+    def test_owner_can_revoke_waiting_mail_session(self) -> None:
+        token = self.login()
+        headers = self.bearer(token)
+        task_id = self.create_task(token)
+        session = self.create_session(token, task_id)
+        session_id = session.json()["id"]
+        revoked = self.request(
+            "POST",
+            f"/api/v1/mail-sessions/{session_id}/revoke",
+            headers=headers,
+        )
+        self.assertEqual(revoked.status_code, 200, revoked.text)
+        self.assertEqual(revoked.json()["status"], "revoked")
+        code = self.request(
+            "GET", f"/api/v1/mail-sessions/{session_id}/code", headers=headers
+        )
+        self.assertEqual(code.json(), {"status": "revoked", "code": None})
+        replay = self.request(
+            "POST",
+            f"/api/v1/mail-sessions/{session_id}/revoke",
+            headers=headers,
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        with self.app.state.session_factory() as db:
+            events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mail_session.revoked"
+                    )
+                )
+            )
+        self.assertEqual(len(events), 1)
+
+    def test_mail_openapi_schemas_do_not_expose_internal_mail_fields(self) -> None:
+        schema = self.app.openapi()
+        for name in ("MailSessionResponse", "MailCodeResponse"):
+            properties = schema["components"]["schemas"][name]["properties"]
+            for forbidden in ("secret_ref", "password", "body", "credential"):
+                self.assertNotIn(forbidden, properties)
+        self.assertIn("/api/v1/tasks/{task_id}/mail-sessions", schema["paths"])
+        self.assertIn("/api/v1/mail-sessions/{session_id}/code", schema["paths"])
+
+
+if __name__ == "__main__":
+    unittest.main()

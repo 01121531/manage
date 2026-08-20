@@ -1,0 +1,74 @@
+name: Release Windows desktop
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  verified-windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            platform/requirements.txt
+            requirements-desktop-build.txt
+
+      - name: Install pinned dependencies
+        run: >-
+          python -m pip install
+          -r platform/requirements.txt
+          -r requirements-desktop-build.txt
+
+      - name: Verify tag matches the application version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $declared = python -c "from app_version import APP_VERSION; print(APP_VERSION)"
+          if ($version -ne $declared.Trim()) {
+            throw "Tag version $version does not match app_version.py ($declared)."
+          }
+
+      - name: Run full quality gate
+        shell: pwsh
+        run: ./scripts/quality_gate.ps1
+
+      - name: Build and inspect platform-only Windows EXE
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Create verified update assets
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $source = Get-ChildItem -LiteralPath release/windows -Filter *.exe
+          if ($source.Count -ne 1) { throw "Expected exactly one Windows EXE." }
+          New-Item -ItemType Directory -Force -Path release/assets | Out-Null
+          $asset = "release/assets/email-platform-windows.exe"
+          Copy-Item -LiteralPath $source[0].FullName -Destination $asset
+          python scripts/verify_desktop_package.py --exe $asset
+          python scripts/create_update_manifest.py `
+            --exe $asset `
+            --version $version `
+            --repository "${{ github.repository }}" `
+            --output release/assets/update-manifest.json
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ github.ref_name }}"
+          release/assets/email-platform-windows.exe
+          release/assets/update-manifest.json
+          --verify-tag
+          --generate-notes
+          --title "邮箱验证码助手 ${{ github.ref_name }}"

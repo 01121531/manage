@@ -1,0 +1,275 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [backend]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    restart: unless-stopped
+    command: ["start", "--import-realm", "--http-enabled=true"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?set KEYCLOAK_ADMIN_USERNAME in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HOSTNAME: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
+      KC_PROXY_HEADERS: xforwarded
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
+    volumes:
+      - ./infra/keycloak/email-platform-realm.json:/opt/keycloak/data/import/email-platform-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
+
+  # Local-only helper for integration tests. The dev server and root token are
+  # intentionally behind a profile and must never be enabled in production.
+  vault:
+    image: hashicorp/vault:1.18
+    profiles: ["vault-dev"]
+    cap_add: ["IPC_LOCK"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:?set VAULT_DEV_ROOT_TOKEN_ID in .env}
+    command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+    image: email-platform-api:local
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    environment:
+      PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      PLATFORM_AUTH_MODE: oidc
+      PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
+      PLATFORM_OIDC_AUDIENCE: email-platform-api
+      PLATFORM_OIDC_CLIENT_ID: email-platform-web
+      PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+      PLATFORM_OIDC_JWKS_URL: http://keycloak:8080/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:-}
+      PLATFORM_VAULT_TOKEN: ${PLATFORM_VAULT_TOKEN:-}
+      PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
+      PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
+      PLATFORM_MAIL_POLL_MODE: worker
+      PLATFORM_SUB2_POLICY_VERSION: ${PLATFORM_SUB2_POLICY_VERSION:-sub2-v1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    command: ["uvicorn", "platform.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [backend]
+
+  worker-mail:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+    image: email-platform-worker-mail:local
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    environment:
+      PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      PLATFORM_AUTH_MODE: oidc
+      PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
+      PLATFORM_OIDC_AUDIENCE: email-platform-api
+      PLATFORM_OIDC_CLIENT_ID: email-platform-web
+      PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+      PLATFORM_OIDC_JWKS_URL: http://keycloak:8080/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:-}
+      PLATFORM_VAULT_TOKEN: ${PLATFORM_VAULT_TOKEN:-}
+      PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
+      PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
+      PLATFORM_MAIL_POLL_MODE: worker
+      PLATFORM_MAIL_API_URL: ${PLATFORM_MAIL_API_URL:?set PLATFORM_MAIL_API_URL in .env}
+      PLATFORM_MAIL_TIMEOUT_SECONDS: ${PLATFORM_MAIL_TIMEOUT_SECONDS:-20}
+      PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
+      PLATFORM_WORKER_METRICS_PORT: 9101
+      PLATFORM_WORKER_HEARTBEAT_PATH: /tmp/email-platform-mail-worker.heartbeat
+      PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS: ${PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-30}
+    expose:
+      - "9101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["python", "-m", "infra.mail_worker"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "infra.check_worker_heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [backend]
+
+  worker-sub2:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+    image: email-platform-worker-sub2:local
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    environment:
+      PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      PLATFORM_AUTH_MODE: oidc
+      PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
+      PLATFORM_OIDC_AUDIENCE: email-platform-api
+      PLATFORM_OIDC_CLIENT_ID: email-platform-web
+      PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+      PLATFORM_OIDC_JWKS_URL: http://keycloak:8080/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:-}
+      PLATFORM_VAULT_TOKEN: ${PLATFORM_VAULT_TOKEN:-}
+      PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
+      PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
+      PLATFORM_SUB2_POLICY_VERSION: ${PLATFORM_SUB2_POLICY_VERSION:-sub2-v1}
+      PLATFORM_SUB2_GROUP_ID: ${PLATFORM_SUB2_GROUP_ID:-49}
+      PLATFORM_SUB2_CONCURRENCY: ${PLATFORM_SUB2_CONCURRENCY:-40}
+      PLATFORM_SUB2_PROXY_REF: ${PLATFORM_SUB2_PROXY_REF:?set PLATFORM_SUB2_PROXY_REF in .env}
+      PLATFORM_SUB2_CREDENTIAL_REF: ${PLATFORM_SUB2_CREDENTIAL_REF:?set PLATFORM_SUB2_CREDENTIAL_REF in .env}
+      PLATFORM_SUB2_UPLOAD_URL: ${PLATFORM_SUB2_UPLOAD_URL:-}
+      PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
+      PLATFORM_WORKER_METRICS_PORT: 9102
+      PLATFORM_WORKER_HEARTBEAT_PATH: /tmp/email-platform-sub2-worker.heartbeat
+      PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS: ${PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-30}
+    expose:
+      - "9102"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["python", "-m", "infra.worker"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "infra.check_worker_heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [backend]
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/frontend.Dockerfile
+    image: email-platform-web:local
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+      - /var/run
+      - /var/cache/nginx
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [backend]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+      worker-mail:
+        condition: service_started
+      worker-sub2:
+        condition: service_started
+    networks: [backend]
+
+volumes:
+  postgres-data:
+    name: email-platform-postgres
+  redis-data:
+    name: email-platform-redis
+  prometheus-data:
+    name: email-platform-prometheus
+
+networks:
+  backend:
+    name: email-platform-backend
+    driver: bridge

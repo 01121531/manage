@@ -1,0 +1,38 @@
+groups:
+  - name: platform-availability
+    rules:
+      - alert: PlatformApiDown
+        expr: up{job="api"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Platform API is unreachable
+      - alert: PlatformMailWorkerStalled
+        expr: time() - platform_worker_last_batch_timestamp_seconds{job="worker-mail"} > 120
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Mail worker batch loop is stalled
+      - alert: PlatformSub2WorkerStalled
+        expr: time() - platform_worker_last_batch_timestamp_seconds{job="worker-sub2"} > 120
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Sub2 worker batch loop is stalled
+      - alert: PlatformUnknownUploadsPresent
+        expr: platform_upload_jobs_total{status="unknown"} > 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Unknown uploads need operator review
+      - alert: PlatformApi5xxRateElevated
+        expr: sum(rate(platform_http_requests_total{status=~"5.."}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Platform API 5xx rate is elevated

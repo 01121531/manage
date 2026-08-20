@@ -1,0 +1,14 @@
+{
+  "release_id": "0.1.0",
+  "backend_version": "0.1.0",
+  "frontend_version": "0.1.0",
+  "migration_head": "0009_upload_policy_governance",
+  "compose_images": {
+    "api": "email-platform-api:local",
+    "worker-mail": "email-platform-worker-mail:local",
+    "worker-sub2": "email-platform-worker-sub2:local",
+    "web": "email-platform-web:local",
+    "prometheus": "prom/prometheus:v2.55.1"
+  },
+  "rollback_policy": "Restore the latest backup before switching to a previous release manifest."
+}
