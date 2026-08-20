@@ -81,6 +81,14 @@ Release manifest:
    - Evidence:
    - Result:
 
+   - Phase 6 role-training evidence file and payload SHA-256:
+   - Training session/environment/release/window:
+   - Operator trainee/reviewer:
+   - Ops administrator trainee/reviewer:
+   - Security auditor trainee/reviewer:
+   - Platform administrator trainee/reviewer:
+   - Required tabletop scenarios and trace IDs:
+
    Rollback evidence must name the same release tag, commit, migration head,
    container-manifest SHA-256 and schema-v2 platform + Keycloak backup bundle.
    Record actual running image digests and confirm that a forced restore or

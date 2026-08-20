@@ -483,3 +483,10 @@ of the following:
    released safely.
 7. Restore, key rotation, device revocation and incident-response runbooks are
    signed off by an operator who is not the implementer.
+8. The four platform roles complete the five scenarios in
+   `deploy/runbooks/role-training.md`; `scripts.training_evidence` seals a
+   release-bound, independently reviewed record with
+   `production_acceptance=false` and a canonical payload SHA-256.
+9. A separate target-environment pilot proves real identity, Mail, Sub2,
+   alert delivery, restore and rollback behavior. CI and training-tool tests do
+   not satisfy this production gate.

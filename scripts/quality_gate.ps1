@@ -46,6 +46,9 @@ try {
     python scripts/verify_rollback_assets.py
     if ($LASTEXITCODE -ne 0) { throw "Rollback asset verification failed." }
 
+    python scripts/verify_training_assets.py
+    if ($LASTEXITCODE -ne 0) { throw "Role-training asset verification failed." }
+
     python scripts/verify_nginx_headers.py
     if ($LASTEXITCODE -ne 0) { throw "Nginx header verification failed." }
 
