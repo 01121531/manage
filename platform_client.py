@@ -115,6 +115,7 @@ class MailSessionSnapshot:
     status: str
     expires_at: str
     trace_id: str | None = None
+    session_token: str | None = dataclass_field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -1128,23 +1129,37 @@ class PlatformClient:
     def create_mail_session(self, task_id: str) -> MailSessionSnapshot:
         task_path = urllib.parse.quote(_required_value(task_id, "task_id"), safe="")
         response = self._request_json("POST", f"/tasks/{task_path}/mail-sessions")
-        return _decode_mail_session(response, self.last_trace_id)
+        return _decode_mail_session(
+            response, self.last_trace_id, require_session_token=True
+        )
 
-    def get_mail_code(self, session_id: str) -> MailCodeSnapshot:
+    def get_mail_code(
+        self, session_id: str, session_token: str
+    ) -> MailCodeSnapshot:
         session_path = urllib.parse.quote(
             _required_value(session_id, "session_id"), safe=""
         )
         response = self._request_json(
-            "GET", f"/mail-sessions/{session_path}/code"
+            "GET",
+            f"/mail-sessions/{session_path}/code",
+            _mail_session_token=_required_value(
+                session_token, "session_token"
+            ),
         )
         return _decode_mail_code(response, self.last_trace_id)
 
-    def revoke_mail_session(self, session_id: str) -> MailSessionSnapshot:
+    def revoke_mail_session(
+        self, session_id: str, session_token: str
+    ) -> MailSessionSnapshot:
         session_path = urllib.parse.quote(
             _required_value(session_id, "session_id"), safe=""
         )
         response = self._request_json(
-            "POST", f"/mail-sessions/{session_path}/revoke"
+            "POST",
+            f"/mail-sessions/{session_path}/revoke",
+            _mail_session_token=_required_value(
+                session_token, "session_token"
+            ),
         )
         return _decode_mail_session(response, self.last_trace_id)
 
@@ -1254,6 +1269,7 @@ class PlatformClient:
         *,
         authenticated: bool = True,
         _access_token_override: str | None = None,
+        _mail_session_token: str | None = None,
     ) -> dict[str, Any]:
         response = self._request_json_value(
             method,
@@ -1261,6 +1277,7 @@ class PlatformClient:
             payload,
             authenticated=authenticated,
             _access_token_override=_access_token_override,
+            _mail_session_token=_mail_session_token,
         )
         if not isinstance(response, dict):
             raise PlatformProtocolError(
@@ -1296,6 +1313,7 @@ class PlatformClient:
         *,
         authenticated: bool = True,
         _access_token_override: str | None = None,
+        _mail_session_token: str | None = None,
     ) -> Any:
         if _access_token_override is not None:
             access_token = _access_token_override
@@ -1312,6 +1330,8 @@ class PlatformClient:
         }
         if authenticated:
             headers["Authorization"] = f"Bearer {access_token}"
+        if _mail_session_token is not None:
+            headers["X-Mail-Session-Token"] = _mail_session_token
         body = None
         if payload is not None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1605,10 +1625,22 @@ def _decode_task(payload: Mapping[str, Any], trace_id: str | None) -> TaskSnapsh
 
 
 def _decode_mail_session(
-    payload: Mapping[str, Any], trace_id: str | None
+    payload: Mapping[str, Any],
+    trace_id: str | None,
+    *,
+    require_session_token: bool = False,
 ) -> MailSessionSnapshot:
-    expected = {"id", "email_masked", "status", "expires_at", "trace_id"}
+    expected = {
+        "id",
+        "email_masked",
+        "status",
+        "expires_at",
+        "trace_id",
+        "session_token",
+    }
     required = expected - {"trace_id"}
+    if not require_session_token:
+        required.remove("session_token")
     if set(payload) - expected or not required.issubset(payload):
         raise PlatformProtocolError(
             "邮箱会话响应字段无效",
@@ -1625,6 +1657,14 @@ def _decode_mail_session(
         or payload["status"]
         not in {"initializing", "waiting", "code_ready", "consumed", "expired", "revoked"}
         or (payload.get("trace_id") is not None and not isinstance(payload["trace_id"], str))
+        or (
+            payload.get("session_token") is not None
+            and (
+                not isinstance(payload["session_token"], str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["session_token"])
+                is None
+            )
+        )
     ):
         raise PlatformProtocolError(
             "邮箱会话响应状态无效",
@@ -1649,6 +1689,7 @@ def _decode_mail_session(
         status=payload["status"],
         expires_at=payload["expires_at"],
         trace_id=payload.get("trace_id"),
+        session_token=payload.get("session_token"),
     )
 
 

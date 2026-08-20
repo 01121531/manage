@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNBOOKS = {
-    "restore.md": ["python -m scripts.postgres_maintenance restore", "Do not use Alembic downgrade"],
+    "restore.md": ["python -m scripts.postgres_maintenance restore-bundle", "Do not use Alembic downgrade"],
     "rollback.md": ["python -m scripts.release_manifest verify", "restore-first"],
     "device-revocation.md": ["/api/v1/admin/devices/{device_id}/revoke", "device.revoked"],
     "key-rotation.md": ["docker compose config", "verify_compose_env.py"],

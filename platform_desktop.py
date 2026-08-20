@@ -143,6 +143,7 @@ class PlatformDesktopApp:
         self._login_dialog: PlatformLoginDialog | None = None
         self._task_id: str | None = None
         self._mail_session_id: str | None = None
+        self._mail_session_token: str | None = None
         self._current_code: str | None = None
         self._current_card_clipboard: str | None = None
         self._card_allocation_id: str | None = None
@@ -754,6 +755,7 @@ class PlatformDesktopApp:
         previous_task_id = self._task_id
         self._task_id = None
         self._mail_session_id = None
+        self._mail_session_token = None
         self._clear_sensitive_code()
         self._clear_card_details()
         self._card_allocation_id = None
@@ -803,7 +805,11 @@ class PlatformDesktopApp:
         threading.Thread(target=worker, daemon=True, name="platform-task-create").start()
 
     def _start_polling(self) -> None:
-        if self._mail_session_id is None or self._client is None:
+        if (
+            self._mail_session_id is None
+            or self._mail_session_token is None
+            or self._client is None
+        ):
             return
         self.stop_polling()
         self._poll_generation += 1
@@ -813,7 +819,9 @@ class PlatformDesktopApp:
 
         def worker() -> None:
             try:
-                snapshot: MailCodeSnapshot = self._client.get_mail_code(self._mail_session_id)
+                snapshot: MailCodeSnapshot = self._client.get_mail_code(
+                    self._mail_session_id, self._mail_session_token
+                )
             except BaseException as error:
                 self._events.put((generation, "poll_error", error))
                 return
@@ -911,6 +919,7 @@ class PlatformDesktopApp:
                 task_id, task_trace_id, session, allocation = value
                 self._task_id = task_id
                 self._mail_session_id = session.id
+                self._mail_session_token = session.session_token
                 self._card_allocation_id = allocation.id
                 self.task_label.configure(
                     text=f"{task_id[:8]} · trace {task_trace_id[:8]}"
@@ -1264,6 +1273,7 @@ class PlatformDesktopApp:
             ).start()
         self._task_id = None
         self._mail_session_id = None
+        self._mail_session_token = None
         self._card_allocation_id = None
         self._upload_job_id = None
         self._reset_upload_attempt()

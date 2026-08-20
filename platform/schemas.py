@@ -207,6 +207,10 @@ class MailSessionResponse(BaseModel):
     expires_at: datetime
 
 
+class MailSessionCreateResponse(MailSessionResponse):
+    session_token: str = Field(min_length=32, max_length=128, repr=False)
+
+
 class MailCodeResponse(BaseModel):
     status: str
     code: str | None = None

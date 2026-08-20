@@ -18,6 +18,9 @@ try {
     python scripts/verify_service_boundaries.py
     if ($LASTEXITCODE -ne 0) { throw "Service boundary verification failed." }
 
+    python scripts/verify_vault_isolation.py
+    if ($LASTEXITCODE -ne 0) { throw "Vault isolation verification failed." }
+
     python scripts/verify_desktop_package.py
     if ($LASTEXITCODE -ne 0) { throw "Desktop package boundary verification failed." }
 

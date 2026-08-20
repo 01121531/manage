@@ -1,5 +1,7 @@
 """Phase 1 persistence models."""
 
+import hashlib
+import secrets
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -25,6 +27,12 @@ def new_id() -> str:
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def new_session_token_hash() -> str:
+    """Create an unissued token hash for internal/legacy session rows."""
+
+    return hashlib.sha256(secrets.token_bytes(32)).hexdigest()
 
 
 class User(Base):
@@ -143,6 +151,9 @@ class MailSession(Base):
     device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
     mailbox_id: Mapped[str] = mapped_column(ForeignKey("mailboxes.id"), index=True)
     trace_id: Mapped[str] = mapped_column(String(36), default=new_id, index=True)
+    session_token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=new_session_token_hash
+    )
     status: Mapped[str] = mapped_column(String(32), default="waiting", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     start_watermark: Mapped[str | None] = mapped_column(String(512), nullable=True)

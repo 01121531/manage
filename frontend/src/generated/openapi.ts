@@ -1099,6 +1099,24 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** MailSessionCreateResponse */
+        MailSessionCreateResponse: {
+            /** Email Masked */
+            email_masked: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Session Token */
+            session_token: string;
+            /** Status */
+            status: string;
+            /** Trace Id */
+            trace_id: string;
+        };
         /** MailSessionResponse */
         MailSessionResponse: {
             /** Email Masked */
@@ -2441,13 +2459,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Existing session */
+            /** @description Existing session with a rotated token */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MailSessionResponse"];
+                    "application/json": components["schemas"]["MailSessionCreateResponse"];
                 };
             };
             /** @description Successful Response */
@@ -2456,7 +2474,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MailSessionResponse"];
+                    "application/json": components["schemas"]["MailSessionCreateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2481,13 +2499,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Existing session */
+            /** @description Existing session with a rotated token */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MailSessionResponse"];
+                    "application/json": components["schemas"]["MailSessionCreateResponse"];
                 };
             };
             /** @description Successful Response */
@@ -2496,7 +2514,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MailSessionResponse"];
+                    "application/json": components["schemas"]["MailSessionCreateResponse"];
                 };
             };
             /** @description Validation Error */

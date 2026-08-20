@@ -33,6 +33,16 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_mail_polling_uses_opaque_session_token(self) -> None:
+        init_source = inspect.getsource(PlatformDesktopApp.__init__)
+        polling_source = inspect.getsource(PlatformDesktopApp._start_polling)
+        event_source = inspect.getsource(PlatformDesktopApp._drain_events)
+        logout_source = inspect.getsource(PlatformDesktopApp.logout)
+        self.assertIn("self._mail_session_token: str | None = None", init_source)
+        self.assertIn("session.session_token", event_source)
+        self.assertIn("self._mail_session_token", polling_source)
+        self.assertIn("self._mail_session_token = None", logout_source)
+
     def test_workflow_progress_uses_text_icons_and_distinct_terminal_states(self) -> None:
         waiting_text, waiting_color = format_workflow_progress("waiting")
         self.assertIn("✓ 登录", waiting_text)

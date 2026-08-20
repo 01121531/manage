@@ -56,6 +56,7 @@ from platform.schemas import (
     LoginRequest,
     MailCodeResponse,
     MailboxStatusResponse,
+    MailSessionCreateResponse,
     MailSessionResponse,
     CardAllocationResponse,
     CardRevealChallengeResponse,
@@ -92,6 +93,7 @@ _TENANT_DASHBOARD_ROLES = frozenset(
     {ROLE_OPS_ADMIN, ROLE_SECURITY_AUDITOR, ROLE_PLATFORM_ADMIN}
 )
 _ACTIVE_MAIL_SESSION_STATUSES = ("initializing", "waiting", "code_ready")
+_MAIL_SESSION_TOKEN_HEADER = "X-Mail-Session-Token"
 
 
 def _utc_now() -> datetime:
@@ -117,6 +119,20 @@ def _mailbox_access(mailbox: Mailbox) -> MailboxAccess:
 def _mail_poll_mode(request: Request) -> str:
     settings: Settings = request.app.state.settings
     return settings.mail_poll_mode.strip().lower()
+
+
+def _new_mail_session_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _require_mail_session_token(request: Request, session: MailSession) -> None:
+    token = request.headers.get(_MAIL_SESSION_TOKEN_HEADER)
+    if not token or len(token) > 128:
+        raise HTTPException(status_code=404, detail="Mail session not found")
+    candidate_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not secrets.compare_digest(candidate_hash, session.session_token_hash):
+        raise HTTPException(status_code=404, detail="Mail session not found")
 
 
 @router.get("/health", tags=["system"])
@@ -785,16 +801,26 @@ def close_task(
 
 @router.post(
     "/tasks/{task_id}/mail-sessions",
-    response_model=MailSessionResponse,
+    response_model=MailSessionCreateResponse,
     status_code=201,
-    responses={200: {"model": MailSessionResponse, "description": "Existing session"}},
+    responses={
+        200: {
+            "model": MailSessionCreateResponse,
+            "description": "Existing session with a rotated token",
+        }
+    },
     tags=["mail"],
 )
 @router.post(
     "/tasks/{task_id}/mail-session",
-    response_model=MailSessionResponse,
+    response_model=MailSessionCreateResponse,
     status_code=201,
-    responses={200: {"model": MailSessionResponse, "description": "Existing session"}},
+    responses={
+        200: {
+            "model": MailSessionCreateResponse,
+            "description": "Existing session with a rotated token",
+        }
+    },
     tags=["mail"],
 )
 def create_mail_session(
@@ -803,7 +829,9 @@ def create_mail_session(
     response: Response,
     principal: AuthPrincipal = Depends(get_current_principal),
     db: Session = Depends(get_db),
-) -> MailSessionResponse:
+) -> MailSessionCreateResponse:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     task = db.scalar(
         select(Task).where(
             Task.id == task_id,
@@ -833,14 +861,16 @@ def create_mail_session(
             existing.delivered_code = None
             existing.delivered_at = None
             existing.code_expires_at = None
-            db.commit()
+        session_token, existing.session_token_hash = _new_mail_session_token()
+        db.commit()
         response.status_code = 200
-        return MailSessionResponse(
+        return MailSessionCreateResponse(
             id=existing.id,
             trace_id=existing.trace_id,
             email_masked=mailbox.email_masked,
             status=existing.status,
             expires_at=existing.expires_at,
+            session_token=session_token,
         )
 
     now = _utc_now()
@@ -891,6 +921,7 @@ def create_mail_session(
         except MailConnectorUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
         status = "waiting"
+    session_token, session_token_hash = _new_mail_session_token()
     session = MailSession(
         tenant_id=principal.tenant_id,
         task_id=task.id,
@@ -898,6 +929,7 @@ def create_mail_session(
         device_id=principal.device_id,
         mailbox_id=mailbox.id,
         trace_id=task.trace_id,
+        session_token_hash=session_token_hash,
         status=status,
         expires_at=now + timedelta(seconds=settings.mail_session_ttl_seconds),
         start_watermark=start_watermark,
@@ -926,12 +958,13 @@ def create_mail_session(
         },
     )
     db.commit()
-    return MailSessionResponse(
+    return MailSessionCreateResponse(
         id=session.id,
         trace_id=session.trace_id,
         email_masked=mailbox.email_masked,
         status=session.status,
         expires_at=session.expires_at,
+        session_token=session_token,
     )
 
 
@@ -948,9 +981,12 @@ def create_mail_session(
 def get_mail_code(
     session_id: str,
     request: Request,
+    response: Response,
     principal: AuthPrincipal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ) -> MailCodeResponse:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     session = db.scalar(
         select(MailSession).where(
             MailSession.id == session_id,
@@ -961,6 +997,7 @@ def get_mail_code(
     )
     if session is None:
         raise HTTPException(status_code=404, detail="Mail session not found")
+    _require_mail_session_token(request, session)
 
     now = _utc_now()
     if session.status == "revoked":
@@ -1145,6 +1182,7 @@ def revoke_mail_session(
     )
     if session is None:
         raise HTTPException(status_code=404, detail="Mail session not found")
+    _require_mail_session_token(request, session)
     mailbox = db.get(Mailbox, session.mailbox_id)
     if mailbox is None:
         raise HTTPException(status_code=503, detail="Assigned mailbox is unavailable")
@@ -1198,6 +1236,7 @@ async def mail_session_events(
     )
     if session is None:
         raise HTTPException(status_code=404, detail="Mail session not found")
+    _require_mail_session_token(request, session)
     deadline = session.expires_at
     poll_seconds = min(5, max(1, request.app.state.settings.mail_poll_interval_seconds))
 
@@ -1208,7 +1247,7 @@ async def mail_session_events(
             with request.app.state.session_factory() as stream_db:
                 try:
                     result = get_mail_code(
-                        session_id, request, principal, stream_db
+                        session_id, request, Response(), principal, stream_db
                     )
                 except HTTPException as exc:
                     event = {

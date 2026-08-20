@@ -174,7 +174,7 @@ snapshot even if the tenant rolls back before the job runs.
 Server-side secrets support two reference schemes. `env://NAME` reads a JSON
 object or plain value from the process environment and is intended for local or
 private validation. `vault://mount/path` uses Vault KV v2 and requires
-`PLATFORM_VAULT_ADDR` plus `PLATFORM_VAULT_TOKEN`; optional
+`PLATFORM_VAULT_ADDR` plus the process-local `PLATFORM_VAULT_TOKEN`; optional
 `PLATFORM_VAULT_NAMESPACE` is sent as `X-Vault-Namespace`. For example, a
 production deployment can set
 `PLATFORM_SUB2_CREDENTIAL_REF=vault://secret/sub2/credential`,
@@ -182,8 +182,23 @@ production deployment can set
 values such as `vault://secret/mailboxes/mail-001`, and card `secret_ref`
 values such as `vault://secret/cards/card-001`. The mail and Sub2 workers
 resolve these only in-process before calling the configured upstream
-interfaces. Use distinct least-privilege Vault tokens for the API, mail worker,
-and Sub2 worker in production.
+interfaces. Compose maps `PLATFORM_VAULT_API_TOKEN`,
+`PLATFORM_VAULT_MAIL_TOKEN`, and `PLATFORM_VAULT_SUB2_TOKEN` into that common
+in-container name separately. The API token can read only `secret/data/cards/*`
+for card reveal, the mail token only `secret/data/mailboxes/*`, and the Sub2
+token only the reviewed Sub2 credential/proxy paths plus `secret/data/cards/*`,
+which it must resolve when assembling the server-side upload payload. It has no
+mailbox permission. A missing token fails startup when a Vault address is
+configured; a missing resolver otherwise makes each Vault-backed operation
+fail closed.
+
+Reviewed least-privilege policies and an AppRole configuration helper live in
+`infra/vault/`. The `*_ROLE_ID` and `*_SECRET_ID` variables are for Vault Agent
+or an approved deployment secret broker; they are deliberately never injected
+into application containers. The broker exchanges each one-use SecretID for a
+short-lived service token and supplies only its matching `*_TOKEN`. Never write
+SecretIDs or issued tokens to Git, container images, logs, or a shared `.env`
+in a real production deployment.
 
 Every response includes an `X-Trace-Id` header. A valid UUID supplied in the
 request's `X-Trace-Id` header is propagated; otherwise one is generated. API
@@ -227,6 +242,7 @@ Copy-Item .env.example .env
 # Replace every CHANGE_ME value through the deployment secret manager.
 # PLATFORM_MIGRATION_DATABASE_URL is the schema-owner/DDL role.
 # PLATFORM_DATABASE_URL is the API/worker DML-only role.
+# Issue independent Vault tokens using infra/vault/README.md.
 docker compose config
 docker compose up -d
 ```
@@ -268,14 +284,26 @@ The migrations cover `users` (including OIDC subject and RBAC role), `devices`, 
 alembic -x db_url="postgresql+psycopg://USER:PASSWORD@HOST:5432/DB" upgrade head --sql > schema.sql
 ```
 
-For an actual backup/restore drill, use the helper script from the repository
-root:
+For production backup and restore, keep the platform and Keycloak databases in
+one integrity-checked bundle. The Keycloak realm JSON is bootstrap configuration,
+not a backup of live users or credentials. Use the helper from the repository root:
 
 ```powershell
-python -m scripts.postgres_maintenance backup --output backups/email-platform.dump
-python -m scripts.postgres_maintenance restore --input backups/email-platform.dump --target-db email_platform_restore
-python -m scripts.postgres_maintenance drill --output backups/email-platform.dump --scratch-db email_platform_restore_drill
+python -m scripts.postgres_maintenance backup-bundle --output-dir backups/production-YYYYMMDDTHHMMSSZ --platform-db email_platform --keycloak-db keycloak
+python -m scripts.postgres_maintenance verify-bundle --input-dir backups/production-YYYYMMDDTHHMMSSZ
+python -m scripts.postgres_maintenance restore-bundle --input-dir backups/production-YYYYMMDDTHHMMSSZ --platform-target-db email_platform_restore --keycloak-target-db keycloak_restore
+python -m scripts.postgres_maintenance drill-bundle --output-dir backups/production-YYYYMMDDTHHMMSSZ --platform-db email_platform --keycloak-db keycloak --platform-scratch-db email_platform_restore_drill --keycloak-scratch-db keycloak_restore_drill
 ```
+
+The bundle manifest records the database name, artifact filename, byte size and
+SHA-256 for `platform.dump` and `keycloak.dump` in `manifest.json`. Restore
+verifies the complete bundle first. The drill
+also requires non-empty source databases and matching source/restored public
+table counts for both databases. It emits matching source/restored row counts
+for platform `users`, `devices`, `audit_events` and Keycloak `realm`,
+`user_entity`, `credential`; retain that output as signoff evidence and review
+whether zero counts are credible for the environment. Archive the entire
+directory as one unit.
 
 The release lock is captured in `deploy/release-manifest.json`. Before a
 production cut, verify it against the working tree with:

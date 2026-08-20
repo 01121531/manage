@@ -760,6 +760,47 @@
         "title": "MailCodeResponse",
         "type": "object"
       },
+      "MailSessionCreateResponse": {
+        "properties": {
+          "email_masked": {
+            "title": "Email Masked",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "session_token": {
+            "maxLength": 128,
+            "minLength": 32,
+            "title": "Session Token",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trace_id",
+          "email_masked",
+          "status",
+          "expires_at",
+          "session_token"
+        ],
+        "title": "MailSessionCreateResponse",
+        "type": "object"
+      },
       "MailSessionResponse": {
         "properties": {
           "email_masked": {
@@ -3133,17 +3174,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MailSessionResponse"
+                  "$ref": "#/components/schemas/MailSessionCreateResponse"
                 }
               }
             },
-            "description": "Existing session"
+            "description": "Existing session with a rotated token"
           },
           "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MailSessionResponse"
+                  "$ref": "#/components/schemas/MailSessionCreateResponse"
                 }
               }
             },
@@ -3190,17 +3231,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MailSessionResponse"
+                  "$ref": "#/components/schemas/MailSessionCreateResponse"
                 }
               }
             },
-            "description": "Existing session"
+            "description": "Existing session with a rotated token"
           },
           "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MailSessionResponse"
+                  "$ref": "#/components/schemas/MailSessionCreateResponse"
                 }
               }
             },

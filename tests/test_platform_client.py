@@ -816,6 +816,7 @@ class PlatformClientTests(unittest.TestCase):
                     "email_masked": "m***@example.com",
                     "status": "waiting",
                     "expires_at": "2026-08-19T12:00:00Z",
+                    "session_token": "s" * 43,
                 }
             )
         )
@@ -828,7 +829,11 @@ class PlatformClientTests(unittest.TestCase):
         self.assertEqual(
             result,
             MailSessionSnapshot(
-                "session-1", "m***@example.com", "waiting", "2026-08-19T12:00:00Z"
+                "session-1",
+                "m***@example.com",
+                "waiting",
+                "2026-08-19T12:00:00Z",
+                session_token="s" * 43,
             ),
         )
         self.assertEqual(
@@ -837,13 +842,14 @@ class PlatformClientTests(unittest.TestCase):
         )
         self.assertIsNone(request.data)
         self.assertEqual(request.get_header("Authorization"), "Bearer access-secret")
+        self.assertNotIn("s" * 43, repr(result))
 
     def test_get_mail_code_quotes_id_and_parses_optional_code(self):
         opener = RecordingOpener(FakeResponse({"status": "consumed", "code": "123456"}))
         client = PlatformClient("https://platform.example", opener=opener)
         client.set_access_token("access-secret")
 
-        result = client.get_mail_code("session/1")
+        result = client.get_mail_code("session/1", "opaque-session-token")
 
         request, _ = opener.requests[0]
         self.assertEqual(result, MailCodeSnapshot("consumed", "123456"))
@@ -851,10 +857,40 @@ class PlatformClientTests(unittest.TestCase):
             request.full_url,
             "https://platform.example/api/v1/mail-sessions/session%2F1/code",
         )
+        self.assertEqual(
+            request.get_header("X-mail-session-token"),
+            "opaque-session-token",
+        )
         waiting_opener = RecordingOpener(FakeResponse({"status": "waiting"}))
         waiting_client = PlatformClient("https://platform.example", opener=waiting_opener)
         waiting_client.set_access_token("access-secret")
-        self.assertEqual(waiting_client.get_mail_code("session-1"), MailCodeSnapshot("waiting"))
+        self.assertEqual(
+            waiting_client.get_mail_code("session-1", "opaque-session-token"),
+            MailCodeSnapshot("waiting"),
+        )
+
+    def test_revoke_mail_session_sends_opaque_session_token(self):
+        opener = RecordingOpener(
+            FakeResponse(
+                {
+                    "id": "session-1",
+                    "email_masked": "m***@example.com",
+                    "status": "revoked",
+                    "expires_at": "2026-08-19T12:00:00Z",
+                }
+            )
+        )
+        client = PlatformClient("https://platform.example", opener=opener)
+        client.set_access_token("access-secret")
+
+        result = client.revoke_mail_session("session/1", "opaque-session-token")
+
+        request, _ = opener.requests[0]
+        self.assertEqual(result.status, "revoked")
+        self.assertEqual(
+            request.get_header("X-mail-session-token"),
+            "opaque-session-token",
+        )
 
     def test_mail_responses_reject_unknown_sensitive_fields_and_wrong_types(self):
         for payload in (
@@ -875,8 +911,13 @@ class PlatformClientTests(unittest.TestCase):
                 client = PlatformClient("https://platform.example", opener=opener)
                 client.set_access_token("access-secret")
                 with self.assertRaises(PlatformProtocolError):
-                    (client.create_mail_session("task-1")
-                     if "id" in payload else client.get_mail_code("session-1"))
+                    (
+                        client.create_mail_session("task-1")
+                        if "id" in payload
+                        else client.get_mail_code(
+                            "session-1", "opaque-session-token"
+                        )
+                    )
 
     def test_upload_requests_keep_sub2_policy_server_side(self):
         payload = {
