@@ -14,7 +14,7 @@ from platform import __version__
 from platform.api.v1.routes import router as v1_router
 from platform.cards import CardSecretResolver, SecretCardSecretResolver
 from platform.config import Settings, get_settings
-from platform.database import initialize_database
+from platform.database import database_schema_is_current, initialize_database
 from platform.errors import http_exception_handler, validation_exception_handler
 from platform.auth import AccessTokenVerifier, LocalAccessTokenVerifier, OidcAccessTokenVerifier
 from platform.middleware import TraceAndErrorMiddleware
@@ -79,7 +79,12 @@ def create_app(
         if missing:
             raise RuntimeError(f"Missing OIDC configuration: {', '.join(missing)}")
 
-    engine, session_factory = initialize_database(resolved_settings.database_url)
+    environment = resolved_settings.environment.strip().lower()
+    manages_local_schema = environment in {"development", "test"}
+    engine, session_factory = initialize_database(
+        resolved_settings.database_url,
+        create_schema=manages_local_schema,
+    )
     application = FastAPI(
         title=resolved_settings.app_name,
         version=__version__,
@@ -91,6 +96,7 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.engine = engine
     application.state.session_factory = session_factory
+    application.state.requires_current_migrations = not manages_local_schema
     application.state.metrics = MetricsRegistry()
     application.state.jwt_hmac_secret = jwt_hmac_secret
     application.state.access_token_verifier = access_token_verifier or (
@@ -163,11 +169,30 @@ def create_app(
                     "checks": {"database": "unavailable"},
                 },
             )
+        if (
+            request.app.state.requires_current_migrations
+            and not database_schema_is_current(request.app.state.engine)
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "degraded",
+                    "service": request.app.state.settings.app_name,
+                    "checks": {"database": "ok", "migrations": "pending"},
+                },
+            )
         return JSONResponse(
             content={
                 "status": "ok",
                 "service": request.app.state.settings.app_name,
-                "checks": {"database": "ok"},
+                "checks": {
+                    "database": "ok",
+                    "migrations": (
+                        "ok"
+                        if request.app.state.requires_current_migrations
+                        else "not_required"
+                    ),
+                },
             }
         )
 

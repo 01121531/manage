@@ -11,7 +11,55 @@ from platform.app import create_app
 from platform.bootstrap import create_user_with_device
 from platform.cards import CardSecret
 from platform.config import Settings
-from platform.models import AuditEvent, Card, CardAllocation, utc_now
+from platform.models import (
+    AuditEvent,
+    Card,
+    CardAllocation,
+    CardRevealChallenge,
+    User,
+    utc_now,
+)
+
+
+class MixedStepUpVerifier:
+    def __init__(
+        self,
+        *,
+        main_token: str,
+        user_id: str,
+        oidc_subject: str,
+        tenant_id: str,
+        device_id: str,
+        acr: str = "urn:email-platform:acr:mfa",
+        auth_time_offset_seconds: int = 0,
+    ) -> None:
+        now = utc_now() + timedelta(seconds=auth_time_offset_seconds)
+        self.claims = {
+            main_token: {
+                "sub": user_id,
+                "tenant_id": tenant_id,
+                "device_id": device_id,
+                "identity_kind": "local",
+                "auth_time": int(now.timestamp()),
+                "acr": "urn:email-platform:acr:password",
+                "amr": ["pwd"],
+            },
+            "step-up-token": {
+                "sub": oidc_subject,
+                "tenant_id": tenant_id,
+                "device_id": device_id,
+                "identity_kind": "oidc",
+                "auth_time": int(now.timestamp()),
+                "acr": acr,
+                "amr": ["pwd", "otp"],
+            },
+        }
+
+    def verify(self, token: str) -> dict[str, object]:
+        try:
+            return self.claims[token]
+        except KeyError as error:
+            raise ValueError("invalid token") from error
 
 
 class FakeCardSecretResolver:
@@ -96,6 +144,54 @@ class CardAllocationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["id"]
+
+    def reveal_with_step_up(
+        self,
+        token: str,
+        allocation_id: str,
+        *,
+        acr: str = "urn:email-platform:acr:mfa",
+        auth_time_offset_seconds: int = 0,
+    ) -> tuple[httpx.Response, httpx.Response, httpx.Response]:
+        challenge = self.request(
+            "POST",
+            f"/api/v1/card-allocations/{allocation_id}/reveal-challenges",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(challenge.status_code, 201, challenge.text)
+        oidc_subject = "oidc-card-owner"
+        with self.app.state.session_factory() as db:
+            user = db.get(User, self.identity.user_id)
+            self.assertIsNotNone(user)
+            user.oidc_subject = oidc_subject
+            db.commit()
+        self.app.state.access_token_verifier = MixedStepUpVerifier(
+            main_token=token,
+            user_id=self.identity.user_id,
+            oidc_subject=oidc_subject,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+            acr=acr,
+            auth_time_offset_seconds=auth_time_offset_seconds,
+        )
+        grant = self.request(
+            "POST",
+            f"/api/v1/card-allocations/{allocation_id}/reveal-grants",
+            headers=self.bearer("step-up-token"),
+            json={"challenge_id": challenge.json()["challenge_id"]},
+        )
+        if grant.status_code != 200:
+            return challenge, grant, grant
+        revealed = self.request(
+            "POST",
+            f"/api/v1/card-allocations/{allocation_id}/reveal",
+            headers=self.bearer(token),
+            json={
+                "reveal_grant": grant.json()["reveal_grant"],
+                "fields": ["pan", "expiry"],
+            },
+        )
+        return challenge, grant, revealed
 
     def test_allocation_is_masked_owner_bound_and_idempotent(self) -> None:
         token = self.login()
@@ -269,23 +365,28 @@ class CardAllocationTests(unittest.TestCase):
         )
         self.assertEqual(allocation.status_code, 201, allocation.text)
 
-        revealed = self.request(
-            "POST",
-            f"/api/v1/card-allocations/{allocation.json()['id']}/reveal",
-            headers=headers,
+        challenge, grant, revealed = self.reveal_with_step_up(
+            token, allocation.json()["id"]
         )
         self.assertEqual(revealed.status_code, 200, revealed.text)
         self.assertEqual(revealed.json()["allocation_id"], allocation.json()["id"])
         self.assertEqual(revealed.json()["trace_id"], allocation.json()["trace_id"])
         self.assertEqual(revealed.json()["card_masked"], "VISA •••• 1111")
         self.assertEqual(revealed.json()["pan"], "4111111111111111")
-        self.assertEqual(revealed.json()["cvv"], "123")
+        self.assertNotIn("cvv", revealed.json())
+        self.assertEqual(challenge.headers["cache-control"], "no-store")
+        self.assertEqual(grant.headers["cache-control"], "no-store")
+        self.assertEqual(revealed.headers["cache-control"], "no-store")
         self.assertEqual(self.card_secret_resolver.secret_refs, ["vault://cards/card-1"])
 
         replay = self.request(
             "POST",
             f"/api/v1/card-allocations/{allocation.json()['id']}/reveal",
             headers=headers,
+            json={
+                "reveal_grant": grant.json()["reveal_grant"],
+                "fields": ["pan", "expiry"],
+            },
         )
         self.assertEqual(replay.status_code, 409, replay.text)
 
@@ -313,77 +414,56 @@ class CardAllocationTests(unittest.TestCase):
             self.assertNotIn("secret_ref", payload)
             values = set(_string_values(payload))
             self.assertTrue(forbidden_values.isdisjoint(values))
+        with self.app.state.session_factory() as db:
+            stored = db.get(CardRevealChallenge, challenge.json()["challenge_id"])
+            self.assertIsNotNone(stored)
+            self.assertIsNone(stored.grant_token_hash)
+            self.assertIsNotNone(stored.consumed_at)
+        self.assertNotIn(grant.json()["reveal_grant"], str(events))
+
+    def test_reveal_rejects_missing_or_insufficient_step_up(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-task-step-up-required")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        allocation_id = allocation.json()["id"]
+        missing = self.request(
+            "POST",
+            f"/api/v1/card-allocations/{allocation_id}/reveal",
+            headers=self.bearer(token),
+            json={"reveal_grant": "x" * 32, "fields": ["pan"]},
+        )
+        self.assertEqual(missing.status_code, 403, missing.text)
+        _challenge, wrong_acr, _ = self.reveal_with_step_up(
+            token, allocation_id, acr="urn:email-platform:acr:password"
+        )
+        self.assertEqual(wrong_acr.status_code, 403, wrong_acr.text)
+        _challenge, stale_auth, _ = self.reveal_with_step_up(
+            token, allocation_id, auth_time_offset_seconds=-600
+        )
+        self.assertEqual(stale_auth.status_code, 403, stale_auth.text)
+        self.assertEqual(self.card_secret_resolver.secret_refs, [])
 
     def test_default_card_resolver_can_reveal_env_secret(self) -> None:
-        app = create_app(
-            Settings(
-                environment="test",
-                database_url="sqlite+pysqlite:///:memory:",
-                jwt_hmac_secret="card-env-test-hmac-secret-that-is-not-production",
-            )
-        )
-        try:
-            identity = create_user_with_device(
-                app.state.session_factory,
-                tenant_id="tenant-card-env",
-                email="card-env@example.test",
-                password="card-env-account-password",
-                device_name="card-env-device",
-            )
-            with app.state.session_factory() as db:
-                db.add(
-                    Card(
-                        tenant_id="tenant-card-env",
-                        provider_ref="provider-card-env",
-                        brand="VISA",
-                        last4="4242",
-                        secret_ref="env://CARD_ENV_JSON",
-                    )
+        with mock.patch.dict(
+            "os.environ", {"CARD_ENV_JSON": '{"pan":"4242424242424242"}'}, clear=False
+        ):
+            app = create_app(
+                Settings(
+                    environment="test",
+                    database_url="sqlite+pysqlite:///:memory:",
+                    jwt_hmac_secret="card-env-test-hmac-secret-that-is-not-production",
                 )
-                db.commit()
-
-            async def run() -> tuple[httpx.Response, httpx.Response]:
-                transport = httpx.ASGITransport(app=app)
-                async with httpx.AsyncClient(
-                    transport=transport, base_url="http://test"
-                ) as client:
-                    login = await client.post(
-                        "/api/v1/auth/login",
-                        json={
-                            "tenant_id": "tenant-card-env",
-                            "email": "card-env@example.test",
-                            "password": "card-env-account-password",
-                            "device_id": identity.device_id,
-                        },
-                    )
-                    token = login.json()["access_token"]
-                    headers = {"Authorization": f"Bearer {token}"}
-                    task = await client.post(
-                        "/api/v1/tasks",
-                        headers=headers,
-                        json={"type": "card_checkout", "idempotency_key": "env-card-task"},
-                    )
-                    allocation = await client.post(
-                        f"/api/v1/tasks/{task.json()['id']}/card-allocations",
-                        headers=headers,
-                    )
-                    reveal = await client.post(
-                        f"/api/v1/card-allocations/{allocation.json()['id']}/reveal",
-                        headers=headers,
-                    )
-                    return allocation, reveal
-
-            with mock.patch.dict(
-                "os.environ",
-                {"CARD_ENV_JSON": '{"pan":"4242424242424242","cvv":"321"}'},
-            ):
-                allocation, reveal = asyncio.run(run())
-            self.assertEqual(allocation.json()["card_masked"], "VISA •••• 4242")
-            self.assertEqual(reveal.status_code, 200, reveal.text)
-            self.assertEqual(reveal.json()["pan"], "4242424242424242")
-            self.assertEqual(reveal.json()["cvv"], "321")
-        finally:
-            app.state.engine.dispose()
+            )
+            try:
+                secret = app.state.card_secret_resolver.resolve("env://CARD_ENV_JSON")
+                self.assertEqual(secret.pan, "4242424242424242")
+                self.assertIsNone(secret.cvv)
+            finally:
+                app.state.engine.dispose()
 
     def test_openapi_has_no_raw_card_fields(self) -> None:
         schemas = self.app.openapi()["components"]["schemas"]
@@ -392,7 +472,9 @@ class CardAllocationTests(unittest.TestCase):
             self.assertNotIn(forbidden, properties)
         reveal_properties = schemas["CardRevealResponse"]["properties"]
         self.assertIn("pan", reveal_properties)
-        self.assertIn("cvv", reveal_properties)
+        self.assertNotIn("cvv", reveal_properties)
+        self.assertIn("CardRevealRequest", schemas)
+        self.assertNotIn("cvv", json.dumps(schemas["CardRevealRequest"]).lower())
 
 
 if __name__ == "__main__":

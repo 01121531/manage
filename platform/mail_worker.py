@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Event
 
 from sqlalchemy import select
@@ -33,6 +33,7 @@ def process_mail_session(
     session_id: str,
     *,
     connectors: Mapping[str, MailConnector],
+    code_ttl_seconds: int = 60,
 ) -> str:
     """Advance one mail session without exposing mailbox credentials to the API."""
 
@@ -41,10 +42,15 @@ def process_mail_session(
         session = db.get(MailSession, session_id)
         if session is None:
             return "missing"
-        if session.status not in {"initializing", "waiting"}:
+        if code_ttl_seconds <= 0:
+            raise ValueError("code_ttl_seconds must be positive")
+        if session.status not in {"initializing", "waiting", "code_ready"}:
             return session.status
         if _is_expired(session.expires_at, now):
             session.status = "expired"
+            session.delivered_code = None
+            session.delivered_at = None
+            session.code_expires_at = None
             record_audit(
                 db,
                 tenant_id=session.tenant_id,
@@ -58,6 +64,29 @@ def process_mail_session(
             )
             db.commit()
             return "expired"
+
+        if session.status == "code_ready":
+            if session.code_expires_at is not None and _is_expired(
+                session.code_expires_at, now
+            ):
+                session.delivered_code = None
+                session.delivered_at = None
+                session.code_expires_at = None
+                session.status = "waiting"
+                record_audit(
+                    db,
+                    tenant_id=session.tenant_id,
+                    user_id=session.user_id,
+                    device_id=session.device_id,
+                    event_type="mail_session.code_expired",
+                    entity_type="mail_session",
+                    entity_id=session.id,
+                    trace_id=session.trace_id,
+                    details={"status": "waiting", "source": "worker"},
+                )
+                db.commit()
+                return "code_expired"
+            return "code_ready"
 
         mailbox = db.get(Mailbox, session.mailbox_id)
         if mailbox is None or not mailbox.is_active:
@@ -100,8 +129,14 @@ def process_mail_session(
         if message_hash == session.last_message_hash:
             return "waiting"
         session.last_message_hash = message_hash
+        session.start_watermark = message.watermark
         session.delivered_code = message.code
         session.delivered_at = now
+        code_expires_at = now + timedelta(seconds=code_ttl_seconds)
+        session_deadline = session.expires_at
+        if session_deadline.tzinfo is None:
+            session_deadline = session_deadline.replace(tzinfo=timezone.utc)
+        session.code_expires_at = min(code_expires_at, session_deadline)
         session.status = "code_ready"
         record_audit(
             db,
@@ -123,19 +158,18 @@ def process_mail_sessions(
     *,
     connectors: Mapping[str, MailConnector],
     limit: int = 20,
+    code_ttl_seconds: int = 60,
 ) -> dict[str, int]:
     """Process active worker-owned mail sessions and return result counts."""
 
     if limit <= 0:
         raise ValueError("limit must be positive")
-    now = utc_now()
     with session_factory() as db:
         session_ids = list(
             db.scalars(
                 select(MailSession.id)
                 .where(
-                    MailSession.status.in_(("initializing", "waiting")),
-                    MailSession.expires_at > now,
+                    MailSession.status.in_(("initializing", "waiting", "code_ready")),
                 )
                 .order_by(MailSession.created_at, MailSession.id)
                 .limit(limit)
@@ -145,7 +179,10 @@ def process_mail_sessions(
     for session_id in session_ids:
         counts[
             process_mail_session(
-                session_factory, session_id, connectors=connectors
+                session_factory,
+                session_id,
+                connectors=connectors,
+                code_ttl_seconds=code_ttl_seconds,
             )
         ] += 1
     return dict(counts)
@@ -160,6 +197,7 @@ def run_mail_worker(
     heartbeat_path: str | None = None,
     batch_reporter: Callable[[dict[str, int]], None] | None = None,
     metrics: WorkerMetrics | None = None,
+    code_ttl_seconds: int = 60,
 ) -> None:
     """Run the dedicated mail worker loop until ``stop_event`` is set."""
 
@@ -168,7 +206,11 @@ def run_mail_worker(
     if heartbeat_path is not None:
         write_worker_heartbeat(heartbeat_path)
     while not stop_event.is_set():
-        counts = process_mail_sessions(session_factory, connectors=connectors)
+        counts = process_mail_sessions(
+            session_factory,
+            connectors=connectors,
+            code_ttl_seconds=code_ttl_seconds,
+        )
         if batch_reporter is not None:
             batch_reporter(counts)
         if metrics is not None:

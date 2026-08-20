@@ -22,6 +22,7 @@ from platform.models import (
 )
 from platform.policies import select_policy_for_task
 from platform.uploads import (
+    Sub2AdapterError,
     Sub2Policy,
     Sub2UploadResult,
     UploadUnknownError,
@@ -35,14 +36,22 @@ from platform.uploads import (
 
 
 class FakeSub2Adapter:
-    def __init__(self, *, unknown: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        unknown: bool = False,
+        error: BaseException | None = None,
+    ) -> None:
         self.unknown = unknown
+        self.error = error
         self.commands = []
 
     def submit(self, command):
         self.commands.append(command)
         if self.unknown:
             raise UploadUnknownError("network result unknown")
+        if self.error is not None:
+            raise self.error
         return Sub2UploadResult(external_ref="sub2-job-123")
 
 
@@ -272,6 +281,8 @@ class UploadJobTests(unittest.TestCase):
         self.assertEqual(processed.status, "succeeded")
         self.assertEqual(processed.external_ref, "sub2-job-123")
         command = self.adapter.commands[0]
+        self.assertEqual(command.job_id, job_id)
+        self.assertEqual(command.task_id, task_id)
         self.assertEqual(command.card_secret_ref, "vault://cards/upload-card")
         self.assertEqual(command.policy.group_id, 49)
         self.assertEqual(command.policy.concurrency, 40)
@@ -398,6 +409,35 @@ class UploadJobTests(unittest.TestCase):
         self.assertEqual(again.status, "unknown")
         self.assertEqual(len(unknown_adapter.commands), 1)
 
+    def test_only_definitive_adapter_rejection_becomes_failed(self) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(token)
+        rejected = self.create_upload(token, task_id, "upload-rejected")
+        rejected_adapter = FakeSub2Adapter(
+            error=Sub2AdapterError("definitive 4xx rejection")
+        )
+        rejected_job = process_upload_job(
+            self.app.state.session_factory,
+            rejected.json()["id"],
+            adapter=rejected_adapter,
+            policy=self.app.state.sub2_policy,
+        )
+        self.assertEqual(rejected_job.status, "failed")
+        self.assertEqual(rejected_job.error_code, "external_rejected")
+
+        ambiguous = self.create_upload(token, task_id, "upload-ambiguous")
+        ambiguous_adapter = FakeSub2Adapter(
+            error=RuntimeError("unexpected disconnect")
+        )
+        ambiguous_job = process_upload_job(
+            self.app.state.session_factory,
+            ambiguous.json()["id"],
+            adapter=ambiguous_adapter,
+            policy=self.app.state.sub2_policy,
+        )
+        self.assertEqual(ambiguous_job.status, "unknown")
+        self.assertEqual(ambiguous_job.error_code, "external_unknown")
+
     def test_closed_task_blocks_upload_before_card_validation(self) -> None:
         token = self.login()
         task_id, _ = self.create_task_with_card(token)
@@ -457,34 +497,65 @@ class UploadJobTests(unittest.TestCase):
         )
         self.assertEqual(forbidden.status_code, 403, forbidden.text)
 
-        auditor = create_user_with_device(
-            self.app.state.session_factory,
-            tenant_id="tenant-upload",
-            email="upload-auditor@example.test",
-            password="upload-auditor-account-password",
-            device_name="upload-auditor-device",
-            role="security_auditor",
-        )
-        login = self.request(
+        role_tokens: dict[str, str] = {}
+        for role in ("security_auditor", "ops_admin", "platform_admin"):
+            password = f"upload-{role}-account-password"
+            email = f"upload-{role}@example.test"
+            identity = create_user_with_device(
+                self.app.state.session_factory,
+                tenant_id="tenant-upload",
+                email=email,
+                password=password,
+                device_name=f"upload-{role}-device",
+                role=role,
+            )
+            login = self.request(
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "tenant_id": "tenant-upload",
+                    "email": email,
+                    "password": password,
+                    "device_id": identity.device_id,
+                },
+            )
+            self.assertEqual(login.status_code, 200, login.text)
+            role_tokens[role] = login.json()["access_token"]
+
+        auditor_forbidden = self.request(
             "POST",
-            "/api/v1/auth/login",
-            json={
-                "tenant_id": "tenant-upload",
-                "email": "upload-auditor@example.test",
-                "password": "upload-auditor-account-password",
-                "device_id": auditor.device_id,
-            },
+            f"/api/v1/upload-jobs/{job_id}/reconcile",
+            headers=self.bearer(role_tokens["security_auditor"]),
+            json={"status": "succeeded", "external_ref": "sub2-confirmed-1"},
         )
-        self.assertEqual(login.status_code, 200, login.text)
+        self.assertEqual(auditor_forbidden.status_code, 403, auditor_forbidden.text)
+
         reconciled = self.request(
             "POST",
             f"/api/v1/upload-jobs/{job_id}/reconcile",
-            headers=self.bearer(login.json()["access_token"]),
+            headers=self.bearer(role_tokens["ops_admin"]),
             json={"status": "succeeded", "external_ref": "sub2-confirmed-1"},
         )
         self.assertEqual(reconciled.status_code, 200, reconciled.text)
         self.assertEqual(reconciled.json()["status"], "succeeded")
         self.assertEqual(reconciled.json()["external_ref"], "sub2-confirmed-1")
+
+        second = self.create_upload(token, task_id, "upload-reconcile-admin")
+        second_id = second.json()["id"]
+        process_upload_job(
+            self.app.state.session_factory,
+            second_id,
+            adapter=FakeSub2Adapter(unknown=True),
+            policy=self.app.state.sub2_policy,
+        )
+        admin_reconciled = self.request(
+            "POST",
+            f"/api/v1/upload-jobs/{second_id}/reconcile",
+            headers=self.bearer(role_tokens["platform_admin"]),
+            json={"status": "failed", "error_code": "not_created"},
+        )
+        self.assertEqual(admin_reconciled.status_code, 200, admin_reconciled.text)
+        self.assertEqual(admin_reconciled.json()["status"], "failed")
 
     def test_openapi_does_not_expose_policy_secrets(self) -> None:
         schemas = self.app.openapi()["components"]["schemas"]

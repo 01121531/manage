@@ -13,7 +13,7 @@ class CardSecretUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class CardSecret:
     pan: str = field(repr=False)
-    cvv: str = field(repr=False)
+    cvv: str | None = field(default=None, repr=False)
 
 
 class CardSecretResolver(Protocol):
@@ -41,12 +41,14 @@ class SecretCardSecretResolver:
         cvv = value.get("cvv") or value.get("cvc") or value.get("security_code")
         if not isinstance(pan, str) or not pan.strip():
             raise CardSecretUnavailable("Card PAN is missing")
-        if not isinstance(cvv, str) or not cvv.strip():
-            raise CardSecretUnavailable("Card CVV is missing")
         normalized_pan = pan.replace(" ", "").replace("-", "")
-        normalized_cvv = cvv.strip()
         if not normalized_pan.isdigit() or not 12 <= len(normalized_pan) <= 19:
             raise CardSecretUnavailable("Card PAN is invalid")
-        if not normalized_cvv.isdigit() or not 3 <= len(normalized_cvv) <= 4:
-            raise CardSecretUnavailable("Card CVV is invalid")
+        normalized_cvv = None
+        if cvv is not None:
+            if not isinstance(cvv, str):
+                raise CardSecretUnavailable("Card CVV is invalid")
+            normalized_cvv = cvv.strip()
+            if not normalized_cvv.isdigit() or not 3 <= len(normalized_cvv) <= 4:
+                raise CardSecretUnavailable("Card CVV is invalid")
         return CardSecret(pan=normalized_pan, cvv=normalized_cvv)

@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Any
@@ -104,8 +105,10 @@ def format_operation_error(error: BaseException) -> str:
 
     if isinstance(error, PlatformAuthenticationError):
         return "登录已失效或设备已撤销。请重新登录平台。"
-    if isinstance(error, (PlatformSessionError, PlatformDeviceAuthorizationError)):
+    if isinstance(error, PlatformSessionError):
         return "安全会话已失效或无法刷新。请重新登录平台。"
+    if isinstance(error, PlatformDeviceAuthorizationError):
+        return "统一身份二次认证未完成或已取消，请重试。"
     if isinstance(error, PlatformConfigurationError):
         return "平台地址配置无效。请检查 PLATFORM_BASE_URL。"
     if isinstance(error, PlatformTimeoutError):
@@ -846,7 +849,11 @@ class PlatformDesktopApp:
                 continue
             if kind in {"upload", "upload_submit_error", "upload_poll_error"} and generation != self._upload_generation:
                 continue
-            if kind in {"card_reveal", "card_reveal_error"} and generation != self._task_generation:
+            if kind in {
+                "card_reveal",
+                "card_reveal_authorizing",
+                "card_reveal_error",
+            } and generation != self._task_generation:
                 continue
             if kind in {
                 "session_restored",
@@ -973,6 +980,10 @@ class PlatformDesktopApp:
                     self._reset_upload_attempt()
                     self.upload_button.configure(state="normal")
                     self._set_workflow_stage("upload_failed")
+            elif kind == "card_reveal_authorizing":
+                self._set_status(
+                    "请在浏览器中重新登录并完成 MFA；完成后将自动返回。", ACCENT
+                )
             elif kind == "card_reveal":
                 details = self._format_card_details(value)
                 self._current_card_clipboard = details
@@ -1093,7 +1104,7 @@ class PlatformDesktopApp:
         expiry = ""
         if snapshot.expiry_month is not None and snapshot.expiry_year is not None:
             expiry = f"{snapshot.expiry_month:02d}/{snapshot.expiry_year % 100:02d}"
-        return "\t".join((snapshot.pan, expiry, snapshot.cvv))
+        return "\t".join((snapshot.pan, expiry)) if expiry else snapshot.pan
 
     def reveal_card_details(self) -> None:
         if (
@@ -1103,13 +1114,48 @@ class PlatformDesktopApp:
         ):
             self._set_status("请先登录并创建已分配卡的任务。", ERROR)
             return
+        confirmed = messagebox.askyesno(
+            "重新验证后揭示卡号",
+            "即将通过浏览器重新登录并完成 MFA。\n\n"
+            "验证通过后只复制卡号和有效期，不包含 CVV；"
+            "操作会写入审计，剪贴板将在 60 秒或窗口失焦时清除。\n\n"
+            "是否继续？",
+            parent=self.root,
+        )
+        if not confirmed:
+            self._set_status("已取消卡号揭示。", MUTED)
+            return
         self.copy_card_button.configure(state="disabled")
+        self._set_status("正在创建卡揭示安全挑战…", ACCENT)
         allocation_id = self._card_allocation_id
         generation = self._task_generation
 
         def worker() -> None:
             try:
-                snapshot = self._client.reveal_card_allocation(allocation_id)
+                challenge = self._client.create_card_reveal_challenge(allocation_id)
+
+                def open_authorization_url(url: str) -> None:
+                    if not webbrowser.open(url, new=2):
+                        raise PlatformTransportError("无法打开统一身份登录页面")
+                    self._events.put(
+                        (generation, "card_reveal_authorizing", None)
+                    )
+
+                step_up = self._client.reauthenticate_for_card_reveal(
+                    open_authorization_url,
+                    acr_values=challenge.acr_values,
+                    cancelled=lambda: (
+                        self._closed or generation != self._task_generation
+                    ),
+                )
+                grant = self._client.create_card_reveal_grant(
+                    allocation_id,
+                    challenge.challenge_id,
+                    step_up.access_token,
+                )
+                snapshot = self._client.reveal_card_allocation(
+                    allocation_id, grant.reveal_grant
+                )
             except BaseException as error:
                 self._events.put((generation, "card_reveal_error", error))
                 return

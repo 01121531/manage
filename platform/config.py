@@ -7,7 +7,7 @@ configuration are intentionally not part of this scaffold.
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,9 +45,15 @@ class Settings(BaseSettings):
     mail_timeout_seconds: int = Field(default=20, gt=0, le=300)
     mail_poll_mode: str = "api"
     mail_session_ttl_seconds: int = Field(default=300, gt=0, le=3_600)
+    mail_code_ttl_seconds: int = Field(default=60, gt=0, le=300)
     mail_poll_interval_seconds: int = Field(default=5, gt=0, le=60)
     card_lease_ttl_seconds: int = Field(default=900, gt=0, le=86_400)
     card_reveal_ttl_seconds: int = Field(default=60, gt=0, le=300)
+    card_step_up_challenge_ttl_seconds: int = Field(default=120, gt=0, le=600)
+    card_step_up_grant_ttl_seconds: int = Field(default=60, gt=0, le=300)
+    card_step_up_acr: str = Field(
+        default="urn:email-platform:acr:mfa", min_length=1, max_length=255
+    )
     task_ttl_seconds: int = Field(default=3_600, gt=0, le=86_400)
     sub2_policy_version: str = "sub2-v1"
     sub2_group_id: int = Field(default=49, gt=0)
@@ -62,6 +68,17 @@ class Settings(BaseSettings):
         env_file=".env",
         extra="ignore",
     )
+
+    @field_validator("card_step_up_acr")
+    @classmethod
+    def validate_card_step_up_acr(cls, value: str) -> str:
+        normalized = value.strip()
+        if (
+            any(character.isspace() for character in normalized)
+            or not normalized.startswith(("urn:", "https://"))
+        ):
+            raise ValueError("card_step_up_acr must be one URI-like ACR value")
+        return normalized
 
     @property
     def versioned_api_prefix(self) -> str:

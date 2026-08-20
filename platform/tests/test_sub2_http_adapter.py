@@ -8,6 +8,7 @@ from unittest import mock
 from platform.secrets import JsonEnvironmentSecretResolver, SecretResolverUnavailable
 from platform.uploads import (
     HttpSub2Adapter,
+    Sub2AdapterError,
     Sub2AdapterUnavailable,
     Sub2Policy,
     Sub2UploadCommand,
@@ -17,8 +18,18 @@ from platform.uploads import (
 
 
 class FakeResponse:
-    def __init__(self, payload: dict[str, object], *, status: int = 200) -> None:
-        self.body = json.dumps(payload).encode("utf-8")
+    def __init__(
+        self,
+        payload: object | None = None,
+        *,
+        status: int = 200,
+        raw_body: bytes | None = None,
+    ) -> None:
+        self.body = (
+            raw_body
+            if raw_body is not None
+            else json.dumps(payload).encode("utf-8")
+        )
         self.status = status
         self.headers = Message()
         self.headers["Content-Type"] = "application/json"
@@ -69,6 +80,22 @@ class RecordingOpener:
 
 
 class HttpSub2AdapterTests(unittest.TestCase):
+    @staticmethod
+    def command() -> Sub2UploadCommand:
+        return Sub2UploadCommand(
+            job_id="job-1",
+            task_id="task-1",
+            business_name="Example Store",
+            card_secret_ref="vault://cards/card-1",
+            policy=Sub2Policy(
+                version="sub2-policy-1",
+                proxy_ref="vault://sub2/proxy",
+                group_id=49,
+                concurrency=40,
+                credential_ref="vault://sub2/credential",
+            ),
+        )
+
     def test_env_secret_resolver_reads_json_object_and_plain_text(self) -> None:
         resolver = JsonEnvironmentSecretResolver()
         with mock.patch.dict(
@@ -100,6 +127,7 @@ class HttpSub2AdapterTests(unittest.TestCase):
         result = adapter.submit(
             Sub2UploadCommand(
                 job_id="job-1",
+                task_id="task-1",
                 business_name="Example Store",
                 card_secret_ref="vault://cards/card-1",
                 policy=Sub2Policy(
@@ -117,7 +145,11 @@ class HttpSub2AdapterTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(timeout, 12)
         self.assertEqual(request.headers["Authorization"], "Bearer sub2-token-secret")
+        self.assertEqual(request.get_header("Idempotency-key"), "job-1")
+        self.assertEqual(request.get_header("X-platform-task-id"), "task-1")
         payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["job_id"], "job-1")
+        self.assertEqual(payload["task_id"], "task-1")
         self.assertEqual(payload["business_name"], "Example Store")
         self.assertEqual(payload["card"]["pan"], "4111111111111111")
         self.assertEqual(payload["policy"]["group_id"], 49)
@@ -136,33 +168,103 @@ class HttpSub2AdapterTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, body_text)
 
-    def test_network_and_gateway_failures_are_unknown_not_retryable_success(self) -> None:
-        gateway_error = urllib.error.HTTPError(
-            "https://sub2-upload.example/api/upload",
-            504,
-            "Gateway Timeout",
-            Message(),
-            io.BytesIO(b""),
+    def test_all_server_errors_are_unknown(self) -> None:
+        for status in (500, 501, 502, 503, 504, 599):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(
+                    "https://sub2-upload.example/api/upload",
+                    status,
+                    "server error",
+                    Message(),
+                    io.BytesIO(b""),
+                )
+                adapter = HttpSub2Adapter(
+                    "https://sub2-upload.example/api/upload",
+                    RecordingResolver(),
+                    opener=RecordingOpener(error),
+                )
+                with self.assertRaises(UploadUnknownError):
+                    adapter.submit(self.command())
+
+    def test_network_failures_are_unknown(self) -> None:
+        for error in (
+            TimeoutError("timed out"),
+            urllib.error.URLError("connection reset"),
+            OSError("disconnected"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                adapter = HttpSub2Adapter(
+                    "https://sub2-upload.example/api/upload",
+                    RecordingResolver(),
+                    opener=RecordingOpener(error),
+                )
+                with self.assertRaises(UploadUnknownError):
+                    adapter.submit(self.command())
+
+    def test_ambiguous_success_responses_are_unknown(self) -> None:
+        responses = (
+            FakeResponse(raw_body=b"not-json"),
+            FakeResponse(["not", "an", "object"]),
+            FakeResponse({"success": True}),
+            FakeResponse({"success": False}),
+            FakeResponse({"id": "alias-is-not-external-ref"}, status=201),
+            FakeResponse(raw_body=b"", status=204),
         )
+        for response in responses:
+            with self.subTest(body=response.body):
+                adapter = HttpSub2Adapter(
+                    "https://sub2-upload.example/api/upload",
+                    RecordingResolver(),
+                    opener=RecordingOpener(response),
+                )
+                with self.assertRaises(UploadUnknownError):
+                    adapter.submit(self.command())
+
+    def test_only_definitive_4xx_rejections_are_failed(self) -> None:
+        for status in (400, 401, 403, 404, 405, 413, 415, 422):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(
+                    "https://sub2-upload.example/api/upload",
+                    status,
+                    "rejected",
+                    Message(),
+                    io.BytesIO(b""),
+                )
+                adapter = HttpSub2Adapter(
+                    "https://sub2-upload.example/api/upload",
+                    RecordingResolver(),
+                    opener=RecordingOpener(error),
+                )
+                with self.assertRaises(Sub2AdapterError):
+                    adapter.submit(self.command())
+
+        for status in (408, 409, 425, 429):
+            with self.subTest(ambiguous_status=status):
+                error = urllib.error.HTTPError(
+                    "https://sub2-upload.example/api/upload",
+                    status,
+                    "ambiguous",
+                    Message(),
+                    io.BytesIO(b""),
+                )
+                adapter = HttpSub2Adapter(
+                    "https://sub2-upload.example/api/upload",
+                    RecordingResolver(),
+                    opener=RecordingOpener(error),
+                )
+                with self.assertRaises(UploadUnknownError):
+                    adapter.submit(self.command())
+
+    def test_non_2xx_response_object_is_classified_before_body(self) -> None:
         adapter = HttpSub2Adapter(
             "https://sub2-upload.example/api/upload",
             RecordingResolver(),
-            opener=RecordingOpener(gateway_error),
-        )
-        command = Sub2UploadCommand(
-            job_id="job-1",
-            business_name="Example Store",
-            card_secret_ref="vault://cards/card-1",
-            policy=Sub2Policy(
-                version="sub2-policy-1",
-                proxy_ref="vault://sub2/proxy",
-                group_id=49,
-                concurrency=40,
-                credential_ref="vault://sub2/credential",
+            opener=RecordingOpener(
+                FakeResponse({"external_ref": "wrong"}, status=500)
             ),
         )
         with self.assertRaises(UploadUnknownError):
-            adapter.submit(command)
+            adapter.submit(self.command())
 
     def test_missing_secret_is_adapter_unavailable(self) -> None:
         adapter = HttpSub2Adapter(
@@ -172,6 +274,7 @@ class HttpSub2AdapterTests(unittest.TestCase):
         )
         command = Sub2UploadCommand(
             job_id="job-1",
+            task_id="task-1",
             business_name="Example Store",
             card_secret_ref="vault://cards/missing",
             policy=Sub2Policy(
@@ -193,6 +296,7 @@ class HttpSub2AdapterTests(unittest.TestCase):
         )
         command = Sub2UploadCommand(
             job_id="job-1",
+            task_id="task-1",
             business_name="Example Store",
             card_secret_ref="vault://cards/card-1",
             policy=Sub2Policy(

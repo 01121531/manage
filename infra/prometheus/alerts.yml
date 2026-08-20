@@ -30,7 +30,7 @@ groups:
         annotations:
           summary: Unknown uploads need operator review
       - alert: PlatformApi5xxRateElevated
-        expr: sum(rate(platform_http_requests_total{status=~"5.."}[5m])) > 0.1
+        expr: sum(rate(platform_http_requests_total{status_code=~"5.."}[5m])) > 0.1
         for: 5m
         labels:
           severity: ticket

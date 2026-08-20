@@ -47,6 +47,7 @@ def main() -> None:
         connectors=application.state.mail_connectors,
         stop_event=stop_event,
         poll_seconds=application.state.settings.mail_poll_interval_seconds,
+        code_ttl_seconds=application.state.settings.mail_code_ttl_seconds,
         heartbeat_path=os.environ.get(
             "PLATFORM_WORKER_HEARTBEAT_PATH",
             "/tmp/email-platform-mail-worker.heartbeat",

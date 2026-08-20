@@ -123,6 +123,17 @@ class MailSession(Base):
     __tablename__ = "mail_sessions"
     __table_args__ = (
         UniqueConstraint("task_id", name="uq_mail_sessions_task_id"),
+        Index(
+            "uq_active_mail_session_mailbox",
+            "mailbox_id",
+            unique=True,
+            sqlite_where=text(
+                "status IN ('initializing', 'waiting', 'code_ready')"
+            ),
+            postgresql_where=text(
+                "status IN ('initializing', 'waiting', 'code_ready')"
+            ),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -139,6 +150,9 @@ class MailSession(Base):
     delivered_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -211,6 +225,37 @@ class CardAllocation(Base):
     reveal_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+
+
+class CardRevealChallenge(Base):
+    """Short-lived, actor-bound proof used before a one-time PAN reveal."""
+
+    __tablename__ = "card_reveal_challenges"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    allocation_id: Mapped[str] = mapped_column(
+        ForeignKey("card_allocations.id"), index=True
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
+    required_acr: Mapped[str] = mapped_column(String(255))
+    grant_token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    grant_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True
     )

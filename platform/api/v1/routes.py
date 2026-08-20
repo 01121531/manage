@@ -3,6 +3,7 @@
 import hashlib
 import asyncio
 import json
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -38,6 +39,7 @@ from platform.mail_connectors import (
 from platform.models import (
     Card,
     CardAllocation,
+    CardRevealChallenge,
     Device,
     Mailbox,
     MailSession,
@@ -56,6 +58,10 @@ from platform.schemas import (
     MailboxStatusResponse,
     MailSessionResponse,
     CardAllocationResponse,
+    CardRevealChallengeResponse,
+    CardRevealGrantRequest,
+    CardRevealGrantResponse,
+    CardRevealRequest,
     CardRevealResponse,
     DashboardSummaryResponse,
     UploadCreate,
@@ -468,6 +474,7 @@ def _release_task_resources(
         session.status = mail_status
         session.delivered_code = None
         session.delivered_at = None
+        session.code_expires_at = None
         record_audit(
             db,
             tenant_id=task.tenant_id,
@@ -542,7 +549,12 @@ def _revoke_principal_resources(
         {"status": "released", "released_at": now}, synchronize_session=False
     )
     db.query(MailSession).filter(*mail_filters).update(
-        {"status": "expired", "delivered_code": None, "delivered_at": None},
+        {
+            "status": "expired",
+            "delivered_code": None,
+            "delivered_at": None,
+            "code_expires_at": None,
+        },
         synchronize_session=False,
     )
 
@@ -816,8 +828,11 @@ def create_mail_session(
         mailbox = db.get(Mailbox, existing.mailbox_id)
         if mailbox is None:
             raise HTTPException(status_code=503, detail="Assigned mailbox is unavailable")
-        if _is_expired(existing.expires_at, _utc_now()) and existing.status == "waiting":
+        if _is_expired(existing.expires_at, _utc_now()) and existing.status in _ACTIVE_MAIL_SESSION_STATUSES:
             existing.status = "expired"
+            existing.delivered_code = None
+            existing.delivered_at = None
+            existing.code_expires_at = None
             db.commit()
         response.status_code = 200
         return MailSessionResponse(
@@ -829,6 +844,22 @@ def create_mail_session(
         )
 
     now = _utc_now()
+    # Reclaim stale leases before selecting.  The partial unique index remains
+    # the database-level backstop, while the row lock prevents two PostgreSQL
+    # transactions from choosing the same available mailbox.
+    db.query(MailSession).filter(
+        MailSession.tenant_id == principal.tenant_id,
+        MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
+        MailSession.expires_at <= now,
+    ).update(
+        {
+            "status": "expired",
+            "delivered_code": None,
+            "delivered_at": None,
+            "code_expires_at": None,
+        },
+        synchronize_session=False,
+    )
     busy_mailbox = exists(
         select(MailSession.id).where(
             MailSession.mailbox_id == Mailbox.id,
@@ -844,6 +875,7 @@ def create_mail_session(
             ~busy_mailbox,
         )
         .order_by(Mailbox.created_at, Mailbox.id)
+        .with_for_update(skip_locked=True)
     )
     if mailbox is None:
         raise HTTPException(status_code=503, detail="No active mailbox is available")
@@ -871,7 +903,13 @@ def create_mail_session(
         start_watermark=start_watermark,
     )
     db.add(session)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=503, detail="No active mailbox is available"
+        ) from None
     record_audit(
         db,
         tenant_id=principal.tenant_id,
@@ -929,6 +967,9 @@ def get_mail_code(
         return MailCodeResponse(status="revoked")
     if session.status == "expired" or _is_expired(session.expires_at, now):
         session.status = "expired"
+        session.delivered_code = None
+        session.delivered_at = None
+        session.code_expires_at = None
         record_audit(
             db,
             tenant_id=principal.tenant_id,
@@ -958,10 +999,33 @@ def get_mail_code(
         db.commit()
         return MailCodeResponse(status="consumed")
 
+    if (
+        session.status == "code_ready"
+        and session.code_expires_at is not None
+        and _is_expired(session.code_expires_at, now)
+    ):
+        session.delivered_code = None
+        session.delivered_at = None
+        session.code_expires_at = None
+        session.status = "waiting"
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type="mail_session.code_expired",
+            entity_type="mail_session",
+            entity_id=session.id,
+            trace_id=session.trace_id,
+            details={"status": "waiting", "source": "worker"},
+        )
+        db.commit()
+
     if session.status == "code_ready" and session.delivered_code is not None:
         delivered_code = session.delivered_code
         session.delivered_code = None
         session.delivered_at = None
+        session.code_expires_at = None
         session.consumed_at = now
         session.status = "consumed"
         record_audit(
@@ -1088,6 +1152,7 @@ def revoke_mail_session(
         session.status = "revoked"
         session.delivered_code = None
         session.delivered_at = None
+        session.code_expires_at = None
         record_audit(
             db,
             tenant_id=principal.tenant_id,
@@ -1207,6 +1272,17 @@ def _owned_card_allocation(
         return None
     card = db.get(Card, allocation.card_id)
     return (allocation, card) if card is not None else None
+
+
+def _assert_revealable(allocation: CardAllocation, now: datetime) -> None:
+    if (
+        allocation.status != "active"
+        or allocation.released_at is not None
+        or _is_expired(allocation.expires_at, now)
+    ):
+        raise HTTPException(status_code=409, detail="Card allocation is not active")
+    if allocation.revealed_at is not None:
+        raise HTTPException(status_code=409, detail="Card allocation was already revealed")
 
 
 @router.post(
@@ -1387,13 +1463,148 @@ def release_card_allocation(
 
 
 @router.post(
+    "/card-allocations/{allocation_id}/reveal-challenges",
+    response_model=CardRevealChallengeResponse,
+    status_code=201,
+    tags=["cards"],
+)
+def create_card_reveal_challenge(
+    allocation_id: str,
+    request: Request,
+    response: Response,
+    principal: AuthPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> CardRevealChallengeResponse:
+    """Bind a short-lived step-up request to the current actor and lease."""
+
+    result = _owned_card_allocation(db, allocation_id, principal)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Card allocation not found")
+    allocation, _card = result
+    now = _utc_now()
+    _assert_revealable(allocation, now)
+    settings: Settings = request.app.state.settings
+    challenge = CardRevealChallenge(
+        allocation_id=allocation.id,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        required_acr=settings.card_step_up_acr,
+        expires_at=now
+        + timedelta(seconds=settings.card_step_up_challenge_ttl_seconds),
+    )
+    db.add(challenge)
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="card.reveal_challenge_created",
+        entity_type="card_allocation",
+        entity_id=allocation.id,
+        trace_id=allocation.trace_id,
+        details={"required_acr": challenge.required_acr},
+    )
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return CardRevealChallengeResponse(
+        challenge_id=challenge.id,
+        acr_values=challenge.required_acr,
+        expires_at=challenge.expires_at,
+    )
+
+
+@router.post(
+    "/card-allocations/{allocation_id}/reveal-grants",
+    response_model=CardRevealGrantResponse,
+    tags=["cards"],
+)
+def create_card_reveal_grant(
+    allocation_id: str,
+    payload: CardRevealGrantRequest,
+    request: Request,
+    response: Response,
+    principal: AuthPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> CardRevealGrantResponse:
+    """Exchange a fresh, required-ACR OIDC authentication for one reveal."""
+
+    result = _owned_card_allocation(db, allocation_id, principal)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Card allocation not found")
+    allocation, _card = result
+    now = _utc_now()
+    _assert_revealable(allocation, now)
+    challenge = db.scalar(
+        select(CardRevealChallenge)
+        .where(
+            CardRevealChallenge.id == payload.challenge_id,
+            CardRevealChallenge.allocation_id == allocation.id,
+            CardRevealChallenge.tenant_id == principal.tenant_id,
+            CardRevealChallenge.user_id == principal.user_id,
+            CardRevealChallenge.device_id == principal.device_id,
+        )
+        .with_for_update()
+    )
+    if challenge is None:
+        raise HTTPException(status_code=404, detail="Reveal challenge not found")
+    if (
+        challenge.consumed_at is not None
+        or challenge.grant_token_hash is not None
+        or _is_expired(challenge.expires_at, now)
+    ):
+        raise HTTPException(status_code=409, detail="Reveal challenge is no longer active")
+    # A browser prompt alone is not proof of step-up.  The API validates the
+    # signed OIDC claims and requires authentication after challenge creation.
+    if principal.identity_kind != "oidc":
+        raise HTTPException(status_code=403, detail="OIDC step-up is required")
+    auth_time = principal.auth_time
+    challenge_created_at = challenge.created_at
+    if challenge_created_at.tzinfo is None:
+        challenge_created_at = challenge_created_at.replace(tzinfo=timezone.utc)
+    if auth_time is None or auth_time + timedelta(seconds=5) < challenge_created_at:
+        raise HTTPException(status_code=403, detail="Fresh step-up is required")
+    if principal.acr != challenge.required_acr:
+        raise HTTPException(status_code=403, detail="Required authentication level missing")
+
+    grant = secrets.token_urlsafe(32)
+    challenge.grant_token_hash = hashlib.sha256(grant.encode("ascii")).hexdigest()
+    challenge.granted_at = now
+    settings: Settings = request.app.state.settings
+    challenge.grant_expires_at = now + timedelta(
+        seconds=settings.card_step_up_grant_ttl_seconds
+    )
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="card.reveal_step_up_succeeded",
+        entity_type="card_allocation",
+        entity_id=allocation.id,
+        trace_id=allocation.trace_id,
+        details={"acr": principal.acr},
+    )
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return CardRevealGrantResponse(
+        reveal_grant=grant,
+        expires_at=challenge.grant_expires_at,
+    )
+
+
+@router.post(
     "/card-allocations/{allocation_id}/reveal",
     response_model=CardRevealResponse,
     tags=["cards"],
 )
 def reveal_card_allocation(
     allocation_id: str,
+    payload: CardRevealRequest,
     request: Request,
+    response: Response,
     principal: AuthPrincipal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ) -> CardRevealResponse:
@@ -1402,14 +1613,26 @@ def reveal_card_allocation(
         raise HTTPException(status_code=404, detail="Card allocation not found")
     allocation, card = result
     now = _utc_now()
+    _assert_revealable(allocation, now)
+    grant_hash = hashlib.sha256(payload.reveal_grant.encode("utf-8")).hexdigest()
+    challenge = db.scalar(
+        select(CardRevealChallenge)
+        .where(
+            CardRevealChallenge.allocation_id == allocation.id,
+            CardRevealChallenge.tenant_id == principal.tenant_id,
+            CardRevealChallenge.user_id == principal.user_id,
+            CardRevealChallenge.device_id == principal.device_id,
+            CardRevealChallenge.grant_token_hash == grant_hash,
+            CardRevealChallenge.consumed_at.is_(None),
+        )
+        .with_for_update()
+    )
     if (
-        allocation.status != "active"
-        or allocation.released_at is not None
-        or _is_expired(allocation.expires_at, now)
+        challenge is None
+        or challenge.grant_expires_at is None
+        or _is_expired(challenge.grant_expires_at, now)
     ):
-        raise HTTPException(status_code=409, detail="Card allocation is not active")
-    if allocation.revealed_at is not None:
-        raise HTTPException(status_code=409, detail="Card allocation was already revealed")
+        raise HTTPException(status_code=403, detail="Valid reveal grant required")
 
     try:
         secret = request.app.state.card_secret_resolver.resolve(card.secret_ref)
@@ -1417,6 +1640,8 @@ def reveal_card_allocation(
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
     settings: Settings = request.app.state.settings
+    challenge.consumed_at = now
+    challenge.grant_token_hash = None
     allocation.revealed_at = now
     allocation.reveal_expires_at = now + timedelta(
         seconds=settings.card_reveal_ttl_seconds
@@ -1430,19 +1655,24 @@ def reveal_card_allocation(
         entity_type="card_allocation",
         entity_id=allocation.id,
         trace_id=allocation.trace_id,
-        details={"card_id": card.id, "reveal_ttl_seconds": settings.card_reveal_ttl_seconds},
+        details={
+            "card_id": card.id,
+            "fields": payload.fields,
+            "reveal_ttl_seconds": settings.card_reveal_ttl_seconds,
+        },
     )
     db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     return CardRevealResponse(
         id=new_id(),
         allocation_id=allocation.id,
         trace_id=allocation.trace_id,
         card_masked=_card_masked(card),
         brand=card.brand,
-        expiry_month=card.expiry_month,
-        expiry_year=card.expiry_year,
+        expiry_month=card.expiry_month if "expiry" in payload.fields else None,
+        expiry_year=card.expiry_year if "expiry" in payload.fields else None,
         pan=secret.pan,
-        cvv=secret.cvv,
         reveal_expires_at=allocation.reveal_expires_at,
     )
 
@@ -1714,7 +1944,7 @@ def reconcile_upload_job(
     payload: UploadReconcileRequest,
     request: Request,
     principal: AuthPrincipal = Depends(
-        require_roles(ROLE_SECURITY_AUDITOR, ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:

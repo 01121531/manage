@@ -232,8 +232,42 @@ class CardRevealResponse(BaseModel):
     expiry_month: int | None
     expiry_year: int | None
     pan: str
-    cvv: str
     reveal_expires_at: datetime
+
+
+class CardRevealChallengeResponse(BaseModel):
+    challenge_id: str
+    acr_values: str
+    expires_at: datetime
+
+
+class CardRevealGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    challenge_id: str = Field(min_length=1, max_length=36)
+
+
+class CardRevealGrantResponse(BaseModel):
+    reveal_grant: str
+    expires_at: datetime
+
+
+class CardRevealRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reveal_grant: str = Field(min_length=32, max_length=256)
+    fields: list[Literal["pan", "expiry"]] = Field(
+        default_factory=lambda: ["pan", "expiry"], min_length=1, max_length=2
+    )
+
+    @field_validator("fields")
+    @classmethod
+    def validate_reveal_fields(
+        cls, value: list[Literal["pan", "expiry"]]
+    ) -> list[Literal["pan", "expiry"]]:
+        if len(set(value)) != len(value):
+            raise ValueError("fields must be unique")
+        return value
 
 
 class UploadCreate(BaseModel):

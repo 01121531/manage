@@ -45,7 +45,12 @@ The default endpoints are:
 - `POST /api/v1/mail-sessions/{id}/revoke` — revoke an active mail session.
 - `POST /api/v1/tasks/{id}/card-allocations` — lease one server-managed card.
 - `GET /api/v1/card-allocations/{id}` — return only masked card details.
-- `POST /api/v1/card-allocations/{id}/reveal` — one-time reveal for an active owned lease.
+- `POST /api/v1/card-allocations/{id}/reveal-challenges` — bind a short-lived
+  step-up request to the current actor, device, and active lease.
+- `POST /api/v1/card-allocations/{id}/reveal-grants` — exchange a fresh OIDC
+  authentication with the required ACR for a hashed, one-use reveal grant.
+- `POST /api/v1/card-allocations/{id}/reveal` — atomically consume that grant
+  and reveal PAN/expiry once; CVV is not part of the default API contract.
 - `POST /api/v1/card-allocations/{id}/release` — release a lease.
 - `POST /api/v1/tasks/{id}/uploads` — enqueue an idempotent Sub2 upload job.
 - `GET /api/v1/upload-jobs/{id}` — poll the upload state.
@@ -119,6 +124,11 @@ server-side secret resolver before the call. The desktop client never receives
 mailbox credentials or raw message bodies. A session records a connector
 watermark, ignores messages at or before that watermark, and marks the first
 newer code consumed; later polls return `{"status":"consumed","code":null}`.
+Mailbox allocation locks candidate rows with `FOR UPDATE SKIP LOCKED` on
+PostgreSQL and is backed by a partial unique index, so one mailbox cannot serve
+two active sessions. Worker-delivered codes have an independent
+`PLATFORM_MAIL_CODE_TTL_SECONDS` (60 seconds by default); expiry, revocation,
+task close, and device/user disable paths erase the plaintext columns.
 The API-mode polling path remains available for local tests and injected
 connectors.
 
@@ -126,11 +136,16 @@ Cards likewise store a provider reference, brand, last four digits, and an
 opaque secret-manager reference—never PAN or CVV in the platform database.
 Active leases are unique per card and task, tied to tenant/user/device,
 time-limited, and audited. The ordinary allocation response returns only a
-mask; the reveal endpoint calls a server-side `CardSecretResolver`, returns
-PAN/CVV once for an active owned lease, records `card.revealed`, and never
-stores those details in audit events. The default resolver is fail-closed and
-returns `503 service_unavailable` until a production secret-manager adapter is
-injected. Upload requests accept only `business_name` and an idempotency key.
+mask. A reveal first creates an actor-bound challenge; an isolated browser
+PKCE flow must then produce a token whose signed `auth_time` is newer than the
+challenge and whose `acr` equals `PLATFORM_CARD_STEP_UP_ACR`. The server stores
+only a SHA-256 hash of the short-lived reveal grant and consumes it atomically.
+The reveal response is `no-store`, returns PAN/expiry once, and deliberately
+omits CVV. No PAN, grant, or CVV is written to audit events. The default
+resolver is fail-closed and returns `503 service_unavailable` until a
+production secret-manager adapter is injected. Configure a real Keycloak LoA
+flow for the required ACR before production; a browser prompt by itself is not
+accepted as step-up proof. Upload requests accept only `business_name` and an idempotency key.
 Creating an upload job also inserts one payload-free `upload.requested` row in
 `outbox_events` in the same database transaction. The upload worker claims only
 those outbox rows; it does not scan `upload_jobs` as an implicit queue. A stale
@@ -210,19 +225,26 @@ Compose topology. It is a deployment baseline, not a production secret store:
 ```powershell
 Copy-Item .env.example .env
 # Replace every CHANGE_ME value through the deployment secret manager.
-# PLATFORM_DATABASE_URL must use a URL-encoded database password.
+# PLATFORM_MIGRATION_DATABASE_URL is the schema-owner/DDL role.
+# PLATFORM_DATABASE_URL is the API/worker DML-only role.
 docker compose config
-docker compose up -d postgres redis keycloak
-docker compose run --rm api alembic upgrade head
-docker compose up -d api worker-mail worker-sub2 web
+docker compose up -d
 ```
 
+Compose runs the one-shot `migrate` service first; the API, mail worker and
+Sub2 worker wait for `alembic upgrade head` to finish successfully. The
+migration URL must use a dedicated schema-owner role with DDL privileges.
+`PLATFORM_DATABASE_URL` must use a separate runtime role limited to the DML
+needed by the application, without `CREATE`, `ALTER`, `DROP`, or `TRIGGER`.
+Production API and worker startup never calls `create_all` or rebuilds audit
+triggers; Alembic is the only production schema source of truth. Development
+and test environments keep local automatic schema creation for fast feedback.
 The API image runs as UID 10001 and has no shell-level credentials baked into
 the image. The API, mail worker, Sub2 worker and web containers run read-only,
 drop all Linux capabilities, set `no-new-privileges:true`, and mount only the
 small `/tmp`-style scratch space they need. Its container health check uses
-`/readyz`, so a broken database connection makes the API unhealthy instead of
-merely proving the process is listening. PostgreSQL and Redis data use named volumes. The Keycloak container
+`/readyz`, so a broken database connection or an unapplied migration makes the
+API unhealthy instead of merely proving the process is listening. PostgreSQL and Redis data use named volumes. The Keycloak container
 imports `infra/keycloak/email-platform-realm.json`, which requires Authorization
 Code + PKCE (S256), disables direct password grants, forces TOTP enrollment as a
 required action, and adds API audience plus tenant/device claims. Review the
@@ -239,7 +261,7 @@ configuration.
 Alembic is the source of truth for schema changes. Review and back up the
 database before `upgrade`; never use `downgrade` as a data-recovery mechanism.
 The migrations cover `users` (including OIDC subject and RBAC role), `devices`, `tasks`, `mailboxes`,
-`mail_sessions`, `cards`, `card_allocations`, `upload_jobs`, and
+`mail_sessions`, `cards`, `card_allocations`, `card_reveal_challenges`, `upload_jobs`, and
 `audit_events`. Generate offline SQL for review with:
 
 ```powershell

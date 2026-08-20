@@ -12,7 +12,10 @@ from unittest import mock
 
 from platform_client import (
     CardAllocationSnapshot,
+    CardRevealChallenge,
+    CardRevealGrant,
     CardRevealSnapshot,
+    DEFAULT_CARD_REVEAL_ACR_VALUES,
     DEFAULT_TIMEOUT_SECONDS,
     PlatformApiError,
     PlatformAuthenticationError,
@@ -289,6 +292,126 @@ class PlatformClientTests(unittest.TestCase):
         self.assertEqual(form["code"], ["one-time-code"])
         self.assertEqual(form["redirect_uri"], [receiver.redirect_uri])
         self.assertNotIn("password", form)
+
+    def test_card_reveal_step_up_isolated_from_primary_session(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        store = MemorySessionStore()
+        store.save("primary-refresh")
+        opener = SequenceOpener(
+            [
+                FakeResponse(
+                    {
+                        "mode": "oidc",
+                        "issuer": issuer,
+                        "client_id": "email-platform-web",
+                        "desktop_client_id": "email-platform-desktop",
+                        "audience": "email-platform-api",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "authorization_endpoint": f"{issuer}/protocol/openid-connect/auth",
+                        "token_endpoint": f"{issuer}/protocol/openid-connect/token",
+                        "revocation_endpoint": f"{issuer}/protocol/openid-connect/revoke",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "access_token": "step-up-access",
+                        "refresh_token": "step-up-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 120,
+                    }
+                ),
+                EmptyResponse(),
+                FakeResponse(
+                    {
+                        "challenge_id": "challenge-1",
+                        "acr_values": DEFAULT_CARD_REVEAL_ACR_VALUES,
+                        "expires_at": "2026-08-20T00:01:00Z",
+                    }
+                ),
+            ]
+        )
+
+        class FakeReceiver:
+            redirect_uri = "http://127.0.0.1:54321/callback"
+            expected_state = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def wait_for_code(self, *, expected_state, timeout, cancelled):
+                self.expected_state = expected_state
+                self.assertEqual(timeout, 300.0)
+                self.assertFalse(cancelled())
+                return "step-up-code"
+
+            def assertEqual(self, first, second):
+                if first != second:
+                    raise AssertionError(f"{first!r} != {second!r}")
+
+            def assertFalse(self, value):
+                if value:
+                    raise AssertionError(f"expected false, got {value!r}")
+
+        receiver = FakeReceiver()
+        urls = []
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        client.set_access_token("primary-access")
+
+        step_up = client.reauthenticate_for_card_reveal(
+            urls.append,
+            acr_values=DEFAULT_CARD_REVEAL_ACR_VALUES,
+            loopback_factory=lambda: receiver,
+        )
+        challenge = client.create_card_reveal_challenge("allocation-1")
+
+        self.assertEqual(step_up.expires_in, 120)
+        self.assertNotIn("step-up-access", repr(step_up))
+        self.assertEqual(store.load(), "primary-refresh")
+        self.assertTrue(client.is_authenticated)
+        self.assertEqual(
+            challenge,
+            CardRevealChallenge(
+                challenge_id="challenge-1",
+                acr_values=DEFAULT_CARD_REVEAL_ACR_VALUES,
+                expires_at="2026-08-20T00:01:00Z",
+            ),
+        )
+
+        authorization = urllib.parse.urlsplit(urls[0])
+        query = urllib.parse.parse_qs(authorization.query)
+        self.assertEqual(query["state"], [receiver.expected_state])
+        self.assertEqual(query["prompt"], ["login"])
+        self.assertEqual(query["max_age"], ["0"])
+        self.assertEqual(
+            query["acr_values"], [DEFAULT_CARD_REVEAL_ACR_VALUES]
+        )
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+
+        token_form = urllib.parse.parse_qs(
+            opener.requests[2][0].data.decode("ascii")
+        )
+        verifier = token_form["code_verifier"][0]
+        expected_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode("ascii")).digest()
+        ).rstrip(b"=").decode("ascii")
+        self.assertEqual(query["code_challenge"], [expected_challenge])
+        revoke_form = urllib.parse.parse_qs(
+            opener.requests[3][0].data.decode("ascii")
+        )
+        self.assertEqual(revoke_form["token"], ["step-up-refresh"])
+        self.assertEqual(revoke_form["token_type_hint"], ["refresh_token"])
+        self.assertEqual(
+            opener.requests[4][0].get_header("Authorization"),
+            "Bearer primary-access",
+        )
 
     def test_refresh_rotates_dpapi_boundary_and_invalid_grant_clears_session(self):
         issuer = "https://identity.example.test/realms/email-platform"
@@ -821,35 +944,115 @@ class PlatformClientTests(unittest.TestCase):
         for forbidden in ("pan", "cvv", "password", "secret_ref", "provider_ref"):
             self.assertNotIn(forbidden, repr(snapshot).lower())
 
-    def test_card_reveal_is_post_only_and_hides_secret_repr(self):
-        payload = {
-            "id": "reveal-1",
-            "allocation_id": "allocation/1",
-            "trace_id": "task-trace",
-            "card_masked": "VISA •••• 1111",
-            "brand": "VISA",
-            "expiry_month": 12,
-            "expiry_year": 2030,
-            "pan": "4111111111111111",
-            "cvv": "123",
-            "reveal_expires_at": "2026-08-19T12:00:45Z",
-        }
-        opener = RecordingOpener(FakeResponse(payload))
-        client = PlatformClient("https://platform.example", opener=opener)
-        client.set_access_token("access-secret")
-
-        snapshot = client.reveal_card_allocation("allocation/1")
-
-        self.assertEqual(snapshot, CardRevealSnapshot(**payload))
-        request, _ = opener.requests[0]
-        self.assertEqual(request.get_method(), "POST")
-        self.assertIsNone(request.data)
-        self.assertTrue(
-            request.full_url.endswith("/card-allocations/allocation%2F1/reveal")
+    def test_card_reveal_requires_one_time_grant_and_never_requests_cvv(self):
+        opener = SequenceOpener(
+            [
+                FakeResponse(
+                    {
+                        "challenge_id": "challenge-1",
+                        "acr_values": DEFAULT_CARD_REVEAL_ACR_VALUES,
+                        "expires_at": "2026-08-19T12:00:30Z",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "reveal_grant": "opaque-reveal-grant",
+                        "expires_at": "2026-08-19T12:00:45Z",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "id": "reveal-1",
+                        "allocation_id": "allocation/1",
+                        "trace_id": "task-trace",
+                        "card_masked": "VISA •••• 1111",
+                        "brand": "VISA",
+                        "expiry_month": 12,
+                        "expiry_year": 2030,
+                        "pan": "4111111111111111",
+                        "reveal_expires_at": "2026-08-19T12:00:45Z",
+                    }
+                ),
+            ]
         )
+        client = PlatformClient("https://platform.example", opener=opener)
+        client.set_access_token("primary-access")
+
+        challenge = client.create_card_reveal_challenge("allocation/1")
+        grant = client.create_card_reveal_grant(
+            "allocation/1", challenge.challenge_id, "step-up-access"
+        )
+        snapshot = client.reveal_card_allocation(
+            "allocation/1", grant.reveal_grant
+        )
+
+        self.assertEqual(
+            grant,
+            CardRevealGrant(
+                reveal_grant="opaque-reveal-grant",
+                expires_at="2026-08-19T12:00:45Z",
+            ),
+        )
+        self.assertFalse(hasattr(snapshot, "cvv"))
+        challenge_request, _ = opener.requests[0]
+        self.assertEqual(challenge_request.get_method(), "POST")
+        self.assertIsNone(challenge_request.data)
+        self.assertTrue(
+            challenge_request.full_url.endswith(
+                "/card-allocations/allocation%2F1/reveal-challenges"
+            )
+        )
+        grant_request, _ = opener.requests[1]
+        self.assertEqual(
+            grant_request.get_header("Authorization"), "Bearer step-up-access"
+        )
+        self.assertEqual(
+            json.loads(grant_request.data), {"challenge_id": "challenge-1"}
+        )
+        reveal_request, _ = opener.requests[2]
+        self.assertEqual(
+            reveal_request.get_header("Authorization"), "Bearer primary-access"
+        )
+        self.assertEqual(
+            json.loads(reveal_request.data),
+            {
+                "reveal_grant": "opaque-reveal-grant",
+                "fields": ["pan", "expiry"],
+            },
+        )
+        self.assertNotIn("cvv", reveal_request.data.decode("utf-8").lower())
         self.assertNotIn("4111111111111111", repr(snapshot))
-        self.assertNotIn("123", repr(snapshot))
+        self.assertNotIn("opaque-reveal-grant", repr(grant))
         self.assertNotIn("secret_ref", repr(snapshot).lower())
+
+    def test_rejected_step_up_grant_does_not_clear_primary_session(self):
+        headers = Message()
+        body = json.dumps(
+            {
+                "error": {
+                    "code": "forbidden",
+                    "message": "Required authentication level missing",
+                }
+            }
+        ).encode("utf-8")
+        rejected = urllib.error.HTTPError(
+            "https://platform.example/api/v1/card-allocations/a/reveal-grants",
+            403,
+            "Forbidden",
+            headers,
+            io.BytesIO(body),
+        )
+        client = PlatformClient(
+            "https://platform.example", opener=RecordingOpener(rejected)
+        )
+        client.set_access_token("primary-access")
+
+        with self.assertRaises(PlatformDeviceAuthorizationError):
+            client.create_card_reveal_grant(
+                "allocation-1", "challenge-1", "step-up-access"
+            )
+
+        self.assertTrue(client.is_authenticated)
 
     def test_parses_unified_error_envelope(self):
         headers = Message()

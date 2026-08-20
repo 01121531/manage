@@ -1,11 +1,16 @@
 """SQLAlchemy setup kept local to each FastAPI application instance."""
 
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from alembic.util.exc import CommandError
 from fastapi import Request
 from sqlalchemy import Engine, event
 from sqlalchemy import create_engine as sqlalchemy_create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -101,13 +106,31 @@ def _install_audit_append_only_constraints(engine: Engine) -> None:
 
 def initialize_database(
     database_url: str,
+    *,
+    create_schema: bool = True,
 ) -> tuple[Engine, sessionmaker[Session]]:
-    """Create the development schema and return its session factory."""
+    """Return a session factory, optionally creating a local development schema."""
 
     engine = create_engine(database_url)
-    Base.metadata.create_all(engine)
-    _install_audit_append_only_constraints(engine)
+    if create_schema:
+        Base.metadata.create_all(engine)
+        _install_audit_append_only_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def database_schema_is_current(engine: Engine) -> bool:
+    """Return whether the database revision exactly matches repository heads."""
+
+    try:
+        script_location = Path(__file__).resolve().parent / "migrations"
+        expected_heads = frozenset(ScriptDirectory(str(script_location)).get_heads())
+        with engine.connect() as connection:
+            current_heads = frozenset(
+                MigrationContext.configure(connection).get_current_heads()
+            )
+        return bool(expected_heads) and current_heads == expected_heads
+    except (CommandError, OSError, RuntimeError, SQLAlchemyError):
+        return False
 
 
 def get_db(request: Request) -> Generator[Session, None, None]:

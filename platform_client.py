@@ -35,6 +35,7 @@ from session_store import (
 PLATFORM_BASE_URL_ENV = "PLATFORM_BASE_URL"
 API_PREFIX = "/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 15.0
+DEFAULT_CARD_REVEAL_ACR_VALUES = "urn:email-platform:acr:mfa"
 
 
 class PlatformClientError(Exception):
@@ -143,9 +144,27 @@ class CardRevealSnapshot:
     expiry_month: int | None
     expiry_year: int | None
     pan: str = dataclass_field(repr=False)
-    cvv: str = dataclass_field(repr=False)
     reveal_expires_at: str
     trace_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CardRevealChallenge:
+    challenge_id: str
+    acr_values: str
+    expires_at: str
+
+
+@dataclass(frozen=True)
+class CardRevealGrant:
+    reveal_grant: str = dataclass_field(repr=False)
+    expires_at: str
+
+
+@dataclass(frozen=True)
+class StepUpAuthorization:
+    access_token: str = dataclass_field(repr=False)
+    expires_in: int
 
 
 @dataclass(frozen=True)
@@ -605,6 +624,158 @@ class PlatformClient:
             expected_generation=generation,
         )
 
+    def reauthenticate_for_card_reveal(
+        self,
+        on_authorization_url: Callable[[str], None],
+        *,
+        acr_values: str = DEFAULT_CARD_REVEAL_ACR_VALUES,
+        authorization_timeout: float = 300.0,
+        cancelled: Callable[[], bool] | None = None,
+        loopback_factory: Callable[[], LoopbackAuthorizationReceiver] = LoopbackAuthorizationReceiver,
+    ) -> StepUpAuthorization:
+        """Run isolated PKCE step-up without replacing the primary session."""
+
+        if authorization_timeout <= 0:
+            raise ValueError("authorization_timeout 必须大于 0")
+        normalized_acr = _required_value(acr_values, "acr_values")
+        if (
+            len(normalized_acr) > 255
+            or any(character.isspace() for character in normalized_acr)
+            or not normalized_acr.startswith(("urn:", "https://"))
+        ):
+            raise PlatformProtocolError("卡揭示二次认证等级无效")
+        with self._state_lock:
+            if self._access_token is None:
+                raise PlatformAuthenticationRequiredError("请先登录平台")
+            generation = self._auth_generation
+        is_cancelled = cancelled or (lambda: False)
+        if is_cancelled():
+            raise PlatformDeviceAuthorizationError(
+                "卡揭示二次认证已取消", code="cancelled"
+            )
+
+        config = self.get_auth_config()
+        if config["mode"] != "oidc":
+            raise PlatformDeviceAuthorizationError(
+                "卡揭示仅支持统一身份二次认证", code="oidc_not_enabled"
+            )
+        issuer = _normalize_oidc_base(str(config["issuer"]))
+        discovery = self._request_external_json(
+            "GET", f"{issuer}/.well-known/openid-configuration"
+        )
+        authorization_endpoint = _same_origin_oidc_endpoint(
+            discovery.get("authorization_endpoint"), issuer
+        )
+        token_endpoint = _same_origin_oidc_endpoint(
+            discovery.get("token_endpoint"), issuer
+        )
+        client_id = _required_value(
+            str(config["desktop_client_id"]), "desktop_client_id"
+        )
+        state = secrets.token_urlsafe(32)
+        verifier = secrets.token_urlsafe(64)
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode("ascii")).digest()
+        ).rstrip(b"=").decode("ascii")
+
+        with loopback_factory() as receiver:
+            redirect = urllib.parse.urlsplit(receiver.redirect_uri)
+            if (
+                redirect.scheme != "http"
+                or redirect.hostname != "127.0.0.1"
+                or redirect.port is None
+                or redirect.path != "/callback"
+                or redirect.query
+                or redirect.fragment
+            ):
+                raise PlatformProtocolError("统一身份回调地址无效")
+            authorization_url = authorization_endpoint + "?" + urllib.parse.urlencode(
+                {
+                    "response_type": "code",
+                    "client_id": client_id,
+                    "redirect_uri": receiver.redirect_uri,
+                    "scope": "openid profile email",
+                    "state": state,
+                    "code_challenge": challenge,
+                    "code_challenge_method": "S256",
+                    "prompt": "login",
+                    "max_age": "0",
+                    "acr_values": normalized_acr,
+                }
+            )
+            on_authorization_url(authorization_url)
+            code = receiver.wait_for_code(
+                expected_state=state,
+                timeout=authorization_timeout,
+                cancelled=is_cancelled,
+            )
+            if is_cancelled():
+                raise PlatformDeviceAuthorizationError(
+                    "卡揭示二次认证已取消", code="cancelled"
+                )
+            status, token_payload = self._request_external_json_with_status(
+                "POST",
+                token_endpoint,
+                form={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": code,
+                    "redirect_uri": receiver.redirect_uri,
+                    "code_verifier": verifier,
+                },
+            )
+        if status < 200 or status >= 300:
+            raise PlatformDeviceAuthorizationError(
+                "卡揭示二次认证授权码兑换失败",
+                code=_safe_oauth_error(token_payload),
+            )
+
+        access_token = token_payload.get("access_token")
+        expires_in = token_payload.get("expires_in")
+        token_type = token_payload.get("token_type")
+        if (
+            not isinstance(access_token, str)
+            or not access_token.strip()
+            or not isinstance(expires_in, int)
+            or isinstance(expires_in, bool)
+            or expires_in <= 0
+            or not isinstance(token_type, str)
+            or token_type.lower() != "bearer"
+        ):
+            raise PlatformProtocolError("卡揭示二次认证令牌响应无效")
+
+        refresh_token = token_payload.get("refresh_token")
+        if refresh_token is not None:
+            if not isinstance(refresh_token, str) or not refresh_token.strip():
+                raise PlatformProtocolError("卡揭示二次认证刷新令牌格式无效")
+            raw_revocation_endpoint = discovery.get("revocation_endpoint")
+            if raw_revocation_endpoint is None:
+                raise PlatformSessionError("统一身份服务无法撤销二次认证临时会话")
+            revocation_endpoint = _same_origin_oidc_endpoint(
+                raw_revocation_endpoint, issuer
+            )
+            revoke_status, _ = self._request_external_json_with_status(
+                "POST",
+                revocation_endpoint,
+                form={
+                    "client_id": client_id,
+                    "token": refresh_token,
+                    "token_type_hint": "refresh_token",
+                },
+                allow_empty=True,
+            )
+            if revoke_status < 200 or revoke_status >= 300:
+                raise PlatformSessionError("无法撤销二次认证临时会话")
+
+        with self._state_lock:
+            if generation != self._auth_generation or self._access_token is None:
+                raise PlatformDeviceAuthorizationError(
+                    "卡揭示二次认证已取消", code="cancelled"
+                )
+        return StepUpAuthorization(
+            access_token=access_token.strip(), expires_in=expires_in
+        )
+
     def refresh_oidc_session(self) -> int:
         """Rotate the saved refresh token and replace the in-memory access token."""
 
@@ -1014,12 +1185,54 @@ class PlatformClient:
         )
         return _decode_card_allocation(response, self.last_trace_id)
 
-    def reveal_card_allocation(self, allocation_id: str) -> CardRevealSnapshot:
+    def create_card_reveal_challenge(
+        self, allocation_id: str
+    ) -> CardRevealChallenge:
         allocation_path = urllib.parse.quote(
             _required_value(allocation_id, "allocation_id"), safe=""
         )
         response = self._request_json(
-            "POST", f"/card-allocations/{allocation_path}/reveal"
+            "POST", f"/card-allocations/{allocation_path}/reveal-challenges"
+        )
+        return _decode_card_reveal_challenge(response, self.last_trace_id)
+
+    def create_card_reveal_grant(
+        self,
+        allocation_id: str,
+        challenge_id: str,
+        step_up_access_token: str,
+    ) -> CardRevealGrant:
+        allocation_path = urllib.parse.quote(
+            _required_value(allocation_id, "allocation_id"), safe=""
+        )
+        try:
+            response = self._request_json(
+                "POST",
+                f"/card-allocations/{allocation_path}/reveal-grants",
+                {"challenge_id": _required_value(challenge_id, "challenge_id")},
+                _access_token_override=_required_value(
+                    step_up_access_token, "step_up_access_token"
+                ),
+            )
+        except PlatformAuthenticationError as error:
+            raise PlatformDeviceAuthorizationError(
+                "卡揭示二次认证未通过", code=error.code
+            ) from error
+        return _decode_card_reveal_grant(response, self.last_trace_id)
+
+    def reveal_card_allocation(
+        self, allocation_id: str, reveal_grant: str
+    ) -> CardRevealSnapshot:
+        allocation_path = urllib.parse.quote(
+            _required_value(allocation_id, "allocation_id"), safe=""
+        )
+        response = self._request_json(
+            "POST",
+            f"/card-allocations/{allocation_path}/reveal",
+            {
+                "reveal_grant": _required_value(reveal_grant, "reveal_grant"),
+                "fields": ["pan", "expiry"],
+            },
         )
         return _decode_card_reveal(response, self.last_trace_id)
 
@@ -1583,7 +1796,6 @@ def _decode_card_reveal(
         "expiry_month",
         "expiry_year",
         "pan",
-        "cvv",
         "reveal_expires_at",
         "trace_id",
     }
@@ -1595,7 +1807,6 @@ def _decode_card_reveal(
         "card_masked",
         "brand",
         "pan",
-        "cvv",
         "reveal_expires_at",
     ):
         if not isinstance(payload[key], str) or not payload[key].strip():
@@ -1615,7 +1826,43 @@ def _decode_card_reveal(
         expiry_month=payload["expiry_month"],
         expiry_year=payload["expiry_year"],
         pan=payload["pan"],
-        cvv=payload["cvv"],
         reveal_expires_at=payload["reveal_expires_at"],
         trace_id=payload.get("trace_id"),
+    )
+
+
+def _decode_card_reveal_challenge(
+    payload: Mapping[str, Any], trace_id: str | None
+) -> CardRevealChallenge:
+    expected = {"challenge_id", "acr_values", "expires_at"}
+    if set(payload) != expected or any(
+        not isinstance(payload[key], str) or not payload[key].strip()
+        for key in expected
+    ):
+        raise PlatformProtocolError("卡揭示挑战响应无效", trace_id=trace_id)
+    acr_values = payload["acr_values"]
+    if (
+        len(acr_values) > 255
+        or any(character.isspace() for character in acr_values)
+        or not acr_values.startswith(("urn:", "https://"))
+    ):
+        raise PlatformProtocolError("卡揭示二次认证等级无效", trace_id=trace_id)
+    return CardRevealChallenge(
+        challenge_id=payload["challenge_id"],
+        acr_values=payload["acr_values"],
+        expires_at=payload["expires_at"],
+    )
+
+
+def _decode_card_reveal_grant(
+    payload: Mapping[str, Any], trace_id: str | None
+) -> CardRevealGrant:
+    expected = {"reveal_grant", "expires_at"}
+    if set(payload) != expected or any(
+        not isinstance(payload[key], str) or not payload[key].strip()
+        for key in expected
+    ):
+        raise PlatformProtocolError("卡揭示授权响应无效", trace_id=trace_id)
+    return CardRevealGrant(
+        reveal_grant=payload["reveal_grant"], expires_at=payload["expires_at"]
     )

@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from platform.app import create_app
 from platform.bootstrap import create_user_with_device
@@ -98,12 +99,12 @@ class MailSessionTests(unittest.TestCase):
     def bearer(token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}"}
 
-    def create_task(self, token: str) -> str:
+    def create_task(self, token: str, key: str = "mail-task-1") -> str:
         response = self.request(
             "POST",
             "/api/v1/tasks",
             headers=self.bearer(token),
-            json={"type": "mail_code", "idempotency_key": "mail-task-1"},
+            json={"type": "mail_code", "idempotency_key": key},
         )
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["id"]
@@ -224,6 +225,98 @@ class MailSessionTests(unittest.TestCase):
             persisted = db.get(MailSession, session_id)
             self.assertIsNotNone(persisted)
             self.assertIsNone(persisted.delivered_code)
+            self.assertIsNone(persisted.code_expires_at)
+
+    def test_worker_expired_code_is_erased_and_newer_code_can_arrive(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        self.connector.messages.append(
+            MailCodeMessage(message_id="old", watermark="1", code="111111")
+        )
+        token = self.login()
+        task_id = self.create_task(token, "mail-code-ttl")
+        session = self.create_session(token, task_id)
+        session_id = session.json()["id"]
+        self.assertEqual(
+            process_mail_session(
+                self.app.state.session_factory,
+                session_id,
+                connectors={"fake": self.connector},
+                code_ttl_seconds=1,
+            ),
+            "initialized",
+        )
+        self.connector.messages.append(
+            MailCodeMessage(message_id="first", watermark="2", code="222222")
+        )
+        self.assertEqual(
+            process_mail_session(
+                self.app.state.session_factory,
+                session_id,
+                connectors={"fake": self.connector},
+                code_ttl_seconds=1,
+            ),
+            "code_ready",
+        )
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertEqual(persisted.delivered_code, "222222")
+            persisted.code_expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+        self.assertEqual(
+            process_mail_session(
+                self.app.state.session_factory,
+                session_id,
+                connectors={"fake": self.connector},
+                code_ttl_seconds=1,
+            ),
+            "code_expired",
+        )
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNone(persisted.delivered_code)
+            self.assertIsNone(persisted.delivered_at)
+            self.assertIsNone(persisted.code_expires_at)
+            self.assertEqual(persisted.status, "waiting")
+        self.connector.messages.append(
+            MailCodeMessage(message_id="second", watermark="3", code="333333")
+        )
+        self.assertEqual(
+            process_mail_session(
+                self.app.state.session_factory,
+                session_id,
+                connectors={"fake": self.connector},
+                code_ttl_seconds=1,
+            ),
+            "code_ready",
+        )
+
+    def test_database_rejects_two_active_leases_for_one_mailbox(self) -> None:
+        token = self.login()
+        first_task_id = self.create_task(token, "mail-lease-first")
+        first = self.create_session(token, first_task_id)
+        self.assertEqual(first.status_code, 201, first.text)
+        second_task_id = self.create_task(token, "mail-lease-second")
+        unavailable = self.create_session(token, second_task_id)
+        self.assertEqual(unavailable.status_code, 503, unavailable.text)
+
+        with self.app.state.session_factory() as db:
+            mailbox = db.scalar(select(Mailbox))
+            second_task = db.get(Task, second_task_id)
+            db.add(
+                MailSession(
+                    tenant_id="tenant-mail",
+                    task_id=second_task_id,
+                    user_id=self.identity.user_id,
+                    device_id=self.identity.device_id,
+                    mailbox_id=mailbox.id,
+                    trace_id=second_task.trace_id,
+                    status="waiting",
+                    expires_at=utc_now() + timedelta(minutes=5),
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
 
     def test_cross_user_cannot_read_session(self) -> None:
         token = self.login()

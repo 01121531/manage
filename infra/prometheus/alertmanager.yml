@@ -1,0 +1,18 @@
+# Safe development default: alerts are routed to a loopback discard port and
+# cannot leave the Alertmanager container. Production must mount an approved
+# receiver configuration through ALERTMANAGER_CONFIG_FILE.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: local-placeholder-webhook
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: local-placeholder-webhook
+    webhook_configs:
+      - url: http://127.0.0.1:9/alerts
+        send_resolved: true

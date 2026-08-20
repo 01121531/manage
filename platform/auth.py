@@ -91,6 +91,9 @@ def create_access_token(
     ttl_seconds: int,
     role: str = ROLE_OPERATOR,
     now: datetime | None = None,
+    auth_time: datetime | None = None,
+    acr: str = "urn:email-platform:acr:password",
+    amr: tuple[str, ...] = ("pwd",),
 ) -> str:
     issued_at = now or datetime.now(timezone.utc)
     issued_timestamp = int(issued_at.timestamp())
@@ -101,6 +104,9 @@ def create_access_token(
         "device_id": device_id,
         "role": role,
         "iat": issued_timestamp,
+        "auth_time": int((auth_time or issued_at).timestamp()),
+        "acr": acr,
+        "amr": list(amr),
         "exp": issued_timestamp + ttl_seconds,
     }
     unsigned = ".".join(
@@ -208,6 +214,10 @@ class AuthPrincipal:
     device_id: str
     email: str
     role: str
+    identity_kind: str
+    auth_time: datetime | None
+    acr: str | None
+    amr: tuple[str, ...]
 
 
 def unauthorized() -> HTTPException:
@@ -252,12 +262,31 @@ def get_current_principal(
     )
     if user is None or device is None:
         raise unauthorized()
+    auth_time: datetime | None = None
+    raw_auth_time = claims.get("auth_time")
+    if isinstance(raw_auth_time, (int, float)) and not isinstance(raw_auth_time, bool):
+        try:
+            auth_time = datetime.fromtimestamp(raw_auth_time, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            auth_time = None
+    raw_acr = claims.get("acr")
+    acr = raw_acr if isinstance(raw_acr, str) and raw_acr else None
+    raw_amr = claims.get("amr")
+    amr = (
+        tuple(value for value in raw_amr if isinstance(value, str) and value)
+        if isinstance(raw_amr, list)
+        else ()
+    )
     return AuthPrincipal(
         user_id=user.id,
         tenant_id=user.tenant_id,
         device_id=device.id,
         email=user.email,
         role=user.role,
+        identity_kind=str(claims.get("identity_kind") or "unknown"),
+        auth_time=auth_time,
+        acr=acr,
+        amr=amr,
     )
 
 

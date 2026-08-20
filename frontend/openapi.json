@@ -451,6 +451,94 @@
         "title": "CardAllocationResponse",
         "type": "object"
       },
+      "CardRevealChallengeResponse": {
+        "properties": {
+          "acr_values": {
+            "title": "Acr Values",
+            "type": "string"
+          },
+          "challenge_id": {
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge_id",
+          "acr_values",
+          "expires_at"
+        ],
+        "title": "CardRevealChallengeResponse",
+        "type": "object"
+      },
+      "CardRevealGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "challenge_id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Challenge Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge_id"
+        ],
+        "title": "CardRevealGrantRequest",
+        "type": "object"
+      },
+      "CardRevealGrantResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "reveal_grant": {
+            "title": "Reveal Grant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reveal_grant",
+          "expires_at"
+        ],
+        "title": "CardRevealGrantResponse",
+        "type": "object"
+      },
+      "CardRevealRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "enum": [
+                "pan",
+                "expiry"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "reveal_grant": {
+            "maxLength": 256,
+            "minLength": 32,
+            "title": "Reveal Grant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reveal_grant"
+        ],
+        "title": "CardRevealRequest",
+        "type": "object"
+      },
       "CardRevealResponse": {
         "properties": {
           "allocation_id": {
@@ -463,10 +551,6 @@
           },
           "card_masked": {
             "title": "Card Masked",
-            "type": "string"
-          },
-          "cvv": {
-            "title": "Cvv",
             "type": "string"
           },
           "expiry_month": {
@@ -518,7 +602,6 @@
           "expiry_month",
           "expiry_year",
           "pan",
-          "cvv",
           "reveal_expires_at"
         ],
         "title": "CardRevealResponse",
@@ -2131,6 +2214,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardRevealRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -2159,6 +2252,112 @@
           }
         ],
         "summary": "Reveal Card Allocation",
+        "tags": [
+          "cards"
+        ]
+      }
+    },
+    "/api/v1/card-allocations/{allocation_id}/reveal-challenges": {
+      "post": {
+        "description": "Bind a short-lived step-up request to the current actor and lease.",
+        "operationId": "create_card_reveal_challenge_api_v1_card_allocations__allocation_id__reveal_challenges_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "allocation_id",
+            "required": true,
+            "schema": {
+              "title": "Allocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardRevealChallengeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Card Reveal Challenge",
+        "tags": [
+          "cards"
+        ]
+      }
+    },
+    "/api/v1/card-allocations/{allocation_id}/reveal-grants": {
+      "post": {
+        "description": "Exchange a fresh, required-ACR OIDC authentication for one reveal.",
+        "operationId": "create_card_reveal_grant_api_v1_card_allocations__allocation_id__reveal_grants_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "allocation_id",
+            "required": true,
+            "schema": {
+              "title": "Allocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardRevealGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardRevealGrantResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Card Reveal Grant",
         "tags": [
           "cards"
         ]

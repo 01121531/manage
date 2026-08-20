@@ -300,6 +300,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/card-allocations/{allocation_id}/reveal-challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Card Reveal Challenge
+         * @description Bind a short-lived step-up request to the current actor and lease.
+         */
+        post: operations["create_card_reveal_challenge_api_v1_card_allocations__allocation_id__reveal_challenges_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/card-allocations/{allocation_id}/reveal-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Card Reveal Grant
+         * @description Exchange a fresh, required-ACR OIDC authentication for one reveal.
+         */
+        post: operations["create_card_reveal_grant_api_v1_card_allocations__allocation_id__reveal_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboard/summary": {
         parameters: {
             query?: never;
@@ -939,6 +979,40 @@ export interface components {
             /** Trace Id */
             trace_id: string;
         };
+        /** CardRevealChallengeResponse */
+        CardRevealChallengeResponse: {
+            /** Acr Values */
+            acr_values: string;
+            /** Challenge Id */
+            challenge_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
+        /** CardRevealGrantRequest */
+        CardRevealGrantRequest: {
+            /** Challenge Id */
+            challenge_id: string;
+        };
+        /** CardRevealGrantResponse */
+        CardRevealGrantResponse: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Reveal Grant */
+            reveal_grant: string;
+        };
+        /** CardRevealRequest */
+        CardRevealRequest: {
+            /** Fields */
+            fields?: ("pan" | "expiry")[];
+            /** Reveal Grant */
+            reveal_grant: string;
+        };
         /** CardRevealResponse */
         CardRevealResponse: {
             /** Allocation Id */
@@ -947,8 +1021,6 @@ export interface components {
             brand: string;
             /** Card Masked */
             card_masked: string;
-            /** Cvv */
-            cvv: string;
             /** Expiry Month */
             expiry_month: number | null;
             /** Expiry Year */
@@ -1752,7 +1824,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardRevealRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1761,6 +1837,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CardRevealResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_card_reveal_challenge_api_v1_card_allocations__allocation_id__reveal_challenges_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                allocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardRevealChallengeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_card_reveal_grant_api_v1_card_allocations__allocation_id__reveal_grants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                allocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardRevealGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardRevealGrantResponse"];
                 };
             };
             /** @description Validation Error */

@@ -1,7 +1,15 @@
 import inspect
+import queue
 import unittest
+from unittest import mock
 
 import app
+from platform_client import (
+    CardRevealChallenge,
+    CardRevealGrant,
+    CardRevealSnapshot,
+    StepUpAuthorization,
+)
 from platform_desktop import PlatformDesktopApp, format_workflow_progress
 
 
@@ -92,6 +100,135 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn('name="platform-update-check"', check_source)
         self.assertIn("launch_update_helper", drain_source)
         self.assertIn("SHA-256", drain_source)
+
+    def test_card_clipboard_format_never_includes_cvv(self) -> None:
+        snapshot = CardRevealSnapshot(
+            id="reveal-1",
+            allocation_id="allocation-1",
+            card_masked="VISA •••• 1111",
+            brand="VISA",
+            expiry_month=12,
+            expiry_year=2030,
+            pan="4111111111111111",
+            reveal_expires_at="2026-08-20T00:01:00Z",
+        )
+
+        formatted = PlatformDesktopApp._format_card_details(snapshot)
+
+        self.assertEqual(formatted, "4111111111111111\t12/30")
+
+    def test_card_reveal_confirms_then_runs_step_up_grant_chain(self) -> None:
+        calls = []
+
+        class FakeWidget:
+            def __init__(self):
+                self.states = []
+
+            def configure(self, **values):
+                self.states.append(values)
+
+        class FakeClient:
+            is_authenticated = True
+
+            def create_card_reveal_challenge(self, allocation_id):
+                calls.append(("challenge", allocation_id))
+                return CardRevealChallenge(
+                    challenge_id="challenge-1",
+                    acr_values="urn:email-platform:acr:mfa",
+                    expires_at="2026-08-20T00:01:00Z",
+                )
+
+            def reauthenticate_for_card_reveal(
+                self, on_authorization_url, *, acr_values, cancelled
+            ):
+                calls.append(("step_up", acr_values))
+                self.assertFalse(cancelled())
+                on_authorization_url("https://identity.example.test/step-up")
+                return StepUpAuthorization(
+                    access_token="step-up-access", expires_in=120
+                )
+
+            def create_card_reveal_grant(
+                self, allocation_id, challenge_id, step_up_access_token
+            ):
+                calls.append(
+                    (
+                        "grant",
+                        allocation_id,
+                        challenge_id,
+                        step_up_access_token,
+                    )
+                )
+                return CardRevealGrant(
+                    reveal_grant="opaque-grant",
+                    expires_at="2026-08-20T00:01:00Z",
+                )
+
+            def reveal_card_allocation(self, allocation_id, reveal_grant):
+                calls.append(("reveal", allocation_id, reveal_grant))
+                return CardRevealSnapshot(
+                    id="reveal-1",
+                    allocation_id=allocation_id,
+                    card_masked="VISA •••• 1111",
+                    brand="VISA",
+                    expiry_month=12,
+                    expiry_year=2030,
+                    pan="4111111111111111",
+                    reveal_expires_at="2026-08-20T00:01:00Z",
+                )
+
+            @staticmethod
+            def assertFalse(value):
+                if value:
+                    raise AssertionError(f"expected false, got {value!r}")
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        instance = object.__new__(PlatformDesktopApp)
+        instance._client = FakeClient()
+        instance._card_allocation_id = "allocation-1"
+        instance._task_generation = 7
+        instance._closed = False
+        instance._events = queue.Queue()
+        instance.root = object()
+        instance.copy_card_button = FakeWidget()
+        instance.status_label = FakeWidget()
+
+        with (
+            mock.patch(
+                "platform_desktop.messagebox.askyesno", return_value=True
+            ) as confirm,
+            mock.patch("platform_desktop.webbrowser.open", return_value=True),
+            mock.patch("platform_desktop.threading.Thread", InlineThread),
+        ):
+            instance.reveal_card_details()
+
+        confirm.assert_called_once()
+        confirmation_text = confirm.call_args.args[1]
+        self.assertIn("MFA", confirmation_text)
+        self.assertIn("不包含 CVV", confirmation_text)
+        self.assertEqual(
+            calls,
+            [
+                ("challenge", "allocation-1"),
+                ("step_up", "urn:email-platform:acr:mfa"),
+                (
+                    "grant",
+                    "allocation-1",
+                    "challenge-1",
+                    "step-up-access",
+                ),
+                ("reveal", "allocation-1", "opaque-grant"),
+            ],
+        )
+        event_kinds = [instance._events.get_nowait()[1] for _ in range(2)]
+        self.assertEqual(event_kinds, ["card_reveal_authorizing", "card_reveal"])
+        self.assertIn({"state": "disabled"}, instance.copy_card_button.states)
 
 
 if __name__ == "__main__":

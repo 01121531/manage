@@ -30,7 +30,7 @@ class UploadUnknownError(RuntimeError):
 
 
 class Sub2AdapterError(RuntimeError):
-    """The Sub2 service rejected or returned an invalid response."""
+    """The Sub2 service definitively rejected the upload before creation."""
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class Sub2Policy:
 @dataclass(frozen=True)
 class Sub2UploadCommand:
     job_id: str
+    task_id: str
     business_name: str
     card_secret_ref: str = field(repr=False)
     policy: Sub2Policy
@@ -66,6 +67,33 @@ class UnconfiguredSub2Adapter:
 
 
 ResponseOpener = Callable[..., Any]
+
+# Statuses that establish that the request was rejected before an upload could
+# be created. Ambiguous client statuses (timeout, conflict, too early, and rate
+# limiting) deliberately remain outside this set.
+_DEFINITIVE_REJECTION_STATUSES = frozenset(
+    {
+        400,
+        401,
+        403,
+        404,
+        405,
+        406,
+        410,
+        411,
+        412,
+        413,
+        414,
+        415,
+        416,
+        417,
+        421,
+        422,
+        426,
+        428,
+        431,
+    }
+)
 
 
 def _normalize_https_url(value: str) -> str:
@@ -128,6 +156,7 @@ class HttpSub2Adapter:
             raise Sub2AdapterUnavailable(str(error)) from error
         payload: dict[str, object] = {
             "job_id": command.job_id,
+            "task_id": command.task_id,
             "business_name": command.business_name,
             "card": card,
             "policy": {
@@ -145,34 +174,44 @@ class HttpSub2Adapter:
                 "Accept": "application/json",
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                "Idempotency-Key": command.job_id,
                 "User-Agent": "EmailPlatformWorker/1.0",
+                "X-Platform-Task-Id": command.task_id,
             },
         )
         try:
             with self._open(request, timeout=self.timeout) as response:
+                status = int(getattr(response, "status", 200))
                 charset = response.headers.get_content_charset() or "utf-8"
                 raw = response.read().decode(charset, errors="replace")
         except urllib.error.HTTPError as error:
-            if error.code in {502, 503, 504}:
-                raise UploadUnknownError("Sub2 gateway result is unknown") from error
-            raise Sub2AdapterError(f"Sub2 upload rejected with HTTP {error.code}") from error
+            if error.code in _DEFINITIVE_REJECTION_STATUSES:
+                raise Sub2AdapterError(
+                    f"Sub2 upload rejected with HTTP {error.code}"
+                ) from error
+            raise UploadUnknownError("Sub2 upload result is unknown") from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise UploadUnknownError("Sub2 upload result is unknown") from error
+
+        if status not in range(200, 300):
+            if status in _DEFINITIVE_REJECTION_STATUSES:
+                raise Sub2AdapterError(f"Sub2 upload rejected with HTTP {status}")
+            raise UploadUnknownError("Sub2 upload result is unknown")
 
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise Sub2AdapterError("Sub2 upload returned invalid JSON") from error
+            raise UploadUnknownError("Sub2 upload returned invalid JSON") from error
         if not isinstance(data, dict):
-            raise Sub2AdapterError("Sub2 upload returned invalid data")
+            raise UploadUnknownError("Sub2 upload returned invalid data")
         if data.get("success") is False:
-            raise Sub2AdapterError("Sub2 upload returned failure")
+            raise UploadUnknownError("Sub2 upload returned ambiguous failure")
         nested = data.get("data")
         if isinstance(nested, dict):
             data = nested
-        external_ref = data.get("external_ref") or data.get("id") or data.get("job_id")
+        external_ref = data.get("external_ref")
         if not isinstance(external_ref, str) or not external_ref.strip():
-            raise Sub2AdapterError("Sub2 upload response missing external_ref")
+            raise UploadUnknownError("Sub2 upload response missing external_ref")
         return Sub2UploadResult(external_ref=external_ref.strip())
 
 
@@ -265,6 +304,7 @@ def process_upload_job(
 
         command = Sub2UploadCommand(
             job_id=job.id,
+            task_id=job.task_id,
             business_name=job.business_name,
             card_secret_ref=card.secret_ref,
             policy=policy,
@@ -303,15 +343,31 @@ def process_upload_job(
             )
             db.commit()
             return job
-        except Exception:
+        except Sub2AdapterError:
             job.status = "failed"
-            job.error_code = "adapter_error"
+            job.error_code = "external_rejected"
             record_audit(
                 db,
                 tenant_id=job.tenant_id,
                 user_id=job.user_id,
                 device_id=job.device_id,
                 event_type="upload.failed",
+                entity_type="upload_job",
+                entity_id=job.id,
+                trace_id=job.trace_id,
+                details={"error_code": job.error_code},
+            )
+            db.commit()
+            return job
+        except Exception:
+            job.status = "unknown"
+            job.error_code = "external_unknown"
+            record_audit(
+                db,
+                tenant_id=job.tenant_id,
+                user_id=job.user_id,
+                device_id=job.device_id,
+                event_type="upload.unknown",
                 entity_type="upload_job",
                 entity_id=job.id,
                 trace_id=job.trace_id,

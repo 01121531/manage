@@ -19,7 +19,7 @@ class ReleaseManifestTests(unittest.TestCase):
         errors = release_manifest.verify_manifest(manifest)
         self.assertEqual(errors, [])
         self.assertEqual(manifest["release_id"], "0.1.3")
-        self.assertEqual(manifest["migration_head"], "0009_upload_policy_governance")
+        self.assertEqual(manifest["migration_head"], "0011_mailbox_lease_and_code_ttl")
         self.assertIn("worker-mail", manifest["compose_images"])
 
 
