@@ -57,7 +57,15 @@ def build_release_manifest() -> dict[str, Any]:
     if not isinstance(services, dict):
         raise RuntimeError("Compose services block is invalid")
     compose_images: dict[str, str] = {}
-    for service_name in ("api", "worker-mail", "worker-sub2", "web", "prometheus"):
+    for service_name in (
+        "migrate",
+        "api",
+        "worker-mail",
+        "worker-sub2",
+        "web",
+        "edge",
+        "prometheus",
+    ):
         service = services.get(service_name)
         if not isinstance(service, dict):
             raise RuntimeError(f"Missing compose service: {service_name}")
@@ -75,7 +83,10 @@ def build_release_manifest() -> dict[str, Any]:
         "frontend_version": frontend_version,
         "migration_head": migration_head,
         "compose_images": compose_images,
-        "rollback_policy": "Restore the latest backup before switching to a previous release manifest.",
+        "rollback_policy": (
+            "Use scripts.rollback_release with an immutable container manifest "
+            "and its release-bound platform plus Keycloak backup bundle."
+        ),
     }
 
 

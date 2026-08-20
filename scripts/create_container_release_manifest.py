@@ -11,11 +11,18 @@ from typing import Any, Sequence
 
 
 EXPECTED_IMAGES = ("api", "web", "edge")
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = ROOT / "platform" / "migrations" / "versions"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
-_IMAGE = re.compile(r"^ghcr\.io/[a-z0-9._/-]+$")
+_IMAGE = re.compile(
+    r"^ghcr\.io/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?/"
+    r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?-(?:api|web|edge)$"
+)
+_MIGRATION_HEAD = re.compile(r"^[0-9]{4}_[a-z0-9_]+$")
+_ATTESTATIONS = ["cosign-spdxjson", "github-build-provenance"]
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -23,6 +30,144 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"metadata must contain an object: {path.name}")
     return value
+
+
+def _current_migration_head() -> str:
+    candidates = sorted(
+        path.stem for path in MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.py")
+    )
+    if not candidates:
+        raise ValueError("no migration head was found")
+    return candidates[-1]
+
+
+def _require_exact_keys(value: dict[str, Any], expected: set[str], context: str) -> None:
+    if set(value) != expected:
+        raise ValueError(f"invalid {context} fields")
+
+
+def verify_manifest(
+    manifest: dict[str, Any],
+    *,
+    expected_tag: str | None = None,
+    expected_commit: str | None = None,
+    expected_migration_head: str | None = None,
+) -> dict[str, Any]:
+    """Validate claimed release metadata; this is not cryptographic verification."""
+
+    if not isinstance(manifest, dict):
+        raise ValueError("container release manifest must contain an object")
+    _require_exact_keys(
+        manifest,
+        {"schema_version", "tag", "commit", "migration_head", "images"},
+        "manifest",
+    )
+    if type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1:
+        raise ValueError("unsupported container release manifest schema")
+
+    tag = manifest["tag"]
+    commit = manifest["commit"]
+    migration_head = manifest["migration_head"]
+    if not isinstance(tag, str) or not _TAG.fullmatch(tag):
+        raise ValueError("invalid release tag")
+    if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+        raise ValueError("invalid release commit")
+    if not isinstance(migration_head, str) or not _MIGRATION_HEAD.fullmatch(migration_head):
+        raise ValueError("invalid migration head")
+    if expected_tag is not None and tag != expected_tag:
+        raise ValueError("release tag does not match expected tag")
+    if expected_commit is not None and commit != expected_commit:
+        raise ValueError("release commit does not match expected commit")
+    if expected_migration_head is not None and migration_head != expected_migration_head:
+        raise ValueError("migration head does not match expected head")
+
+    images = manifest["images"]
+    if not isinstance(images, dict) or set(images) != set(EXPECTED_IMAGES):
+        raise ValueError("manifest must contain exactly api, web, and edge images")
+    expected_identity_suffix = f"/.github/workflows/release.yml@refs/tags/{tag}"
+    identity_pattern = re.compile(
+        r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+        + re.escape(expected_identity_suffix)
+        + r"$"
+    )
+    for name in EXPECTED_IMAGES:
+        image_metadata = images[name]
+        if not isinstance(image_metadata, dict):
+            raise ValueError(f"invalid image metadata: {name}")
+        _require_exact_keys(
+            image_metadata,
+            {"image", "digest", "sbom", "scan", "signature", "attestations"},
+            f"image metadata: {name}",
+        )
+        image = image_metadata["image"]
+        digest = image_metadata["digest"]
+        if (
+            not isinstance(image, str)
+            or not _IMAGE.fullmatch(image)
+            or not image.endswith(f"-{name}")
+        ):
+            raise ValueError(f"invalid GHCR image name: {name}")
+        if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+            raise ValueError(f"invalid OCI digest: {name}")
+
+        sbom = image_metadata["sbom"]
+        if not isinstance(sbom, dict):
+            raise ValueError(f"invalid SBOM metadata: {name}")
+        _require_exact_keys(sbom, {"file", "sha256"}, f"SBOM metadata: {name}")
+        if (
+            sbom["file"] != f"{name}.spdx.json"
+            or not isinstance(sbom["sha256"], str)
+            or not _SHA256.fullmatch(sbom["sha256"])
+        ):
+            raise ValueError(f"invalid SBOM metadata: {name}")
+
+        scan = image_metadata["scan"]
+        if not isinstance(scan, dict):
+            raise ValueError(f"invalid Trivy scan metadata: {name}")
+        _require_exact_keys(
+            scan,
+            {"tool", "severities", "result", "file", "sha256"},
+            f"Trivy scan metadata: {name}",
+        )
+        if (
+            scan["tool"] != "trivy"
+            or scan["severities"] != ["HIGH", "CRITICAL"]
+            or scan["result"] != "passed"
+            or scan["file"] != f"{name}.trivy.sarif"
+            or not isinstance(scan["sha256"], str)
+            or not _SHA256.fullmatch(scan["sha256"])
+        ):
+            raise ValueError(f"invalid Trivy scan metadata: {name}")
+
+        signature = image_metadata["signature"]
+        if not isinstance(signature, dict):
+            raise ValueError(f"invalid signature identity: {name}")
+        _require_exact_keys(signature, {"issuer", "identity"}, f"signature metadata: {name}")
+        identity = signature["identity"]
+        if signature["issuer"] != "https://token.actions.githubusercontent.com":
+            raise ValueError(f"invalid signature issuer: {name}")
+        if not isinstance(identity, str) or not identity_pattern.fullmatch(identity):
+            raise ValueError(f"invalid signature identity: {name}")
+        if image_metadata["attestations"] != _ATTESTATIONS:
+            raise ValueError(f"required attestations are missing: {name}")
+    return manifest
+
+
+def load_manifest(
+    path: Path,
+    *,
+    expected_tag: str | None = None,
+    expected_commit: str | None = None,
+    expected_migration_head: str | None = None,
+) -> dict[str, Any]:
+    """Load and strictly pre-validate a container release manifest."""
+
+    return verify_manifest(
+        _load_mapping(path),
+        expected_tag=expected_tag,
+        expected_commit=expected_commit,
+        expected_migration_head=expected_migration_head,
+    )
 
 
 def build_manifest(input_dir: Path, *, tag: str, commit: str) -> dict[str, Any]:
@@ -109,7 +254,17 @@ def build_manifest(input_dir: Path, *, tag: str, commit: str) -> dict[str, Any]:
             "signature": dict(signature),
             "attestations": sorted(metadata["attestations"]),
         }
-    return {"schema_version": 1, "tag": tag, "commit": commit, "images": images}
+    return verify_manifest(
+        {
+            "schema_version": 1,
+            "tag": tag,
+            "commit": commit,
+            "migration_head": _current_migration_head(),
+            "images": images,
+        },
+        expected_tag=tag,
+        expected_commit=commit,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

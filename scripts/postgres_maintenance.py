@@ -17,9 +17,19 @@ from typing import Sequence
 
 _SAFE_DB_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_RELEASE_TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
+_RELEASE_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_MIGRATION_HEAD = re.compile(r"^[0-9]{4}_[A-Za-z0-9_]+$")
 BACKUP_MANIFEST_NAME = "manifest.json"
 BACKUP_MANIFEST_SCHEMA = 1
+BACKUP_RELEASE_MANIFEST_SCHEMA = 2
 BACKUP_BUNDLE_DATABASES = ("platform", "keycloak")
+RELEASE_BINDING_FIELDS = (
+    "release_tag",
+    "release_commit",
+    "migration_head",
+    "container_manifest_sha256",
+)
 CRITICAL_TABLES = {
     "platform": ("users", "devices", "audit_events"),
     "keycloak": ("realm", "user_entity", "credential"),
@@ -239,13 +249,54 @@ def _artifact_metadata(result: BackupResult, *, database: str) -> dict[str, obje
     }
 
 
+def _release_binding(
+    *,
+    release_tag: str | None,
+    release_commit: str | None,
+    migration_head: str | None,
+    container_manifest_sha256: str | None,
+) -> dict[str, str] | None:
+    values = {
+        "release_tag": release_tag,
+        "release_commit": release_commit,
+        "migration_head": migration_head,
+        "container_manifest_sha256": container_manifest_sha256,
+    }
+    if all(value is None for value in values.values()):
+        return None
+    if any(value is None for value in values.values()):
+        raise ValueError("release binding requires all four fields")
+    if not all(isinstance(value, str) for value in values.values()):
+        raise ValueError("release binding fields must be strings")
+    binding = {key: value for key, value in values.items() if isinstance(value, str)}
+    if not _RELEASE_TAG.fullmatch(binding["release_tag"]):
+        raise ValueError("invalid release tag")
+    if not _RELEASE_COMMIT.fullmatch(binding["release_commit"]):
+        raise ValueError("invalid release commit")
+    if not _MIGRATION_HEAD.fullmatch(binding["migration_head"]):
+        raise ValueError("invalid migration head")
+    if not _SHA256.fullmatch(binding["container_manifest_sha256"]):
+        raise ValueError("invalid container manifest SHA-256")
+    return binding
+
+
 def backup_bundle(
     output_dir: Path | str,
     *,
     platform_db: str,
     keycloak_db: str,
     service: str = "postgres",
+    release_tag: str | None = None,
+    release_commit: str | None = None,
+    migration_head: str | None = None,
+    container_manifest_sha256: str | None = None,
 ) -> BackupBundleResult:
+    release_binding = _release_binding(
+        release_tag=release_tag,
+        release_commit=release_commit,
+        migration_head=migration_head,
+        container_manifest_sha256=container_manifest_sha256,
+    )
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     manifest_path = directory / BACKUP_MANIFEST_NAME
@@ -262,8 +313,12 @@ def backup_bundle(
         )
         for logical_name, database_name in database_names.items()
     }
-    manifest = {
-        "schema_version": BACKUP_MANIFEST_SCHEMA,
+    manifest: dict[str, object] = {
+        "schema_version": (
+            BACKUP_RELEASE_MANIFEST_SCHEMA
+            if release_binding is not None
+            else BACKUP_MANIFEST_SCHEMA
+        ),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "databases": {
             logical_name: _artifact_metadata(
@@ -272,6 +327,8 @@ def backup_bundle(
             for logical_name in BACKUP_BUNDLE_DATABASES
         },
     }
+    if release_binding is not None:
+        manifest.update(release_binding)
     temporary_manifest = directory / f".{BACKUP_MANIFEST_NAME}.tmp"
     temporary_manifest.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -292,8 +349,38 @@ def verify_bundle(input_dir: Path | str) -> dict[str, dict[str, object]]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid backup manifest: {error}") from error
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != BACKUP_MANIFEST_SCHEMA:
+    if not isinstance(manifest, dict) or manifest.get("schema_version") not in {
+        BACKUP_MANIFEST_SCHEMA,
+        BACKUP_RELEASE_MANIFEST_SCHEMA,
+    }:
         raise ValueError("unsupported backup manifest schema")
+    schema_version = manifest["schema_version"]
+    release_fields_present = {field for field in RELEASE_BINDING_FIELDS if field in manifest}
+    expected_manifest_fields = {"schema_version", "created_at", "databases"}
+    if schema_version == BACKUP_MANIFEST_SCHEMA:
+        if release_fields_present:
+            raise ValueError("schema v1 backup manifest cannot contain release binding")
+    else:
+        expected_manifest_fields.update(RELEASE_BINDING_FIELDS)
+        if release_fields_present != set(RELEASE_BINDING_FIELDS):
+            raise ValueError("schema v2 backup manifest requires all release binding fields")
+        _release_binding(
+            release_tag=manifest.get("release_tag"),
+            release_commit=manifest.get("release_commit"),
+            migration_head=manifest.get("migration_head"),
+            container_manifest_sha256=manifest.get("container_manifest_sha256"),
+        )
+    if set(manifest) != expected_manifest_fields:
+        raise ValueError("backup manifest contains unexpected fields")
+    created_at = manifest.get("created_at")
+    if not isinstance(created_at, str):
+        raise ValueError("invalid backup manifest creation time")
+    try:
+        parsed_created_at = datetime.fromisoformat(created_at)
+    except ValueError as error:
+        raise ValueError("invalid backup manifest creation time") from error
+    if parsed_created_at.tzinfo is None:
+        raise ValueError("invalid backup manifest creation time")
     databases = manifest.get("databases")
     if not isinstance(databases, dict) or set(databases) != set(BACKUP_BUNDLE_DATABASES):
         raise ValueError("backup manifest must contain platform and keycloak databases")
@@ -302,6 +389,8 @@ def verify_bundle(input_dir: Path | str) -> dict[str, dict[str, object]]:
         entry = databases.get(logical_name)
         if not isinstance(entry, dict):
             raise ValueError(f"invalid manifest entry: {logical_name}")
+        if set(entry) != {"database", "artifact", "sha256", "size_bytes"}:
+            raise ValueError(f"unexpected manifest entry fields: {logical_name}")
         database = entry.get("database")
         artifact = entry.get("artifact")
         sha256 = entry.get("sha256")
@@ -332,20 +421,60 @@ def verify_bundle(input_dir: Path | str) -> dict[str, dict[str, object]]:
     return verified
 
 
+def verify_bundle_release_binding(
+    input_dir: Path | str,
+    *,
+    release_tag: str,
+    release_commit: str,
+    migration_head: str,
+    container_manifest_sha256: str,
+) -> dict[str, str]:
+    directory = Path(input_dir)
+    verify_bundle(directory)
+    manifest = json.loads((directory / BACKUP_MANIFEST_NAME).read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != BACKUP_RELEASE_MANIFEST_SCHEMA:
+        raise ValueError("backup bundle is not release-bound")
+    expected = _release_binding(
+        release_tag=release_tag,
+        release_commit=release_commit,
+        migration_head=migration_head,
+        container_manifest_sha256=container_manifest_sha256,
+    )
+    if expected is None:
+        raise ValueError("expected release binding requires all four fields")
+    for field in RELEASE_BINDING_FIELDS:
+        if manifest.get(field) != expected[field]:
+            raise ValueError(f"release binding mismatch: {field}")
+    return expected
+
+
 def restore_bundle(
     input_dir: Path | str,
     *,
     platform_target_db: str,
     keycloak_target_db: str,
     service: str = "postgres",
+    release_tag: str | None = None,
+    release_commit: str | None = None,
+    migration_head: str | None = None,
+    container_manifest_sha256: str | None = None,
 ) -> None:
     directory = Path(input_dir)
-    verify_bundle(directory)
+    expected_binding = _release_binding(
+        release_tag=release_tag,
+        release_commit=release_commit,
+        migration_head=migration_head,
+        container_manifest_sha256=container_manifest_sha256,
+    )
+    if expected_binding is None:
+        verify_bundle(directory)
     targets = {
         "platform": _require_safe_db_name(platform_target_db),
         "keycloak": _require_safe_db_name(keycloak_target_db),
     }
     for logical_name in BACKUP_BUNDLE_DATABASES:
+        if expected_binding is not None:
+            verify_bundle_release_binding(directory, **expected_binding)
         restore_database(
             directory / f"{logical_name}.dump",
             target_db=targets[logical_name],
@@ -387,6 +516,10 @@ def drill_bundle(
     platform_scratch_db: str,
     keycloak_scratch_db: str,
     service: str = "postgres",
+    release_tag: str | None = None,
+    release_commit: str | None = None,
+    migration_head: str | None = None,
+    container_manifest_sha256: str | None = None,
 ) -> DrillBundleResult:
     source_databases = {
         "platform": _require_safe_db_name(platform_db),
@@ -415,6 +548,10 @@ def drill_bundle(
         platform_db=source_databases["platform"],
         keycloak_db=source_databases["keycloak"],
         service=service,
+        release_tag=release_tag,
+        release_commit=release_commit,
+        migration_head=migration_head,
+        container_manifest_sha256=container_manifest_sha256,
     )
     verify_bundle(bundle.directory)
     created: list[str] = []
@@ -497,6 +634,8 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_parser.add_argument("--platform-db", default="email_platform")
     bundle_parser.add_argument("--keycloak-db", default="keycloak")
     bundle_parser.add_argument("--service", default="postgres", help="Compose service name.")
+    for field in RELEASE_BINDING_FIELDS:
+        bundle_parser.add_argument("--" + field.replace("_", "-"))
 
     verify_parser = subparsers.add_parser(
         "verify-bundle",
@@ -512,6 +651,8 @@ def build_parser() -> argparse.ArgumentParser:
     restore_bundle_parser.add_argument("--platform-target-db", default="email_platform")
     restore_bundle_parser.add_argument("--keycloak-target-db", default="keycloak")
     restore_bundle_parser.add_argument("--service", default="postgres", help="Compose service name.")
+    for field in RELEASE_BINDING_FIELDS:
+        restore_bundle_parser.add_argument("--" + field.replace("_", "-"))
 
     drill_bundle_parser = subparsers.add_parser(
         "drill-bundle",
@@ -527,6 +668,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--keycloak-scratch-db", default="keycloak_restore_drill"
     )
     drill_bundle_parser.add_argument("--service", default="postgres", help="Compose service name.")
+    for field in RELEASE_BINDING_FIELDS:
+        drill_bundle_parser.add_argument("--" + field.replace("_", "-"))
 
     return parser
 
@@ -559,6 +702,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             platform_db=args.platform_db,
             keycloak_db=args.keycloak_db,
             service=args.service,
+            release_tag=args.release_tag,
+            release_commit=args.release_commit,
+            migration_head=args.migration_head,
+            container_manifest_sha256=args.container_manifest_sha256,
         )
         print(bundle.manifest_path)
         for logical_name in BACKUP_BUNDLE_DATABASES:
@@ -575,6 +722,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             platform_target_db=args.platform_target_db,
             keycloak_target_db=args.keycloak_target_db,
             service=args.service,
+            release_tag=args.release_tag,
+            release_commit=args.release_commit,
+            migration_head=args.migration_head,
+            container_manifest_sha256=args.container_manifest_sha256,
         )
         return 0
     if args.command == "drill-bundle":
@@ -585,6 +736,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             platform_scratch_db=args.platform_scratch_db,
             keycloak_scratch_db=args.keycloak_scratch_db,
             service=args.service,
+            release_tag=args.release_tag,
+            release_commit=args.release_commit,
+            migration_head=args.migration_head,
+            container_manifest_sha256=args.container_manifest_sha256,
         )
         print(drill.bundle.manifest_path)
         print(json.dumps({"critical_row_counts": drill.critical_row_counts}, sort_keys=True))

@@ -321,7 +321,9 @@ alembic -x db_url="postgresql+psycopg://USER:PASSWORD@HOST:5432/DB" upgrade head
 
 For production backup and restore, keep the platform and Keycloak databases in
 one integrity-checked bundle. The Keycloak realm JSON is bootstrap configuration,
-not a backup of live users or credentials. Use the helper from the repository root:
+not a backup of live users or credentials. A release rollback must create schema
+v2 evidence bound to the release tag, commit, migration head, and SHA-256 of the
+immutable container release manifest. Use the helper from the repository root:
 
 ```powershell
 python -m scripts.postgres_maintenance backup-bundle --output-dir backups/production-YYYYMMDDTHHMMSSZ --platform-db email_platform --keycloak-db keycloak
@@ -329,6 +331,12 @@ python -m scripts.postgres_maintenance verify-bundle --input-dir backups/product
 python -m scripts.postgres_maintenance restore-bundle --input-dir backups/production-YYYYMMDDTHHMMSSZ --platform-target-db email_platform_restore --keycloak-target-db keycloak_restore
 python -m scripts.postgres_maintenance drill-bundle --output-dir backups/production-YYYYMMDDTHHMMSSZ --platform-db email_platform --keycloak-db keycloak --platform-scratch-db email_platform_restore_drill --keycloak-scratch-db keycloak_restore_drill
 ```
+
+The generic commands above remain available for disaster-recovery exercises.
+For a release rollback, use `backup-bundle` with all four release-binding flags
+shown in `deploy/runbooks/rollback.md`; the rollback executor refuses legacy v1
+bundles, partial bindings, or a manifest that does not match the selected OCI
+release exactly.
 
 The bundle manifest records the database name, artifact filename, byte size and
 SHA-256 for `platform.dump` and `keycloak.dump` in `manifest.json`. Restore
@@ -357,17 +365,21 @@ cluster with matching seal/KMS material before approving production recovery.
 The complete procedure is in `deploy/runbooks/vault-restore.md`; the `vault-dev`
 Compose profile is ephemeral and is not a valid snapshot or restore target.
 
-The release lock is captured in `deploy/release-manifest.json`. Before a
-production cut, verify it against the working tree with:
+`deploy/release-manifest.json` is a source/Compose consistency snapshot. Before
+a production cut, verify it against the working tree with:
 
 ```powershell
 python -m scripts.release_manifest verify --manifest deploy/release-manifest.json
 ```
 
-To cut a fresh release record after a validated deployment, snapshot the
-current state and archive the resulting manifest alongside the backup artifact.
-For rollback, restore the latest backup first, then redeploy the previous
-manifest and rerun `alembic upgrade head` only when moving forward again.
+It is not a runtime image lock and must never be used as the rollback input.
+Runtime rollback uses the previous tag's strict `container-release-manifest.json`
+with `api`, `web`, and `edge` GHCR digests, plus a schema v2 dual-database bundle
+bound to that manifest. `scripts.rollback_release plan` verifies all bindings;
+`execute` verifies Cosign/SBOM/provenance, pulls exact digests, restores both
+databases, verifies internal services, and exposes the edge only after all checks
+pass. Follow `deploy/runbooks/rollback.md`; do not restore only one database and
+do not rebuild images during rollback.
 The operational runbooks live under `deploy/runbooks/` and cover restore,
 rollback, device revocation, key rotation, and incident response.
 The production signoff template lives at `deploy/production-signoff-template.md`
@@ -441,8 +453,9 @@ pinned to immutable commit or registry digests. Run
 `python scripts/verify_container_supply_chain.py` locally to validate the
 workflow structure and release ordering. Production signoff must record each
 OCI digest, SBOM SHA-256, Cosign identity/issuer, and provenance evidence.
-The container release manifest also locks each Trivy report hash and the exact
-HIGH/CRITICAL gate result.
+The container release manifest also locks the Alembic migration head, each Trivy
+report hash, and the exact HIGH/CRITICAL gate result. It is the immutable image
+input for `scripts.rollback_release`; the repository source manifest is not.
 
 The Python runtime requirements currently use bounded version ranges rather
 than a resolver-generated `--require-hashes` lock. Do not hand-author hashes:

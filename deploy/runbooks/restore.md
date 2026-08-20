@@ -7,7 +7,7 @@ Keycloak database backup because it does not contain the live user state.
 1. Freeze writes.
 
    ```powershell
-   docker compose stop api worker-mail worker-sub2 web keycloak
+   docker compose stop edge api worker-mail worker-sub2 web keycloak
    ```
 
 2. Identify and verify the backup bundle before changing either database.
@@ -28,17 +28,18 @@ Keycloak database backup because it does not contain the live user state.
    python -m scripts.postgres_maintenance restore-bundle --input-dir backups/production-YYYYMMDDTHHMMSSZ --platform-target-db email_platform --keycloak-target-db keycloak
    ```
 
-4. Bring the application back in the current release manifest state.
+4. Bring up internal services from the already selected images. Keep edge closed.
 
    ```powershell
-   docker compose up -d keycloak api worker-mail worker-sub2 web
+   docker compose up -d --no-build --pull never keycloak migrate api worker-mail worker-sub2 web
    ```
 
-5. Validate the service.
+5. Validate internal services, then open edge last.
 
    ```powershell
    docker compose exec -T api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3).read().decode())"
    docker compose ps keycloak api worker-mail worker-sub2 web
+   docker compose up -d --no-build --pull never edge
    python -m unittest tests.test_postgres_maintenance -v
    ```
 
@@ -57,3 +58,7 @@ platform `users`, `devices`, `audit_events` and Keycloak `realm`, `user_entity`,
 but production signoff must review whether each count is operationally credible.
 
 Do not use Alembic downgrade as a recovery mechanism.
+
+For a release rollback, a generic schema-v1 bundle is insufficient. Follow
+`rollback.md`; it requires schema v2 bound to the exact release tag, commit,
+migration head, and immutable container-manifest SHA-256.

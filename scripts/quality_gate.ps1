@@ -43,6 +43,9 @@ try {
     python scripts/verify_backup_tools.py
     if ($LASTEXITCODE -ne 0) { throw "Backup tooling verification failed." }
 
+    python scripts/verify_rollback_assets.py
+    if ($LASTEXITCODE -ne 0) { throw "Rollback asset verification failed." }
+
     python scripts/verify_nginx_headers.py
     if ($LASTEXITCODE -ne 0) { throw "Nginx header verification failed." }
 

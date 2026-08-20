@@ -83,7 +83,7 @@ services:
     build:
       context: .
       dockerfile: infra/Dockerfile
-    image: email-platform-api:local
+    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
     restart: "no"
     user: "10001:10001"
     read_only: true
@@ -103,7 +103,7 @@ services:
     build:
       context: .
       dockerfile: infra/Dockerfile
-    image: email-platform-api:local
+    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
     restart: unless-stopped
     user: "10001:10001"
     read_only: true
@@ -156,7 +156,7 @@ services:
     build:
       context: .
       dockerfile: infra/Dockerfile
-    image: email-platform-worker-mail:local
+    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
     restart: unless-stopped
     user: "10001:10001"
     read_only: true
@@ -212,7 +212,7 @@ services:
     build:
       context: .
       dockerfile: infra/Dockerfile
-    image: email-platform-worker-sub2:local
+    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
     restart: unless-stopped
     user: "10001:10001"
     read_only: true
@@ -271,7 +271,7 @@ services:
     build:
       context: .
       dockerfile: infra/frontend.Dockerfile
-    image: email-platform-web:local
+    image: ${PLATFORM_WEB_IMAGE:-email-platform-web:local}
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -294,7 +294,7 @@ services:
     build:
       context: .
       dockerfile: infra/edge.Dockerfile
-    image: email-platform-edge:local
+    image: ${PLATFORM_EDGE_IMAGE:-email-platform-edge:local}
     restart: unless-stopped
     user: "101:101"
     read_only: true

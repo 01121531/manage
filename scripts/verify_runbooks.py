@@ -15,16 +15,47 @@ RUNBOOKS = {
         "production_acceptance=false",
         "does **not** prove target",
     ],
-    "rollback.md": ["python -m scripts.release_manifest verify", "restore-first"],
+    "rollback.md": [
+        "python -m scripts.rollback_release plan",
+        "python -m scripts.rollback_release execute",
+        "--confirm-release-tag",
+        "platform + Keycloak",
+        "Cosign",
+        "--no-build --pull never",
+        "edge` last",
+        "production_acceptance=false",
+    ],
     "device-revocation.md": ["/api/v1/admin/devices/{device_id}/revoke", "device.revoked"],
     "key-rotation.md": ["docker compose config", "verify_compose_env.py", "PLATFORM_VAULT_API_TOKEN_DIR"],
     "incident-response.md": ["PlatformUnknownUploadsPresent", "reconcile"],
 }
+ROLLBACK_FORBIDDEN = (
+    "scripts.postgres_maintenance restore --input",
+    "scripts.release_manifest verify",
+    "127.0.0.1:8000",
+    "127.0.0.1:9101",
+    "127.0.0.1:9102",
+    "Rebuild or pull",
+)
 
 
 def _fail(message: str) -> int:
     print(message, file=sys.stderr)
     return 1
+
+
+def rollback_runbook_errors(text: str) -> list[str]:
+    errors = [
+        f"rollback runbook is missing: {needle}"
+        for needle in RUNBOOKS["rollback.md"]
+        if needle not in text
+    ]
+    errors.extend(
+        f"rollback runbook contains obsolete control: {needle}"
+        for needle in ROLLBACK_FORBIDDEN
+        if needle in text
+    )
+    return errors
 
 
 def main() -> int:
@@ -36,6 +67,11 @@ def main() -> int:
         if not path.exists():
             return _fail(f"Missing runbook: {filename}")
         text = path.read_text(encoding="utf-8")
+        if filename == "rollback.md":
+            errors = rollback_runbook_errors(text)
+            if errors:
+                return _fail("; ".join(errors))
+            continue
         for needle in needles:
             if needle not in text:
                 return _fail(f"Runbook {filename} is missing: {needle}")

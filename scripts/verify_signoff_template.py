@@ -46,8 +46,19 @@ def main() -> int:
         "Vault snapshot artifact and SHA-256:",
         "Phase 6 CI rehearsal evidence, file SHA-256 and payload SHA-256 (preflight only):",
         "Target-environment pilot evidence:",
+        "Rollback release tag, commit and migration head:",
+        "Rollback container manifest SHA-256:",
+        "Release-bound dual-database backup manifest SHA-256:",
+        "Rollback expected and observed OCI digests:",
+        "Rollback Cosign, SBOM attestation and provenance verification:",
+        "Rollback drill start/end UTC and achieved RTO/RPO:",
+        "Rollback dual-database critical row counts:",
+        "Rollback failure-injection result (edge remained closed):",
+        "Rollback independent operator/reviewer:",
         "Target-environment pilot, alert delivery, training and rollback drill",
         "production_acceptance=false",
+        "schema-v2 platform + Keycloak backup bundle",
+        "kept edge closed",
     ]
     missing = [item for item in required if item not in text]
     if missing:

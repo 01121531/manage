@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.create_container_release_manifest import build_manifest
+from scripts.create_container_release_manifest import build_manifest, load_manifest, verify_manifest
 
 
 TAG = "v1.2.3"
@@ -44,16 +44,76 @@ def write_evidence(directory: Path, name: str) -> None:
 
 
 class ContainerReleaseManifestTests(unittest.TestCase):
+    @staticmethod
+    def build_complete_manifest(directory: Path) -> dict[str, object]:
+        for name in ("api", "web", "edge"):
+            write_evidence(directory, name)
+        return build_manifest(directory, tag=TAG, commit=COMMIT)
+
     def test_builds_manifest_only_for_complete_verified_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            manifest = self.build_complete_manifest(directory)
+
+        self.assertEqual(set(manifest["images"]), {"api", "web", "edge"})
+        self.assertEqual(manifest["images"]["api"]["digest"], "sha256:" + "b" * 64)
+        self.assertRegex(manifest["migration_head"], r"^[0-9]{4}_[a-z0-9_]+$")
+
+    def test_loads_manifest_bound_to_expected_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            manifest = self.build_complete_manifest(directory)
+            path = directory / "container-release-manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            loaded = load_manifest(
+                path,
+                expected_tag=TAG,
+                expected_commit=COMMIT,
+                expected_migration_head=manifest["migration_head"],
+            )
+
+        self.assertEqual(loaded, manifest)
+
+    def test_rejects_local_tag(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
             for name in ("api", "web", "edge"):
                 write_evidence(directory, name)
 
-            manifest = build_manifest(directory, tag=TAG, commit=COMMIT)
+            with self.assertRaisesRegex(ValueError, "release tag"):
+                build_manifest(directory, tag="local/tag", commit=COMMIT)
 
-        self.assertEqual(set(manifest["images"]), {"api", "web", "edge"})
-        self.assertEqual(manifest["images"]["api"]["digest"], "sha256:" + "b" * 64)
+    def test_verify_rejects_missing_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = self.build_complete_manifest(Path(temp_dir))
+            del manifest["images"]["edge"]
+
+            with self.assertRaisesRegex(ValueError, "exactly api, web, and edge"):
+                verify_manifest(manifest)
+
+    def test_verify_rejects_wrong_expected_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = self.build_complete_manifest(Path(temp_dir))
+
+            with self.assertRaisesRegex(ValueError, "expected commit"):
+                verify_manifest(manifest, expected_commit="c" * 40)
+
+            with self.assertRaisesRegex(ValueError, "expected head"):
+                verify_manifest(manifest, expected_migration_head="9999_wrong_head")
+
+    def test_verify_rejects_unknown_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = self.build_complete_manifest(Path(temp_dir))
+            manifest["unexpected"] = True
+
+            with self.assertRaisesRegex(ValueError, "invalid manifest fields"):
+                verify_manifest(manifest)
+
+            del manifest["unexpected"]
+            manifest["images"]["api"]["signature"]["untrusted"] = True
+            with self.assertRaisesRegex(ValueError, "invalid signature metadata: api fields"):
+                verify_manifest(manifest)
 
     def test_rejects_missing_edge_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

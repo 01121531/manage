@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,14 @@ postgres_maintenance = importlib.util.module_from_spec(SPEC)
 import sys
 sys.modules[SPEC.name] = postgres_maintenance
 SPEC.loader.exec_module(postgres_maintenance)
+
+
+RELEASE_BINDING = {
+    "release_tag": "v1.2.3",
+    "release_commit": "a" * 40,
+    "migration_head": "0014_audit_evidence_fields",
+    "container_manifest_sha256": "b" * 64,
+}
 
 
 class PostgresMaintenanceTests(unittest.TestCase):
@@ -111,6 +120,151 @@ class PostgresMaintenanceTests(unittest.TestCase):
         self.assertTrue(any('"email_platform"' in command for command in dumps))
         self.assertTrue(any('"keycloak"' in command for command in dumps))
 
+    def test_release_bound_bundle_uses_schema_v2_and_verifies_binding(self) -> None:
+        def fake_run(command, check, stdout=None, **kwargs):
+            if stdout is not None:
+                stdout.write(b"database-backup")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir) / "bundle"
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                postgres_maintenance.backup_bundle(
+                    bundle_dir,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                    **RELEASE_BINDING,
+                )
+
+            manifest = json.loads(
+                (bundle_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["schema_version"], 2)
+            for field, expected in RELEASE_BINDING.items():
+                self.assertEqual(manifest[field], expected)
+            self.assertEqual(
+                postgres_maintenance.verify_bundle_release_binding(
+                    bundle_dir, **RELEASE_BINDING
+                ),
+                RELEASE_BINDING,
+            )
+
+    def test_release_binding_requires_all_fields_before_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("subprocess.run") as run:
+                with self.assertRaisesRegex(
+                    ValueError, "release binding requires all four fields"
+                ):
+                    postgres_maintenance.backup_bundle(
+                        Path(temp_dir) / "bundle",
+                        platform_db="email_platform",
+                        keycloak_db="keycloak",
+                        release_tag=RELEASE_BINDING["release_tag"],
+                    )
+                run.assert_not_called()
+
+    def test_verify_rejects_incomplete_or_malformed_v2_binding(self) -> None:
+        def fake_run(command, check, stdout=None, **kwargs):
+            if stdout is not None:
+                stdout.write(b"database-backup")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir) / "bundle"
+            manifest_path = bundle_dir / "manifest.json"
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                postgres_maintenance.backup_bundle(
+                    bundle_dir,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                    **RELEASE_BINDING,
+                )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("migration_head")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "requires all release binding fields"):
+                postgres_maintenance.verify_bundle(bundle_dir)
+
+            manifest["migration_head"] = RELEASE_BINDING["migration_head"]
+            manifest["release_commit"] = "not-a-commit"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid release commit"):
+                postgres_maintenance.verify_bundle(bundle_dir)
+
+    def test_release_binding_check_rejects_v1_and_mismatch(self) -> None:
+        def fake_run(command, check, stdout=None, **kwargs):
+            if stdout is not None:
+                stdout.write(b"database-backup")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy = root / "legacy"
+            bound = root / "bound"
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                postgres_maintenance.backup_bundle(
+                    legacy,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                )
+                postgres_maintenance.backup_bundle(
+                    bound,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                    **RELEASE_BINDING,
+                )
+
+            self.assertEqual(
+                set(postgres_maintenance.verify_bundle(legacy)),
+                {"platform", "keycloak"},
+            )
+            with self.assertRaisesRegex(ValueError, "not release-bound"):
+                postgres_maintenance.verify_bundle_release_binding(
+                    legacy, **RELEASE_BINDING
+                )
+            mismatched = dict(RELEASE_BINDING)
+            mismatched["release_tag"] = "v1.2.4"
+            with self.assertRaisesRegex(ValueError, "release binding mismatch: release_tag"):
+                postgres_maintenance.verify_bundle_release_binding(
+                    bound, **mismatched
+                )
+
+    def test_bundle_manifest_rejects_unknown_fields_and_naive_timestamp(self) -> None:
+        def fake_run(command, check, stdout=None, **kwargs):
+            if stdout is not None:
+                stdout.write(b"database-backup")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir) / "bundle"
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                postgres_maintenance.backup_bundle(
+                    bundle_dir,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                    **RELEASE_BINDING,
+                )
+            manifest_path = bundle_dir / "manifest.json"
+            original = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            tampered = dict(original)
+            tampered["notes"] = "not part of the closed evidence schema"
+            manifest_path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unexpected fields"):
+                postgres_maintenance.verify_bundle(bundle_dir)
+
+            tampered = json.loads(json.dumps(original))
+            tampered["databases"]["platform"]["notes"] = "unexpected"
+            manifest_path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unexpected manifest entry fields"):
+                postgres_maintenance.verify_bundle(bundle_dir)
+
+            tampered = dict(original)
+            tampered["created_at"] = "2026-08-20T12:00:00"
+            manifest_path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "creation time"):
+                postgres_maintenance.verify_bundle(bundle_dir)
+
     def test_restore_bundle_verifies_integrity_before_restoring_both_databases(self) -> None:
         calls: list[list[str]] = []
 
@@ -142,6 +296,97 @@ class PostgresMaintenanceTests(unittest.TestCase):
         self.assertEqual(len(restores), 2)
         self.assertTrue(any('"email_platform_restore"' in command for command in restores))
         self.assertTrue(any('"keycloak_restore"' in command for command in restores))
+
+    def test_release_bound_restore_rechecks_binding_before_each_database(self) -> None:
+        def fake_run(command, check, stdout=None, stdin=None, **kwargs):
+            if stdout is not None:
+                stdout.write(b"database-backup")
+            if stdin is not None:
+                self.assertEqual(stdin.read(), b"database-backup")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir) / "bundle"
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                postgres_maintenance.backup_bundle(
+                    bundle_dir,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                    **RELEASE_BINDING,
+                )
+                with mock.patch.object(
+                    postgres_maintenance,
+                    "verify_bundle_release_binding",
+                    wraps=postgres_maintenance.verify_bundle_release_binding,
+                ) as verify_binding:
+                    postgres_maintenance.restore_bundle(
+                        bundle_dir,
+                        platform_target_db="email_platform_restore",
+                        keycloak_target_db="keycloak_restore",
+                        **RELEASE_BINDING,
+                    )
+            self.assertEqual(verify_binding.call_count, 2)
+
+    def test_release_bound_restore_rejects_mismatch_before_restore(self) -> None:
+        def fake_backup(command, check, stdout=None, **kwargs):
+            if stdout is not None:
+                stdout.write(b"database-backup")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir) / "bundle"
+            with mock.patch("subprocess.run", side_effect=fake_backup):
+                postgres_maintenance.backup_bundle(
+                    bundle_dir,
+                    platform_db="email_platform",
+                    keycloak_db="keycloak",
+                    **RELEASE_BINDING,
+                )
+            mismatched = dict(RELEASE_BINDING)
+            mismatched["container_manifest_sha256"] = "c" * 64
+            with mock.patch("subprocess.run") as run:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "release binding mismatch: container_manifest_sha256",
+                ):
+                    postgres_maintenance.restore_bundle(
+                        bundle_dir,
+                        platform_target_db="email_platform_restore",
+                        keycloak_target_db="keycloak_restore",
+                        **mismatched,
+                    )
+                run.assert_not_called()
+            with mock.patch("subprocess.run") as run:
+                with self.assertRaisesRegex(
+                    ValueError, "release binding requires all four fields"
+                ):
+                    postgres_maintenance.restore_bundle(
+                        bundle_dir,
+                        platform_target_db="email_platform_restore",
+                        keycloak_target_db="keycloak_restore",
+                        release_tag=RELEASE_BINDING["release_tag"],
+                    )
+                run.assert_not_called()
+
+    def test_bundle_cli_parses_release_binding_for_generation_and_restore(self) -> None:
+        parser = postgres_maintenance.build_parser()
+        flags = [
+            "--release-tag",
+            RELEASE_BINDING["release_tag"],
+            "--release-commit",
+            RELEASE_BINDING["release_commit"],
+            "--migration-head",
+            RELEASE_BINDING["migration_head"],
+            "--container-manifest-sha256",
+            RELEASE_BINDING["container_manifest_sha256"],
+        ]
+        for command in ("backup-bundle", "drill-bundle", "restore-bundle"):
+            directory_flag = (
+                "--input-dir" if command == "restore-bundle" else "--output-dir"
+            )
+            args = parser.parse_args([command, directory_flag, "bundle", *flags])
+            for field, expected in RELEASE_BINDING.items():
+                self.assertEqual(getattr(args, field), expected)
 
     def test_failed_bundle_refresh_invalidates_old_manifest(self) -> None:
         call_count = 0
@@ -202,8 +447,14 @@ class PostgresMaintenanceTests(unittest.TestCase):
                     keycloak_db="keycloak",
                     platform_scratch_db="email_platform_restore_drill",
                     keycloak_scratch_db="keycloak_restore_drill",
+                    **RELEASE_BINDING,
                 )
+            manifest = json.loads(
+                drill.bundle.manifest_path.read_text(encoding="utf-8")
+            )
 
+        self.assertEqual(manifest["schema_version"], 2)
+        self.assertEqual(manifest["release_tag"], RELEASE_BINDING["release_tag"])
         self.assertEqual(
             set(drill.critical_row_counts["platform"]),
             {"users", "devices", "audit_events"},

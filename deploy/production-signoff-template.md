@@ -21,6 +21,15 @@ Release manifest:
 - CodeQL JavaScript/TypeScript result:
 - Phase 6 CI rehearsal evidence, file SHA-256 and payload SHA-256 (preflight only):
 - Target-environment pilot evidence:
+- Rollback release tag, commit and migration head:
+- Rollback container manifest SHA-256:
+- Release-bound dual-database backup manifest SHA-256:
+- Rollback expected and observed OCI digests:
+- Rollback Cosign, SBOM attestation and provenance verification:
+- Rollback drill start/end UTC and achieved RTO/RPO:
+- Rollback dual-database critical row counts:
+- Rollback failure-injection result (edge remained closed):
+- Rollback independent operator/reviewer:
 - Signed by:
 - Reviewer role:
 - Review date:
@@ -71,6 +80,12 @@ Release manifest:
 
    - Evidence:
    - Result:
+
+   Rollback evidence must name the same release tag, commit, migration head,
+   container-manifest SHA-256 and schema-v2 platform + Keycloak backup bundle.
+   Record actual running image digests and confirm that a forced restore or
+   smoke-test failure kept edge closed. A local mocked command-order test is
+   preflight only and does not satisfy this gate.
 
 The Phase 6 CI rehearsal is only a preflight artifact and must have
 `production_acceptance=false`. It cannot be used as the evidence for gate 9.

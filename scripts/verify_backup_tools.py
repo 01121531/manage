@@ -57,10 +57,27 @@ def main() -> int:
     }:
         print("Backup drill critical-table whitelist is incomplete", file=sys.stderr)
         return 1
-    for function_name in ("backup_bundle", "verify_bundle", "restore_bundle", "drill_bundle"):
+    for function_name in (
+        "backup_bundle",
+        "verify_bundle",
+        "verify_bundle_release_binding",
+        "restore_bundle",
+        "drill_bundle",
+    ):
         if not callable(getattr(maintenance, function_name, None)):
             print(f"Missing backup function: {function_name}", file=sys.stderr)
             return 1
+    if maintenance.BACKUP_RELEASE_MANIFEST_SCHEMA != 2:
+        print("Release-bound backup schema v2 is required", file=sys.stderr)
+        return 1
+    if set(maintenance.RELEASE_BINDING_FIELDS) != {
+        "release_tag",
+        "release_commit",
+        "migration_head",
+        "container_manifest_sha256",
+    }:
+        print("Release-bound backup fields are incomplete", file=sys.stderr)
+        return 1
 
     if not VAULT_SCRIPT.exists():
         print("Missing vault_maintenance.py", file=sys.stderr)
