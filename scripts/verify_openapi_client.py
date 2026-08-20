@@ -7,7 +7,16 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from export_openapi import REPOSITORY_ROOT, export_openapi
+try:
+    from .export_openapi import REPOSITORY_ROOT, export_openapi
+except ImportError:  # Direct script execution from scripts/.
+    from export_openapi import REPOSITORY_ROOT, export_openapi
+
+
+def normalized_contract(path: Path) -> str:
+    """Compare generated source independent of the runner's newline policy."""
+
+    return path.read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
 def main() -> int:
@@ -30,7 +39,7 @@ def main() -> int:
             cwd=frontend,
             check=True,
         )
-        if generated.read_bytes() != expected.read_bytes():
+        if normalized_contract(generated) != normalized_contract(expected):
             raise SystemExit(
                 "generated OpenAPI client is stale; run npm run generate:api"
             )
