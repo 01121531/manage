@@ -10,6 +10,7 @@ from update_client import (
     UpdateClient,
     UpdateError,
     apply_downloaded_update,
+    apply_update_cli,
     is_newer_version,
     parse_update_manifest,
 )
@@ -130,6 +131,66 @@ class UpdateClientTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), package_bytes)
             self.assertFalse(package.exists())
             self.assertEqual(launched, [target.resolve()])
+            self.assertEqual(list(target.parent.glob(".Manage.exe.rollback-*")), [])
+
+    def test_apply_restores_previous_executable_when_launch_fails(self) -> None:
+        package_bytes = b"new executable"
+        old_bytes = b"old executable"
+        digest = hashlib.sha256(package_bytes).hexdigest()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"LOCALAPPDATA": directory}
+        ):
+            cache = Path(directory) / "MailCodeHelper" / "updates"
+            cache.mkdir(parents=True)
+            package = cache / "package-0.2.0.exe"
+            package.write_bytes(package_bytes)
+            target = Path(directory) / "Manage.exe"
+            target.write_bytes(old_bytes)
+
+            with self.assertRaisesRegex(UpdateError, "已恢复原版本") as captured:
+                apply_downloaded_update(
+                    package=package,
+                    target=target,
+                    expected_sha256=digest,
+                    parent_pid=123,
+                    wait_fn=lambda _pid: True,
+                    launch_fn=lambda _target: (_ for _ in ()).throw(
+                        OSError("SENSITIVE_LAUNCH_DETAIL")
+                    ),
+                )
+
+            self.assertEqual(target.read_bytes(), old_bytes)
+            self.assertTrue(package.exists())
+            self.assertNotIn("SENSITIVE_LAUNCH_DETAIL", str(captured.exception))
+            self.assertEqual(list(target.parent.glob(".Manage.exe.rollback-*")), [])
+            self.assertEqual(list(target.parent.glob(".Manage.exe.update-*")), [])
+
+    def test_apply_cli_records_safe_update_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "updates"
+            with patch(
+                "update_client.apply_downloaded_update",
+                side_effect=UpdateError("新版本启动失败，已恢复原版本"),
+            ), patch("update_client.update_cache_dir", return_value=cache):
+                result = apply_update_cli(
+                    [
+                        "--apply-update",
+                        "--package",
+                        str(cache / "package.exe"),
+                        "--target",
+                        str(Path(directory) / "Manage.exe"),
+                        "--sha256",
+                        "a" * 64,
+                        "--parent-pid",
+                        "123",
+                    ]
+                )
+
+            self.assertEqual(result, 1)
+            self.assertEqual(
+                (cache / "update-error.log").read_text(encoding="utf-8"),
+                "新版本启动失败，已恢复原版本",
+            )
 
 
 if __name__ == "__main__":

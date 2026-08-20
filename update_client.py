@@ -325,18 +325,40 @@ def apply_downloaded_update(
     if file_sha256(package) != expected_sha256:
         raise UpdateError("更新包完整性校验失败")
     staged = target.with_name(f".{target.name}.update-{uuid4().hex}")
+    backup = target.with_name(f".{target.name}.rollback-{uuid4().hex}")
     try:
         shutil.copy2(package, staged)
         if file_sha256(staged) != expected_sha256:
             raise UpdateError("更新文件复制校验失败")
-        os.replace(staged, target)
+        try:
+            os.replace(target, backup)
+        except OSError as error:
+            raise UpdateError("无法备份当前程序") from error
+        try:
+            os.replace(staged, target)
+        except OSError as error:
+            try:
+                os.replace(backup, target)
+            except OSError as restore_error:
+                raise UpdateError("更新替换失败且原版本恢复失败") from restore_error
+            raise UpdateError("更新替换失败，已恢复原版本") from error
+
+        try:
+            if launch_fn is None:
+                subprocess.Popen([str(target)], close_fds=True)
+            else:
+                launch_fn(target)
+        except Exception as error:
+            try:
+                os.replace(backup, target)
+            except OSError as restore_error:
+                raise UpdateError("新版本启动失败且原版本恢复失败") from restore_error
+            raise UpdateError("新版本启动失败，已恢复原版本") from error
+
+        backup.unlink(missing_ok=True)
+        package.unlink(missing_ok=True)
     finally:
         staged.unlink(missing_ok=True)
-    package.unlink(missing_ok=True)
-    if launch_fn is None:
-        subprocess.Popen([str(target)], close_fds=True)
-    else:
-        launch_fn(target)
 
 
 def cleanup_update_cache(*, max_age_seconds: int = 24 * 60 * 60) -> None:
