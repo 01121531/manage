@@ -147,6 +147,7 @@ class PlatformDesktopApp:
         self._current_code: str | None = None
         self._current_card_clipboard: str | None = None
         self._card_allocation_id: str | None = None
+        self._verified_task_id: str | None = None
         self._upload_job_id: str | None = None
         self._upload_idempotency_key: str | None = None
         self._upload_business_name: str | None = None
@@ -392,7 +393,7 @@ class PlatformDesktopApp:
         self.logout_button.configure(state="normal" if authenticated else "disabled")
         self.login_button.configure(state="disabled" if authenticated else "normal")
         if not authenticated:
-            self.upload_button.configure(state="disabled")
+            self._reset_task_verification()
             self.copy_card_button.configure(state="disabled")
             self.copy_button.configure(state="disabled")
             self._set_workflow_stage("logged_out")
@@ -413,6 +414,22 @@ class PlatformDesktopApp:
     def _reset_upload_attempt(self) -> None:
         self._upload_idempotency_key = None
         self._upload_business_name = None
+
+    def _current_task_is_verified(self) -> bool:
+        return (
+            self._task_id is not None
+            and self._verified_task_id == self._task_id
+        )
+
+    def _mark_current_task_verified(self) -> None:
+        if self._task_id is None:
+            return
+        self._verified_task_id = self._task_id
+        self.upload_button.configure(state="normal")
+
+    def _reset_task_verification(self) -> None:
+        self._verified_task_id = None
+        self.upload_button.configure(state="disabled")
 
     def _set_status(self, text: str, color: str = MUTED) -> None:
         if not self._closed:
@@ -759,6 +776,7 @@ class PlatformDesktopApp:
         self._clear_sensitive_code()
         self._clear_card_details()
         self._card_allocation_id = None
+        self._reset_task_verification()
         self._upload_job_id = None
         self._reset_upload_attempt()
         self._task_generation += 1
@@ -928,7 +946,7 @@ class PlatformDesktopApp:
                 self.card_label.configure(text=allocation.card_masked)
                 self.session_label.configure(text=session.status)
                 self.copy_card_button.configure(state="normal")
-                self.upload_button.configure(state="normal")
+                self._reset_task_verification()
                 self.new_task_button.configure(state="normal")
                 self._set_workflow_stage("waiting")
                 self._set_status("邮箱已分配，正在等待新验证码…", ACCENT)
@@ -944,6 +962,7 @@ class PlatformDesktopApp:
                 snapshot: MailCodeSnapshot = value
                 self.session_label.configure(text=snapshot.status)
                 if snapshot.code:
+                    self._mark_current_task_verified()
                     self._current_code = snapshot.code
                     self.code_label.configure(text=snapshot.code, foreground=ACCENT)
                     self.copy_button.configure(state="normal")
@@ -952,7 +971,14 @@ class PlatformDesktopApp:
                     self._set_status("已收到验证码并复制到剪贴板。", SUCCESS)
                     self._set_workflow_stage("code_ready")
                     self.stop_polling()
+                elif snapshot.status == "code_ready":
+                    self._reset_task_verification()
+                    self._set_status("验证码已到达，正在安全获取…", ACCENT)
+                    self._set_workflow_stage("code_ready")
+                    if hasattr(self, "_schedule_next_poll"):
+                        self._schedule_next_poll()
                 elif snapshot.status in {"expired", "revoked"}:
+                    self._reset_task_verification()
                     self._set_status("邮箱会话已结束，请新建任务。", WARNING)
                     self.stop_polling()
                     self.copy_card_button.configure(state="disabled")
@@ -960,7 +986,9 @@ class PlatformDesktopApp:
                     self._set_workflow_stage("stopped")
                     self._close_active_task_async()
                 elif snapshot.status == "consumed":
-                    self._set_status("验证码已消费。", MUTED)
+                    self._mark_current_task_verified()
+                    self._set_status("验证码已消费，可继续提交上传。", SUCCESS)
+                    self._set_workflow_stage("code_ready")
                     self.stop_polling()
                 else:
                     self._set_status("等待新验证码…", MUTED)
@@ -976,18 +1004,20 @@ class PlatformDesktopApp:
                     self.root.after(2000, self._poll_upload)
                 elif snapshot.status == "succeeded":
                     self._set_status("上传完成。", SUCCESS)
-                    self.upload_button.configure(state="disabled")
+                    self._reset_task_verification()
                     self.copy_card_button.configure(state="disabled")
                     self._set_workflow_stage("completed")
                     self._close_active_task_async()
                 elif snapshot.status == "unknown":
                     self._set_status("上传结果未知，请管理员核对后再处理，系统不会自动重试。", WARNING)
-                    self.upload_button.configure(state="disabled")
+                    self._reset_task_verification()
                     self._set_workflow_stage("review")
                 else:
                     self._set_status(f"上传失败：{snapshot.error_code or 'unknown_error'}。", ERROR)
                     self._reset_upload_attempt()
-                    self.upload_button.configure(state="normal")
+                    self.upload_button.configure(
+                        state="normal" if self._current_task_is_verified() else "disabled"
+                    )
                     self._set_workflow_stage("upload_failed")
             elif kind == "card_reveal_authorizing":
                 self._set_status(
@@ -1009,11 +1039,14 @@ class PlatformDesktopApp:
                     self._set_authenticated(False)
                 self._set_status(format_operation_error(value), ERROR)
             elif kind == "upload_submit_error":
-                self.upload_button.configure(state="normal")
                 if isinstance(value, PlatformAuthenticationError):
                     if self._client is not None:
                         self._client.clear_access_token()
                     self._set_authenticated(False)
+                else:
+                    self.upload_button.configure(
+                        state="normal" if self._current_task_is_verified() else "disabled"
+                    )
                 self._set_status(format_operation_error(value), ERROR)
             elif kind == "upload_poll_error":
                 if isinstance(value, PlatformAuthenticationError):
@@ -1181,6 +1214,10 @@ class PlatformDesktopApp:
         ):
             self._set_status("请先登录并创建已分配卡的任务。", ERROR)
             return
+        if not self._current_task_is_verified():
+            self.upload_button.configure(state="disabled")
+            self._set_status("请等待当前任务取得验证码后再提交上传。", ERROR)
+            return
         business_name = self.business_entry.get().strip()
         if not business_name:
             self._set_status("请输入业务名称后再提交上传。", ERROR)
@@ -1275,6 +1312,7 @@ class PlatformDesktopApp:
         self._mail_session_id = None
         self._mail_session_token = None
         self._card_allocation_id = None
+        self._reset_task_verification()
         self._upload_job_id = None
         self._reset_upload_attempt()
         self._task_generation += 1

@@ -8,6 +8,22 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
+class BusinessHTTPException(StarletteHTTPException):
+    """HTTP error with a stable, non-sensitive business error contract."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        code: str,
+        message: str,
+        recovery_hint: str,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=message)
+        self.code = code
+        self.recovery_hint = recovery_hint
+
+
 def error_response(
     request: Request,
     *,
@@ -51,14 +67,20 @@ async def http_exception_handler(
         409: "刷新当前状态后按页面提示继续",
         503: "稍后重试；持续失败时携带 trace_id 联系管理员",
     }
+    code = exc.code if isinstance(exc, BusinessHTTPException) else codes.get(
+        exc.status_code, "http_error"
+    )
+    recovery_hint = (
+        exc.recovery_hint
+        if isinstance(exc, BusinessHTTPException)
+        else recovery_hints.get(exc.status_code, "携带 trace_id 联系管理员")
+    )
     return error_response(
         request,
         status_code=exc.status_code,
-        code=codes.get(exc.status_code, "http_error"),
+        code=code,
         message=detail,
-        recovery_hint=recovery_hints.get(
-            exc.status_code, "携带 trace_id 联系管理员"
-        ),
+        recovery_hint=recovery_hint,
         headers=exc.headers,
     )
 

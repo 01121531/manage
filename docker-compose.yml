@@ -114,6 +114,8 @@ services:
     environment:
       PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
       PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      PLATFORM_RATE_LIMIT_ENABLED: "true"
+      PLATFORM_REDIS_URL: ${PLATFORM_REDIS_URL:?set PLATFORM_REDIS_URL in .env}
       PLATFORM_AUTH_MODE: oidc
       PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
       PLATFORM_OIDC_AUDIENCE: email-platform-api

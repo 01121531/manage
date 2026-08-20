@@ -15,10 +15,15 @@ from platform.config import Settings
 from platform.models import (
     AuditEvent,
     Card,
+    Device,
+    Mailbox,
+    MailSession,
     OutboxEvent,
+    Task,
     UploadJob,
     UploadPolicyDeployment,
     UploadPolicyVersion,
+    utc_now,
 )
 from platform.policies import select_policy_for_task
 from platform.uploads import (
@@ -80,15 +85,22 @@ class UploadJobTests(unittest.TestCase):
             device_name="upload-device",
         )
         with self.app.state.session_factory() as db:
-            db.add(
-                Card(
-                    tenant_id="tenant-upload",
-                    provider_ref="provider-upload-card",
-                    brand="VISA",
-                    last4="2222",
-                    secret_ref="vault://cards/upload-card",
-                )
+            card = Card(
+                tenant_id="tenant-upload",
+                provider_ref="provider-upload-card",
+                brand="VISA",
+                last4="2222",
+                secret_ref="vault://cards/upload-card",
             )
+            mailbox = Mailbox(
+                tenant_id="tenant-upload",
+                email_masked="u***@example.test",
+                connector_type="http",
+                secret_ref="vault://secret/mailboxes/upload-test",
+            )
+            db.add_all([card, mailbox])
+            db.flush()
+            self.mailbox_id = mailbox.id
             db.commit()
 
     def tearDown(self) -> None:
@@ -120,7 +132,9 @@ class UploadJobTests(unittest.TestCase):
     def bearer(token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}"}
 
-    def create_task_with_card(self, token: str) -> tuple[str, str]:
+    def create_task_with_card(
+        self, token: str, *, with_verification: bool = True
+    ) -> tuple[str, str]:
         task = self.request(
             "POST",
             "/api/v1/tasks",
@@ -135,7 +149,37 @@ class UploadJobTests(unittest.TestCase):
             headers=self.bearer(token),
         )
         self.assertEqual(allocation.status_code, 201, allocation.text)
+        if with_verification:
+            self.add_mail_verification(task_id)
         return task_id, allocation.json()["id"]
+
+    def add_mail_verification(
+        self,
+        task_id: str,
+        *,
+        status: str = "consumed",
+        consumed_at: datetime | None = None,
+        expires_at: datetime | None = None,
+        device_id: str | None = None,
+    ) -> str:
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            assert task is not None
+            session = MailSession(
+                tenant_id=task.tenant_id,
+                task_id=task.id,
+                user_id=task.user_id,
+                device_id=device_id or task.device_id,
+                mailbox_id=self.mailbox_id,
+                trace_id=task.trace_id,
+                status=status,
+                consumed_at=(now if consumed_at is None and status == "consumed" else consumed_at),
+                expires_at=expires_at or now + timedelta(minutes=5),
+            )
+            db.add(session)
+            db.commit()
+            return session.id
 
     def create_upload(self, token: str, task_id: str, key: str = "upload-1") -> httpx.Response:
         return self.request(
@@ -207,6 +251,100 @@ class UploadJobTests(unittest.TestCase):
         self.assertEqual(events[0].status, "pending")
         for forbidden in ("payload", "secret", "credential", "proxy", "token"):
             self.assertNotIn(forbidden, OutboxEvent.__table__.columns)
+
+    def test_first_upload_requires_consumed_verification_for_same_task_and_device(self) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(token, with_verification=False)
+
+        def assert_verification_required(key: str) -> None:
+            response = self.create_upload(token, task_id, key)
+            self.assertEqual(response.status_code, 409, response.text)
+            error = response.json()["error"]
+            self.assertEqual(error["code"], "verification_required")
+            self.assertEqual(
+                set(error), {"code", "message", "recovery_hint", "trace_id"}
+            )
+            serialized = str(error).lower()
+            for forbidden in ("mailbox", "email", "session_id", "secret", "token"):
+                self.assertNotIn(forbidden, serialized)
+
+        assert_verification_required("verification-none")
+        session_id = self.add_mail_verification(
+            task_id, status="waiting", consumed_at=None
+        )
+        assert_verification_required("verification-waiting")
+
+        cases = (
+            ("code_ready", None, utc_now() + timedelta(minutes=5), self.identity.device_id),
+            ("expired", None, utc_now() + timedelta(minutes=5), self.identity.device_id),
+            ("revoked", None, utc_now() + timedelta(minutes=5), self.identity.device_id),
+            ("consumed", None, utc_now() + timedelta(minutes=5), self.identity.device_id),
+            ("consumed", utc_now(), utc_now() - timedelta(seconds=1), self.identity.device_id),
+        )
+        for index, (status, consumed_at, expires_at, device_id) in enumerate(cases):
+            with self.subTest(status=status, consumed_at=consumed_at, expires_at=expires_at):
+                with self.app.state.session_factory() as db:
+                    session = db.get(MailSession, session_id)
+                    session.status = status
+                    session.consumed_at = consumed_at
+                    session.expires_at = expires_at
+                    session.device_id = device_id
+                    db.commit()
+                assert_verification_required(f"verification-state-{index}")
+
+        with self.app.state.session_factory() as db:
+            alternate_device = Device(
+                tenant_id="tenant-upload",
+                user_id=self.identity.user_id,
+                name="alternate-upload-device",
+            )
+            db.add(alternate_device)
+            db.flush()
+            session = db.get(MailSession, session_id)
+            session.status = "consumed"
+            session.consumed_at = utc_now()
+            session.expires_at = utc_now() + timedelta(minutes=5)
+            session.device_id = alternate_device.id
+            db.commit()
+        assert_verification_required("verification-cross-device")
+
+        other_identity = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-upload",
+            email="other-verification-owner@example.test",
+            password="other-verification-owner-password",
+            device_name="other-verification-device",
+        )
+        with self.app.state.session_factory() as db:
+            session = db.get(MailSession, session_id)
+            session.user_id = other_identity.user_id
+            session.device_id = other_identity.device_id
+            db.commit()
+        assert_verification_required("verification-cross-user")
+
+        with self.app.state.session_factory() as db:
+            session = db.get(MailSession, session_id)
+            session.user_id = self.identity.user_id
+            session.device_id = self.identity.device_id
+            db.commit()
+        accepted = self.create_upload(token, task_id, "verification-valid")
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+
+    def test_upload_idempotent_replay_survives_later_verification_revocation(self) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(token)
+        created = self.create_upload(token, task_id, "verification-replay")
+        self.assertEqual(created.status_code, 201, created.text)
+        with self.app.state.session_factory() as db:
+            session = db.scalar(
+                select(MailSession).where(MailSession.task_id == task_id)
+            )
+            session.status = "revoked"
+            session.consumed_at = None
+            db.commit()
+        replay = self.create_upload(token, task_id, "verification-replay")
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["id"], created.json()["id"])
 
     def test_worker_consumes_transactional_outbox(self) -> None:
         token = self.login()

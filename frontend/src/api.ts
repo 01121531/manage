@@ -4,6 +4,7 @@ import type {
   AdminUser,
   AdminDevice,
   AuditEvent,
+  AuditFilters,
   AuthConfig,
   CardCreate,
   CardSummary,
@@ -59,7 +60,7 @@ export function setBearer(value: string, expiresIn?: number) {
 
 const authMiddleware: Middleware = {
   onRequest({ request }) {
-    request.headers.set('Accept', 'application/json')
+    if (!request.headers.has('Accept')) request.headers.set('Accept', 'application/json')
     if (bearer) request.headers.set('Authorization', `Bearer ${bearer}`)
     return request
   },
@@ -225,22 +226,57 @@ export const deployUploadPolicyVersion = (
 export const rollbackUploadPolicy = (): Promise<UploadPolicyDeployment> =>
   unwrap(api.POST('/api/v1/admin/policies/upload/rollback'))
 
-export const listAuditEvents = (filters?: {
-  traceId?: string
-  userId?: string
-  entityId?: string
-  eventType?: string
-}): Promise<AuditEvent[]> => unwrap(api.GET('/api/v1/admin/audit', {
+const auditQuery = (filters?: AuditFilters) => ({
+  trace_id: filters?.traceId?.trim() || undefined,
+  actor_id: filters?.actorId?.trim() || undefined,
+  user_id: filters?.userId?.trim() || undefined,
+  entity_type: filters?.entityType?.trim() || undefined,
+  entity_id: filters?.entityId?.trim() || undefined,
+  event_type: filters?.eventType?.trim() || undefined,
+  result: filters?.result?.trim() || undefined,
+  created_from: filters?.createdFrom?.trim() || undefined,
+  created_to: filters?.createdTo?.trim() || undefined,
+})
+
+export const listAuditEvents = (filters?: AuditFilters): Promise<AuditEvent[]> =>
+  unwrap(api.GET('/api/v1/admin/audit', {
   params: {
     query: {
-      trace_id: filters?.traceId?.trim() || undefined,
-      user_id: filters?.userId?.trim() || undefined,
-      entity_id: filters?.entityId?.trim() || undefined,
-      event_type: filters?.eventType?.trim() || undefined,
+      ...auditQuery(filters),
       limit: 200,
     },
   },
 }))
+
+export async function downloadAuditEvents(filters?: AuditFilters): Promise<void> {
+  const { data, error, response } = await api.GET('/api/v1/admin/audit/export', {
+    params: { query: { ...auditQuery(filters), limit: 5000 } },
+    headers: { Accept: 'text/csv' },
+    cache: 'no-store',
+    parseAs: 'text',
+  })
+  if (!response.ok) {
+    await unwrap(Promise.resolve({ data: undefined, error, response }))
+    return
+  }
+  if (typeof data !== 'string' || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/csv')) {
+    throw new ApiError('审计导出响应格式异常，请稍后重试。', response.status)
+  }
+
+  const blob = new Blob([data], { type: 'text/csv;charset=utf-8' })
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = `audit-redacted-${new Date().toISOString().replaceAll(':', '-')}.csv`
+  link.hidden = true
+  document.body.appendChild(link)
+  try {
+    link.click()
+  } finally {
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+  }
+}
 
 export const cancelUploadJob = (jobId: string): Promise<UploadSummary> =>
   unwrap(api.POST('/api/v1/upload-jobs/{job_id}/cancel', {

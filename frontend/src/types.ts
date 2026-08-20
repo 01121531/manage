@@ -27,6 +27,18 @@ export type AdminDevice = ApiSchemas['AdminDeviceResponse']
 
 export type AuditEvent = ApiSchemas['AdminAuditResponse']
 
+export type AuditFilters = {
+  traceId?: string
+  actorId?: string
+  userId?: string
+  entityType?: string
+  entityId?: string
+  eventType?: string
+  result?: string
+  createdFrom?: string
+  createdTo?: string
+}
+
 export type CardSummary = ApiSchemas['AdminCardResponse']
 export type CardCreate = ApiSchemas['AdminCardCreate']
 

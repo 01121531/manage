@@ -23,7 +23,8 @@ python -m uvicorn platform.app:create_app --factory --reload
 The default endpoints are:
 
 - `GET /healthz` — infrastructure probe.
-- `GET /readyz` — dependency readiness probe; currently verifies database access.
+- `GET /readyz` — dependency readiness probe; verifies database/migrations and,
+  when distributed rate limiting is enabled, Redis connectivity.
 - `GET /metrics` — Prometheus text metrics for low-cardinality API request
   counters and upload job status counts.
 - `GET /api/v1/health` — versioned service health.
@@ -59,6 +60,10 @@ The default endpoints are:
 - `GET /api/v1/admin/policies/upload` — privileged, read-only upload policy
   status; returns booleans and version only, never `proxy_ref`, credentials,
   group, concurrency or upstream URLs.
+- `GET /api/v1/admin/audit` — tenant-scoped structured audit search by actor,
+  user, resource, event/result, trace and time range.
+- `GET /api/v1/admin/audit/export` — bounded, redacted CSV export that omits
+  free-form details and is returned with `no-store`.
 - `/api/docs` — OpenAPI UI. Run `cd frontend && npm run generate:api` after
   contract changes; the quality gate rejects a stale generated TypeScript
   contract before building the Web console.
@@ -146,6 +151,12 @@ resolver is fail-closed and returns `503 service_unavailable` until a
 production secret-manager adapter is injected. Configure a real Keycloak LoA
 flow for the required ACR before production; a browser prompt by itself is not
 accepted as step-up proof. Upload requests accept only `business_name` and an idempotency key.
+Before the first upload job is created, the server requires the same task's
+mail session to have been atomically consumed by the same tenant, user and
+device while both task and session are valid. Missing, waiting, merely
+`code_ready`, expired or revoked verification returns the stable
+`verification_required` conflict; an already-created idempotent job remains
+replayable without repeating the verification side effect.
 Creating an upload job also inserts one payload-free `upload.requested` row in
 `outbox_events` in the same database transaction. The upload worker claims only
 those outbox rows; it does not scan `upload_jobs` as an implicit queue. A stale
@@ -220,6 +231,21 @@ status counts only. Prometheus scrape targets and alert rules live under
 their internal ports for stalled-batch and availability alerts.
 Audit events are append-only at both the application and database layer; update
 and delete attempts are rejected so the audit trail remains tamper-evident.
+Each event records structured actor/action/result, tenant/user/device/resource,
+trace, bounded request IP and user agent, timestamp and policy version fields.
+Known sensitive keys and Luhn-valid card numbers embedded in arbitrary strings
+are redacted before persistence. The Web console never renders the free-form
+details object, and its CSV export includes only reviewed structured fields.
+
+Production and staging require `PLATFORM_RATE_LIMIT_ENABLED=true` and a
+secret-managed `PLATFORM_REDIS_URL`. One atomic Redis Lua operation increments
+each fixed-window counter and assigns its TTL. Login uses a hashed client-IP
+identity; upload writes and card-reveal operations use hashed Bearer/IP
+fingerprints with a stricter tier; ordinary requests use a wider tier. Raw
+tokens, email addresses, tenants and IP values never enter Redis keys. Limit
+responses include `Retry-After`, `X-RateLimit-*` and the normal trace envelope.
+If Redis cannot make a decision, managed environments fail closed with 503 and
+`/readyz` becomes unhealthy; development/test may disable or inject the backend.
 
 ## Verify
 
@@ -373,6 +399,38 @@ with a caller-supplied token. It can exercise `vault://secret/...` references
 locally when `PLATFORM_VAULT_ADDR=http://vault:8200` is set for containers.
 Never enable this profile in staging/production; production uses a sealed,
 least-privilege Vault deployment or another approved secret manager.
+
+### Container supply-chain release gate
+
+Every push and pull request runs CodeQL `security-extended` analysis for Python
+and JavaScript/TypeScript, and builds the API, Web, and Edge images locally in
+the Security Gate workflow. Syft produces an SPDX JSON SBOM for each exact candidate
+and Trivy fails the job on any HIGH or CRITICAL OS or library vulnerability,
+including vulnerabilities without a published fix. The workflow uploads the
+SBOM and SARIF evidence but never pushes pull-request candidates.
+
+For a semantic-version tag, `release.yml` first runs the complete quality gate,
+then builds each image once, generates its Syft SBOM, and passes the same Trivy
+gate before authenticating to GHCR. Only that scanned local image is tagged and
+pushed. The workflow signs the OCI digest with keyless Cosign using GitHub OIDC,
+attaches the SPDX SBOM as a signed Cosign attestation, attaches GitHub build
+provenance, and verifies the expected workflow identity and issuer. The Windows
+GitHub Release job depends on all three matrix publications and includes their
+SBOMs, Trivy SARIF reports, and `container-release-manifest.json`; a container failure therefore
+prevents the desktop release from being published.
+
+All newly added third-party Actions and self-built image base references are
+pinned to immutable commit or registry digests. Run
+`python scripts/verify_container_supply_chain.py` locally to validate the
+workflow structure and release ordering. Production signoff must record each
+OCI digest, SBOM SHA-256, Cosign identity/issuer, and provenance evidence.
+The container release manifest also locks each Trivy report hash and the exact
+HIGH/CRITICAL gate result.
+
+The Python runtime requirements currently use bounded version ranges rather
+than a resolver-generated `--require-hashes` lock. Do not hand-author hashes:
+generate and review the lock in a controlled Linux build environment, then make
+the image install from that lock in a subsequent supply-chain change.
 
 ### Production readiness gates
 

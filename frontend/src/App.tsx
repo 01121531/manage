@@ -4,6 +4,7 @@ import {
   BankOutlined,
   CloudUploadOutlined,
   DashboardOutlined,
+  DownloadOutlined,
   LockOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
@@ -39,10 +40,10 @@ import {
   Typography,
 } from 'antd'
 import type { MenuProps, TableColumnsType } from 'antd'
-import { ApiError, approveUploadPolicyVersion, cancelUploadJob, clearSession, closeTask, createCard, createMailbox, deployUploadPolicyVersion, disableUser, getAuthConfig, getDashboardSummary, getMe, getUploadPolicyStatus, listAuditEvents, listCards, listDevices, listMailboxes, listTasks, listUploadPolicyVersions, listUploads, listUsers, login, reconcileUploadJob, registerUploadPolicyVersion, revokeDevice, rollbackUploadPolicy, rotateMailboxSecret, setBearer, updateCardState, updateMailboxState } from './api'
+import { ApiError, approveUploadPolicyVersion, cancelUploadJob, clearSession, closeTask, createCard, createMailbox, deployUploadPolicyVersion, disableUser, downloadAuditEvents, getAuthConfig, getDashboardSummary, getMe, getUploadPolicyStatus, listAuditEvents, listCards, listDevices, listMailboxes, listTasks, listUploadPolicyVersions, listUploads, listUsers, login, reconcileUploadJob, registerUploadPolicyVersion, revokeDevice, rollbackUploadPolicy, rotateMailboxSecret, setBearer, updateCardState, updateMailboxState } from './api'
 import { createOidcManager } from './oidc'
 import type { UserManager } from 'oidc-client-ts'
-import type { AdminDevice, AdminUser, AuditEvent, AuthConfig, CardCreate, CardSummary, DashboardSummary, MailboxCreate, MailboxSummary, Principal, TaskSummary, UploadPolicyStatus, UploadPolicyVersion, UploadSummary } from './types'
+import type { AdminDevice, AdminUser, AuditEvent, AuditFilters, AuthConfig, CardCreate, CardSummary, DashboardSummary, MailboxCreate, MailboxSummary, Principal, TaskSummary, UploadPolicyStatus, UploadPolicyVersion, UploadSummary } from './types'
 
 const { Header, Content, Sider } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -77,19 +78,19 @@ const roleNames: Record<string, string> = {
 }
 
 const statusColor: Record<string, string> = {
-  active: 'green', available: 'green', succeeded: 'green', enabled: 'green',
+  active: 'green', available: 'green', succeeded: 'green', success: 'green', enabled: 'green',
   queued: 'blue', running: 'processing', allocated: 'orange', unknown: 'gold',
   initializing: 'processing', code_ready: 'green',
   busy: 'processing', ready: 'green', not_configured: 'gold',
   draft: 'default', approved: 'blue', retired: 'default',
-  disabled: 'red', failed: 'red', revoked: 'red', expired: 'default',
+  disabled: 'red', failed: 'red', error: 'red', denied: 'red', revoked: 'red', expired: 'default',
   created: 'processing', closed: 'default',
 }
 
 function StatusTag({ value }: { value: string }) {
-  const icon = value === 'succeeded' || value === 'available' ? <CheckCircleOutlined />
+  const icon = value === 'succeeded' || value === 'success' || value === 'available' ? <CheckCircleOutlined />
     : value === 'running' || value === 'queued' ? <LoadingOutlined />
-      : value === 'failed' || value === 'unknown' || value === 'revoked' ? <ExclamationCircleOutlined /> : undefined
+      : value === 'failed' || value === 'error' || value === 'denied' || value === 'unknown' || value === 'revoked' ? <ExclamationCircleOutlined /> : undefined
   return <Tag icon={icon} color={statusColor[value] ?? 'default'}>{value}</Tag>
 }
 
@@ -691,25 +692,74 @@ function UploadsPage() {
 }
 
 function AuditPage() {
-  const [filters, setFilters] = useState({ traceId: '', userId: '', entityId: '', eventType: '' })
-  const [applied, setApplied] = useState(filters)
+  const { message } = AntApp.useApp()
+  const emptyFilters: AuditFilters = {
+    traceId: '', actorId: '', userId: '', entityType: '', entityId: '',
+    eventType: '', result: '', createdFrom: '', createdTo: '',
+  }
+  const [filters, setFilters] = useState<AuditFilters>(emptyFilters)
+  const [applied, setApplied] = useState<AuditFilters>(emptyFilters)
+  const [exporting, setExporting] = useState(false)
   const loader = useCallback(() => listAuditEvents(applied), [applied])
   const columns: TableColumnsType<AuditEvent> = [
-    { title: '时间', dataIndex: 'created_at' },
-    { title: '动作', dataIndex: 'event_type' },
-    { title: '操作者', dataIndex: 'user_id', render: (value) => value ?? '系统' },
+    { title: '时间', dataIndex: 'created_at', width: 190 },
+    { title: '动作', dataIndex: 'action', width: 160 },
+    { title: '结果', dataIndex: 'result', width: 110, render: (value: string) => <StatusTag value={value} /> },
+    { title: '事件类型', dataIndex: 'event_type', width: 170 },
+    { title: '操作者', dataIndex: 'actor_id', width: 150, render: (value: string | null) => value ?? '系统' },
+    { title: '关联用户', dataIndex: 'user_id', width: 150, render: (value: string | null) => value ?? '—' },
     { title: '对象', render: (_, row) => `${row.entity_type}${row.entity_id ? ` / ${row.entity_id}` : ''}` },
-    { title: '追踪号', dataIndex: 'trace_id', render: (value) => value ?? '—' },
+    { title: '策略版本', dataIndex: 'policy_version', width: 130, render: (value: string | null) => value ?? '—' },
+    { title: '来源 IP', dataIndex: 'ip_address', width: 140, render: (value: string | null) => value ?? '—' },
+    {
+      title: '客户端', dataIndex: 'user_agent', width: 220,
+      render: (value: string | null) => value
+        ? <Text className="audit-user-agent" title={value}>{value}</Text>
+        : '—',
+    },
+    { title: '追踪号', dataIndex: 'trace_id', width: 300 },
   ]
-  return <><PageHeading title="审计中心" description="按操作者、对象、动作和 trace_id 定位全链路记录。" /><Card>
-    <Space wrap className="section-card">
-      <Input placeholder="trace_id" value={filters.traceId} onChange={(event) => setFilters({ ...filters, traceId: event.target.value })} />
-      <Input placeholder="操作者 user_id" value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })} />
-      <Input placeholder="对象 entity_id" value={filters.entityId} onChange={(event) => setFilters({ ...filters, entityId: event.target.value })} />
-      <Input placeholder="动作 event_type" value={filters.eventType} onChange={(event) => setFilters({ ...filters, eventType: event.target.value })} />
-      <Button type="primary" onClick={() => setApplied({ ...filters })}>检索</Button>
-      <Button onClick={() => { const empty = { traceId: '', userId: '', entityId: '', eventType: '' }; setFilters(empty); setApplied(empty) }}>清空</Button>
-    </Space>
+
+  function applyFilters() {
+    if (filters.createdFrom && filters.createdTo && filters.createdFrom > filters.createdTo) {
+      message.error('开始时间不能晚于结束时间。')
+      return
+    }
+    setApplied({ ...filters })
+  }
+
+  async function exportCsv() {
+    setExporting(true)
+    try {
+      await downloadAuditEvents(applied)
+      message.success('脱敏审计 CSV 已开始下载。')
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '审计导出失败，请稍后重试。')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return <><PageHeading title="审计中心" description="按操作者、对象、动作、结果和时间范围定位全链路记录。" /><Card>
+    <form className="audit-filter-form" role="search" aria-label="审计事件筛选" onSubmit={(event) => { event.preventDefault(); applyFilters() }}>
+      <div className="audit-filter-grid">
+        <label><span>追踪号</span><Input placeholder="trace_id" value={filters.traceId} onChange={(event) => setFilters({ ...filters, traceId: event.target.value })} /></label>
+        <label><span>操作者</span><Input placeholder="actor_id" value={filters.actorId} onChange={(event) => setFilters({ ...filters, actorId: event.target.value })} /></label>
+        <label><span>关联用户</span><Input placeholder="user_id" value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })} /></label>
+        <label><span>对象类型</span><Input placeholder="entity_type" value={filters.entityType} onChange={(event) => setFilters({ ...filters, entityType: event.target.value })} /></label>
+        <label><span>对象 ID</span><Input placeholder="entity_id" value={filters.entityId} onChange={(event) => setFilters({ ...filters, entityId: event.target.value })} /></label>
+        <label><span>事件类型</span><Input placeholder="event_type" value={filters.eventType} onChange={(event) => setFilters({ ...filters, eventType: event.target.value })} /></label>
+        <label><span>结果</span><Input placeholder="result" value={filters.result} onChange={(event) => setFilters({ ...filters, result: event.target.value })} /></label>
+        <label><span>开始时间</span><Input type="datetime-local" value={filters.createdFrom} onChange={(event) => setFilters({ ...filters, createdFrom: event.target.value })} /></label>
+        <label><span>结束时间</span><Input type="datetime-local" value={filters.createdTo} onChange={(event) => setFilters({ ...filters, createdTo: event.target.value })} /></label>
+      </div>
+      <div className="audit-filter-actions">
+        <Button type="primary" htmlType="submit">检索</Button>
+        <Button onClick={() => { const empty = { ...emptyFilters }; setFilters(empty); setApplied(empty) }}>清空</Button>
+        <Button icon={<DownloadOutlined />} loading={exporting} onClick={exportCsv}>导出脱敏 CSV</Button>
+        <Text type="secondary">导出使用当前已应用筛选，且不包含自由格式详情或原始敏感值。</Text>
+      </div>
+    </form>
     <RemoteTable loader={loader} columns={columns} empty="暂无审计事件" />
   </Card></>
 }

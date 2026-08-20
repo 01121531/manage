@@ -422,10 +422,16 @@ class AuditEvent(Base):
     device_id: Mapped[str | None] = mapped_column(
         ForeignKey("devices.id"), nullable=True
     )
+    actor_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(80), index=True)
+    action: Mapped[str] = mapped_column(String(80), default="unspecified", index=True)
+    result: Mapped[str] = mapped_column(String(32), default="success", index=True)
     entity_type: Mapped[str] = mapped_column(String(80))
     entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(36), index=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    policy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True

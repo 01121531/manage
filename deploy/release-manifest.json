@@ -2,7 +2,7 @@
   "release_id": "0.1.3",
   "backend_version": "0.1.3",
   "frontend_version": "0.1.3",
-  "migration_head": "0013_card_secret_ref_unique",
+  "migration_head": "0014_audit_evidence_fields",
   "compose_images": {
     "api": "email-platform-api:local",
     "worker-mail": "email-platform-worker-mail:local",

@@ -60,6 +60,9 @@ try {
     python scripts/verify_security_workflow.py
     if ($LASTEXITCODE -ne 0) { throw "Security workflow verification failed." }
 
+    python scripts/verify_container_supply_chain.py
+    if ($LASTEXITCODE -ne 0) { throw "Container supply-chain verification failed." }
+
     python scripts/secret_scan.py
     if ($LASTEXITCODE -ne 0) { throw "Secret scan failed." }
 

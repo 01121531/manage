@@ -1,6 +1,8 @@
 import asyncio
+import csv
+import io
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import select
@@ -523,7 +525,11 @@ class PlatformAppTests(unittest.TestCase):
             "POST",
             "/api/v1/tasks",
             headers=self.bearer(token),
-            json={"type": "mail_code", "idempotency_key": "request-audit-1"},
+            json={
+                "type": "mail_code",
+                "idempotency_key": "request-audit-1",
+                "client_reference": "reference 4111 1111 1111 1111 must redact",
+            },
         )
         self.assertEqual(created.status_code, 201)
         with self.app.state.session_factory() as db:
@@ -536,6 +542,8 @@ class PlatformAppTests(unittest.TestCase):
         self.assertNotIn(token, audit_text)
         self.assertNotIn("password", audit_text.lower())
         self.assertNotIn("token", audit_text.lower())
+        self.assertNotIn("4111 1111 1111 1111", audit_text)
+        self.assertIn("[REDACTED_CARD]", audit_text)
 
     def test_admin_audit_supports_tenant_scoped_trace_filters(self) -> None:
         token = self.login()
@@ -563,6 +571,137 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(len(filtered.json()), 1)
         self.assertEqual(filtered.json()[0]["trace_id"], trace_id)
         self.assertEqual(filtered.json()[0]["event_type"], "task.created")
+
+    def test_audit_evidence_fields_and_redacted_csv_export(self) -> None:
+        token = self.login()
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers={
+                **self.bearer(token),
+                "X-Real-IP": "203.0.113.18",
+                "User-Agent": "Evidence Client/1.0",
+            },
+            json={
+                "type": "mail_code",
+                "idempotency_key": "must-not-appear-in-export",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        trace_id = created.json()["trace_id"]
+        with self.app.state.session_factory() as db:
+            user = db.get(User, self.identity.user_id)
+            self.assertIsNotNone(user)
+            user.role = "security_auditor"
+            db.add(
+                AuditEvent(
+                    tenant_id="tenant-a",
+                    user_id=self.identity.user_id,
+                    device_id=self.identity.device_id,
+                    actor_id=self.identity.user_id,
+                    event_type="formula.test",
+                    action="formula.test",
+                    result="success",
+                    entity_type="task",
+                    entity_id="=1+1",
+                    trace_id="00000000-0000-0000-0000-000000000099",
+                    user_agent="@formula-agent",
+                    details_json='{"password":"must-not-export"}',
+                )
+            )
+            db.commit()
+        auditor_token = self.login()
+
+        response = self.request(
+            "GET",
+            f"/api/v1/admin/audit?trace_id={trace_id}&result=success",
+            headers=self.bearer(auditor_token),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()), 1)
+        event = response.json()[0]
+        self.assertEqual(event["actor_id"], self.identity.user_id)
+        self.assertEqual(event["action"], "task.created")
+        self.assertEqual(event["result"], "success")
+        self.assertEqual(event["ip_address"], "203.0.113.18")
+        self.assertEqual(event["user_agent"], "Evidence Client/1.0")
+
+        exported = self.request(
+            "GET",
+            "/api/v1/admin/audit/export?entity_type=task&limit=100",
+            headers=self.bearer(auditor_token),
+        )
+        self.assertEqual(exported.status_code, 200, exported.text)
+        self.assertIn("text/csv", exported.headers["content-type"])
+        self.assertEqual(exported.headers["cache-control"], "no-store")
+        csv_text = exported.content.decode("utf-8-sig")
+        rows = list(csv.DictReader(io.StringIO(csv_text)))
+        self.assertTrue(rows)
+        self.assertIn("actor_id", rows[0])
+        self.assertNotIn("details", rows[0])
+        serialized = csv_text.lower()
+        self.assertNotIn("must-not-appear-in-export", serialized)
+        self.assertNotIn("must-not-export", serialized)
+        formula_row = next(row for row in rows if row["action"] == "formula.test")
+        self.assertEqual(formula_row["entity_id"], "'=1+1")
+        self.assertEqual(formula_row["user_agent"], "'@formula-agent")
+
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+        empty = self.request(
+            "GET",
+            "/api/v1/admin/audit",
+            params={"created_from": tomorrow.isoformat()},
+            headers=self.bearer(auditor_token),
+        )
+        self.assertEqual(empty.status_code, 200, empty.text)
+        self.assertEqual(empty.json(), [])
+
+    def test_audit_export_is_tenant_scoped_and_role_protected(self) -> None:
+        operator_token = self.login()
+        forbidden = self.request(
+            "GET",
+            "/api/v1/admin/audit/export",
+            headers=self.bearer(operator_token),
+        )
+        self.assertEqual(forbidden.status_code, 403, forbidden.text)
+
+        other = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-b",
+            email="other-auditor@example.test",
+            password="other-auditor-password",
+            device_name="other-auditor-device",
+            role="security_auditor",
+        )
+        with self.app.state.session_factory() as db:
+            user = db.get(User, self.identity.user_id)
+            self.assertIsNotNone(user)
+            user.role = "security_auditor"
+            db.add(
+                AuditEvent(
+                    tenant_id="tenant-b",
+                    user_id=other.user_id,
+                    device_id=other.device_id,
+                    actor_id=other.user_id,
+                    event_type="tenant-b.hidden",
+                    action="tenant-b.hidden",
+                    result="success",
+                    entity_type="task",
+                    entity_id="other-tenant-resource",
+                    trace_id="00000000-0000-0000-0000-000000000098",
+                    details_json="{}",
+                )
+            )
+            db.commit()
+        auditor_token = self.login()
+        exported = self.request(
+            "GET",
+            "/api/v1/admin/audit/export",
+            headers=self.bearer(auditor_token),
+        )
+        self.assertEqual(exported.status_code, 200, exported.text)
+        self.assertNotIn("tenant-b.hidden", exported.text)
+        self.assertNotIn("other-tenant-resource", exported.text)
 
     def test_task_idempotency_is_scoped_to_owner_and_payload(self) -> None:
         token = self.login()

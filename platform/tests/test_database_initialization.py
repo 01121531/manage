@@ -24,6 +24,8 @@ def production_settings() -> Settings:
             "https://identity.example.test/realms/platform/"
             "protocol/openid-connect/certs"
         ),
+        rate_limit_enabled=True,
+        redis_url="redis://redis.example.test:6379/0",
     )
 
 

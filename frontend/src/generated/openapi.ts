@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Export Audit
+         * @description Export bounded, redacted evidence; free-form details are intentionally omitted.
+         */
+        get: operations["admin_export_audit_api_v1_admin_audit_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/cards": {
         parameters: {
             query?: never;
@@ -887,6 +907,10 @@ export interface components {
     schemas: {
         /** AdminAuditResponse */
         AdminAuditResponse: {
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -906,10 +930,18 @@ export interface components {
             event_type: string;
             /** Id */
             id: string;
+            /** Ip Address */
+            ip_address: string | null;
+            /** Policy Version */
+            policy_version: string | null;
+            /** Result */
+            result: string;
             /** Tenant Id */
             tenant_id: string;
             /** Trace Id */
             trace_id: string;
+            /** User Agent */
+            user_agent: string | null;
             /** User Id */
             user_id: string | null;
         };
@@ -1494,9 +1526,14 @@ export interface operations {
         parameters: {
             query?: {
                 trace_id?: string | null;
+                actor_id?: string | null;
                 user_id?: string | null;
+                entity_type?: string | null;
                 entity_id?: string | null;
                 event_type?: string | null;
+                result?: string | null;
+                created_from?: string | null;
+                created_to?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -1512,6 +1549,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminAuditResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_export_audit_api_v1_admin_audit_export_get: {
+        parameters: {
+            query?: {
+                trace_id?: string | null;
+                actor_id?: string | null;
+                user_id?: string | null;
+                entity_type?: string | null;
+                entity_id?: string | null;
+                event_type?: string | null;
+                result?: string | null;
+                created_from?: string | null;
+                created_to?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant-scoped redacted audit CSV */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
                 };
             };
             /** @description Validation Error */

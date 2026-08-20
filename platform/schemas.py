@@ -90,10 +90,16 @@ class AdminAuditResponse(BaseModel):
     tenant_id: str
     user_id: str | None
     device_id: str | None
+    actor_id: str | None
     event_type: str
+    action: str
+    result: str
     entity_type: str
     entity_id: str | None
     trace_id: str
+    ip_address: str | None
+    user_agent: str | None
+    policy_version: str | None
     details: dict[str, object]
     created_at: datetime
 

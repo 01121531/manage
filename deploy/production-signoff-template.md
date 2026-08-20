@@ -7,6 +7,17 @@ Release manifest:
 - Frontend version:
 - Migration head:
 - Backup artifact:
+- Container release manifest:
+- API OCI digest:
+- Web OCI digest:
+- Edge OCI digest:
+- SBOM SHA-256 values:
+- Trivy report SHA-256 values:
+- Cosign certificate identity:
+- Cosign OIDC issuer:
+- Provenance attestation evidence:
+- CodeQL Python result:
+- CodeQL JavaScript/TypeScript result:
 - Signed by:
 - Reviewer role:
 - Review date:
@@ -18,32 +29,37 @@ Release manifest:
    - Evidence:
    - Result:
 
-2. PostgreSQL backup/restore drill and Alembic upgrade
+2. CodeQL SAST plus container build, HIGH/CRITICAL scan, SPDX SBOM, keyless signature and provenance
 
    - Evidence:
    - Result:
 
-3. Keycloak realm, redirect URIs, client auth, MFA
+3. PostgreSQL backup/restore drill and Alembic upgrade
 
    - Evidence:
    - Result:
 
-4. TLS headers, rate limits, log redaction, retention, alerting
+4. Keycloak realm, redirect URIs, client auth, MFA
 
    - Evidence:
    - Result:
 
-5. Mail connector and Sub2 boundary
+5. TLS headers, rate limits, log redaction, retention, alerting
 
    - Evidence:
    - Result:
 
-6. Worker retry / reconciliation / card lease safety
+6. Mail connector and Sub2 boundary
 
    - Evidence:
    - Result:
 
-7. Runbooks signed off by a separate operator
+7. Worker retry / reconciliation / card lease safety
+
+   - Evidence:
+   - Result:
+
+8. Runbooks signed off by a separate operator
 
    - Evidence:
    - Result:
@@ -53,4 +69,3 @@ Release manifest:
 - Approved for production:
 - Conditions:
 - Follow-up actions:
-

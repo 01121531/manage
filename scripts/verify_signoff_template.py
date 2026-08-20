@@ -21,6 +21,7 @@ def main() -> int:
     text = TEMPLATE.read_text(encoding="utf-8")
     required = [
         "Compose/config and secret scan",
+        "CodeQL SAST plus container build, HIGH/CRITICAL scan, SPDX SBOM, keyless signature and provenance",
         "PostgreSQL backup/restore drill and Alembic upgrade",
         "Keycloak realm, redirect URIs, client auth, MFA",
         "TLS headers, rate limits, log redaction, retention, alerting",
@@ -31,6 +32,17 @@ def main() -> int:
         "Signed by:",
         "Reviewer role:",
         "Review date:",
+        "Container release manifest:",
+        "API OCI digest:",
+        "Web OCI digest:",
+        "Edge OCI digest:",
+        "SBOM SHA-256 values:",
+        "Trivy report SHA-256 values:",
+        "Cosign certificate identity:",
+        "Cosign OIDC issuer:",
+        "Provenance attestation evidence:",
+        "CodeQL Python result:",
+        "CodeQL JavaScript/TypeScript result:",
     ]
     missing = [item for item in required if item not in text]
     if missing:

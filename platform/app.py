@@ -20,6 +20,11 @@ from platform.auth import AccessTokenVerifier, LocalAccessTokenVerifier, OidcAcc
 from platform.middleware import TraceAndErrorMiddleware
 from platform.metrics import MetricsRegistry
 from platform.mail_connectors import HttpMailConnector, MailConnector
+from platform.rate_limit import (
+    RateLimitBackend,
+    RateLimitMiddleware,
+    RedisRateLimitBackend,
+)
 from platform.secrets import SecretResolver, secret_resolver_from_settings
 from platform.uploads import (
     Sub2Adapter,
@@ -40,6 +45,7 @@ def create_app(
     card_secret_resolver: CardSecretResolver | None = None,
     secret_resolver: SecretResolver | None = None,
     access_token_verifier: AccessTokenVerifier | None = None,
+    rate_limit_backend: RateLimitBackend | None = None,
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -55,8 +61,15 @@ def create_app(
     mail_poll_mode = resolved_settings.mail_poll_mode.strip().lower()
     if mail_poll_mode not in {"api", "worker"}:
         raise RuntimeError("PLATFORM_MAIL_POLL_MODE must be api or worker")
-    if resolved_settings.environment.lower() not in {"development", "test"} and auth_mode != "oidc":
+    environment = resolved_settings.environment.strip().lower()
+    managed_environment = environment not in {"development", "test"}
+    if managed_environment and auth_mode != "oidc":
         raise RuntimeError("PLATFORM_AUTH_MODE=oidc is required outside development")
+    redis_url = (
+        resolved_settings.redis_url.get_secret_value().strip()
+        if resolved_settings.redis_url is not None
+        else ""
+    )
 
     jwt_hmac_secret: str | None = None
     if auth_mode == "local" and resolved_settings.jwt_hmac_secret is not None:
@@ -78,8 +91,13 @@ def create_app(
         missing = [name for name, value in required_oidc.items() if not value]
         if missing:
             raise RuntimeError(f"Missing OIDC configuration: {', '.join(missing)}")
+    if managed_environment and not resolved_settings.rate_limit_enabled:
+        raise RuntimeError(
+            "PLATFORM_RATE_LIMIT_ENABLED=true is required outside development"
+        )
+    if managed_environment and not redis_url:
+        raise RuntimeError("PLATFORM_REDIS_URL is required outside development")
 
-    environment = resolved_settings.environment.strip().lower()
     manages_local_schema = environment in {"development", "test"}
     engine, session_factory = initialize_database(
         resolved_settings.database_url,
@@ -136,6 +154,25 @@ def create_app(
         credential_ref=credential_ref,
     )
     application.state.sub2_adapter = sub2_adapter or UnconfiguredSub2Adapter()
+    resolved_rate_limit_backend = rate_limit_backend
+    if resolved_settings.rate_limit_enabled and resolved_rate_limit_backend is None:
+        if not redis_url:
+            raise RuntimeError(
+                "PLATFORM_REDIS_URL is required when rate limiting is enabled"
+            )
+        resolved_rate_limit_backend = RedisRateLimitBackend(redis_url)
+    application.state.rate_limit_backend = resolved_rate_limit_backend
+    if resolved_settings.rate_limit_enabled and resolved_rate_limit_backend is not None:
+        application.add_middleware(
+            RateLimitMiddleware,
+            backend=resolved_rate_limit_backend,
+            api_prefix=resolved_settings.versioned_api_prefix,
+            login_limit=resolved_settings.rate_limit_login_requests,
+            high_risk_limit=resolved_settings.rate_limit_high_risk_requests,
+            general_limit=resolved_settings.rate_limit_general_requests,
+            window_seconds=resolved_settings.rate_limit_window_seconds,
+            fail_closed=managed_environment,
+        )
     application.add_middleware(TraceAndErrorMiddleware)
     application.add_exception_handler(
         StarletteHTTPException, http_exception_handler
@@ -181,6 +218,30 @@ def create_app(
                     "checks": {"database": "ok", "migrations": "pending"},
                 },
             )
+        redis_check = "not_required"
+        if request.app.state.settings.rate_limit_enabled:
+            try:
+                redis_ok = await request.app.state.rate_limit_backend.ping()
+            except Exception:
+                redis_ok = False
+            if not redis_ok:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "degraded",
+                        "service": request.app.state.settings.app_name,
+                        "checks": {
+                            "database": "ok",
+                            "migrations": (
+                                "ok"
+                                if request.app.state.requires_current_migrations
+                                else "not_required"
+                            ),
+                            "redis": "unavailable",
+                        },
+                    },
+                )
+            redis_check = "ok"
         return JSONResponse(
             content={
                 "status": "ok",
@@ -192,6 +253,7 @@ def create_app(
                         if request.app.state.requires_current_migrations
                         else "not_required"
                     ),
+                    "redis": redis_check,
                 },
             }
         )

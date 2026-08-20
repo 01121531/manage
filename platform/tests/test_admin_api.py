@@ -303,6 +303,30 @@ class AdminApiTests(unittest.TestCase):
             headers=self.headers(operator_token),
         )
         self.assertEqual(allocation.status_code, 201, allocation.text)
+        with self.app.state.session_factory() as db:
+            persisted_task = db.get(Task, task.json()["id"])
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="u***@example.test",
+                connector_type="http",
+                secret_ref="vault://secret/mailboxes/admin-disable-upload",
+            )
+            db.add(mailbox)
+            db.flush()
+            db.add(
+                MailSession(
+                    tenant_id="tenant-a",
+                    task_id=persisted_task.id,
+                    user_id=self.operator.user_id,
+                    device_id=self.operator.device_id,
+                    mailbox_id=mailbox.id,
+                    trace_id=persisted_task.trace_id,
+                    status="consumed",
+                    consumed_at=utc_now(),
+                    expires_at=utc_now() + timedelta(minutes=5),
+                )
+            )
+            db.commit()
         queued_upload = self.request(
             "POST",
             f"/api/v1/tasks/{task.json()['id']}/uploads",

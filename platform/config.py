@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     api_version: str = "v1"
     debug: bool = False
     database_url: str = f"sqlite+pysqlite:///{_DEFAULT_DATABASE.as_posix()}"
+    redis_url: SecretStr | None = None
+    rate_limit_enabled: bool = False
+    rate_limit_window_seconds: int = Field(default=60, gt=0, le=3_600)
+    rate_limit_login_requests: int = Field(default=5, gt=0, le=100_000)
+    rate_limit_high_risk_requests: int = Field(default=30, gt=0, le=100_000)
+    rate_limit_general_requests: int = Field(default=300, gt=0, le=100_000)
     auth_mode: str = "local"
     jwt_hmac_secret: SecretStr | None = None
     access_token_ttl_seconds: int = Field(default=900, gt=0, le=86_400)

@@ -1,7 +1,9 @@
 """Version 1 API routes for the Phase 1 platform slice."""
 
+import csv
 import hashlib
 import asyncio
+import io
 import json
 import secrets
 import time
@@ -30,6 +32,7 @@ from platform.auth import (
 from platform.cards import CardSecretUnavailable
 from platform.config import Settings
 from platform.database import get_db
+from platform.errors import BusinessHTTPException
 from platform.mail_connectors import (
     MailboxAccess,
     MailConnector,
@@ -1826,6 +1829,25 @@ def create_upload_job(
             detail="An active card allocation is required before upload",
         )
 
+    verification = db.scalar(
+        select(MailSession.id).where(
+            MailSession.task_id == task.id,
+            MailSession.tenant_id == principal.tenant_id,
+            MailSession.user_id == principal.user_id,
+            MailSession.device_id == principal.device_id,
+            MailSession.status == "consumed",
+            MailSession.consumed_at.is_not(None),
+            MailSession.expires_at > now,
+        )
+    )
+    if verification is None:
+        raise BusinessHTTPException(
+            status_code=409,
+            code="verification_required",
+            message="Verification must be completed before upload",
+            recovery_hint="完成当前任务的验证码验证后重新提交",
+        )
+
     selected_policy = select_policy_for_task(
         db,
         tenant_id=principal.tenant_id,
@@ -2181,6 +2203,187 @@ def admin_revoke_device(
     return AdminDeviceResponse.model_validate(device, from_attributes=True)
 
 
+def _normalized_audit_time(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _audit_query(
+    *,
+    tenant_id: str,
+    trace_id: str | None,
+    actor_id: str | None,
+    user_id: str | None,
+    entity_type: str | None,
+    entity_id: str | None,
+    event_type: str | None,
+    result: str | None,
+    created_from: datetime | None,
+    created_to: datetime | None,
+) -> Any:
+    start = _normalized_audit_time(created_from)
+    end = _normalized_audit_time(created_to)
+    if start is not None and end is not None and start > end:
+        raise HTTPException(
+            status_code=422, detail="created_from must be earlier than created_to"
+        )
+    query = select(AuditEvent).where(AuditEvent.tenant_id == tenant_id)
+    filters = (
+        (AuditEvent.trace_id, trace_id),
+        (AuditEvent.actor_id, actor_id),
+        (AuditEvent.user_id, user_id),
+        (AuditEvent.entity_type, entity_type),
+        (AuditEvent.entity_id, entity_id),
+        (AuditEvent.event_type, event_type),
+        (AuditEvent.result, result),
+    )
+    for column, value in filters:
+        if value:
+            query = query.where(column == value.strip())
+    if start is not None:
+        query = query.where(AuditEvent.created_at >= start)
+    if end is not None:
+        query = query.where(AuditEvent.created_at <= end)
+    return query
+
+
+def _admin_audit_response(event: AuditEvent) -> AdminAuditResponse:
+    return AdminAuditResponse(
+        id=event.id,
+        tenant_id=event.tenant_id,
+        user_id=event.user_id,
+        device_id=event.device_id,
+        actor_id=event.actor_id,
+        event_type=event.event_type,
+        action=event.action,
+        result=event.result,
+        entity_type=event.entity_type,
+        entity_id=event.entity_id,
+        trace_id=event.trace_id,
+        ip_address=event.ip_address,
+        user_agent=event.user_agent,
+        policy_version=event.policy_version,
+        details=_safe_audit_details(event),
+        created_at=event.created_at,
+    )
+
+
+def _audit_csv_cell(value: object) -> str:
+    if value is None:
+        return ""
+    rendered = value.isoformat() if isinstance(value, datetime) else str(value)
+    rendered = " ".join(rendered.split())
+    if rendered.startswith(("=", "+", "-", "@")):
+        rendered = "'" + rendered
+    return rendered
+
+
+@router.get(
+    "/admin/audit/export",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Tenant-scoped redacted audit CSV",
+            "content": {"text/csv": {"schema": {"type": "string"}}},
+        }
+    },
+    tags=["admin"],
+)
+def admin_export_audit(
+    request: Request,
+    trace_id: str | None = Query(default=None, max_length=64),
+    actor_id: str | None = Query(default=None, max_length=64),
+    user_id: str | None = Query(default=None, max_length=64),
+    entity_type: str | None = Query(default=None, max_length=80),
+    entity_id: str | None = Query(default=None, max_length=64),
+    event_type: str | None = Query(default=None, max_length=80),
+    result: str | None = Query(default=None, max_length=32),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
+    limit: int = Query(default=5_000, ge=1, le=10_000),
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_SECURITY_AUDITOR, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export bounded, redacted evidence; free-form details are intentionally omitted."""
+
+    query = _audit_query(
+        tenant_id=principal.tenant_id,
+        trace_id=trace_id,
+        actor_id=actor_id,
+        user_id=user_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        event_type=event_type,
+        result=result,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    events = db.scalars(
+        query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(limit)
+    ).all()
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="audit.exported",
+        entity_type="audit_report",
+        entity_id=None,
+        trace_id=request.state.trace_id,
+        details={
+            "filters": {
+                "trace_id": trace_id,
+                "actor_id": actor_id,
+                "user_id": user_id,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "event_type": event_type,
+                "result": result,
+                "created_from": created_from.isoformat() if created_from else None,
+                "created_to": created_to.isoformat() if created_to else None,
+            },
+            "row_count": len(events),
+            "limit": limit,
+        },
+    )
+    db.commit()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\r\n")
+    columns = (
+        "id",
+        "tenant_id",
+        "created_at",
+        "actor_id",
+        "user_id",
+        "device_id",
+        "action",
+        "result",
+        "entity_type",
+        "entity_id",
+        "trace_id",
+        "policy_version",
+        "ip_address",
+        "user_agent",
+    )
+    writer.writerow(columns)
+    for event in events:
+        writer.writerow(_audit_csv_cell(getattr(event, column)) for column in columns)
+    return Response(
+        content=("\ufeff" + output.getvalue()).encode("utf-8"),
+        media_type="text/csv",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="audit-events.csv"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get(
     "/admin/audit",
     response_model=list[AdminAuditResponse],
@@ -2188,42 +2391,36 @@ def admin_revoke_device(
 )
 def admin_list_audit(
     trace_id: str | None = Query(default=None, max_length=64),
+    actor_id: str | None = Query(default=None, max_length=64),
     user_id: str | None = Query(default=None, max_length=64),
+    entity_type: str | None = Query(default=None, max_length=80),
     entity_id: str | None = Query(default=None, max_length=64),
     event_type: str | None = Query(default=None, max_length=80),
+    result: str | None = Query(default=None, max_length=32),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=500),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_SECURITY_AUDITOR, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> list[AdminAuditResponse]:
-    query = select(AuditEvent).where(AuditEvent.tenant_id == principal.tenant_id)
-    if trace_id:
-        query = query.where(AuditEvent.trace_id == trace_id.strip())
-    if user_id:
-        query = query.where(AuditEvent.user_id == user_id.strip())
-    if entity_id:
-        query = query.where(AuditEvent.entity_id == entity_id.strip())
-    if event_type:
-        query = query.where(AuditEvent.event_type == event_type.strip())
+    query = _audit_query(
+        tenant_id=principal.tenant_id,
+        trace_id=trace_id,
+        actor_id=actor_id,
+        user_id=user_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        event_type=event_type,
+        result=result,
+        created_from=created_from,
+        created_to=created_to,
+    )
     events = db.scalars(
-        query.order_by(AuditEvent.created_at.desc()).limit(limit)
+        query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(limit)
     ).all()
-    return [
-        AdminAuditResponse(
-            id=event.id,
-            tenant_id=event.tenant_id,
-            user_id=event.user_id,
-            device_id=event.device_id,
-            event_type=event.event_type,
-            entity_type=event.entity_type,
-            entity_id=event.entity_id,
-            trace_id=event.trace_id,
-            details=_safe_audit_details(event),
-            created_at=event.created_at,
-        )
-        for event in events
-    ]
+    return [_admin_audit_response(event) for event in events]
 
 
 @router.get(

@@ -8,12 +8,68 @@ from platform_client import (
     CardRevealChallenge,
     CardRevealGrant,
     CardRevealSnapshot,
+    MailCodeSnapshot,
     StepUpAuthorization,
+    UploadJobSnapshot,
 )
 from platform_desktop import PlatformDesktopApp, format_workflow_progress
 
 
+class RecordingWidget:
+    def __init__(self):
+        self.values = {}
+        self.states = []
+
+    def configure(self, **values):
+        self.values.update(values)
+        if "state" in values:
+            self.states.append(values["state"])
+
+
+class RootStub:
+    def __init__(self):
+        self.scheduled = []
+
+    def after(self, delay, callback, *args):
+        self.scheduled.append((delay, callback, args))
+
+    @staticmethod
+    def clipboard_get():
+        return ""
+
+
 class PlatformDesktopBoundaryTests(unittest.TestCase):
+    @staticmethod
+    def _event_app() -> PlatformDesktopApp:
+        instance = object.__new__(PlatformDesktopApp)
+        instance._closed = False
+        instance._events = queue.Queue()
+        instance._task_generation = 1
+        instance._poll_generation = 1
+        instance._upload_generation = 1
+        instance._update_generation = 1
+        instance._session_generation = 1
+        instance._task_id = "task-1"
+        instance._verified_task_id = None
+        instance._current_code = None
+        instance._code_clear_generation = 0
+        instance._upload_idempotency_key = "attempt-1"
+        instance._upload_business_name = "Example Store"
+        instance.root = RootStub()
+        instance.session_label = RecordingWidget()
+        instance.code_label = RecordingWidget()
+        instance.copy_button = RecordingWidget()
+        instance.upload_button = RecordingWidget()
+        instance.copy_card_button = RecordingWidget()
+        instance.upload_label = RecordingWidget()
+        instance.workflow_label = RecordingWidget()
+        instance.status_label = RecordingWidget()
+        instance._write_clipboard = mock.Mock()
+        instance._schedule_code_cleanup = mock.Mock()
+        instance.stop_polling = mock.Mock()
+        instance._close_active_task_async = mock.Mock()
+        return instance
+
     def test_default_entry_point_uses_platform_window(self) -> None:
         source = inspect.getsource(app.main)
         self.assertIn("PlatformDesktopApp", source)
@@ -82,6 +138,131 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn('upload_button.configure(state="disabled")', poll_branch)
         self.assertIn('root.after(3000, self._poll_upload)', poll_branch)
         self.assertIn("请勿重复提交", poll_branch)
+
+    def test_code_ready_stays_disabled_until_code_is_consumed(self) -> None:
+        instance = self._event_app()
+        instance._schedule_next_poll = mock.Mock()
+
+        instance._events.put(
+            (1, "code", MailCodeSnapshot(status="code_ready", code=None))
+        )
+        instance._drain_events()
+
+        self.assertIsNone(instance._verified_task_id)
+        self.assertFalse(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        instance._schedule_next_poll.assert_called_once_with()
+
+        instance._events.put(
+            (1, "code", MailCodeSnapshot(status="consumed", code="123456"))
+        )
+        instance._drain_events()
+
+        self.assertEqual(instance._verified_task_id, "task-1")
+        self.assertEqual(instance.upload_button.values["state"], "normal")
+        self.assertTrue(instance._current_task_is_verified())
+
+        instance._clear_sensitive_code()
+
+        self.assertIsNone(instance._current_code)
+        self.assertTrue(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "normal")
+
+    def test_consumed_code_enables_upload_but_expired_session_resets_it(self) -> None:
+        instance = self._event_app()
+
+        instance._events.put(
+            (1, "code", MailCodeSnapshot(status="consumed", code=None))
+        )
+        instance._drain_events()
+
+        self.assertTrue(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "normal")
+
+        instance._events.put(
+            (1, "code", MailCodeSnapshot(status="expired", code=None))
+        )
+        instance._drain_events()
+
+        self.assertFalse(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+
+    def test_upload_guard_rejects_unverified_current_task(self) -> None:
+        class ClientStub:
+            is_authenticated = True
+
+            def create_upload_job(self, *_):
+                raise AssertionError("unverified upload must not reach the client")
+
+        instance = self._event_app()
+        instance._client = ClientStub()
+        instance._card_allocation_id = "allocation-1"
+        instance.business_entry = mock.Mock()
+
+        instance.submit_upload()
+
+        instance.business_entry.get.assert_not_called()
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertIn("取得验证码", instance.status_label.values["text"])
+
+    def test_failed_upload_can_retry_only_for_same_verified_task(self) -> None:
+        instance = self._event_app()
+        instance._verified_task_id = "task-1"
+        failed = UploadJobSnapshot(
+            id="upload-1",
+            task_id="task-1",
+            status="failed",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code="upstream_rejected",
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:01Z",
+        )
+
+        instance._events.put((1, "upload", failed))
+        instance._drain_events()
+
+        self.assertTrue(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "normal")
+
+        instance._task_id = "task-2"
+        instance._events.put((1, "upload", failed))
+        instance._drain_events()
+
+        self.assertFalse(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+
+    def test_unknown_upload_blocks_resubmission_and_task_boundaries_reset(self) -> None:
+        instance = self._event_app()
+        instance._verified_task_id = "task-1"
+        unknown = UploadJobSnapshot(
+            id="upload-1",
+            task_id="task-1",
+            status="unknown",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code=None,
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:01Z",
+        )
+
+        instance._events.put((1, "upload", unknown))
+        instance._drain_events()
+
+        self.assertFalse(instance._current_task_is_verified())
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertIn("不会自动重试", instance.status_label.values["text"])
+
+        self.assertIn(
+            "self._reset_task_verification()",
+            inspect.getsource(PlatformDesktopApp.create_mail_task),
+        )
+        self.assertIn(
+            "self._reset_task_verification()",
+            inspect.getsource(PlatformDesktopApp.logout),
+        )
 
     def test_saved_oidc_session_is_restored_and_refreshed_before_expiry(self) -> None:
         restore_source = inspect.getsource(PlatformDesktopApp._attempt_session_restore)
