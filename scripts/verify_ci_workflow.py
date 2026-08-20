@@ -9,6 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+QUALITY_GATE_PATH = ROOT / "scripts" / "quality_gate.ps1"
 
 
 def verification_errors() -> list[str]:
@@ -20,6 +21,25 @@ def verification_errors() -> list[str]:
     if missing:
         errors.append("missing CI jobs: " + ", ".join(sorted(missing)))
         return errors
+
+    quality_steps = jobs["quality-gate"].get("steps", [])
+    quality_serialized = "\n".join(str(step) for step in quality_steps)
+    for required in (
+        "phase6-ci-rehearsal-${{ github.sha }}",
+        "release/evidence/phase6-ci-rehearsal.json",
+        "if-no-files-found",
+        "error",
+    ):
+        if required not in quality_serialized:
+            errors.append(f"quality gate is missing Phase 6 evidence control: {required}")
+    quality_gate = QUALITY_GATE_PATH.read_text(encoding="utf-8")
+    for required in (
+        "phase6_rehearsal.py run",
+        "phase6_rehearsal.py verify",
+        "release/evidence/phase6-ci-rehearsal.json",
+    ):
+        if required not in quality_gate:
+            errors.append(f"quality gate is missing Phase 6 rehearsal command: {required}")
 
     release = jobs["windows-desktop-release"]
     if release.get("runs-on") != "windows-latest":
@@ -50,7 +70,7 @@ def main() -> int:
         for error in errors:
             print(f"ci-workflow-error: {error}")
         return 1
-    print("ci-workflow-ok quality-e2e-windows-artifact")
+    print("ci-workflow-ok quality-e2e-phase6-windows-artifact")
     return 0
 
 

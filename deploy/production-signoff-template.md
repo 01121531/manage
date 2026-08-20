@@ -19,6 +19,8 @@ Release manifest:
 - Provenance attestation evidence:
 - CodeQL Python result:
 - CodeQL JavaScript/TypeScript result:
+- Phase 6 CI rehearsal evidence and payload SHA-256 (preflight only):
+- Target-environment pilot evidence:
 - Signed by:
 - Reviewer role:
 - Review date:
@@ -64,6 +66,14 @@ Release manifest:
 
    - Evidence:
    - Result:
+
+9. Target-environment pilot, alert delivery, training and rollback drill
+
+   - Evidence:
+   - Result:
+
+The Phase 6 CI rehearsal is only a preflight artifact and must have
+`production_acceptance=false`. It cannot be used as the evidence for gate 9.
 
 ## Final signoff
 

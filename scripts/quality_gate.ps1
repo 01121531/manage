@@ -12,6 +12,13 @@ try {
     python -m unittest discover -s tests -p "test_*.py" -v
     if ($LASTEXITCODE -ne 0) { throw "Desktop/client tests failed." }
 
+    $phase6Commit = (git rev-parse HEAD).Trim()
+    $phase6Evidence = "release/evidence/phase6-ci-rehearsal.json"
+    python scripts/phase6_rehearsal.py run --output $phase6Evidence --commit $phase6Commit
+    if ($LASTEXITCODE -ne 0) { throw "Phase 6 CI rehearsal failed." }
+    python scripts/phase6_rehearsal.py verify --input $phase6Evidence
+    if ($LASTEXITCODE -ne 0) { throw "Phase 6 CI rehearsal evidence verification failed." }
+
     python scripts/verify_compose_env.py
     if ($LASTEXITCODE -ne 0) { throw "Compose env verification failed." }
 

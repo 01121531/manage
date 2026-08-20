@@ -32,6 +32,14 @@ jobs:
         shell: pwsh
         run: ./scripts/quality_gate.ps1
 
+      - name: Upload Phase 6 CI rehearsal evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6-ci-rehearsal-${{ github.sha }}
+          path: release/evidence/phase6-ci-rehearsal.json
+          if-no-files-found: error
+          retention-days: 14
+
   browser-e2e:
     runs-on: ubuntu-latest
     steps:
