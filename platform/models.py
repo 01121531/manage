@@ -181,6 +181,9 @@ class Card(Base):
         UniqueConstraint(
             "tenant_id", "provider_ref", name="uq_cards_tenant_provider_ref"
         ),
+        UniqueConstraint(
+            "tenant_id", "secret_ref", name="uq_cards_tenant_secret_ref"
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

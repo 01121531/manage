@@ -174,3 +174,126 @@ test('platform admin governs upload policies without browser execution details',
   }))
   expect(JSON.stringify(browserStorage)).not.toContain(accessValue)
 })
+
+test('ops admin safely manages card and mailbox references', async ({ page }) => {
+  const accessValue = 'ops-resource-access'
+  let cards: Array<Record<string, unknown>> = []
+  let mailboxes: Array<Record<string, unknown>> = []
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    const fulfill = (value: unknown, status = 200) => route.fulfill({
+      status,
+      contentType: 'application/json',
+      body: JSON.stringify(value),
+    })
+    if (path === '/api/v1/auth/config') {
+      return fulfill({ mode: 'local', issuer: null, client_id: null, desktop_client_id: null, audience: null })
+    }
+    if (path === '/api/v1/auth/login') {
+      return fulfill({ access_token: accessValue, expires_in: 900, token_type: 'bearer' })
+    }
+    expect(request.headers().authorization).toBe(`Bearer ${accessValue}`)
+    if (path === '/api/v1/me') {
+      return fulfill({
+        id: 'ops-user', tenant_id: 'tenant-1', email: 'ops@example.invalid',
+        device_id: 'ops-device', role: 'ops_admin',
+      })
+    }
+    if (path === '/api/v1/dashboard/summary') {
+      return fulfill({
+        scope: 'tenant', generated_at: '2026-08-20T00:00:00Z', active_tasks: 0,
+        allocated_cards: 0, waiting_mail_sessions: 0, queued_uploads: 0,
+        unknown_uploads: 0, task_statuses: {}, mail_session_statuses: {},
+        card_allocation_statuses: {}, upload_statuses: {},
+      })
+    }
+    if (path === '/api/v1/admin/cards' && request.method() === 'GET') return fulfill(cards)
+    if (path === '/api/v1/admin/cards' && request.method() === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      expect(Object.keys(body).sort()).toEqual(['brand', 'last4', 'provider_ref', 'secret_ref'])
+      expect(body).not.toHaveProperty('pan')
+      expect(body).not.toHaveProperty('cvv')
+      cards = [{
+        id: 'card-1', tenant_id: 'tenant-1', provider_ref: body.provider_ref,
+        brand: body.brand, last4: body.last4, expiry_month: null, expiry_year: null,
+        is_active: true, created_at: '2026-08-20T00:00:00Z',
+      }]
+      return fulfill(cards[0], 201)
+    }
+    if (path === '/api/v1/admin/cards/card-1' && request.method() === 'PATCH') {
+      expect(request.postDataJSON()).toEqual({ is_active: false })
+      expect(JSON.stringify(request.postDataJSON())).not.toContain('secret')
+      cards = [{ ...cards[0], is_active: false }]
+      return fulfill(cards[0])
+    }
+    if (path === '/api/v1/mailboxes' && request.method() === 'GET') return fulfill(mailboxes)
+    if (path === '/api/v1/admin/mailboxes' && request.method() === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      expect(Object.keys(body).sort()).toEqual(['connector_type', 'email_masked', 'secret_ref'])
+      mailboxes = [{
+        id: 'mailbox-1', email_masked: body.email_masked,
+        connector_type: body.connector_type, is_active: true, status: 'available',
+        active_session_count: 0, created_at: '2026-08-20T00:00:00Z',
+      }]
+      return fulfill(mailboxes[0], 201)
+    }
+    if (path === '/api/v1/admin/mailboxes/mailbox-1/secret-rotations') {
+      expect(Object.keys(request.postDataJSON())).toEqual(['secret_ref'])
+      return fulfill(mailboxes[0])
+    }
+    return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
+  })
+
+  await page.goto('/')
+  await page.getByLabel('租户').fill('tenant-1')
+  await page.getByLabel('平台账号').fill('ops@example.invalid')
+  await page.getByLabel('平台密码').fill('development-password')
+  await page.getByLabel('设备标识').fill('ops-device')
+  await page.getByRole('button', { name: '安全登录' }).click()
+
+  await page.getByText('卡池管理', { exact: true }).click()
+  await page.getByRole('button', { name: '登记卡资源' }).click()
+  let cardDialog = page.getByRole('dialog', { name: '登记卡资源' })
+  await cardDialog.getByLabel('密钥引用').fill('vault://secret/cards/must-clear')
+  await cardDialog.getByRole('button', { name: /取\s*消/ }).click()
+  await page.getByRole('button', { name: '登记卡资源' }).click()
+  cardDialog = page.getByRole('dialog', { name: '登记卡资源' })
+  await expect(cardDialog.getByLabel('密钥引用')).toHaveValue('')
+  await page.getByLabel('提供方引用').fill('provider-safe-1')
+  await page.getByLabel('品牌').fill('VISA')
+  await page.getByLabel('尾号').fill('4242')
+  await page.getByLabel('密钥引用').fill('vault://secret/cards/provider-safe-1')
+  await cardDialog.getByRole('button', { name: /^登\s*记$/ }).click()
+  await expect(page.getByText('•••• 4242')).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('vault://secret/cards/provider-safe-1')
+  await page.getByRole('button', { name: /停\s*用/ }).click()
+  const disableDialog = page.getByRole('dialog', { name: '确认停用该卡资源？' })
+  await disableDialog.getByRole('button', { name: /停\s*用并释\s*放/ }).click()
+  await expect(page.getByText('disabled')).toBeVisible()
+
+  await page.getByText('邮箱连接器', { exact: true }).click()
+  await page.getByRole('button', { name: '登记邮箱连接器' }).click()
+  let mailboxDialog = page.getByRole('dialog', { name: '登记邮箱连接器' })
+  await mailboxDialog.getByLabel('密钥引用').fill('vault://secret/mailboxes/must-clear')
+  await mailboxDialog.getByRole('button', { name: /取\s*消/ }).click()
+  await page.getByRole('button', { name: '登记邮箱连接器' }).click()
+  mailboxDialog = page.getByRole('dialog', { name: '登记邮箱连接器' })
+  await expect(mailboxDialog.getByLabel('密钥引用')).toHaveValue('')
+  await page.getByLabel('掩码邮箱').fill('m***@example.invalid')
+  await page.getByLabel('连接器类型').fill('http')
+  await page.getByLabel('密钥引用').fill('vault://secret/mailboxes/managed-1')
+  await mailboxDialog.getByRole('button', { name: /^登\s*记$/ }).click()
+  await expect(page.getByText('m***@example.invalid')).toBeVisible()
+  await page.getByRole('button', { name: '轮换密钥引用' }).click()
+  let rotationDialog = page.getByRole('dialog', { name: '轮换密钥引用' })
+  await rotationDialog.getByLabel('新密钥引用').fill('vault://secret/mailboxes/must-clear')
+  await rotationDialog.getByRole('button', { name: /取\s*消/ }).click()
+  await page.getByRole('button', { name: '轮换密钥引用' }).click()
+  rotationDialog = page.getByRole('dialog', { name: '轮换密钥引用' })
+  await expect(rotationDialog.getByLabel('新密钥引用')).toHaveValue('')
+  await rotationDialog.getByLabel('新密钥引用').fill('vault://secret/mailboxes/managed-2')
+  await rotationDialog.getByRole('button', { name: /确认\s*轮换/ }).click()
+  await expect(page.locator('body')).not.toContainText('vault://secret/mailboxes/managed-2')
+})

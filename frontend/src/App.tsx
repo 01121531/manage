@@ -24,6 +24,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   Layout,
   Menu,
   Modal,
@@ -38,10 +39,10 @@ import {
   Typography,
 } from 'antd'
 import type { MenuProps, TableColumnsType } from 'antd'
-import { ApiError, approveUploadPolicyVersion, cancelUploadJob, clearSession, closeTask, deployUploadPolicyVersion, disableUser, getAuthConfig, getDashboardSummary, getMe, getUploadPolicyStatus, listAuditEvents, listCards, listDevices, listMailboxes, listTasks, listUploadPolicyVersions, listUploads, listUsers, login, reconcileUploadJob, registerUploadPolicyVersion, revokeDevice, rollbackUploadPolicy, setBearer } from './api'
+import { ApiError, approveUploadPolicyVersion, cancelUploadJob, clearSession, closeTask, createCard, createMailbox, deployUploadPolicyVersion, disableUser, getAuthConfig, getDashboardSummary, getMe, getUploadPolicyStatus, listAuditEvents, listCards, listDevices, listMailboxes, listTasks, listUploadPolicyVersions, listUploads, listUsers, login, reconcileUploadJob, registerUploadPolicyVersion, revokeDevice, rollbackUploadPolicy, rotateMailboxSecret, setBearer, updateCardState, updateMailboxState } from './api'
 import { createOidcManager } from './oidc'
 import type { UserManager } from 'oidc-client-ts'
-import type { AdminDevice, AdminUser, AuditEvent, AuthConfig, CardSummary, DashboardSummary, MailboxSummary, Principal, TaskSummary, UploadPolicyStatus, UploadPolicyVersion, UploadSummary } from './types'
+import type { AdminDevice, AdminUser, AuditEvent, AuthConfig, CardCreate, CardSummary, DashboardSummary, MailboxCreate, MailboxSummary, Principal, TaskSummary, UploadPolicyStatus, UploadPolicyVersion, UploadSummary } from './types'
 
 const { Header, Content, Sider } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -311,17 +312,155 @@ function UsersPage() {
   </>
 }
 
-function CardsPage() {
+function CardsPage({ canManage }: { canManage: boolean }) {
+  const { message } = AntApp.useApp()
+  const [rows, setRows] = useState<CardSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refresh, setRefresh] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm<CardCreate>()
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    listCards().then((items) => { if (alive) setRows(items) })
+      .catch(() => { if (alive) message.warning('卡资源列表暂不可用。') })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [message, refresh])
+
+  async function submitCard(values: CardCreate) {
+    setSaving(true)
+    try {
+      await createCard(values)
+      message.success('卡资源已登记。')
+      form.resetFields()
+      setCreateOpen(false)
+      setRefresh((value) => value + 1)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '卡资源登记失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function closeCreateCard() {
+    form.resetFields()
+    setCreateOpen(false)
+  }
+
+  async function changeState(row: CardSummary, isActive: boolean) {
+    try {
+      await updateCardState(row.id, isActive)
+      message.success(isActive ? '卡资源已启用。' : '卡资源已停用，活动租约已释放。')
+      setRefresh((value) => value + 1)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '卡资源状态更新失败')
+    }
+  }
+
   const columns: TableColumnsType<CardSummary> = [
-    { title: '卡标识', dataIndex: 'id' },
+    { title: '提供方引用', dataIndex: 'provider_ref' },
     { title: '品牌', dataIndex: 'brand' },
     { title: '尾号', dataIndex: 'last4', render: (value: string) => `•••• ${value}` },
+    { title: '有效期', render: (_, row) => row.expiry_month && row.expiry_year ? `${String(row.expiry_month).padStart(2, '0')}/${row.expiry_year}` : '—' },
     { title: '状态', dataIndex: 'is_active', render: (value: boolean) => <StatusTag value={value ? 'available' : 'disabled'} /> },
+    ...(canManage ? [{ title: '操作', render: (_: unknown, row: CardSummary) => row.is_active ? <Button danger onClick={() => {
+      Modal.confirm({
+        title: '确认停用该卡资源？',
+        content: '停用会立即释放活动租约，并取消尚未执行的关联上传；运行中的上传将转为待人工核对。',
+        okText: '停用并释放',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: () => changeState(row, false),
+      })
+    }}>停用</Button> : <Button onClick={() => changeState(row, true)}>启用</Button> }] : []),
   ]
-  return <><PageHeading title="卡池管理" description="只展示掩码信息；分配与释放均保留审计记录。" /><Card><RemoteTable loader={listCards} columns={columns} empty="暂无卡资源" /></Card></>
+  return <>
+    <div className="page-heading"><div><Title level={2}>卡池管理</Title><Text type="secondary">登记接口不接收 PAN/CVV；PAN 保存在 Vault 且仅经 step-up 揭示，CVV 默认不返回。</Text></div>{canManage ? <Button type="primary" onClick={() => setCreateOpen(true)}>登记卡资源</Button> : null}</div>
+    <Alert className="section-card" type="info" showIcon message="敏感卡信息必须保存在服务端密钥管理器" description="生产环境必须填写 vault://secret/cards/ 引用；env:// 仅限开发和测试。停用会释放活动租约，取消排队上传，并将运行中上传转为待人工核对。" />
+    <Card className="section-card"><Table loading={loading} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无卡资源" /> }} scroll={{ x: 900 }} /></Card>
+    <Modal title="登记卡资源" open={createOpen} onCancel={closeCreateCard} onOk={() => form.submit()} confirmLoading={saving} okText="登记" cancelText="取消" destroyOnHidden>
+      <Form form={form} layout="vertical" onFinish={submitCard} requiredMark="optional">
+        <Form.Item label="提供方引用" name="provider_ref" rules={[{ required: true }, { max: 160 }]}><Input autoComplete="off" placeholder="provider-card-001" /></Form.Item>
+        <Row gutter={12}>
+          <Col span={12}><Form.Item label="品牌" name="brand" rules={[{ required: true }, { max: 40 }]}><Input placeholder="VISA" /></Form.Item></Col>
+          <Col span={12}><Form.Item label="尾号" name="last4" rules={[{ required: true }, { pattern: /^\d{4}$/, message: '必须是 4 位数字' }]}><Input inputMode="numeric" maxLength={4} placeholder="4242" /></Form.Item></Col>
+          <Col span={12}><Form.Item label="有效期月份" name="expiry_month" dependencies={['expiry_year']} rules={[({ getFieldValue }) => ({ validator(_, value) { return (value == null) === (getFieldValue('expiry_year') == null) ? Promise.resolve() : Promise.reject(new Error('月份和年份须同时填写')) } })]}><InputNumber min={1} max={12} className="full-width" placeholder="12" /></Form.Item></Col>
+          <Col span={12}><Form.Item label="有效期年份" name="expiry_year" dependencies={['expiry_month']} rules={[({ getFieldValue }) => ({ validator(_, value) { return (value == null) === (getFieldValue('expiry_month') == null) ? Promise.resolve() : Promise.reject(new Error('月份和年份须同时填写')) } })]}><InputNumber min={2000} max={9999} className="full-width" placeholder="2030" /></Form.Item></Col>
+        </Row>
+        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/cards/；env:// 仅限开发/测试。请勿粘贴卡号或安全码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/cards\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/cards/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/cards/provider-card-001" /></Form.Item>
+      </Form>
+    </Modal>
+  </>
 }
 
-function MailboxesPage() {
+function MailboxesPage({ canManage }: { canManage: boolean }) {
+  const { message } = AntApp.useApp()
+  const [rows, setRows] = useState<MailboxSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refresh, setRefresh] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [rotateTarget, setRotateTarget] = useState<MailboxSummary | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [createForm] = Form.useForm<MailboxCreate>()
+  const [rotateForm] = Form.useForm<{ secret_ref: string }>()
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    listMailboxes().then((items) => { if (alive) setRows(items) })
+      .catch(() => { if (alive) message.warning('邮箱连接器列表暂不可用。') })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [message, refresh])
+
+  async function submitMailbox(values: MailboxCreate) {
+    setSaving(true)
+    try {
+      await createMailbox(values)
+      message.success('邮箱连接器已登记。')
+      createForm.resetFields()
+      setCreateOpen(false)
+      setRefresh((value) => value + 1)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '邮箱连接器登记失败')
+    } finally { setSaving(false) }
+  }
+
+  function closeCreateMailbox() {
+    createForm.resetFields()
+    setCreateOpen(false)
+  }
+
+  function closeSecretRotation() {
+    rotateForm.resetFields()
+    setRotateTarget(null)
+  }
+
+  async function changeState(row: MailboxSummary, isActive: boolean) {
+    try {
+      await updateMailboxState(row.id, isActive)
+      message.success(isActive ? '邮箱连接器已启用。' : '邮箱连接器已停用，活动会话已撤销。')
+      setRefresh((value) => value + 1)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '邮箱状态更新失败')
+    }
+  }
+
+  async function submitRotation(values: { secret_ref: string }) {
+    if (!rotateTarget) return
+    setSaving(true)
+    try {
+      await rotateMailboxSecret(rotateTarget.id, values.secret_ref)
+      message.success('密钥引用已轮换。')
+      rotateForm.resetFields()
+      setRotateTarget(null)
+      setRefresh((value) => value + 1)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '密钥引用轮换失败')
+    } finally { setSaving(false) }
+  }
+
   const columns: TableColumnsType<MailboxSummary> = [
     { title: '邮箱', dataIndex: 'email_masked' },
     { title: '连接器', dataIndex: 'connector_type' },
@@ -329,8 +468,28 @@ function MailboxesPage() {
     { title: '等待会话', dataIndex: 'active_session_count' },
     { title: '启用', dataIndex: 'is_active', render: (value: boolean) => value ? '是' : '否' },
     { title: '创建时间', dataIndex: 'created_at' },
+    ...(canManage ? [{ title: '操作', render: (_: unknown, row: MailboxSummary) => <Space>
+      {row.is_active ? <Button danger onClick={() => Modal.confirm({ title: '确认停用邮箱连接器？', content: '活动取码会话将立即撤销，尚未消费的验证码会被擦除。', okText: '停用并撤销会话', okButtonProps: { danger: true }, cancelText: '取消', onOk: () => changeState(row, false) })}>停用</Button> : <Button onClick={() => changeState(row, true)}>启用</Button>}
+      <Button onClick={() => setRotateTarget(row)}>轮换密钥引用</Button>
+    </Space> }] : []),
   ]
-  return <><PageHeading title="邮箱连接器" description="只显示连接健康度与掩码地址，不显示源凭据。" /><Card><RemoteTable loader={listMailboxes} columns={columns} empty="暂无邮箱连接器" /></Card></>
+  return <>
+    <div className="page-heading"><div><Title level={2}>邮箱连接器</Title><Text type="secondary">只显示连接状态与掩码地址，源邮箱账号和密码不进入浏览器。</Text></div>{canManage ? <Button type="primary" onClick={() => setCreateOpen(true)}>登记邮箱连接器</Button> : null}</div>
+    <Card><Table loading={loading} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无邮箱连接器" /> }} scroll={{ x: 980 }} /></Card>
+    <Modal title="登记邮箱连接器" open={createOpen} onCancel={closeCreateMailbox} onOk={() => createForm.submit()} confirmLoading={saving} okText="登记" cancelText="取消" destroyOnHidden>
+      <Form form={createForm} layout="vertical" onFinish={submitMailbox} requiredMark="optional">
+        <Form.Item label="掩码邮箱" name="email_masked" extra="必须使用掩码地址，例如 m***@example.com。" rules={[{ required: true }, { pattern: /^[^@]*\*[^@]*@[^@]+$/, message: '请输入包含 * 的掩码邮箱' }]}><Input autoComplete="off" placeholder="m***@example.com" /></Form.Item>
+        <Form.Item label="连接器类型" name="connector_type" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_-]*$/, message: '仅允许小写字母、数字、横线和下划线' }]}><Input placeholder="http" /></Form.Item>
+        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env:// 仅限开发/测试。请勿填写邮箱账号或密码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001" /></Form.Item>
+      </Form>
+    </Modal>
+    <Modal title="轮换密钥引用" open={rotateTarget !== null} onCancel={closeSecretRotation} onOk={() => rotateForm.submit()} confirmLoading={saving} okText="确认轮换" cancelText="取消" destroyOnHidden>
+      <Alert type="warning" showIcon message="仅更新密钥引用" description="新凭据应已预先写入服务端密钥管理器；审计只记录轮换动作，不记录引用值。" />
+      <Form className="modal-form" form={rotateForm} layout="vertical" onFinish={submitRotation}>
+        <Form.Item label="新密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env:// 仅限开发/测试。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001-v2" /></Form.Item>
+      </Form>
+    </Modal>
+  </>
 }
 
 function TasksPage() {
@@ -715,8 +874,8 @@ function Shell({ principal, onLogout }: { principal: Principal; onLogout: () => 
   const content = useMemo(() => ({
     dashboard: <Dashboard />,
     tasks: <TasksPage />,
-    cards: <CardsPage />,
-    mailboxes: <MailboxesPage />,
+    cards: <CardsPage canManage={principal.role === 'ops_admin' || principal.role === 'platform_admin'} />,
+    mailboxes: <MailboxesPage canManage={principal.role === 'ops_admin' || principal.role === 'platform_admin'} />,
     uploads: <UploadsPage />,
     users: <UsersPage />,
     audit: <AuditPage />,

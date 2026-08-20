@@ -14,11 +14,13 @@ COMPOSE = ROOT / "docker-compose.yml"
 ENV_EXAMPLE = ROOT / ".env.example"
 VAULT_DIR = ROOT / "infra" / "vault"
 
-SERVICE_TOKEN_SOURCES = {
-    "api": "${PLATFORM_VAULT_API_TOKEN:-}",
-    "worker-mail": "${PLATFORM_VAULT_MAIL_TOKEN:-}",
-    "worker-sub2": "${PLATFORM_VAULT_SUB2_TOKEN:-}",
+SERVICE_TOKEN_DIRECTORIES = {
+    "api": "${PLATFORM_VAULT_API_TOKEN_DIR:?set PLATFORM_VAULT_API_TOKEN_DIR in .env}",
+    "worker-mail": "${PLATFORM_VAULT_MAIL_TOKEN_DIR:?set PLATFORM_VAULT_MAIL_TOKEN_DIR in .env}",
+    "worker-sub2": "${PLATFORM_VAULT_SUB2_TOKEN_DIR:?set PLATFORM_VAULT_SUB2_TOKEN_DIR in .env}",
 }
+TOKEN_DIRECTORY_TARGET = "/run/secrets/email-platform-vault"
+TOKEN_FILE_TARGET = f"{TOKEN_DIRECTORY_TARGET}/token"
 POLICY_PATHS = {
     "email-platform-api-cards.hcl": {"secret/data/cards/*"},
     "email-platform-mail.hcl": {"secret/data/mailboxes/*"},
@@ -32,6 +34,9 @@ DEPLOYMENT_CREDENTIALS = {
     f"PLATFORM_VAULT_{service}_{kind}"
     for service in ("API", "MAIL", "SUB2")
     for kind in ("TOKEN", "ROLE_ID", "SECRET_ID")
+}
+DEPLOYMENT_TOKEN_DIRECTORIES = {
+    f"PLATFORM_VAULT_{service}_TOKEN_DIR" for service in ("API", "MAIL", "SUB2")
 }
 
 
@@ -77,32 +82,59 @@ def validate_vault_isolation(
     if not isinstance(services, dict):
         return ["Compose services block is invalid"]
 
-    for service_name, expected_source in SERVICE_TOKEN_SOURCES.items():
-        environment = _service_environment(services.get(service_name))
-        if environment.get("PLATFORM_VAULT_TOKEN") != expected_source:
+    for service_name, expected_directory in SERVICE_TOKEN_DIRECTORIES.items():
+        service = services.get(service_name)
+        environment = _service_environment(service)
+        if environment.get("PLATFORM_VAULT_TOKEN_FILE") != TOKEN_FILE_TARGET:
             errors.append(
-                f"{service_name} PLATFORM_VAULT_TOKEN must come only from {expected_source}"
+                f"{service_name} must use the reviewed PLATFORM_VAULT_TOKEN_FILE"
             )
+        if "PLATFORM_VAULT_TOKEN" in environment:
+            errors.append(f"{service_name} must not receive an environment Vault token")
         leaked = sorted(DEPLOYMENT_CREDENTIALS.intersection(environment))
         if leaked:
             errors.append(
                 f"{service_name} must not receive deployment AppRole variables: "
                 + ", ".join(leaked)
             )
-        serialized_environment = yaml.safe_dump(environment)
-        allowed_source = expected_source.removeprefix("${").split(":", 1)[0]
+        serialized_service = yaml.safe_dump(service)
+        referenced_variables = set(
+            re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", serialized_service)
+        )
         unexpected_sources = sorted(
             name
             for name in DEPLOYMENT_CREDENTIALS
-            if name != allowed_source and f"${{{name}" in serialized_environment
+            if name in referenced_variables
         )
         if unexpected_sources:
             errors.append(
                 f"{service_name} references another service/AppRole credential: "
                 + ", ".join(unexpected_sources)
             )
+        volumes = service.get("volumes", []) if isinstance(service, dict) else []
+        matching_mounts = [
+            volume
+            for volume in volumes
+            if isinstance(volume, dict) and volume.get("target") == TOKEN_DIRECTORY_TARGET
+        ] if isinstance(volumes, list) else []
+        if len(matching_mounts) != 1:
+            errors.append(f"{service_name} must mount exactly one Vault token directory")
+        else:
+            mount = matching_mounts[0]
+            bind = mount.get("bind", {})
+            if (
+                mount.get("type") != "bind"
+                or mount.get("source") != expected_directory
+                or mount.get("read_only") is not True
+                or not isinstance(bind, dict)
+                or bind.get("create_host_path") is not False
+            ):
+                errors.append(
+                    f"{service_name} Vault token directory must be isolated, read-only, "
+                    "and fail when absent"
+                )
 
-    for service_name in ("migrate", "web"):
+    for service_name in ("migrate", "web", "edge"):
         environment = _service_environment(services.get(service_name))
         leaked = sorted(name for name in environment if name.startswith("PLATFORM_VAULT_"))
         if leaked:
@@ -111,13 +143,23 @@ def validate_vault_isolation(
     env_values = _env_values(env_text)
     if "PLATFORM_VAULT_TOKEN" in env_values:
         errors.append("Shared PLATFORM_VAULT_TOKEN must not be declared")
-    missing = sorted(DEPLOYMENT_CREDENTIALS - env_values.keys())
+    required_env = DEPLOYMENT_CREDENTIALS | DEPLOYMENT_TOKEN_DIRECTORIES
+    missing = sorted(required_env - env_values.keys())
     if missing:
         errors.append("Missing per-service Vault variables: " + ", ".join(missing))
     for name in DEPLOYMENT_CREDENTIALS:
         value = env_values.get(name, "")
         if value and not value.startswith("CHANGE_ME_"):
             errors.append(f"{name} must be empty or an unusable placeholder")
+    for name in DEPLOYMENT_TOKEN_DIRECTORIES:
+        value = env_values.get(name, "")
+        if not value.startswith("/"):
+            errors.append(f"{name} must document an absolute host directory")
+    documented_directories = {
+        env_values.get(name, "") for name in DEPLOYMENT_TOKEN_DIRECTORIES
+    }
+    if len(documented_directories) != len(DEPLOYMENT_TOKEN_DIRECTORIES):
+        errors.append("Per-service Vault token directories must be distinct")
 
     for policy_name, allowed_paths in POLICY_PATHS.items():
         policy = policies.get(policy_name, "")

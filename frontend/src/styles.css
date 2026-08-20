@@ -45,6 +45,8 @@ button, input { font: inherit; }
 .task-detail-card { margin-top: 16px; }
 .task-lifecycle { margin-top: 20px; }
 .task-row-selected td { background: #eef6fb !important; }
+.full-width { width: 100%; }
+.modal-form { margin-top: 20px; }
 
 @media (max-width: 800px) {
   .login-shell { grid-template-columns: 1fr; gap: 32px; padding: 28px 20px; }

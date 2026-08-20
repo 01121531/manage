@@ -19,7 +19,7 @@ class ReleaseManifestTests(unittest.TestCase):
         errors = release_manifest.verify_manifest(manifest)
         self.assertEqual(errors, [])
         self.assertEqual(manifest["release_id"], "0.1.3")
-        self.assertEqual(manifest["migration_head"], "0012_mail_session_tokens")
+        self.assertEqual(manifest["migration_head"], "0013_card_secret_ref_unique")
         self.assertIn("worker-mail", manifest["compose_images"])
 
 

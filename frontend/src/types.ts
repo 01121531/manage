@@ -28,8 +28,10 @@ export type AdminDevice = ApiSchemas['AdminDeviceResponse']
 export type AuditEvent = ApiSchemas['AdminAuditResponse']
 
 export type CardSummary = ApiSchemas['AdminCardResponse']
+export type CardCreate = ApiSchemas['AdminCardCreate']
 
 export type MailboxSummary = ApiSchemas['MailboxStatusResponse']
+export type MailboxCreate = ApiSchemas['AdminMailboxCreate']
 
 export type UploadSummary = Pick<
   ApiSchemas['AdminUploadResponse'],

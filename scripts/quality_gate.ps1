@@ -39,6 +39,9 @@ try {
     python scripts/verify_nginx_headers.py
     if ($LASTEXITCODE -ne 0) { throw "Nginx header verification failed." }
 
+    python scripts/verify_edge_assets.py
+    if ($LASTEXITCODE -ne 0) { throw "HTTPS edge verification failed." }
+
     python scripts/verify_keycloak_realm.py
     if ($LASTEXITCODE -ne 0) { throw "Keycloak realm verification failed." }
 

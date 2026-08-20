@@ -1,13 +1,25 @@
 import asyncio
 import json
 import unittest
+from datetime import timedelta
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 
 from platform.app import create_app
 from platform.bootstrap import create_user_with_device, provision_card
 from platform.config import Settings
-from platform.models import AuditEvent
+from platform.models import (
+    AuditEvent,
+    Card,
+    CardAllocation,
+    Mailbox,
+    MailSession,
+    Task,
+    OutboxEvent,
+    UploadJob,
+    utc_now,
+)
 
 
 class AdminApiTests(unittest.TestCase):
@@ -168,7 +180,7 @@ class AdminApiTests(unittest.TestCase):
             provider_ref="provider-card-1",
             brand="Visa",
             last4="4242",
-            secret_ref="vault://cards/provider-card-1",
+            secret_ref="vault://secret/cards/provider-card-1",
         )
         cards = self.request("GET", "/api/v1/admin/cards", headers=self.headers(admin_token))
         self.assertEqual(cards.status_code, 200, cards.text)
@@ -176,6 +188,422 @@ class AdminApiTests(unittest.TestCase):
         serialized = json.dumps(cards.json()).lower()
         self.assertNotIn("secret_ref", serialized)
         self.assertNotIn("vault://", serialized)
+
+    def test_admin_card_management_rejects_pan_and_releases_active_lease(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        rejected_pan = self.request(
+            "POST",
+            "/api/v1/admin/cards",
+            headers=self.headers(admin_token),
+            json={
+                "provider_ref": "4111111111111111",
+                "brand": "Visa",
+                "last4": "1111",
+                "secret_ref": "vault://secret/cards/card-1",
+                "pan": "4111111111111111",
+                "cvv": "123",
+            },
+        )
+        self.assertEqual(rejected_pan.status_code, 422, rejected_pan.text)
+        rejected_raw_secret = self.request(
+            "POST",
+            "/api/v1/admin/cards",
+            headers=self.headers(admin_token),
+            json={
+                "provider_ref": "provider-card-managed",
+                "brand": "Visa",
+                "last4": "4242",
+                "secret_ref": "4111111111111111|123",
+            },
+        )
+        self.assertEqual(rejected_raw_secret.status_code, 422, rejected_raw_secret.text)
+        for unsafe_payload in (
+            {
+                "provider_ref": "provider-4111-1111-1111-1111",
+                "brand": "Visa",
+                "last4": "1111",
+                "secret_ref": "vault://secret/cards/unsafe-provider",
+            },
+            {
+                "provider_ref": "safe-provider",
+                "brand": "Visa 4111 1111 1111 1111",
+                "last4": "1111",
+                "secret_ref": "vault://secret/cards/unsafe-brand",
+            },
+            {
+                "provider_ref": "safe-provider",
+                "brand": "Visa",
+                "last4": "1111",
+                "expiry_month": 12,
+                "secret_ref": "vault://secret/cards/incomplete-expiry",
+            },
+            {
+                "provider_ref": "safe-provider",
+                "brand": "Visa",
+                "last4": "1111",
+                "secret_ref": "vault://secret/mailboxes/wrong-domain",
+            },
+            {
+                "provider_ref": "safe-provider",
+                "brand": "Visa",
+                "last4": "1111",
+                "secret_ref": "vault://secret/cards/../mailboxes/wrong-domain",
+            },
+            {
+                "provider_ref": "safe-provider",
+                "brand": "Visa",
+                "last4": "1111",
+                "secret_ref": "vault://secret/cards//empty-segment",
+            },
+        ):
+            with self.subTest(unsafe_payload=unsafe_payload):
+                rejected = self.request(
+                    "POST",
+                    "/api/v1/admin/cards",
+                    headers=self.headers(admin_token),
+                    json=unsafe_payload,
+                )
+                self.assertEqual(rejected.status_code, 422, rejected.text)
+
+        created = self.request(
+            "POST",
+            "/api/v1/admin/cards",
+            headers=self.headers(admin_token),
+            json={
+                "provider_ref": "provider-card-managed",
+                "brand": "Visa",
+                "last4": "4242",
+                "expiry_month": 12,
+                "expiry_year": 2030,
+                "secret_ref": "vault://secret/cards/provider-card-managed",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        card_id = created.json()["id"]
+        self.assertNotIn("secret_ref", created.text.lower())
+        self.assertNotIn("vault://", created.text.lower())
+
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        task = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.headers(operator_token),
+            json={"type": "card_checkout", "idempotency_key": "admin-disable-card"},
+        )
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task.json()['id']}/card-allocations",
+            headers=self.headers(operator_token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        queued_upload = self.request(
+            "POST",
+            f"/api/v1/tasks/{task.json()['id']}/uploads",
+            headers=self.headers(operator_token),
+            json={"business_name": "Queued", "idempotency_key": "disable-queued"},
+        )
+        running_upload = self.request(
+            "POST",
+            f"/api/v1/tasks/{task.json()['id']}/uploads",
+            headers=self.headers(operator_token),
+            json={"business_name": "Running", "idempotency_key": "disable-running"},
+        )
+        with self.app.state.session_factory() as db:
+            running = db.get(UploadJob, running_upload.json()["id"])
+            running.status = "running"
+            db.commit()
+
+        disabled = self.request(
+            "PATCH",
+            f"/api/v1/admin/cards/{card_id}",
+            headers=self.headers(admin_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertFalse(disabled.json()["is_active"])
+        with self.app.state.session_factory() as db:
+            persisted = db.get(CardAllocation, allocation.json()["id"])
+            self.assertEqual(persisted.status, "released")
+            self.assertIsNotNone(persisted.released_at)
+            queued = db.get(UploadJob, queued_upload.json()["id"])
+            running = db.get(UploadJob, running_upload.json()["id"])
+            self.assertEqual(queued.status, "cancelled")
+            self.assertEqual(queued.error_code, "card_disabled")
+            self.assertEqual(running.status, "unknown")
+            self.assertEqual(running.error_code, "external_unknown")
+            events = list(
+                db.query(OutboxEvent).filter(
+                    OutboxEvent.aggregate_id.in_([queued.id, running.id])
+                )
+            )
+            self.assertEqual({event.status for event in events}, {"processed"})
+
+        enabled = self.request(
+            "PATCH",
+            f"/api/v1/admin/cards/{card_id}",
+            headers=self.headers(admin_token),
+            json={"is_active": True},
+        )
+        self.assertTrue(enabled.json()["is_active"])
+        duplicate_secret = self.request(
+            "POST",
+            "/api/v1/admin/cards",
+            headers=self.headers(admin_token),
+            json={
+                "provider_ref": "different-provider-same-secret",
+                "brand": "Visa",
+                "last4": "9999",
+                "secret_ref": "vault://secret/cards/provider-card-managed",
+            },
+        )
+        self.assertEqual(duplicate_secret.status_code, 409, duplicate_secret.text)
+        forbidden = self.request(
+            "PATCH",
+            f"/api/v1/admin/cards/{card_id}",
+            headers=self.headers(operator_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(forbidden.status_code, 403, forbidden.text)
+        other_token = self.login(
+            "tenant-b",
+            "other@example.test",
+            "other-account-password",
+            self.other_tenant.device_id,
+        )
+        other_tenant_same_secret = self.request(
+            "POST",
+            "/api/v1/admin/cards",
+            headers=self.headers(other_token),
+            json={
+                "provider_ref": "tenant-b-card",
+                "brand": "Visa",
+                "last4": "4242",
+                "secret_ref": "vault://secret/cards/provider-card-managed",
+            },
+        )
+        self.assertEqual(other_tenant_same_secret.status_code, 201, other_tenant_same_secret.text)
+        hidden = self.request(
+            "PATCH",
+            f"/api/v1/admin/cards/{card_id}",
+            headers=self.headers(other_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(hidden.status_code, 404, hidden.text)
+
+        with self.app.state.session_factory() as db:
+            audit_text = "\n".join(event.details_json for event in db.query(AuditEvent))
+        self.assertNotIn("vault://secret/cards/provider-card-managed", audit_text)
+
+    def test_admin_mailbox_management_revokes_sessions_and_rotates_reference(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        wrong_domain = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes",
+            headers=self.headers(admin_token),
+            json={
+                "email_masked": "m***@example.test",
+                "connector_type": "http",
+                "secret_ref": "vault://secret/cards/wrong-domain",
+            },
+        )
+        self.assertEqual(wrong_domain.status_code, 422, wrong_domain.text)
+        created = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes",
+            headers=self.headers(admin_token),
+            json={
+                "email_masked": "m***@example.test",
+                "connector_type": "http",
+                "secret_ref": "vault://secret/mailboxes/managed-v1",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        mailbox_id = created.json()["id"]
+        self.assertNotIn("secret_ref", created.text.lower())
+        self.assertNotIn("vault://", created.text.lower())
+        with self.app.state.session_factory() as db:
+            task = Task(
+                tenant_id="tenant-a",
+                user_id=self.operator.user_id,
+                device_id=self.operator.device_id,
+                task_type="mail_code",
+                idempotency_key="admin-disable-mailbox",
+                status="created",
+                expires_at=utc_now() + timedelta(minutes=10),
+            )
+            db.add(task)
+            db.flush()
+            session = MailSession(
+                tenant_id="tenant-a",
+                task_id=task.id,
+                user_id=self.operator.user_id,
+                device_id=self.operator.device_id,
+                mailbox_id=mailbox_id,
+                trace_id=task.trace_id,
+                status="code_ready",
+                expires_at=utc_now() + timedelta(minutes=5),
+                delivered_code="987654",
+                delivered_at=utc_now(),
+                code_expires_at=utc_now() + timedelta(minutes=1),
+            )
+            db.add(session)
+            db.commit()
+            session_id = session.id
+
+        disabled = self.request(
+            "PATCH",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
+            headers=self.headers(admin_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertEqual(disabled.json()["status"], "disabled")
+        self.assertEqual(disabled.json()["active_session_count"], 0)
+        with self.app.state.session_factory() as db:
+            session = db.get(MailSession, session_id)
+            self.assertEqual(session.status, "revoked")
+            self.assertIsNone(session.delivered_code)
+            self.assertIsNone(session.delivered_at)
+            self.assertIsNone(session.code_expires_at)
+
+        rotated = self.request(
+            "POST",
+            f"/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+            headers=self.headers(admin_token),
+            json={"secret_ref": "vault://secret/mailboxes/managed-v2"},
+        )
+        self.assertEqual(rotated.status_code, 200, rotated.text)
+        self.assertNotIn("vault://", rotated.text.lower())
+        rejected_rotation = self.request(
+            "POST",
+            f"/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+            headers=self.headers(admin_token),
+            json={"secret_ref": "vault://secret/cards/wrong-domain"},
+        )
+        self.assertEqual(rejected_rotation.status_code, 422, rejected_rotation.text)
+        enabled = self.request(
+            "PATCH",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
+            headers=self.headers(admin_token),
+            json={"is_active": True},
+        )
+        self.assertTrue(enabled.json()["is_active"])
+        with self.app.state.session_factory() as db:
+            mailbox = db.get(Mailbox, mailbox_id)
+            self.assertEqual(mailbox.secret_ref, "vault://secret/mailboxes/managed-v2")
+            audit_text = "\n".join(event.details_json for event in db.query(AuditEvent))
+        self.assertNotIn("vault://secret/mailboxes/managed-v1", audit_text)
+        self.assertNotIn("vault://secret/mailboxes/managed-v2", audit_text)
+
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        forbidden = self.request(
+            "POST",
+            f"/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+            headers=self.headers(operator_token),
+            json={"secret_ref": "vault://secret/mailboxes/forbidden"},
+        )
+        self.assertEqual(forbidden.status_code, 403, forbidden.text)
+        other_token = self.login(
+            "tenant-b",
+            "other@example.test",
+            "other-account-password",
+            self.other_tenant.device_id,
+        )
+        hidden = self.request(
+            "PATCH",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
+            headers=self.headers(other_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(hidden.status_code, 404, hidden.text)
+
+    def test_card_secret_reference_unique_constraint_closes_concurrent_check_race(self) -> None:
+        first = self.app.state.session_factory()
+        second = self.app.state.session_factory()
+        try:
+            first.add(Card(
+                tenant_id="tenant-a",
+                provider_ref="race-provider-a",
+                brand="Visa",
+                last4="4242",
+                secret_ref="vault://secret/cards/race-shared",
+            ))
+            second.add(Card(
+                tenant_id="tenant-a",
+                provider_ref="race-provider-b",
+                brand="Visa",
+                last4="4242",
+                secret_ref="vault://secret/cards/race-shared",
+            ))
+            first.commit()
+            with self.assertRaises(IntegrityError):
+                second.commit()
+        finally:
+            first.close()
+            second.close()
+
+    def test_resource_management_role_matrix_allows_only_ops_and_platform_admin(self) -> None:
+        ops = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="ops-resource@example.test",
+            password="ops-resource-account-password",
+            device_name="ops-resource-device",
+            role="ops_admin",
+        )
+        auditor = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="audit-resource@example.test",
+            password="audit-resource-account-password",
+            device_name="audit-resource-device",
+            role="security_auditor",
+        )
+        ops_token = self.login(
+            "tenant-a",
+            "ops-resource@example.test",
+            "ops-resource-account-password",
+            ops.device_id,
+        )
+        created = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes",
+            headers=self.headers(ops_token),
+            json={
+                "email_masked": "o***@example.test",
+                "connector_type": "http",
+                "secret_ref": "vault://secret/mailboxes/ops-resource",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+
+        auditor_token = self.login(
+            "tenant-a",
+            "audit-resource@example.test",
+            "audit-resource-account-password",
+            auditor.device_id,
+        )
+        denied = self.request(
+            "PATCH",
+            f"/api/v1/admin/mailboxes/{created.json()['id']}",
+            headers=self.headers(auditor_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
 
     def test_audit_and_upload_views_follow_security_roles(self) -> None:
         auditor = create_user_with_device(

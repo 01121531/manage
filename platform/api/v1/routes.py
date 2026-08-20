@@ -53,6 +53,11 @@ from platform.models import (
     new_id,
 )
 from platform.schemas import (
+    AdminCardCreate,
+    AdminCardStateUpdate,
+    AdminMailboxCreate,
+    AdminMailboxSecretRotation,
+    AdminMailboxStateUpdate,
     LoginRequest,
     MailCodeResponse,
     MailboxStatusResponse,
@@ -2238,6 +2243,362 @@ def admin_list_cards(
         .order_by(Card.created_at.desc())
     ).all()
     return [AdminCardResponse.model_validate(card, from_attributes=True) for card in cards]
+
+
+@router.post(
+    "/admin/cards",
+    response_model=AdminCardResponse,
+    status_code=201,
+    tags=["admin"],
+)
+def admin_create_card(
+    payload: AdminCardCreate,
+    request: Request,
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> AdminCardResponse:
+    card = Card(
+        tenant_id=principal.tenant_id,
+        provider_ref=payload.provider_ref,
+        brand=payload.brand,
+        last4=payload.last4,
+        expiry_month=payload.expiry_month,
+        expiry_year=payload.expiry_year,
+        secret_ref=payload.secret_ref,
+        is_active=True,
+    )
+    db.add(card)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Card provider or secret reference already exists",
+        ) from None
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="admin.card_created",
+        entity_type="card",
+        entity_id=card.id,
+        trace_id=request.state.trace_id,
+        details={"provider_ref": card.provider_ref, "brand": card.brand, "last4": card.last4},
+    )
+    db.commit()
+    db.refresh(card)
+    return AdminCardResponse.model_validate(card, from_attributes=True)
+
+
+@router.patch(
+    "/admin/cards/{card_id}",
+    response_model=AdminCardResponse,
+    tags=["admin"],
+)
+def admin_update_card_state(
+    card_id: str,
+    payload: AdminCardStateUpdate,
+    request: Request,
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> AdminCardResponse:
+    card = db.scalar(
+        select(Card).where(
+            Card.id == card_id, Card.tenant_id == principal.tenant_id
+        )
+    )
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+    if card.is_active != payload.is_active:
+        released_count = 0
+        if not payload.is_active:
+            now = _utc_now()
+            allocations = list(
+                db.scalars(
+                    select(CardAllocation).where(
+                        CardAllocation.card_id == card.id,
+                        CardAllocation.tenant_id == principal.tenant_id,
+                        CardAllocation.released_at.is_(None),
+                    )
+                )
+            )
+            allocation_ids = [allocation.id for allocation in allocations]
+            if allocation_ids:
+                upload_jobs = list(
+                    db.scalars(
+                        select(UploadJob).where(
+                            UploadJob.tenant_id == principal.tenant_id,
+                            UploadJob.card_allocation_id.in_(allocation_ids),
+                            UploadJob.status.in_(("queued", "running")),
+                        )
+                    )
+                )
+                for upload in upload_jobs:
+                    was_running = upload.status == "running"
+                    upload.status = "unknown" if was_running else "cancelled"
+                    upload.error_code = (
+                        "external_unknown" if was_running else "card_disabled"
+                    )
+                    record_audit(
+                        db,
+                        tenant_id=principal.tenant_id,
+                        user_id=principal.user_id,
+                        device_id=principal.device_id,
+                        event_type=(
+                            "upload.unknown"
+                            if was_running
+                            else "upload.cancel_requested"
+                        ),
+                        entity_type="upload_job",
+                        entity_id=upload.id,
+                        trace_id=upload.trace_id,
+                        details={
+                            "status": upload.status,
+                            "reason": "admin_card_disabled",
+                        },
+                    )
+                    outbox_events = list(
+                        db.scalars(
+                            select(OutboxEvent).where(
+                                OutboxEvent.aggregate_id == upload.id,
+                                OutboxEvent.event_type == "upload.requested",
+                                OutboxEvent.status.in_(("pending", "processing")),
+                            )
+                        )
+                    )
+                    for event in outbox_events:
+                        event.status = "processed"
+                        event.processed_at = now
+                        event.last_error_code = None
+            for allocation in allocations:
+                allocation.status = "released"
+                allocation.released_at = now
+                released_count += 1
+                record_audit(
+                    db,
+                    tenant_id=principal.tenant_id,
+                    user_id=principal.user_id,
+                    device_id=principal.device_id,
+                    event_type="card.released",
+                    entity_type="card_allocation",
+                    entity_id=allocation.id,
+                    trace_id=allocation.trace_id,
+                    details={
+                        "task_id": allocation.task_id,
+                        "release_reason": "admin_card_disabled",
+                    },
+                )
+        card.is_active = payload.is_active
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type=(
+                "admin.card_enabled" if payload.is_active else "admin.card_disabled"
+            ),
+            entity_type="card",
+            entity_id=card.id,
+            trace_id=request.state.trace_id,
+            details={"released_allocation_count": released_count},
+        )
+        db.commit()
+        db.refresh(card)
+    return AdminCardResponse.model_validate(card, from_attributes=True)
+
+
+@router.post(
+    "/admin/mailboxes",
+    response_model=MailboxStatusResponse,
+    status_code=201,
+    tags=["admin"],
+)
+def admin_create_mailbox(
+    payload: AdminMailboxCreate,
+    request: Request,
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> MailboxStatusResponse:
+    mailbox = Mailbox(
+        tenant_id=principal.tenant_id,
+        email_masked=payload.email_masked,
+        connector_type=payload.connector_type,
+        secret_ref=payload.secret_ref,
+        is_active=True,
+    )
+    db.add(mailbox)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Mailbox secret reference already exists"
+        ) from None
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="admin.mailbox_created",
+        entity_type="mailbox",
+        entity_id=mailbox.id,
+        trace_id=request.state.trace_id,
+        details={
+            "email_masked": mailbox.email_masked,
+            "connector_type": mailbox.connector_type,
+        },
+    )
+    db.commit()
+    db.refresh(mailbox)
+    return _mailbox_status_response(mailbox, active_session_count=0)
+
+
+@router.patch(
+    "/admin/mailboxes/{mailbox_id}",
+    response_model=MailboxStatusResponse,
+    tags=["admin"],
+)
+def admin_update_mailbox_state(
+    mailbox_id: str,
+    payload: AdminMailboxStateUpdate,
+    request: Request,
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> MailboxStatusResponse:
+    mailbox = db.scalar(
+        select(Mailbox).where(
+            Mailbox.id == mailbox_id,
+            Mailbox.tenant_id == principal.tenant_id,
+        )
+    )
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox not found")
+    if mailbox.is_active != payload.is_active:
+        revoked_count = 0
+        if not payload.is_active:
+            sessions = list(
+                db.scalars(
+                    select(MailSession).where(
+                        MailSession.mailbox_id == mailbox.id,
+                        MailSession.tenant_id == principal.tenant_id,
+                        MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
+                    )
+                )
+            )
+            for session in sessions:
+                session.status = "revoked"
+                session.delivered_code = None
+                session.delivered_at = None
+                session.code_expires_at = None
+                revoked_count += 1
+                record_audit(
+                    db,
+                    tenant_id=principal.tenant_id,
+                    user_id=principal.user_id,
+                    device_id=principal.device_id,
+                    event_type="mail_session.revoked",
+                    entity_type="mail_session",
+                    entity_id=session.id,
+                    trace_id=session.trace_id,
+                    details={"task_id": session.task_id, "reason": "admin_mailbox_disabled"},
+                )
+        mailbox.is_active = payload.is_active
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type=(
+                "admin.mailbox_enabled"
+                if payload.is_active
+                else "admin.mailbox_disabled"
+            ),
+            entity_type="mailbox",
+            entity_id=mailbox.id,
+            trace_id=request.state.trace_id,
+            details={"revoked_session_count": revoked_count},
+        )
+        db.commit()
+        db.refresh(mailbox)
+    active_session_count = db.scalar(
+        select(func.count())
+        .select_from(MailSession)
+        .where(
+            MailSession.mailbox_id == mailbox.id,
+            MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
+            MailSession.expires_at > _utc_now(),
+        )
+    )
+    return _mailbox_status_response(
+        mailbox, active_session_count=int(active_session_count or 0)
+    )
+
+
+@router.post(
+    "/admin/mailboxes/{mailbox_id}/secret-rotations",
+    response_model=MailboxStatusResponse,
+    tags=["admin"],
+)
+def admin_rotate_mailbox_secret(
+    mailbox_id: str,
+    payload: AdminMailboxSecretRotation,
+    request: Request,
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> MailboxStatusResponse:
+    mailbox = db.scalar(
+        select(Mailbox).where(
+            Mailbox.id == mailbox_id,
+            Mailbox.tenant_id == principal.tenant_id,
+        )
+    )
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox not found")
+    if mailbox.secret_ref != payload.secret_ref:
+        mailbox.secret_ref = payload.secret_ref
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type="admin.mailbox_secret_rotated",
+            entity_type="mailbox",
+            entity_id=mailbox.id,
+            trace_id=request.state.trace_id,
+            details={"rotation": "completed"},
+        )
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409, detail="Mailbox secret reference already exists"
+            ) from None
+        db.refresh(mailbox)
+    active_session_count = db.scalar(
+        select(func.count())
+        .select_from(MailSession)
+        .where(
+            MailSession.mailbox_id == mailbox.id,
+            MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
+            MailSession.expires_at > _utc_now(),
+        )
+    )
+    return _mailbox_status_response(
+        mailbox, active_session_count=int(active_session_count or 0)
+    )
 
 
 @router.get(

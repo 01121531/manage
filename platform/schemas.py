@@ -1,9 +1,10 @@
 """Pydantic request and response contracts for the Phase 1 API."""
 
 from datetime import datetime
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -107,6 +108,107 @@ class AdminCardResponse(BaseModel):
     expiry_year: int | None
     is_active: bool
     created_at: datetime
+
+
+def _normalize_opaque_secret_ref(value: str, *, vault_prefix: str) -> str:
+    normalized = value.strip()
+    if re.fullmatch(r"(?:vault|env)://[A-Za-z0-9][A-Za-z0-9._/-]*", normalized) is None:
+        raise ValueError("secret_ref must be an opaque vault:// or env:// reference")
+    path = normalized.split("://", maxsplit=1)[1]
+    if any(segment in {"", ".", ".."} for segment in path.split("/")):
+        raise ValueError("secret_ref path must not contain empty, dot, or parent segments")
+    if normalized.startswith("vault://") and not normalized.startswith(vault_prefix):
+        raise ValueError(f"secret_ref must use {vault_prefix} or an env:// development reference")
+    return normalized
+
+
+def _contains_pan_like_digits(value: str) -> bool:
+    for candidate in re.split(r"[A-Za-z]+", value):
+        digit_count = len(re.sub(r"\D", "", candidate))
+        if 12 <= digit_count <= 19:
+            return True
+    return False
+
+
+class AdminCardCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_ref: str = Field(min_length=1, max_length=160)
+    brand: str = Field(min_length=1, max_length=40)
+    last4: str = Field(pattern=r"^\d{4}$")
+    expiry_month: int | None = Field(default=None, ge=1, le=12)
+    expiry_year: int | None = Field(default=None, ge=2000, le=9999)
+    secret_ref: str = Field(min_length=1, max_length=512, repr=False)
+
+    @field_validator("provider_ref", "brand")
+    @classmethod
+    def normalize_card_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        if _contains_pan_like_digits(normalized):
+            raise ValueError("provider_ref and brand must not contain a PAN")
+        return normalized
+
+    @field_validator("secret_ref")
+    @classmethod
+    def validate_secret_ref(cls, value: str) -> str:
+        return _normalize_opaque_secret_ref(value, vault_prefix="vault://secret/cards/")
+
+    @model_validator(mode="after")
+    def validate_expiry_pair(self) -> "AdminCardCreate":
+        if (self.expiry_month is None) != (self.expiry_year is None):
+            raise ValueError("expiry_month and expiry_year must be provided together")
+        return self
+
+
+class AdminCardStateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_active: bool
+
+
+class AdminMailboxCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email_masked: str = Field(min_length=3, max_length=320)
+    connector_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    secret_ref: str = Field(min_length=1, max_length=512, repr=False)
+
+    @field_validator("email_masked")
+    @classmethod
+    def validate_masked_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or "*" not in normalized:
+            raise ValueError("email_masked must contain a masked email address")
+        return normalized
+
+    @field_validator("connector_type")
+    @classmethod
+    def normalize_connector_type(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("secret_ref")
+    @classmethod
+    def validate_secret_ref(cls, value: str) -> str:
+        return _normalize_opaque_secret_ref(value, vault_prefix="vault://secret/mailboxes/")
+
+
+class AdminMailboxStateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_active: bool
+
+
+class AdminMailboxSecretRotation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    secret_ref: str = Field(min_length=1, max_length=512, repr=False)
+
+    @field_validator("secret_ref")
+    @classmethod
+    def validate_secret_ref(cls, value: str) -> str:
+        return _normalize_opaque_secret_ref(value, vault_prefix="vault://secret/mailboxes/")
 
 
 class AdminUploadResponse(BaseModel):

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     oidc_device_claim: str = "device_id"
     vault_addr: str | None = None
     vault_token: SecretStr | None = None
+    vault_token_file: str | None = None
     vault_namespace: str | None = None
     vault_timeout_seconds: int = Field(default=10, gt=0, le=60)
     mail_api_url: str | None = None

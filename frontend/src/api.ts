@@ -5,10 +5,12 @@ import type {
   AdminDevice,
   AuditEvent,
   AuthConfig,
+  CardCreate,
   CardSummary,
   DashboardSummary,
   LoginResult,
   MailboxSummary,
+  MailboxCreate,
   Principal,
   Role,
   TaskSummary,
@@ -169,6 +171,32 @@ export const revokeDevice = (deviceId: string): Promise<AdminDevice> =>
   }))
 export const listCards = (): Promise<CardSummary[]> =>
   unwrap(api.GET('/api/v1/admin/cards'))
+export const createCard = (payload: CardCreate): Promise<CardSummary> =>
+  unwrap(api.POST('/api/v1/admin/cards', { body: payload }))
+export const updateCardState = (cardId: string, isActive: boolean): Promise<CardSummary> =>
+  unwrap(api.PATCH('/api/v1/admin/cards/{card_id}', {
+    params: { path: { card_id: cardId } },
+    body: { is_active: isActive },
+  }))
+export const createMailbox = (payload: MailboxCreate): Promise<MailboxSummary> =>
+  unwrap(api.POST('/api/v1/admin/mailboxes', { body: payload }))
+export const updateMailboxState = (
+  mailboxId: string,
+  isActive: boolean,
+): Promise<MailboxSummary> => unwrap(api.PATCH('/api/v1/admin/mailboxes/{mailbox_id}', {
+  params: { path: { mailbox_id: mailboxId } },
+  body: { is_active: isActive },
+}))
+export const rotateMailboxSecret = (
+  mailboxId: string,
+  secretRef: string,
+): Promise<MailboxSummary> => unwrap(api.POST(
+  '/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations',
+  {
+    params: { path: { mailbox_id: mailboxId } },
+    body: { secret_ref: secretRef },
+  },
+))
 export const listUploads = (): Promise<UploadSummary[]> =>
   unwrap(api.GET('/api/v1/admin/uploads'))
 export const getUploadPolicyStatus = (): Promise<UploadPolicyStatus> =>

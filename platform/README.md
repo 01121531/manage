@@ -172,19 +172,25 @@ upload job records its selected version, and the worker resolves that exact
 snapshot even if the tenant rolls back before the job runs.
 
 Server-side secrets support two reference schemes. `env://NAME` reads a JSON
-object or plain value from the process environment and is intended for local or
-private validation. `vault://mount/path` uses Vault KV v2 and requires
-`PLATFORM_VAULT_ADDR` plus the process-local `PLATFORM_VAULT_TOKEN`; optional
-`PLATFORM_VAULT_NAMESPACE` is sent as `X-Vault-Namespace`. For example, a
-production deployment can set
+object or plain value from the process environment only in development/test;
+production rejects all `env://` references. `vault://mount/path` uses Vault KV v2 and requires
+`PLATFORM_VAULT_ADDR`; optional `PLATFORM_VAULT_NAMESPACE` is sent as
+`X-Vault-Namespace`. Production must set `PLATFORM_VAULT_TOKEN_FILE` to an
+absolute path below `/run/secrets` or `/var/run/secrets`. The resolver reopens
+that regular file for every Vault request, so an atomic token rotation is used
+by the next resolve without restarting the process. Oversized, empty,
+non-regular, symlinked, or group/world-writable token files fail closed. The
+legacy `PLATFORM_VAULT_TOKEN` environment value is accepted only in development
+and test. For example, a production deployment can set
 `PLATFORM_SUB2_CREDENTIAL_REF=vault://secret/sub2/credential`,
 `PLATFORM_SUB2_PROXY_REF=vault://secret/sub2/proxy`, mailbox `secret_ref`
 values such as `vault://secret/mailboxes/mail-001`, and card `secret_ref`
 values such as `vault://secret/cards/card-001`. The mail and Sub2 workers
 resolve these only in-process before calling the configured upstream
-interfaces. Compose maps `PLATFORM_VAULT_API_TOKEN`,
-`PLATFORM_VAULT_MAIL_TOKEN`, and `PLATFORM_VAULT_SUB2_TOKEN` into that common
-in-container name separately. The API token can read only `secret/data/cards/*`
+interfaces. Compose mounts three different host token directories read-only
+and maps each process to `/run/secrets/email-platform-vault/token`; RoleIDs,
+SecretIDs, and raw token values never enter the application environment. The
+API token can read only `secret/data/cards/*`
 for card reveal, the mail token only `secret/data/mailboxes/*`, and the Sub2
 token only the reviewed Sub2 credential/proxy paths plus `secret/data/cards/*`,
 which it must resolve when assembling the server-side upload payload. It has no
@@ -198,7 +204,9 @@ or an approved deployment secret broker; they are deliberately never injected
 into application containers. The broker exchanges each one-use SecretID for a
 short-lived service token and supplies only its matching `*_TOKEN`. Never write
 SecretIDs or issued tokens to Git, container images, logs, or a shared `.env`
-in a real production deployment.
+in a real production deployment. The broker writes each issued token to the
+matching `PLATFORM_VAULT_*_TOKEN_DIR/token` sink using mode `0400` for container
+UID 10001 and atomically replaces it on rotation.
 
 Every response includes an `X-Trace-Id` header. A valid UUID supplied in the
 request's `X-Trace-Id` header is propagated; otherwise one is generated. API
@@ -242,7 +250,8 @@ Copy-Item .env.example .env
 # Replace every CHANGE_ME value through the deployment secret manager.
 # PLATFORM_MIGRATION_DATABASE_URL is the schema-owner/DDL role.
 # PLATFORM_DATABASE_URL is the API/worker DML-only role.
-# Issue independent Vault tokens using infra/vault/README.md.
+# Provision the three Vault token directories using infra/vault/README.md;
+# placeholder/missing directories intentionally prevent container startup.
 docker compose config
 docker compose up -d
 ```
@@ -335,14 +344,28 @@ addresses, group IDs or concurrency settings. Both workers write heartbeat
 files at `PLATFORM_WORKER_HEARTBEAT_PATH`; the container health check fails
 when that file is missing or older than `PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS`.
 
-For TLS termination, render
-`infra/nginx/email-platform.conf.template` with the deployment domain and
-mount certificates from a secret volume. The template includes HTTP→HTTPS
-redirect, TLS 1.2/1.3, HSTS, CSP, clickjacking/content-type protections and an
-API request limiter. Render only the intended variable so Nginx variables such
-as `$host` survive, for example
-`envsubst '${PLATFORM_DOMAIN}' < infra/nginx/email-platform.conf.template >
-/etc/nginx/conf.d/email-platform.conf`. Do not commit certificate private keys.
+Compose includes a non-root `edge` service as the only public HTTP/HTTPS entry.
+It maps host ports 80/443 to unprivileged container ports 8080/8443; API, Web and
+Keycloak stay reachable only on the backend network. Point both
+`PLATFORM_DOMAIN` and `identity.PLATFORM_DOMAIN` DNS records at the host, then
+set `PLATFORM_TLS_CERT_FILE` and `PLATFORM_TLS_KEY_FILE` to absolute host paths
+for a certificate that covers both names (a matching wildcard or SAN
+certificate). The files are mounted read-only and must be readable by container
+UID 101; never put the private key in Git, the image, or the Compose environment.
+Explicit HTTP and HTTPS default servers return Nginx status 444 for every
+unrecognized Host/SNI name, so only the configured platform and identity names
+can reach application upstreams.
+
+At startup, `infra/nginx/render-edge-config.sh` validates the domain and TLS
+files, replaces only the literal `${PLATFORM_DOMAIN}` token, runs `nginx -t`,
+and then starts Nginx. Nginx runtime variables such as `$host`, `$request_uri`
+and `$proxy_add_x_forwarded_for` remain intact. The container runs read-only,
+drops all Linux capabilities and needs no `NET_BIND_SERVICE` capability because
+it binds only high ports internally. Validate the static deployment contract
+before rollout with `python scripts/verify_edge_assets.py`; then, on a Docker
+host with real certificates, require `docker compose config`, a healthy `edge`
+service, HTTP-to-HTTPS redirects, and successful external requests to both
+hostnames as production signoff evidence.
 
 An optional `vault-dev` Compose profile is provided solely for local contract
 tests (`docker compose --profile vault-dev up vault`). It runs Vault in dev mode

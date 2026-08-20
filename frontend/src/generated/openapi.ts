@@ -31,11 +31,29 @@ export interface paths {
         /** Admin List Cards */
         get: operations["admin_list_cards_api_v1_admin_cards_get"];
         put?: never;
-        post?: never;
+        /** Admin Create Card */
+        post: operations["admin_create_card_api_v1_admin_cards_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/cards/{card_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Admin Update Card State */
+        patch: operations["admin_update_card_state_api_v1_admin_cards__card_id__patch"];
         trace?: never;
     };
     "/api/v1/admin/devices": {
@@ -66,6 +84,57 @@ export interface paths {
         put?: never;
         /** Admin Revoke Device */
         post: operations["admin_revoke_device_api_v1_admin_devices__device_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/mailboxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Create Mailbox */
+        post: operations["admin_create_mailbox_api_v1_admin_mailboxes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/mailboxes/{mailbox_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Admin Update Mailbox State */
+        patch: operations["admin_update_mailbox_state_api_v1_admin_mailboxes__mailbox_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Rotate Mailbox Secret */
+        post: operations["admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -844,6 +913,21 @@ export interface components {
             /** User Id */
             user_id: string | null;
         };
+        /** AdminCardCreate */
+        AdminCardCreate: {
+            /** Brand */
+            brand: string;
+            /** Expiry Month */
+            expiry_month?: number | null;
+            /** Expiry Year */
+            expiry_year?: number | null;
+            /** Last4 */
+            last4: string;
+            /** Provider Ref */
+            provider_ref: string;
+            /** Secret Ref */
+            secret_ref: string;
+        };
         /** AdminCardResponse */
         AdminCardResponse: {
             /** Brand */
@@ -868,6 +952,11 @@ export interface components {
             /** Tenant Id */
             tenant_id: string;
         };
+        /** AdminCardStateUpdate */
+        AdminCardStateUpdate: {
+            /** Is Active */
+            is_active: boolean;
+        };
         /** AdminDeviceResponse */
         AdminDeviceResponse: {
             /**
@@ -885,6 +974,25 @@ export interface components {
             tenant_id: string;
             /** User Id */
             user_id: string;
+        };
+        /** AdminMailboxCreate */
+        AdminMailboxCreate: {
+            /** Connector Type */
+            connector_type: string;
+            /** Email Masked */
+            email_masked: string;
+            /** Secret Ref */
+            secret_ref: string;
+        };
+        /** AdminMailboxSecretRotation */
+        AdminMailboxSecretRotation: {
+            /** Secret Ref */
+            secret_ref: string;
+        };
+        /** AdminMailboxStateUpdate */
+        AdminMailboxStateUpdate: {
+            /** Is Active */
+            is_active: boolean;
         };
         /** AdminUploadResponse */
         AdminUploadResponse: {
@@ -1437,6 +1545,74 @@ export interface operations {
             };
         };
     };
+    admin_create_card_api_v1_admin_cards_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminCardCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCardResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_update_card_state_api_v1_admin_cards__card_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminCardStateUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCardResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     admin_list_devices_api_v1_admin_devices_get: {
         parameters: {
             query?: never;
@@ -1475,6 +1651,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminDeviceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_create_mailbox_api_v1_admin_mailboxes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminMailboxCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailboxStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_update_mailbox_state_api_v1_admin_mailboxes__mailbox_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminMailboxStateUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailboxStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminMailboxSecretRotation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailboxStatusResponse"];
                 };
             };
             /** @description Validation Error */

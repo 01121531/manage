@@ -82,6 +82,68 @@
         "title": "AdminAuditResponse",
         "type": "object"
       },
+      "AdminCardCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "brand": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Brand",
+            "type": "string"
+          },
+          "expiry_month": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Month"
+          },
+          "expiry_year": {
+            "anyOf": [
+              {
+                "maximum": 9999.0,
+                "minimum": 2000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Year"
+          },
+          "last4": {
+            "pattern": "^\\d{4}$",
+            "title": "Last4",
+            "type": "string"
+          },
+          "provider_ref": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Provider Ref",
+            "type": "string"
+          },
+          "secret_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Secret Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_ref",
+          "brand",
+          "last4",
+          "secret_ref"
+        ],
+        "title": "AdminCardCreate",
+        "type": "object"
+      },
       "AdminCardResponse": {
         "properties": {
           "brand": {
@@ -150,6 +212,20 @@
         "title": "AdminCardResponse",
         "type": "object"
       },
+      "AdminCardStateUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_active"
+        ],
+        "title": "AdminCardStateUpdate",
+        "type": "object"
+      },
       "AdminDeviceResponse": {
         "properties": {
           "created_at": {
@@ -195,6 +271,65 @@
           "created_at"
         ],
         "title": "AdminDeviceResponse",
+        "type": "object"
+      },
+      "AdminMailboxCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "connector_type": {
+            "pattern": "^[a-z][a-z0-9_-]{0,79}$",
+            "title": "Connector Type",
+            "type": "string"
+          },
+          "email_masked": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email Masked",
+            "type": "string"
+          },
+          "secret_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Secret Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email_masked",
+          "connector_type",
+          "secret_ref"
+        ],
+        "title": "AdminMailboxCreate",
+        "type": "object"
+      },
+      "AdminMailboxSecretRotation": {
+        "additionalProperties": false,
+        "properties": {
+          "secret_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Secret Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "secret_ref"
+        ],
+        "title": "AdminMailboxSecretRotation",
+        "type": "object"
+      },
+      "AdminMailboxStateUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_active"
+        ],
+        "title": "AdminMailboxStateUpdate",
         "type": "object"
       },
       "AdminUploadResponse": {
@@ -1667,6 +1802,107 @@
         "tags": [
           "admin"
         ]
+      },
+      "post": {
+        "operationId": "admin_create_card_api_v1_admin_cards_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCardCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Create Card",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/cards/{card_id}": {
+      "patch": {
+        "operationId": "admin_update_card_state_api_v1_admin_cards__card_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCardStateUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Update Card State",
+        "tags": [
+          "admin"
+        ]
       }
     },
     "/api/v1/admin/devices": {
@@ -1741,6 +1977,166 @@
           }
         ],
         "summary": "Admin Revoke Device",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/mailboxes": {
+      "post": {
+        "operationId": "admin_create_mailbox_api_v1_admin_mailboxes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminMailboxCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Create Mailbox",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/mailboxes/{mailbox_id}": {
+      "patch": {
+        "operationId": "admin_update_mailbox_state_api_v1_admin_mailboxes__mailbox_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminMailboxStateUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Update Mailbox State",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations": {
+      "post": {
+        "operationId": "admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminMailboxSecretRotation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Rotate Mailbox Secret",
         "tags": [
           "admin"
         ]

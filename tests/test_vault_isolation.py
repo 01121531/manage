@@ -29,6 +29,26 @@ class VaultIsolationTests(unittest.TestCase):
 
         self.assertTrue(any("worker-mail" in error for error in errors), errors)
 
+    def test_cross_service_token_directory_is_rejected(self) -> None:
+        self.compose = copy.deepcopy(self.compose)
+        self.compose["services"]["worker-mail"]["volumes"][0]["source"] = (
+            "${PLATFORM_VAULT_API_TOKEN_DIR:?set PLATFORM_VAULT_API_TOKEN_DIR in .env}"
+        )
+
+        errors = self.validate()
+
+        self.assertTrue(any("worker-mail Vault token directory" in error for error in errors), errors)
+
+    def test_duplicate_documented_token_directories_are_rejected(self) -> None:
+        self.env_text = self.env_text.replace(
+            "PLATFORM_VAULT_MAIL_TOKEN_DIR=/CHANGE_ME/vault-agent/mail",
+            "PLATFORM_VAULT_MAIL_TOKEN_DIR=/CHANGE_ME/vault-agent/api",
+        )
+
+        errors = self.validate()
+
+        self.assertIn("Per-service Vault token directories must be distinct", errors)
+
     def test_cross_service_policy_path_is_rejected(self) -> None:
         self.policies = dict(self.policies)
         self.policies["email-platform-mail.hcl"] += (
