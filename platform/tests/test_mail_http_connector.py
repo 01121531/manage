@@ -14,13 +14,23 @@ from platform.secrets import SecretResolverUnavailable
 
 
 class FakeResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self.body = json.dumps(payload).encode("utf-8")
+    def __init__(
+        self,
+        payload: dict[str, object] | None = None,
+        *,
+        raw_body: bytes | None = None,
+        final_url: str | None = None,
+    ) -> None:
+        self.body = raw_body if raw_body is not None else json.dumps(payload).encode("utf-8")
+        self.final_url = final_url
         self.headers = Message()
         self.headers["Content-Type"] = "application/json"
 
-    def read(self) -> bytes:
-        return self.body
+    def read(self, size: int = -1) -> bytes:
+        return self.body if size < 0 else self.body[:size]
+
+    def geturl(self) -> str:
+        return self.final_url or "https://mail-api.example/api/v1/watermark"
 
     def __enter__(self):
         return self
@@ -41,13 +51,16 @@ class RecordingResolver:
 
 
 class SequenceOpener:
-    def __init__(self, *payloads: dict[str, object]) -> None:
+    def __init__(self, *payloads: dict[str, object] | FakeResponse) -> None:
         self.payloads = list(payloads)
         self.requests = []
 
     def __call__(self, request, timeout: int):
         self.requests.append((request, timeout))
-        return FakeResponse(self.payloads.pop(0))
+        result = self.payloads.pop(0)
+        if isinstance(result, FakeResponse):
+            return result
+        return FakeResponse(result, final_url=request.full_url)
 
 
 class HttpMailConnectorTests(unittest.TestCase):
@@ -174,6 +187,38 @@ class HttpMailConnectorTests(unittest.TestCase):
     def test_rejects_non_https_non_loopback_url(self) -> None:
         with self.assertRaises(ValueError):
             HttpMailConnector("http://mail-api.example/api/v1", RecordingResolver())
+
+    def test_redirects_and_oversized_responses_are_rejected(self) -> None:
+        mailbox = MailboxAccess(
+            mailbox_id="mailbox-1", secret_ref="vault://mailboxes/mail-1"
+        )
+        redirected = HttpMailConnector(
+            "https://mail-api.example/api/v1",
+            RecordingResolver(),
+            opener=SequenceOpener(
+                FakeResponse(
+                    {"watermark": "1"},
+                    final_url="https://redirect.example/watermark",
+                )
+            ),
+        )
+        with self.assertRaisesRegex(MailConnectorUnavailable, "redirect"):
+            redirected.current_watermark(mailbox)
+
+        oversized = HttpMailConnector(
+            "https://mail-api.example/api/v1",
+            RecordingResolver(),
+            opener=SequenceOpener(FakeResponse(raw_body=b"x" * (64 * 1024 + 1))),
+        )
+        with self.assertRaisesRegex(MailConnectorUnavailable, "too large"):
+            oversized.current_watermark(mailbox)
+
+        self.assertTrue(
+            any(
+                handler.__class__.__name__ == "_NoRedirectHandler"
+                for handler in redirected._default_opener.handlers
+            )
+        )
 
 
 if __name__ == "__main__":

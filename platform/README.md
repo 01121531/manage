@@ -126,7 +126,10 @@ is configured on the mail worker. It calls `POST {PLATFORM_MAIL_API_URL}/waterma
 to initialize the session and `POST {PLATFORM_MAIL_API_URL}/code` while
 polling; mailbox `secret_ref` values are resolved in-process through the
 server-side secret resolver before the call. The desktop client never receives
-mailbox credentials or raw message bodies. A session records a connector
+mailbox credentials or raw message bodies. The HTTP connector never follows a
+redirect and rejects a response larger than 64 KiB before JSON decoding, so an
+upstream cannot forward credentials to another address or grow worker memory
+without bound. A session records a connector
 watermark, ignores messages at or before that watermark, and marks the first
 newer code consumed; later polls return `{"status":"consumed","code":null}`.
 Mailbox allocation locks candidate rows with `FOR UPDATE SKIP LOCKED` on
@@ -169,7 +172,9 @@ desktop requests, outbox rows, or API responses.
 
 The upload worker can call a server-side HTTP upload interface by setting
 `PLATFORM_SUB2_UPLOAD_URL`. Without it, the worker remains fail-closed and jobs
-become `adapter_unavailable`.
+become `adapter_unavailable`. The HTTP adapter never follows redirects and caps
+responses at 64 KiB. Either condition is treated as an ambiguous `unknown`
+result, not a definitive failure and not an automatic retry.
 
 Platform administrators can register the current server configuration as an
 immutable upload policy snapshot through `/api/v1/admin/policies/upload/versions`.

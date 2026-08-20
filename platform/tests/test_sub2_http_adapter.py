@@ -24,6 +24,7 @@ class FakeResponse:
         *,
         status: int = 200,
         raw_body: bytes | None = None,
+        final_url: str | None = None,
     ) -> None:
         self.body = (
             raw_body
@@ -31,11 +32,15 @@ class FakeResponse:
             else json.dumps(payload).encode("utf-8")
         )
         self.status = status
+        self.final_url = final_url
         self.headers = Message()
         self.headers["Content-Type"] = "application/json"
 
-    def read(self) -> bytes:
-        return self.body
+    def read(self, size: int = -1) -> bytes:
+        return self.body if size < 0 else self.body[:size]
+
+    def geturl(self) -> str:
+        return self.final_url or "https://sub2-upload.example/api/upload"
 
     def __enter__(self):
         return self
@@ -219,6 +224,34 @@ class HttpSub2AdapterTests(unittest.TestCase):
                 )
                 with self.assertRaises(UploadUnknownError):
                     adapter.submit(self.command())
+
+    def test_redirects_and_oversized_responses_are_unknown(self) -> None:
+        responses = (
+            FakeResponse(
+                {"external_ref": "sub2-job-1"},
+                final_url="https://redirect.example/upload",
+            ),
+            FakeResponse(raw_body=b"x" * (64 * 1024 + 1)),
+        )
+        for response in responses:
+            with self.subTest(final_url=response.final_url, size=len(response.body)):
+                adapter = HttpSub2Adapter(
+                    "https://sub2-upload.example/api/upload",
+                    RecordingResolver(),
+                    opener=RecordingOpener(response),
+                )
+                with self.assertRaises(UploadUnknownError):
+                    adapter.submit(self.command())
+
+        adapter = HttpSub2Adapter(
+            "https://sub2-upload.example/api/upload", RecordingResolver()
+        )
+        self.assertTrue(
+            any(
+                handler.__class__.__name__ == "_NoRedirectHandler"
+                for handler in adapter._default_opener.handlers
+            )
+        )
 
     def test_only_definitive_4xx_rejections_are_failed(self) -> None:
         for status in (400, 401, 403, 404, 405, 413, 415, 422):

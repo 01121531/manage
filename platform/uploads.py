@@ -67,6 +67,12 @@ class UnconfiguredSub2Adapter:
 
 
 ResponseOpener = Callable[..., Any]
+_MAX_RESPONSE_BYTES = 64 * 1024
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
 
 # Statuses that establish that the request was rejected before an upload could
 # be created. Ambiguous client statuses (timeout, conflict, too early, and rate
@@ -134,11 +140,12 @@ class HttpSub2Adapter:
         self.secret_resolver = secret_resolver
         self.timeout = timeout
         self._opener = opener
+        self._default_opener = urllib.request.build_opener(_NoRedirectHandler())
 
     def _open(self, request: urllib.request.Request, timeout: int) -> Any:
         if self._opener is not None:
             return self._opener(request, timeout=timeout)
-        return urllib.request.urlopen(request, timeout=timeout)
+        return self._default_opener.open(request, timeout=timeout)
 
     def submit(self, command: Sub2UploadCommand) -> Sub2UploadResult:
         if command.policy.credential_ref is None:
@@ -182,8 +189,14 @@ class HttpSub2Adapter:
         try:
             with self._open(request, timeout=self.timeout) as response:
                 status = int(getattr(response, "status", 200))
+                get_url = getattr(response, "geturl", None)
+                if callable(get_url) and get_url() != request.full_url:
+                    raise UploadUnknownError("Sub2 upload result is unknown")
                 charset = response.headers.get_content_charset() or "utf-8"
-                raw = response.read().decode(charset, errors="replace")
+                response_bytes = response.read(_MAX_RESPONSE_BYTES + 1)
+                if len(response_bytes) > _MAX_RESPONSE_BYTES:
+                    raise UploadUnknownError("Sub2 upload result is unknown")
+                raw = response_bytes.decode(charset, errors="replace")
         except urllib.error.HTTPError as error:
             if error.code in _DEFINITIVE_REJECTION_STATUSES:
                 raise Sub2AdapterError(
