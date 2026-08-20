@@ -3,6 +3,7 @@
 Use these during incident handling and change control:
 
 - [restore.md](./restore.md)
+- [vault-restore.md](./vault-restore.md)
 - [rollback.md](./rollback.md)
 - [device-revocation.md](./device-revocation.md)
 - [key-rotation.md](./key-rotation.md)

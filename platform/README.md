@@ -340,6 +340,23 @@ for platform `users`, `devices`, `audit_events` and Keycloak `realm`,
 whether zero counts are credible for the environment. Archive the entire
 directory as one unit.
 
+Vault integrated storage is backed up separately from PostgreSQL. Use a
+short-lived operator token file; the token is passed only to the Vault CLI
+child process and is never written to the command line or manifest:
+
+```powershell
+python -m scripts.vault_maintenance backup --output-dir backups/vault-YYYYMMDDTHHMMSSZ --address https://vault.example.com --token-file C:\secure\vault-snapshot.token
+python -m scripts.vault_maintenance verify --input-dir backups/vault-YYYYMMDDTHHMMSSZ
+python -m scripts.vault_maintenance restore --input-dir backups/vault-YYYYMMDDTHHMMSSZ --address https://isolated-vault.example.com --token-file C:\secure\isolated-vault-restore.token --confirm-restore
+```
+
+`vault.snap` and `vault-manifest.json` must be archived together. Restore first
+checks size, SHA-256 and `vault operator raft snapshot inspect`, and refuses to
+run without explicit confirmation. Exercise restore only against an isolated
+cluster with matching seal/KMS material before approving production recovery.
+The complete procedure is in `deploy/runbooks/vault-restore.md`; the `vault-dev`
+Compose profile is ephemeral and is not a valid snapshot or restore target.
+
 The release lock is captured in `deploy/release-manifest.json`. Before a
 production cut, verify it against the working tree with:
 

@@ -8,9 +8,12 @@ Use this when rotating platform secrets, bootstrap credentials, or identity-admi
    - `REDIS_PASSWORD`
    - `KEYCLOAK_ADMIN_PASSWORD`
    - `PLATFORM_JWT_HMAC_SECRET` if local auth is still used in non-production
-   - `PLATFORM_VAULT_TOKEN`
+   - API, mail-worker and Sub2-worker short-lived Vault service tokens
 
-2. Update the deployment `.env` from secret-manager output.
+2. Atomically replace the three service-specific token files under the host
+   directories configured by `PLATFORM_VAULT_API_TOKEN_DIR`,
+   `PLATFORM_VAULT_MAIL_TOKEN_DIR` and `PLATFORM_VAULT_SUB2_TOKEN_DIR`. Never
+   put a raw Vault token in `.env` or a Compose environment value.
 3. Re-run the config checks.
 
    ```powershell
@@ -31,4 +34,3 @@ Use this when rotating platform secrets, bootstrap credentials, or identity-admi
    curl.exe http://127.0.0.1:8000/readyz
    curl.exe http://127.0.0.1:9090/-/ready
    ```
-

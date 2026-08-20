@@ -22,7 +22,7 @@ def main() -> int:
     required = [
         "Compose/config and secret scan",
         "CodeQL SAST plus container build, HIGH/CRITICAL scan, SPDX SBOM, keyless signature and provenance",
-        "PostgreSQL backup/restore drill and Alembic upgrade",
+        "PostgreSQL plus Vault isolated backup/restore drills and Alembic upgrade",
         "Keycloak realm, redirect URIs, client auth, MFA",
         "TLS headers, rate limits, log redaction, retention, alerting",
         "Mail connector and Sub2 boundary",
@@ -43,6 +43,7 @@ def main() -> int:
         "Provenance attestation evidence:",
         "CodeQL Python result:",
         "CodeQL JavaScript/TypeScript result:",
+        "Vault snapshot artifact and SHA-256:",
     ]
     missing = [item for item in required if item not in text]
     if missing:

@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 release/
+backups/
 *.spec
 frontend/node_modules/
 frontend/dist/

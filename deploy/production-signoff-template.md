@@ -7,6 +7,7 @@ Release manifest:
 - Frontend version:
 - Migration head:
 - Backup artifact:
+- Vault snapshot artifact and SHA-256:
 - Container release manifest:
 - API OCI digest:
 - Web OCI digest:
@@ -34,7 +35,7 @@ Release manifest:
    - Evidence:
    - Result:
 
-3. PostgreSQL backup/restore drill and Alembic upgrade
+3. PostgreSQL plus Vault isolated backup/restore drills and Alembic upgrade
 
    - Evidence:
    - Result:
