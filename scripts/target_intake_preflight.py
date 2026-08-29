@@ -56,6 +56,16 @@ from scripts.target_intake_generation import (
     receipt_bytes,
     recheck_generation_lineage,
 )
+from scripts.target_intake_acceptance import (
+    AcceptanceReceiptError,
+    acceptance_receipt_bytes,
+    create_finalization_receipt,
+    create_snapshot_receipt,
+    load_finalization_acceptance,
+    load_snapshot_acceptance,
+    recheck_finalization_acceptance,
+    recheck_snapshot_acceptance,
+)
 from scripts.decision_envelope_validation import decision_errors
 from scripts.phase0_boundary_approval import approval_errors, intake_binding_errors
 from scripts.phase6_pilot_inputs import (
@@ -1317,6 +1327,33 @@ def load_phase_checkpoint(
     return identity
 
 
+def _snapshot_acceptance_identity_errors(acceptance: Any) -> list[str]:
+    """Recompute the Phase 0 window recorded by one snapshot receipt."""
+
+    receipt = acceptance.receipt
+    evaluated_at = _parse_utc(receipt.get("evaluated_at"))
+    if evaluated_at is None:
+        return ["snapshot receipt Phase 0 evaluation is invalid"]
+    checkpoint_path = Path(receipt["result_checkpoint"]["path"])
+    try:
+        identity, checkpoint = _load_validated_phase_checkpoint(
+            checkpoint_path,
+            environment=acceptance.checkpoint["environment"],
+            through_phase=0,
+            evaluated_at=evaluated_at,
+        )
+    except (KeyError, TypeError, PhaseCheckpointError):
+        return ["snapshot receipt Phase 0 evaluation is invalid"]
+    if (
+        checkpoint != acceptance.checkpoint
+        or identity.evaluated_at != receipt.get("evaluated_at")
+        or identity.valid_from != receipt.get("valid_from")
+        or identity.valid_until != receipt.get("valid_until")
+    ):
+        return ["snapshot receipt Phase 0 evaluation does not match checkpoint"]
+    return []
+
+
 def phase_checkpoint_errors(
     manifest_path: Path,
     *,
@@ -1356,6 +1393,7 @@ def _parser() -> argparse.ArgumentParser:
         "--expected-input-receipt-file-sha256", required=True
     )
     snapshot.add_argument("--output", required=True, type=Path)
+    snapshot.add_argument("--receipt-output", required=True, type=Path)
     snapshot.add_argument("--environment", required=True)
     register = commands.add_parser("register")
     register.add_argument("--input", required=True, type=Path)
@@ -1389,7 +1427,15 @@ def _parser() -> argparse.ArgumentParser:
         "--expected-input-receipt-file-sha256", required=True
     )
     finalize.add_argument("--output", required=True, type=Path)
+    finalize.add_argument("--receipt-output", required=True, type=Path)
     finalize.add_argument("--phase0-checkpoint-manifest", required=True, type=Path)
+    finalize.add_argument("--phase0-checkpoint-receipt", required=True, type=Path)
+    finalize.add_argument(
+        "--expected-phase0-checkpoint-receipt-payload-sha256", required=True
+    )
+    finalize.add_argument(
+        "--expected-phase0-checkpoint-receipt-file-sha256", required=True
+    )
     preflight = commands.add_parser("preflight")
     preflight.add_argument("--input", required=True, type=Path)
     preflight.add_argument("--input-receipt", type=Path)
@@ -1398,6 +1444,9 @@ def _parser() -> argparse.ArgumentParser:
     preflight.add_argument("--phase0-checkpoint-manifest", type=Path)
     preflight.add_argument("--expected-manifest-payload-sha256")
     preflight.add_argument("--expected-manifest-file-sha256")
+    preflight.add_argument("--finalization-receipt", type=Path)
+    preflight.add_argument("--expected-finalization-receipt-payload-sha256")
+    preflight.add_argument("--expected-finalization-receipt-file-sha256")
     completeness = preflight.add_mutually_exclusive_group()
     completeness.add_argument("--allow-incomplete", action="store_true")
     completeness.add_argument(
@@ -1727,7 +1776,12 @@ def main(argv: list[str] | None = None) -> int:
             _manifest_path_errors(arguments.input, must_exist=True)
             + _manifest_path_errors(arguments.input_receipt, must_exist=True)
             + _manifest_path_errors(arguments.output, must_exist=False)
+            + _manifest_path_errors(arguments.receipt_output, must_exist=False)
         )
+        if os.path.abspath(arguments.output) == os.path.abspath(
+            arguments.receipt_output
+        ):
+            path_errors.append("snapshot output and receipt output must be distinct")
         if path_errors:
             print("; ".join(path_errors), file=sys.stderr)
             return 1
@@ -1763,18 +1817,77 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         snapshot_raw = _final_manifest_bytes(manifest)
         temporary: Path | None = None
+        output_published = False
+        receipt_published = False
         try:
             recheck_generation_lineage(lineage)
             output = prepare_write_once_file(arguments.output)
+            receipt_output = prepare_write_once_file(arguments.receipt_output)
             temporary = write_fsynced_temporary_bytes(output, snapshot_raw)
             publish_write_once_file(temporary, output)
             temporary = None
-            readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
-            if not hmac.compare_digest(readback, snapshot_raw):
+            output_published = True
+            checkpoint, readback, checkpoint_metadata = (
+                _load_unique_json_with_bytes_and_metadata(
+                    output,
+                    max_bytes=_MAX_MANIFEST_BYTES,
+                )
+            )
+            if checkpoint != manifest or not hmac.compare_digest(readback, snapshot_raw):
                 raise OSError("snapshot publication readback mismatch")
             recheck_generation_lineage(lineage)
-        except (OSError, ValueError, GenerationLineageError, _StableFileError):
-            print("target-intake-snapshot-failed", file=sys.stderr)
+            _recheck_stable_bytes(
+                output,
+                readback,
+                checkpoint_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            receipt = create_snapshot_receipt(
+                source_lineage=lineage,
+                source_manifest_path=arguments.input,
+                source_receipt_path=arguments.input_receipt,
+                checkpoint_path=output,
+                checkpoint=checkpoint,
+                checkpoint_raw=readback,
+                evaluated_at=identity.evaluated_at,
+                valid_from=identity.valid_from,
+                valid_until=identity.valid_until,
+            )
+            receipt_raw = acceptance_receipt_bytes(receipt)
+            temporary = write_fsynced_temporary_bytes(receipt_output, receipt_raw)
+            publish_write_once_file(temporary, receipt_output)
+            temporary = None
+            receipt_published = True
+            acceptance = load_snapshot_acceptance(
+                output,
+                receipt_output,
+                expected_receipt_payload_sha256=requirements_sha256(receipt),
+                expected_receipt_file_sha256=hashlib.sha256(receipt_raw).hexdigest(),
+            )
+            recheck_snapshot_acceptance(acceptance)
+        except (
+            OSError,
+            ValueError,
+            GenerationLineageError,
+            AcceptanceReceiptError,
+            _StableFileError,
+        ):
+            if receipt_published:
+                print(
+                    "target-intake-snapshot-commit-state=unknown "
+                    "verify-receipt-required",
+                    file=sys.stderr,
+                )
+                return 2
+            if output_published:
+                print(
+                    "target-intake-snapshot-orphaned-unaccepted "
+                    "receipt=absent-or-unverified",
+                    file=sys.stderr,
+                )
+                return 1
+            print("target-intake-snapshot-failed commit=not-established", file=sys.stderr)
             return 1
         finally:
             discard_claimed_temporary_file(temporary)
@@ -1785,17 +1898,37 @@ def main(argv: list[str] | None = None) -> int:
             f"manifest_payload_sha256={identity.manifest_payload_sha256} "
             f"manifest_file_sha256={hashlib.sha256(snapshot_raw).hexdigest()} "
             f"requirements_sha256={identity.requirements_sha256} "
+            f"snapshot_receipt_payload_sha256={requirements_sha256(receipt)} "
+            f"snapshot_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
-            "publication=local-no-replace-readback"
+            "snapshot-acceptance=write-once-receipt "
+            "publication=local-no-replace-readback "
+            "snapshot-receipt-authority=unverified "
+            "snapshot-post-publication-custody=unverified"
         )
         return 0
 
     if arguments.command == "finalize":
-        output_errors = _manifest_path_errors(arguments.output, must_exist=False)
+        output_errors = (
+            _manifest_path_errors(arguments.output, must_exist=False)
+            + _manifest_path_errors(arguments.receipt_output, must_exist=False)
+        )
         input_errors = (
             _manifest_path_errors(arguments.input, must_exist=True)
             + _manifest_path_errors(arguments.input_receipt, must_exist=True)
+            + _manifest_path_errors(
+                arguments.phase0_checkpoint_manifest,
+                must_exist=True,
+            )
+            + _manifest_path_errors(
+                arguments.phase0_checkpoint_receipt,
+                must_exist=True,
+            )
         )
+        if os.path.abspath(arguments.output) == os.path.abspath(
+            arguments.receipt_output
+        ):
+            output_errors.append("final output and receipt output must be distinct")
         if output_errors or input_errors:
             print("; ".join(output_errors + input_errors), file=sys.stderr)
             return 1
@@ -1813,6 +1946,26 @@ def main(argv: list[str] | None = None) -> int:
         except GenerationLineageError:
             print("target-intake-finalize-lineage-invalid", file=sys.stderr)
             return 1
+        try:
+            snapshot_acceptance = load_snapshot_acceptance(
+                arguments.phase0_checkpoint_manifest,
+                arguments.phase0_checkpoint_receipt,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_phase0_checkpoint_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_phase0_checkpoint_receipt_file_sha256
+                ),
+            )
+        except AcceptanceReceiptError:
+            print("target-intake-finalize-snapshot-invalid", file=sys.stderr)
+            return 1
+        snapshot_identity_errors = _snapshot_acceptance_identity_errors(
+            snapshot_acceptance
+        )
+        if snapshot_identity_errors:
+            print("; ".join(snapshot_identity_errors), file=sys.stderr)
+            return 1
         manifest = lineage.manifest
         errors = intake_errors(
             manifest,
@@ -1829,17 +1982,82 @@ def main(argv: list[str] | None = None) -> int:
             print("target-intake-finalize-failed", file=sys.stderr)
             return 1
         temporary: Path | None = None
+        output_published = False
+        receipt_published = False
         try:
             recheck_generation_lineage(lineage)
+            recheck_snapshot_acceptance(snapshot_acceptance)
             output = prepare_write_once_file(arguments.output)
+            receipt_output = prepare_write_once_file(arguments.receipt_output)
             temporary = write_fsynced_temporary_bytes(output, final_bytes)
             publish_write_once_file(temporary, output)
-            readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
-            if not hmac.compare_digest(readback, final_bytes):
+            temporary = None
+            output_published = True
+            finalized, readback, finalized_metadata = (
+                _load_unique_json_with_bytes_and_metadata(
+                    output,
+                    max_bytes=_MAX_MANIFEST_BYTES,
+                )
+            )
+            if finalized != manifest or not hmac.compare_digest(readback, final_bytes):
                 raise OSError("final manifest publication readback mismatch")
             recheck_generation_lineage(lineage)
-        except (OSError, ValueError, GenerationLineageError, _StableFileError):
-            print("target-intake-finalize-failed", file=sys.stderr)
+            recheck_snapshot_acceptance(snapshot_acceptance)
+            _recheck_stable_bytes(
+                output,
+                readback,
+                finalized_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            receipt = create_finalization_receipt(
+                source_lineage=lineage,
+                source_manifest_path=arguments.input,
+                source_receipt_path=arguments.input_receipt,
+                phase0_snapshot=snapshot_acceptance,
+                phase0_checkpoint_path=arguments.phase0_checkpoint_manifest,
+                phase0_receipt_path=arguments.phase0_checkpoint_receipt,
+                finalized_path=output,
+                finalized_manifest=finalized,
+                finalized_raw=readback,
+            )
+            receipt_raw = acceptance_receipt_bytes(receipt)
+            temporary = write_fsynced_temporary_bytes(receipt_output, receipt_raw)
+            publish_write_once_file(temporary, receipt_output)
+            temporary = None
+            receipt_published = True
+            acceptance = load_finalization_acceptance(
+                output,
+                receipt_output,
+                arguments.phase0_checkpoint_manifest,
+                expected_receipt_payload_sha256=requirements_sha256(receipt),
+                expected_receipt_file_sha256=hashlib.sha256(receipt_raw).hexdigest(),
+                expected_manifest_payload_sha256=requirements_sha256(finalized),
+                expected_manifest_file_sha256=hashlib.sha256(readback).hexdigest(),
+            )
+            recheck_finalization_acceptance(acceptance)
+        except (
+            OSError,
+            ValueError,
+            GenerationLineageError,
+            AcceptanceReceiptError,
+            _StableFileError,
+        ):
+            if receipt_published:
+                print(
+                    "target-intake-finalization-commit-state=unknown "
+                    "verify-receipt-required",
+                    file=sys.stderr,
+                )
+                return 2
+            if output_published:
+                print(
+                    "target-intake-final-orphaned-unaccepted "
+                    "receipt=absent-or-unverified",
+                    file=sys.stderr,
+                )
+                return 1
+            print("target-intake-finalize-failed commit=not-established", file=sys.stderr)
             return 1
         finally:
             discard_claimed_temporary_file(temporary)
@@ -1848,9 +2066,14 @@ def main(argv: list[str] | None = None) -> int:
             f"environment={manifest['environment']} "
             f"manifest_payload_sha256={requirements_sha256(manifest)} "
             f"manifest_file_sha256={hashlib.sha256(final_bytes).hexdigest()} "
+            f"finalization_receipt_payload_sha256={requirements_sha256(receipt)} "
+            f"finalization_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
+            "phase0-snapshot-acceptance=caller-pinned-local-receipt-validated "
+            "finalization-acceptance=write-once-receipt "
             "publication=local-no-replace-readback "
-            "custody=unverified rollback-protection=unverified"
+            "custody=unverified rollback-protection=unverified "
+            "finalization-receipt-authority=unverified"
         )
         return 0
 
@@ -1868,6 +2091,14 @@ def main(argv: list[str] | None = None) -> int:
         arguments.expected_input_receipt_payload_sha256,
         arguments.expected_input_receipt_file_sha256,
     )
+    finalization_arguments = (
+        arguments.finalization_receipt,
+        arguments.expected_finalization_receipt_payload_sha256,
+        arguments.expected_finalization_receipt_file_sha256,
+    )
+    expected_payload_sha256 = arguments.expected_manifest_payload_sha256
+    expected_file_sha256 = arguments.expected_manifest_file_sha256
+    pin_errors: list[str] = []
     if final_strict:
         if any(value is not None for value in receipt_arguments):
             print(
@@ -1875,13 +2106,93 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        if arguments.phase0_checkpoint_manifest is None:
+            pin_errors.append("final intake requires a Phase 0 checkpoint snapshot")
+        if arguments.finalization_receipt is None:
+            pin_errors.append("finalization receipt path is required")
+        if (
+            not isinstance(expected_payload_sha256, str)
+            or _SHA256.fullmatch(expected_payload_sha256) is None
+        ):
+            pin_errors.append("final manifest payload SHA-256 caller pin is required")
+        if (
+            not isinstance(expected_file_sha256, str)
+            or _SHA256.fullmatch(expected_file_sha256) is None
+        ):
+            pin_errors.append("final manifest file SHA-256 caller pin is required")
+        if (
+            not isinstance(
+                arguments.expected_finalization_receipt_payload_sha256,
+                str,
+            )
+            or _SHA256.fullmatch(
+                arguments.expected_finalization_receipt_payload_sha256
+            )
+            is None
+        ):
+            pin_errors.append(
+                "finalization receipt payload SHA-256 caller pin is required"
+            )
+        if (
+            not isinstance(
+                arguments.expected_finalization_receipt_file_sha256,
+                str,
+            )
+            or _SHA256.fullmatch(
+                arguments.expected_finalization_receipt_file_sha256
+            )
+            is None
+        ):
+            pin_errors.append(
+                "finalization receipt file SHA-256 caller pin is required"
+            )
+        if pin_errors:
+            print("; ".join(pin_errors), file=sys.stderr)
+            return 1
+        path_errors += _manifest_path_errors(
+            arguments.finalization_receipt,
+            must_exist=True,
+        )
+        path_errors += _manifest_path_errors(
+            arguments.phase0_checkpoint_manifest,
+            must_exist=True,
+        )
+        if path_errors:
+            print("; ".join(path_errors), file=sys.stderr)
+            return 1
         try:
-            manifest_raw, manifest = _load_json_with_raw(arguments.input)
-        except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
-            print("target-intake-manifest-invalid", file=sys.stderr)
+            finalization_acceptance = load_finalization_acceptance(
+                arguments.input,
+                arguments.finalization_receipt,
+                arguments.phase0_checkpoint_manifest,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_finalization_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_finalization_receipt_file_sha256
+                ),
+                expected_manifest_payload_sha256=expected_payload_sha256,
+                expected_manifest_file_sha256=expected_file_sha256,
+            )
+        except AcceptanceReceiptError:
+            print("target-intake-finalization-receipt-invalid", file=sys.stderr)
+            return 1
+        manifest = finalization_acceptance.finalized_manifest
+        manifest_raw = finalization_acceptance.finalized_raw
+        snapshot_identity_errors = _snapshot_acceptance_identity_errors(
+            finalization_acceptance.phase0_snapshot
+        )
+        if snapshot_identity_errors:
+            print("; ".join(snapshot_identity_errors), file=sys.stderr)
             return 1
         lineage = None
     else:
+        if any(value is not None for value in finalization_arguments):
+            print(
+                "finalization receipt pins are only valid for final strict preflight",
+                file=sys.stderr,
+            )
+            return 1
         if any(value is None for value in receipt_arguments):
             print(
                 "caller-pinned terminal generation receipt is required",
@@ -1904,31 +2215,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         manifest = lineage.manifest
         manifest_raw = lineage.manifest_raw
-    expected_payload_sha256 = arguments.expected_manifest_payload_sha256
-    expected_file_sha256 = arguments.expected_manifest_file_sha256
-    pin_errors: list[str] = []
-    if final_strict:
-        if (
-            not isinstance(expected_payload_sha256, str)
-            or _SHA256.fullmatch(expected_payload_sha256) is None
-        ):
-            pin_errors.append("final manifest payload SHA-256 caller pin is required")
-        elif not hmac.compare_digest(
-            expected_payload_sha256,
-            requirements_sha256(manifest),
-        ):
-            pin_errors.append("final manifest payload SHA-256 caller pin does not match")
-        if (
-            not isinstance(expected_file_sha256, str)
-            or _SHA256.fullmatch(expected_file_sha256) is None
-        ):
-            pin_errors.append("final manifest file SHA-256 caller pin is required")
-        elif not hmac.compare_digest(
-            expected_file_sha256,
-            hashlib.sha256(manifest_raw).hexdigest(),
-        ):
-            pin_errors.append("final manifest file SHA-256 caller pin does not match")
-    elif expected_payload_sha256 is not None or expected_file_sha256 is not None:
+    if not final_strict and (
+        expected_payload_sha256 is not None or expected_file_sha256 is not None
+    ):
         pin_errors.append(
             "final manifest caller pins are only valid for final strict preflight"
         )
@@ -1957,6 +2246,12 @@ def main(argv: list[str] | None = None) -> int:
         except GenerationLineageError:
             print("target-intake-progress-lineage-invalid", file=sys.stderr)
             return 1
+    else:
+        try:
+            recheck_finalization_acceptance(finalization_acceptance)
+        except AcceptanceReceiptError:
+            print("target-intake-finalization-receipt-invalid", file=sys.stderr)
+            return 1
     if arguments.allow_incomplete:
         status_value = "structurally-valid"
     elif arguments.through_phase is not None:
@@ -1971,10 +2266,13 @@ def main(argv: list[str] | None = None) -> int:
         f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
         f"requirements_sha256={manifest['requirements_sha256']} "
         f"final-manifest-caller-pin={'matched' if final_strict else 'not-applicable'} "
+        f"finalization-receipt-caller-pin={'matched' if final_strict else 'not-applicable'} "
         f"selected-generation-lineage={'not-applicable' if final_strict else 'caller-pinned-local-receipt-chain-validated'} "
+        f"selected-finalization-lineage={'caller-pinned-local-receipt-chain-validated' if final_strict else 'not-applicable'} "
         "final-manifest-custody=unverified "
         "final-manifest-pin-authority=unverified "
         "final-manifest-rollback-protection=unverified "
+        "finalization-receipt-authority=unverified "
         "release-review-selector-subject=manifest-exact "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "

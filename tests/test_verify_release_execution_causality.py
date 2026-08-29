@@ -5,6 +5,7 @@ import re
 import unittest
 
 from scripts.verify_release_execution_causality import (
+    ACCEPTANCE,
     BINDING,
     CONSUMERS,
     EXTERNAL_JSON,
@@ -23,6 +24,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.intake_manifest = INTAKE_MANIFEST.read_text(encoding="utf-8")
         self.external_json = EXTERNAL_JSON.read_text(encoding="utf-8")
         self.generation = GENERATION.read_text(encoding="utf-8")
+        self.acceptance = ACCEPTANCE.read_text(encoding="utf-8")
         self.consumers = {
             name: path.read_text(encoding="utf-8")
             for name, path in CONSUMERS.items()
@@ -42,6 +44,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         intake_only_consumers: dict[str, str] | None = None,
         external_json: str | None = None,
         generation: str | None = None,
+        acceptance: str | None = None,
     ) -> list[str]:
         return causality_errors(
             self.binding if binding is None else binding,
@@ -55,6 +58,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             ),
             self.external_json if external_json is None else external_json,
             self.generation if generation is None else generation,
+            self.acceptance if acceptance is None else acceptance,
         )
 
     def test_current_contract_passes_and_is_in_the_quality_gate(self) -> None:
@@ -311,12 +315,20 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertTrue(self.errors(intake=mutated))
         for old, new in (
             (
-                "expected_payload_sha256,\n            requirements_sha256(manifest),",
-                "requirements_sha256(manifest),\n            requirements_sha256(manifest),",
+                "expected_manifest_payload_sha256=expected_payload_sha256,",
+                "expected_manifest_payload_sha256=requirements_sha256(manifest),",
             ),
             (
-                "expected_file_sha256,\n            hashlib.sha256(manifest_raw).hexdigest(),",
-                "hashlib.sha256(manifest_raw).hexdigest(),\n            hashlib.sha256(manifest_raw).hexdigest(),",
+                "expected_manifest_file_sha256=expected_file_sha256,",
+                "expected_manifest_file_sha256=hashlib.sha256(manifest_raw).hexdigest(),",
+            ),
+            (
+                "arguments.expected_finalization_receipt_payload_sha256\n                ),",
+                "requirements_sha256(receipt)\n                ),",
+            ),
+            (
+                "arguments.expected_finalization_receipt_file_sha256\n                ),",
+                "hashlib.sha256(receipt_raw).hexdigest()\n                ),",
             ),
             (
                 "final-manifest-custody=unverified",
@@ -331,6 +343,64 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 mutated = self.intake.replace(old, new, 1)
                 self.assertNotEqual(mutated, self.intake)
                 self.assertTrue(self.errors(intake=mutated))
+
+    def test_snapshot_and_finalization_acceptance_cannot_be_weakened(self) -> None:
+        for old, new in (
+            (
+                'snapshot.add_argument("--receipt-output", required=True, type=Path)',
+                'snapshot.add_argument("--receipt-output", required=False, type=Path)',
+            ),
+            (
+                'finalize.add_argument("--phase0-checkpoint-receipt", required=True, type=Path)',
+                'finalize.add_argument("--phase0-checkpoint-receipt", required=False, type=Path)',
+            ),
+            (
+                "receipt = create_snapshot_receipt(",
+                "receipt = ignored_create_snapshot_receipt(",
+            ),
+            (
+                "receipt = create_finalization_receipt(",
+                "receipt = ignored_create_finalization_receipt(",
+            ),
+            (
+                "snapshot_identity_errors = _snapshot_acceptance_identity_errors(",
+                "snapshot_identity_errors = ignored_snapshot_acceptance_identity_errors(",
+            ),
+            (
+                "target-intake-snapshot-orphaned-unaccepted",
+                "target-intake-snapshot-accepted",
+            ),
+            (
+                "target-intake-finalization-commit-state=unknown",
+                "target-intake-finalization-commit-state=known",
+            ),
+            (
+                "finalization-receipt-authority=unverified",
+                "finalization-receipt-authority=verified",
+            ),
+        ):
+            with self.subTest(intake_old=old):
+                mutated = self.intake.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+
+        for old, new in (
+            (
+                'document.get("kind") != SNAPSHOT_RECEIPT_KIND',
+                'document.get("kind") != IGNORED_SNAPSHOT_RECEIPT_KIND',
+            ),
+            (
+                'document.get("kind") != FINALIZATION_RECEIPT_KIND',
+                'document.get("kind") != IGNORED_FINALIZATION_RECEIPT_KIND',
+            ),
+            ("generation_lineage_contains(", "ignored_generation_lineage_contains("),
+            ("require_single_link=True", "require_single_link=False"),
+            ("load_snapshot_acceptance(", "ignored_load_snapshot_acceptance("),
+        ):
+            with self.subTest(acceptance_old=old):
+                mutated = self.acceptance.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.acceptance)
+                self.assertTrue(self.errors(acceptance=mutated))
 
     def test_authoring_generation_registration_cannot_be_weakened(self) -> None:
         for old, new in (
@@ -571,6 +641,8 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "release_execution_selector_v1",
             "rebinding all consumers together",
             "cannot inherit the old selector review",
+            "a checkpoint/final leaf left without its receipt is `orphaned-unaccepted`",
+            "the recorded host evaluation instant is not trusted time",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, runbook)
@@ -602,11 +674,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "final strict preflight requires independent caller pins for both its canonical payload SHA-256 and whole-file SHA-256",
+            "Final strict preflight requires independent caller pins for the final manifest payload/file SHA-256 and finalization-receipt payload/file SHA-256",
             requirements,
         )
         self.assertIn(
-            "pin authority, post-publication custody and global rollback protection remain explicitly unverified",
+            "they do not authenticate the pin or receipt source, make host time trusted, prevent later deletion/recreation, prove provider-native custody, select a global latest head, prevent cross-host forks, or prove global rollback protection",
             requirements,
         )
         signoff = Path("deploy/production-signoff-template.md").read_text(
@@ -633,7 +705,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result; separate finalization receipt remains pending:",
+            "Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256, finalization-receipt path and caller-pinned receipt payload/file SHA-256:",
+            signoff,
+        )
+        self.assertIn(
+            "Snapshot receipt exact source-generation/result-checkpoint binding, recorded host evaluation window, local no-replace/readback, orphan/unknown disposition, and receipt-authority/trusted-time/post-publication-custody `unverified` acknowledgement:",
             signoff,
         )
         self.assertIn(

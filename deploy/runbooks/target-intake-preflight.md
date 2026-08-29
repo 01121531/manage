@@ -866,12 +866,14 @@ python scripts/target_intake_preflight.py snapshot `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
   --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --output D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
+  --receipt-output D:\email-platform-evidence\intake\staging-phase0-checkpoint.receipt.json `
   --environment staging
 ```
 
 Use `staging-phase0-checkpoint.json`, not the subsequently evolving intake
 manifest, as `--target-intake-manifest` for the forward or rolling release.
-Retain the snapshot and every Phase 0 artifact it references under write-once
+Retain the snapshot, its printed snapshot-receipt payload/file SHA-256 values,
+and every Phase 0 artifact it references under write-once
   controls. Continue adding Phase 1–6 items only by registering a new generation
   from the selected terminal generation and receipt;
 never edit, replace, or regenerate the checkpoint for an already executed
@@ -973,7 +975,11 @@ python scripts/target_intake_preflight.py finalize `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
   --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --output D:\email-platform-evidence\intake\staging-target-intake-final.json `
-  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json
+  --receipt-output D:\email-platform-evidence\intake\staging-target-intake-final.receipt.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
+  --phase0-checkpoint-receipt D:\email-platform-evidence\intake\staging-phase0-checkpoint.receipt.json `
+  --expected-phase0-checkpoint-receipt-payload-sha256 1111111111111111111111111111111111111111111111111111111111111111 `
+  --expected-phase0-checkpoint-receipt-file-sha256 2222222222222222222222222222222222222222222222222222222222222222
 ```
 
 The output leaf must not already exist and is never overwritten. Preserve both
@@ -988,7 +994,10 @@ python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake-final.json `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --expected-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
-  --expected-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  --expected-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
+  --finalization-receipt D:\email-platform-evidence\intake\staging-target-intake-final.receipt.json `
+  --expected-finalization-receipt-payload-sha256 3333333333333333333333333333333333333333333333333333333333333333 `
+  --expected-finalization-receipt-file-sha256 4444444444444444444444444444444444444444444444444444444444444444
 ```
 
 The final check requires both pins and validates the frozen snapshot as a
@@ -1000,10 +1009,20 @@ authoring manifest may add evidence before finalization; the finalized leaf is
 not edited. Silently replacing a deployed contract, decision, approval,
 inventory, reviewer reference, timestamp, path or digest is not allowed.
 
-Finalization additionally proves that its source was selected by one complete,
-caller-pinned local generation-receipt chain at the command's final recheck.
-It still proves only that this process published and read back a new local leaf
-without replacing an existing name. The final-manifest caller pins detect a later
+Snapshot and finalization acceptance are represented by separate closed,
+canonical, write-once local receipts. The snapshot receipt records the Phase 0
+evaluation instant and validity intersection and binds the exact source
+generation receipt plus result checkpoint locator and bytes. Finalization
+requires caller pins for that snapshot receipt, verifies its source generation
+is an exact ancestor of the terminal generation, and publishes its own receipt
+only after the final leaf and all source rechecks succeed. A checkpoint/final
+leaf left without its receipt is `orphaned-unaccepted`; a failure after receipt
+publication is `commit-state=unknown` and requires explicit receipt verification.
+Never delete either artifact automatically in those states.
+
+These receipts still prove only that this process selected, published, and read
+back one local chain without replacing an existing name. The final-manifest and
+finalization-receipt caller pins detect a later
 byte rewrite, semantic replacement, or rollback when the caller retains the
 current values independently. They do not authenticate who supplied the pins,
 prevent deletion and recreation, prove provider-native immutability, or identify
@@ -1012,8 +1031,9 @@ global rollback protection therefore remain `unverified`; a real guarantee
 requires an external signed change-control record or provider-native CAS/WORM
 head. Generation receipts are unsigned local JSON: they do not prove reviewer
 authority, global latest-head selection, cross-host fork prevention, trusted
-time, or custody after the final recheck. A separately accepted Phase 0
-snapshot receipt and finalization receipt are not yet implemented. The
+time, or custody after the final recheck. Snapshot and finalization receipts
+have the same unsigned local authority boundary; the recorded host evaluation
+instant is not trusted time. The
 private-secret signing domains and their still-unconfigured trust
 anchors are scope-limited and must not be reused for this purpose.
 

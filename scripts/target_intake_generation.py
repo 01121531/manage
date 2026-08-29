@@ -15,6 +15,7 @@ from scripts.external_json import (
     MAX_INTAKE_JSON_BYTES,
     StableFileError,
     load_unique_json_with_bytes_and_metadata,
+    parse_unique_json_bytes,
     recheck_stable_bytes,
 )
 from scripts.target_intake_manifest import (
@@ -345,6 +346,36 @@ def recheck_generation_lineage(lineage: GenerationLineage) -> None:
             )
     except StableFileError as error:
         raise GenerationLineageError() from error
+
+
+def generation_lineage_contains(
+    lineage: GenerationLineage,
+    manifest_selector: Any,
+    receipt_selector: Any,
+) -> bool:
+    """Return whether one exact manifest/receipt selection is in the chain."""
+
+    try:
+        for index in range(0, len(lineage.snapshots), 2):
+            receipt_snapshot = lineage.snapshots[index]
+            manifest_snapshot = lineage.snapshots[index + 1]
+            receipt = parse_unique_json_bytes(receipt_snapshot.raw)
+            manifest = parse_unique_json_bytes(manifest_snapshot.raw)
+            if _matches_manifest_selector(
+                manifest_selector,
+                manifest_snapshot.path,
+                manifest,
+                manifest_snapshot.raw,
+            ) and _matches_receipt_selector(
+                receipt_selector,
+                receipt_snapshot.path,
+                receipt,
+                receipt_snapshot.raw,
+            ):
+                return True
+    except (IndexError, UnicodeError, json.JSONDecodeError, TypeError):
+        return False
+    return False
 
 
 def load_generation_lineage(

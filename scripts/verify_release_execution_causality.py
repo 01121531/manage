@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BINDING = ROOT / "scripts" / "release_execution_binding.py"
 INTAKE = ROOT / "scripts" / "target_intake_preflight.py"
 GENERATION = ROOT / "scripts" / "target_intake_generation.py"
+ACCEPTANCE = ROOT / "scripts" / "target_intake_acceptance.py"
 INTAKE_MANIFEST = ROOT / "scripts" / "target_intake_manifest.py"
 EXTERNAL_JSON = ROOT / "scripts" / "external_json.py"
 CONSUMERS = {
@@ -64,6 +65,16 @@ AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "authoring-pin-authority=unverified",
     "authoring-receipt-authority=unverified",
     "authoring-post-publication-custody=unverified",
+)
+ACCEPTANCE_BOUNDARY_MARKERS = (
+    "snapshot-acceptance=write-once-receipt",
+    "snapshot-receipt-authority=unverified",
+    "snapshot-post-publication-custody=unverified",
+    "phase0-snapshot-acceptance=caller-pinned-local-receipt-validated",
+    "finalization-acceptance=write-once-receipt",
+    "finalization-receipt-caller-pin=",
+    "finalization-receipt-authority=unverified",
+    "selected-finalization-lineage=",
 )
 INTAKE_CALLER_BOUNDARY_MARKERS = (
     "intake-manifest-caller-pin=payload-and-file-matched",
@@ -467,6 +478,7 @@ def causality_errors(
     intake_only_sources: dict[str, str] | None = None,
     external_json_source: str | None = None,
     generation_source: str | None = None,
+    acceptance_source: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     try:
@@ -475,6 +487,7 @@ def causality_errors(
         manifest_tree = ast.parse(intake_manifest_source or "")
         external_json_tree = ast.parse(external_json_source or "")
         generation_tree = ast.parse(generation_source or "")
+        acceptance_tree = ast.parse(acceptance_source or "")
     except SyntaxError:
         return ["release execution causality sources are not valid Python"]
 
@@ -788,22 +801,42 @@ def causality_errors(
             "prepare_write_once_file",
             "write_fsynced_temporary_bytes",
             "publish_write_once_file",
-            "_read_stable_bytes",
+            "_load_unique_json_with_bytes_and_metadata",
+            "create_finalization_receipt",
+            "load_finalization_acceptance",
+            "recheck_finalization_acceptance",
         }.issubset(main_calls) or not _contains_string(main_function, "finalize"):
             errors.append("final target-intake publication must be fsynced and no-replace")
+        final_acceptance_loads = [
+            node
+            for node in ast.walk(main_function)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "load_finalization_acceptance"
+        ]
         if not (
-            _compare_digest_call(
-                main_function,
-                "expected_payload_sha256",
-                "manifest",
-            )
-            and _compare_digest_call(
-                main_function,
-                "expected_file_sha256",
-                "manifest_raw",
+            len(final_acceptance_loads) >= 2
+            and any(
+                all(
+                    (
+                        _contains_name(_keyword_value(call, keyword), expected_name)
+                        or (
+                            isinstance(_keyword_value(call, keyword), ast.Attribute)
+                            and _keyword_value(call, keyword).attr == expected_name
+                        )
+                    )
+                    for keyword, expected_name in (
+                        ("expected_receipt_payload_sha256", "expected_finalization_receipt_payload_sha256"),
+                        ("expected_receipt_file_sha256", "expected_finalization_receipt_file_sha256"),
+                        ("expected_manifest_payload_sha256", "expected_payload_sha256"),
+                        ("expected_manifest_file_sha256", "expected_file_sha256"),
+                    )
+                )
+                for call in final_acceptance_loads
             )
         ):
-            errors.append("final strict intake must require both caller-pinned digests")
+            errors.append(
+                "final strict intake must require manifest and finalization receipt caller pins"
+            )
         if not _has_final_manifest_boundary_output(intake_tree):
             errors.append("final strict intake must report manifest custody boundaries")
     parser_function = _function(intake_tree, "_parser")
@@ -1001,7 +1034,7 @@ def causality_errors(
                     and isinstance(node.value, str)
                     and marker in node.value
                 )
-                >= 2
+                >= 4
                 for marker in ("orphaned-unaccepted", "commit-state=unknown")
             )
         ):
@@ -1065,6 +1098,191 @@ def causality_errors(
             )
         ):
             errors.append("all non-final generation consumers must validate lineage")
+    snapshot_validation = _function(acceptance_tree, "snapshot_receipt_errors")
+    finalization_validation = _function(
+        acceptance_tree,
+        "finalization_receipt_errors",
+    )
+    snapshot_loader = _function(acceptance_tree, "load_snapshot_acceptance")
+    finalization_loader = _function(
+        acceptance_tree,
+        "load_finalization_acceptance",
+    )
+    finalization_creator = _function(
+        acceptance_tree,
+        "create_finalization_receipt",
+    )
+    snapshot_recheck = _function(
+        acceptance_tree,
+        "recheck_snapshot_acceptance",
+    )
+    finalization_recheck = _function(
+        acceptance_tree,
+        "recheck_finalization_acceptance",
+    )
+    ancestry = _function(generation_tree, "generation_lineage_contains")
+    snapshot_identity = _function(
+        intake_tree,
+        "_snapshot_acceptance_identity_errors",
+    )
+    snapshot_branch = (
+        _command_branch(main_function, "snapshot")
+        if main_function is not None
+        else None
+    )
+    if any(
+        value is None
+        for value in (
+            snapshot_validation,
+            finalization_validation,
+            snapshot_loader,
+            finalization_loader,
+            finalization_creator,
+            snapshot_recheck,
+            finalization_recheck,
+            ancestry,
+            snapshot_identity,
+            snapshot_branch,
+            finalize_branch if main_function is not None else None,
+        )
+    ):
+        errors.append("snapshot/finalization acceptance receipt contract is missing")
+    else:
+        if not (
+            _contains_name(snapshot_validation, "SNAPSHOT_RECEIPT_KIND")
+            and _contains_string(snapshot_validation, "result_checkpoint")
+            and _contains_string(snapshot_validation, "source_generation")
+            and _contains_string(snapshot_validation, "evaluated_at")
+            and _contains_string(snapshot_validation, "valid_from")
+            and _contains_string(snapshot_validation, "valid_until")
+            and _contains_name(finalization_validation, "FINALIZATION_RECEIPT_KIND")
+            and _contains_string(finalization_validation, "phase0_snapshot")
+            and _contains_string(finalization_validation, "result_final_manifest")
+            and _contains_string(finalization_validation, "source_generation")
+        ):
+            errors.append("acceptance receipts must use closed typed selectors")
+        acceptance_functions = (
+            snapshot_loader,
+            finalization_loader,
+            snapshot_recheck,
+            finalization_recheck,
+        )
+        if not (
+            all(
+                _contains_name(function, "recheck_stable_bytes")
+                or _contains_name(function, "recheck_snapshot_acceptance")
+                or _contains_name(function, "recheck_finalization_acceptance")
+                for function in acceptance_functions
+            )
+            and _contains_name(snapshot_loader, "load_generation_lineage")
+            and _contains_name(finalization_loader, "load_generation_lineage")
+            and _contains_name(finalization_loader, "load_snapshot_acceptance")
+            and _contains_name(finalization_loader, "generation_lineage_contains")
+            and _contains_name(finalization_creator, "generation_lineage_contains")
+            and _contains_name(ancestry, "parse_unique_json_bytes")
+            and _contains_name(snapshot_identity, "_load_validated_phase_checkpoint")
+            and _contains_string(snapshot_identity, "evaluated_at")
+            and _contains_string(snapshot_identity, "valid_from")
+            and _contains_string(snapshot_identity, "valid_until")
+            and all(
+                any(
+                    isinstance(node, ast.Call)
+                    and isinstance(
+                        _keyword_value(node, "require_single_link"),
+                        ast.Constant,
+                    )
+                    and _keyword_value(node, "require_single_link").value is True
+                    for node in ast.walk(function)
+                )
+                for function in (snapshot_recheck, finalization_recheck)
+            )
+        ):
+            errors.append("acceptance receipt lineage must be replayed and rechecked")
+        snapshot_calls = [
+            _call_name(node)
+            for node in ast.walk(snapshot_branch)
+            if isinstance(node, ast.Call)
+        ]
+        finalize_calls = [
+            _call_name(node)
+            for node in ast.walk(finalize_branch)
+            if isinstance(node, ast.Call)
+        ]
+        if not (
+            snapshot_calls.count("publish_write_once_file") == 2
+            and {
+                "create_snapshot_receipt",
+                "load_snapshot_acceptance",
+                "recheck_snapshot_acceptance",
+            }.issubset(snapshot_calls)
+            and finalize_calls.count("publish_write_once_file") == 2
+            and {
+                "load_snapshot_acceptance",
+                "create_finalization_receipt",
+                "load_finalization_acceptance",
+                "recheck_finalization_acceptance",
+            }.issubset(finalize_calls)
+            and sum(
+                1
+                for node in ast.walk(main_function)
+                if isinstance(node, ast.Call)
+                and _call_name(node) == "_snapshot_acceptance_identity_errors"
+            )
+            == 2
+            and all(
+                _contains_marker(main_function, marker)
+                for marker in (
+                    "target-intake-snapshot-orphaned-unaccepted",
+                    "target-intake-snapshot-commit-state=unknown",
+                    "target-intake-final-orphaned-unaccepted",
+                    "target-intake-finalization-commit-state=unknown",
+                )
+            )
+        ):
+            errors.append("acceptance receipts must be the write-once commit points")
+        snapshot_required = {"--receipt-output"}
+        finalize_required = {
+            "--receipt-output",
+            "--phase0-checkpoint-receipt",
+            "--expected-phase0-checkpoint-receipt-payload-sha256",
+            "--expected-phase0-checkpoint-receipt-file-sha256",
+        }
+        final_strict_options = {
+            "--finalization-receipt",
+            "--expected-finalization-receipt-payload-sha256",
+            "--expected-finalization-receipt-file-sha256",
+        }
+        if not (
+            all(
+                _required_parser_argument(parser_function, "snapshot", option)
+                for option in snapshot_required
+            )
+            and all(
+                _required_parser_argument(parser_function, "finalize", option)
+                for option in finalize_required
+            )
+            and all(
+                _contains_string(parser_function, option)
+                for option in final_strict_options
+            )
+            and _contains_marker(
+                main_function,
+                "finalization receipt pins are only valid for final strict preflight",
+            )
+            and all(
+                _contains_marker(main_function, marker)
+                for marker in ACCEPTANCE_BOUNDARY_MARKERS
+            )
+            and sum(
+                1
+                for node in ast.walk(main_function)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and "finalization-receipt-authority=unverified" in node.value
+            )
+            >= 2
+        ):
+            errors.append("downstream intake must caller-pin acceptance receipts")
     if not (
         _has_dict_constant(create_manifest, "schema_version", 2)
         and _contains_string(create_manifest, "release_execution_review_subject")
@@ -1236,6 +1454,9 @@ def main() -> int:
         generation_source = load_stable_text(
             GENERATION, max_bytes=MAX_SOURCE_BYTES
         )
+        acceptance_source = load_stable_text(
+            ACCEPTANCE, max_bytes=MAX_SOURCE_BYTES
+        )
         intake_manifest_source = load_stable_text(
             INTAKE_MANIFEST, max_bytes=MAX_SOURCE_BYTES
         )
@@ -1261,6 +1482,7 @@ def main() -> int:
         intake_only_sources,
         external_json_source,
         generation_source,
+        acceptance_source,
     )
     if errors:
         for error in errors:
@@ -1285,6 +1507,14 @@ def main() -> int:
         "authoring-latest-head=unverified authoring-pin-authority=unverified "
         "authoring-receipt-authority=unverified "
         "authoring-post-publication-custody=unverified "
+        "snapshot-acceptance=write-once-receipt "
+        "snapshot-receipt-authority=unverified "
+        "snapshot-trusted-time=unverified "
+        "snapshot-post-publication-custody=unverified "
+        "finalization-acceptance=write-once-receipt "
+        "finalization-receipt-caller-pin=payload-and-file "
+        "finalization-receipt-authority=unverified "
+        "finalization-post-publication-custody=unverified "
         "standalone-intake-manifest-consumers=seven "
         "standalone-intake-manifest-schema=closed-v2-inventory-exact "
         "standalone-intake-manifest-caller-pin=payload-and-file "

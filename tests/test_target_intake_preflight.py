@@ -2706,6 +2706,82 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.addCleanup(lineage_patch.stop)
             self.addCleanup(recheck_patch.stop)
 
+            snapshot_receipt_document = {
+                "schema_version": 1,
+                "kind": "test-snapshot-receipt",
+                "production_acceptance": False,
+            }
+            finalization_receipt_document = {
+                "schema_version": 1,
+                "kind": "test-finalization-receipt",
+                "production_acceptance": False,
+            }
+
+            def load_snapshot(checkpoint: Path, receipt: Path, **_kwargs):
+                checkpoint_raw = checkpoint.read_bytes()
+                receipt_raw = receipt.read_bytes()
+                return SimpleNamespace(
+                    checkpoint=json.loads(checkpoint_raw),
+                    checkpoint_raw=checkpoint_raw,
+                    receipt=json.loads(receipt_raw),
+                    receipt_raw=receipt_raw,
+                )
+
+            def load_finalized(finalized: Path, _receipt: Path, _checkpoint: Path, **kwargs):
+                raw = finalized.read_bytes()
+                document = json.loads(raw)
+                if (
+                    kwargs["expected_manifest_payload_sha256"]
+                    != requirements_sha256(document)
+                    or kwargs["expected_manifest_file_sha256"]
+                    != hashlib.sha256(raw).hexdigest()
+                ):
+                    raise target_intake.AcceptanceReceiptError()
+                return SimpleNamespace(
+                    finalized_manifest=document,
+                    finalized_raw=raw,
+                    phase0_snapshot=SimpleNamespace(),
+                )
+
+            acceptance_patches = (
+                mock.patch.object(
+                    target_intake,
+                    "create_snapshot_receipt",
+                    return_value=snapshot_receipt_document,
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "load_snapshot_acceptance",
+                    side_effect=load_snapshot,
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "recheck_snapshot_acceptance",
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "_snapshot_acceptance_identity_errors",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "create_finalization_receipt",
+                    return_value=finalization_receipt_document,
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "load_finalization_acceptance",
+                    side_effect=load_finalized,
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "recheck_finalization_acceptance",
+                ),
+            )
+            for patcher in acceptance_patches:
+                patcher.start()
+                self.addCleanup(patcher.stop)
+
             def provide(item: dict[str, object], phase0_digest: str = "8" * 64) -> None:
                 artifact = root / f"{item['id']}.md"
                 document = self._artifact_document(
@@ -2757,6 +2833,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 encoding="utf-8",
             )
             checkpoint_path = root / "phase0-checkpoint.json"
+            checkpoint_receipt_path = root / "phase0-checkpoint.receipt.json"
             self.assertEqual(
                 main(
                     [
@@ -2771,6 +2848,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         receipt_file_pin,
                         "--output",
                         str(checkpoint_path),
+                        "--receipt-output",
+                        str(checkpoint_receipt_path),
                         "--environment",
                         "staging",
                     ]
@@ -2778,6 +2857,74 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 0,
             )
             checkpoint_bytes = checkpoint_path.read_bytes()
+            orphan_checkpoint = root / "orphan-phase0-checkpoint.json"
+            orphan_checkpoint_receipt = root / "orphan-phase0-checkpoint.receipt.json"
+            target_intake.recheck_generation_lineage.side_effect = [
+                None,
+                GenerationLineageError(),
+            ]
+            error = io.StringIO()
+            with redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        [
+                            "snapshot",
+                            "--input",
+                            str(manifest_path),
+                            "--input-receipt",
+                            str(genesis_receipt_path),
+                            "--expected-input-receipt-payload-sha256",
+                            receipt_payload_pin,
+                            "--expected-input-receipt-file-sha256",
+                            receipt_file_pin,
+                            "--output",
+                            str(orphan_checkpoint),
+                            "--receipt-output",
+                            str(orphan_checkpoint_receipt),
+                            "--environment",
+                            "staging",
+                        ]
+                    ),
+                    1,
+                )
+            self.assertTrue(orphan_checkpoint.exists())
+            self.assertFalse(orphan_checkpoint_receipt.exists())
+            self.assertIn("orphaned-unaccepted", error.getvalue())
+            target_intake.recheck_generation_lineage.side_effect = None
+
+            unknown_checkpoint = root / "unknown-phase0-checkpoint.json"
+            unknown_checkpoint_receipt = root / "unknown-phase0-checkpoint.receipt.json"
+            target_intake.recheck_snapshot_acceptance.side_effect = (
+                target_intake.AcceptanceReceiptError()
+            )
+            error = io.StringIO()
+            with redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        [
+                            "snapshot",
+                            "--input",
+                            str(manifest_path),
+                            "--input-receipt",
+                            str(genesis_receipt_path),
+                            "--expected-input-receipt-payload-sha256",
+                            receipt_payload_pin,
+                            "--expected-input-receipt-file-sha256",
+                            receipt_file_pin,
+                            "--output",
+                            str(unknown_checkpoint),
+                            "--receipt-output",
+                            str(unknown_checkpoint_receipt),
+                            "--environment",
+                            "staging",
+                        ]
+                    ),
+                    2,
+                )
+            self.assertTrue(unknown_checkpoint.exists())
+            self.assertTrue(unknown_checkpoint_receipt.exists())
+            self.assertIn("commit-state=unknown", error.getvalue())
+            target_intake.recheck_snapshot_acceptance.side_effect = None
             self.assertEqual(
                 main(
                     [
@@ -2792,6 +2939,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         receipt_file_pin,
                         "--output",
                         str(checkpoint_path),
+                        "--receipt-output",
+                        str(checkpoint_receipt_path),
                         "--environment",
                         "staging",
                     ]
@@ -2814,6 +2963,15 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 encoding="utf-8",
             )
             final_path = root / "final-target-intake.json"
+            final_receipt_path = root / "final-target-intake.receipt.json"
+            checkpoint_receipt_raw = checkpoint_receipt_path.read_bytes()
+            checkpoint_receipt = json.loads(checkpoint_receipt_raw)
+            checkpoint_receipt_payload_pin = requirements_sha256(
+                checkpoint_receipt
+            )
+            checkpoint_receipt_file_pin = hashlib.sha256(
+                checkpoint_receipt_raw
+            ).hexdigest()
             self.assertEqual(
                 main(
                     [
@@ -2828,8 +2986,16 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         receipt_file_pin,
                         "--output",
                         str(final_path),
+                        "--receipt-output",
+                        str(final_receipt_path),
                         "--phase0-checkpoint-manifest",
                         str(checkpoint_path),
+                        "--phase0-checkpoint-receipt",
+                        str(checkpoint_receipt_path),
+                        "--expected-phase0-checkpoint-receipt-payload-sha256",
+                        checkpoint_receipt_payload_pin,
+                        "--expected-phase0-checkpoint-receipt-file-sha256",
+                        checkpoint_receipt_file_pin,
                     ]
                 ),
                 0,
@@ -2837,6 +3003,86 @@ class TargetIntakePreflightTests(unittest.TestCase):
             final_bytes = final_path.read_bytes()
             self.assertEqual(json.loads(final_bytes), manifest)
             self.assertEqual(final_bytes, target_intake._final_manifest_bytes(manifest))
+            orphan_final = root / "orphan-final.json"
+            orphan_final_receipt = root / "orphan-final.receipt.json"
+            target_intake.recheck_generation_lineage.side_effect = [
+                None,
+                GenerationLineageError(),
+            ]
+            error = io.StringIO()
+            with redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        [
+                            "finalize",
+                            "--input",
+                            str(manifest_path),
+                            "--input-receipt",
+                            str(genesis_receipt_path),
+                            "--expected-input-receipt-payload-sha256",
+                            receipt_payload_pin,
+                            "--expected-input-receipt-file-sha256",
+                            receipt_file_pin,
+                            "--output",
+                            str(orphan_final),
+                            "--receipt-output",
+                            str(orphan_final_receipt),
+                            "--phase0-checkpoint-manifest",
+                            str(checkpoint_path),
+                            "--phase0-checkpoint-receipt",
+                            str(checkpoint_receipt_path),
+                            "--expected-phase0-checkpoint-receipt-payload-sha256",
+                            checkpoint_receipt_payload_pin,
+                            "--expected-phase0-checkpoint-receipt-file-sha256",
+                            checkpoint_receipt_file_pin,
+                        ]
+                    ),
+                    1,
+                )
+            self.assertTrue(orphan_final.exists())
+            self.assertFalse(orphan_final_receipt.exists())
+            self.assertIn("orphaned-unaccepted", error.getvalue())
+            target_intake.recheck_generation_lineage.side_effect = None
+
+            unknown_final = root / "unknown-final.json"
+            unknown_final_receipt = root / "unknown-final.receipt.json"
+            target_intake.recheck_finalization_acceptance.side_effect = (
+                target_intake.AcceptanceReceiptError()
+            )
+            error = io.StringIO()
+            with redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        [
+                            "finalize",
+                            "--input",
+                            str(manifest_path),
+                            "--input-receipt",
+                            str(genesis_receipt_path),
+                            "--expected-input-receipt-payload-sha256",
+                            receipt_payload_pin,
+                            "--expected-input-receipt-file-sha256",
+                            receipt_file_pin,
+                            "--output",
+                            str(unknown_final),
+                            "--receipt-output",
+                            str(unknown_final_receipt),
+                            "--phase0-checkpoint-manifest",
+                            str(checkpoint_path),
+                            "--phase0-checkpoint-receipt",
+                            str(checkpoint_receipt_path),
+                            "--expected-phase0-checkpoint-receipt-payload-sha256",
+                            checkpoint_receipt_payload_pin,
+                            "--expected-phase0-checkpoint-receipt-file-sha256",
+                            checkpoint_receipt_file_pin,
+                        ]
+                    ),
+                    2,
+                )
+            self.assertTrue(unknown_final.exists())
+            self.assertTrue(unknown_final_receipt.exists())
+            self.assertIn("commit-state=unknown", error.getvalue())
+            target_intake.recheck_finalization_acceptance.side_effect = None
             self.assertEqual(
                 main(
                     [
@@ -2851,14 +3097,23 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         receipt_file_pin,
                         "--output",
                         str(final_path),
+                        "--receipt-output",
+                        str(final_receipt_path),
                         "--phase0-checkpoint-manifest",
                         str(checkpoint_path),
+                        "--phase0-checkpoint-receipt",
+                        str(checkpoint_receipt_path),
+                        "--expected-phase0-checkpoint-receipt-payload-sha256",
+                        checkpoint_receipt_payload_pin,
+                        "--expected-phase0-checkpoint-receipt-file-sha256",
+                        checkpoint_receipt_file_pin,
                     ]
                 ),
                 1,
             )
             self.assertEqual(final_path.read_bytes(), final_bytes)
             raced_path = root / "raced-final-target-intake.json"
+            raced_receipt_path = root / "raced-final-target-intake.receipt.json"
 
             def publish_race(_temporary: Path, output: Path) -> None:
                 output.write_bytes(b"winner")
@@ -2882,8 +3137,16 @@ class TargetIntakePreflightTests(unittest.TestCase):
                             receipt_file_pin,
                             "--output",
                             str(raced_path),
+                            "--receipt-output",
+                            str(raced_receipt_path),
                             "--phase0-checkpoint-manifest",
                             str(checkpoint_path),
+                            "--phase0-checkpoint-receipt",
+                            str(checkpoint_receipt_path),
+                            "--expected-phase0-checkpoint-receipt-payload-sha256",
+                            checkpoint_receipt_payload_pin,
+                            "--expected-phase0-checkpoint-receipt-file-sha256",
+                            checkpoint_receipt_file_pin,
                         ]
                     ),
                     1,
@@ -2891,6 +3154,10 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertEqual(raced_path.read_bytes(), b"winner")
             payload_pin = requirements_sha256(manifest)
             file_pin = hashlib.sha256(final_bytes).hexdigest()
+            final_receipt_raw = final_receipt_path.read_bytes()
+            final_receipt = json.loads(final_receipt_raw)
+            final_receipt_payload_pin = requirements_sha256(final_receipt)
+            final_receipt_file_pin = hashlib.sha256(final_receipt_raw).hexdigest()
             self.assertEqual(
                 main(["preflight", "--input", str(manifest_path)]),
                 1,
@@ -2907,6 +3174,28 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         payload_pin,
                         "--expected-manifest-file-sha256",
                         file_pin,
+                    ]
+                ),
+                1,
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "preflight",
+                        "--input",
+                        str(final_path),
+                        "--phase0-checkpoint-manifest",
+                        str(checkpoint_path),
+                        "--expected-manifest-payload-sha256",
+                        payload_pin,
+                        "--expected-manifest-file-sha256",
+                        file_pin,
+                        "--finalization-receipt",
+                        str(final_receipt_path),
+                        "--expected-finalization-receipt-payload-sha256",
+                        final_receipt_payload_pin,
+                        "--expected-finalization-receipt-file-sha256",
+                        final_receipt_file_pin,
                     ]
                 ),
                 0,
@@ -2931,6 +3220,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         payload_pin,
                         "--expected-manifest-file-sha256",
                         file_pin,
+                        "--finalization-receipt",
+                        str(final_receipt_path),
+                        "--expected-finalization-receipt-payload-sha256",
+                        final_receipt_payload_pin,
+                        "--expected-finalization-receipt-file-sha256",
+                        final_receipt_file_pin,
                     ]
                 ),
                 1,
@@ -3495,6 +3790,9 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 ["target intake checkpoint material is invalid"],
             )
             checkpoint_path = Path(temporary) / "duplicate-checkpoint.json"
+            checkpoint_receipt_path = (
+                Path(temporary) / "duplicate-checkpoint.receipt.json"
+            )
             self.assertEqual(
                 main(
                     [
@@ -3509,6 +3807,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "b" * 64,
                         "--output",
                         str(checkpoint_path.resolve()),
+                        "--receipt-output",
+                        str(checkpoint_receipt_path.resolve()),
                         "--environment",
                         "staging",
                     ]
