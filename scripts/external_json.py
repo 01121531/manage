@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 from contextlib import contextmanager
@@ -281,6 +283,49 @@ def load_unique_json_with_bytes(
         expected_identity=expected_identity,
     )
     return parse_unique_json_bytes(raw), raw
+
+
+def load_unique_json_with_bytes_and_metadata(
+    path: Path,
+    *,
+    max_bytes: int = MAX_EXTERNAL_JSON_BYTES,
+    expected_identity: StableFileIdentity | None = None,
+) -> tuple[Any, bytes, os.stat_result]:
+    """Parse one stable snapshot and return its authenticated final metadata."""
+
+    raw, metadata = read_stable_bytes_with_metadata(
+        path,
+        max_bytes=max_bytes,
+        expected_identity=expected_identity,
+    )
+    return parse_unique_json_bytes(raw), raw, metadata
+
+
+def recheck_stable_bytes(
+    path: Path,
+    raw: bytes,
+    metadata: os.stat_result,
+    *,
+    max_bytes: int = MAX_EXTERNAL_JSON_BYTES,
+    require_single_link: bool = False,
+) -> None:
+    """Fail unless a locator still names the same stable bytes and identity."""
+
+    if require_single_link and metadata.st_nlink != 1:
+        raise StableFileError("read")
+    current, current_metadata = read_stable_bytes_with_metadata(
+        path,
+        max_bytes=max_bytes,
+        expected_identity=stable_file_identity(metadata),
+    )
+    if (
+        (require_single_link and current_metadata.st_nlink != 1)
+        or not hmac.compare_digest(
+            hashlib.sha256(current).digest(),
+            hashlib.sha256(raw).digest(),
+        )
+    ):
+        raise StableFileError("read")
 
 
 def load_unique_json(

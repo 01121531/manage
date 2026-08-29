@@ -7,6 +7,7 @@ import unittest
 from scripts.verify_release_execution_causality import (
     BINDING,
     CONSUMERS,
+    EXTERNAL_JSON,
     INTAKE,
     INTAKE_MANIFEST,
     INTAKE_ONLY_CONSUMERS,
@@ -19,6 +20,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.binding = BINDING.read_text(encoding="utf-8")
         self.intake = INTAKE.read_text(encoding="utf-8")
         self.intake_manifest = INTAKE_MANIFEST.read_text(encoding="utf-8")
+        self.external_json = EXTERNAL_JSON.read_text(encoding="utf-8")
         self.consumers = {
             name: path.read_text(encoding="utf-8")
             for name, path in CONSUMERS.items()
@@ -36,6 +38,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         consumers: dict[str, str] | None = None,
         intake_manifest: str | None = None,
         intake_only_consumers: dict[str, str] | None = None,
+        external_json: str | None = None,
     ) -> list[str]:
         return causality_errors(
             self.binding if binding is None else binding,
@@ -47,6 +50,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 if intake_only_consumers is None
                 else intake_only_consumers
             ),
+            self.external_json if external_json is None else external_json,
         )
 
     def test_current_contract_passes_and_is_in_the_quality_gate(self) -> None:
@@ -143,6 +147,41 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                     )
                     self.assertNotEqual(mutated[name], source)
                     self.assertTrue(self.errors(**{sources_argument: mutated}))
+
+    def test_shared_locator_is_exact_case_preserving_and_identity_rechecked(self) -> None:
+        manifest_mutated = self.intake_manifest.replace(
+            "os.path.abspath(expected) != os.path.abspath(supplied_path)",
+            "os.path.normcase(os.path.abspath(expected)) != os.path.normcase(os.path.abspath(supplied_path))",
+            1,
+        )
+        self.assertNotEqual(manifest_mutated, self.intake_manifest)
+        self.assertTrue(self.errors(intake_manifest=manifest_mutated))
+
+        for old, new in (
+            ("expected_identity=stable_file_identity(metadata)", "expected_identity=None"),
+            ("current_metadata.st_nlink != 1", "current_metadata.st_nlink < 1"),
+        ):
+            with self.subTest(old=old):
+                mutated = self.external_json.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.external_json)
+                self.assertTrue(self.errors(external_json=mutated))
+
+    def test_each_consumer_reads_and_rechecks_the_manifest_locator(self) -> None:
+        name = "sub2_execution_evidence.py"
+        for old, new in (
+            ("document_path = manifest_artifact_path(", "document_path = Path("),
+            (
+                "load_unique_json_with_bytes_and_metadata(document_path)",
+                "load_unique_json_with_bytes_and_metadata(arguments.input)",
+            ),
+            ("        recheck_stable_bytes(\n", "        recheck_ignored_bytes(\n"),
+            ("            require_single_link=True,\n", "            require_single_link=False,\n"),
+        ):
+            with self.subTest(old=old):
+                mutated = dict(self.consumers)
+                mutated[name] = mutated[name].replace(old, new, 1)
+                self.assertNotEqual(mutated[name], self.consumers[name])
+                self.assertTrue(self.errors(consumers=mutated))
 
     def test_identity_cannot_replace_finish_with_start(self) -> None:
         mutated = self.binding.replace(

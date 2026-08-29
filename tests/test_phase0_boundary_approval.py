@@ -242,6 +242,7 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                 manifest,
                 "phase0_boundary_approval",
                 reviewed_raw,
+                path=approval_path,
             )
             manifest_encoded = json.dumps(manifest)
             manifest_path.write_text(manifest_encoded, encoding="utf-8")

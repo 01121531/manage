@@ -80,13 +80,19 @@ def bind_manifest_item_bytes(
     manifest: dict[str, Any],
     identifier: str,
     raw: bytes,
+    *,
+    path: Path | None = None,
 ) -> None:
-    """Set one provided item's digest to the exact bytes used by a CLI test."""
+    """Bind one provided test item to the exact bytes and optional locator."""
 
     matches = [item for item in manifest["items"] if item.get("id") == identifier]
     if len(matches) != 1 or matches[0].get("status") != "provided":
         raise ValueError("manifest test item must be uniquely provided")
     matches[0]["sha256"] = hashlib.sha256(raw).hexdigest()
+    if path is not None:
+        if not path.is_absolute():
+            raise ValueError("manifest test artifact path must be absolute")
+        matches[0]["artifact_path"] = str(path)
 
 
 def manifest_pin_arguments(path: Path) -> list[str]:

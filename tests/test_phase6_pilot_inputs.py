@@ -236,7 +236,12 @@ class Phase6PilotInputsTests(unittest.TestCase):
             manifest_path = root / "intake.json"
             manifest = closed_manifest(manifest)
             reviewed_raw = json.dumps(reviewed).encode("utf-8")
-            bind_manifest_item_bytes(manifest, "phase6_pilot_inputs", reviewed_raw)
+            bind_manifest_item_bytes(
+                manifest,
+                "phase6_pilot_inputs",
+                reviewed_raw,
+                path=inventory_path,
+            )
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)
             inventory_path.write_text(json.dumps(self.template), encoding="utf-8")

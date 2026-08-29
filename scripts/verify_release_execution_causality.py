@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BINDING = ROOT / "scripts" / "release_execution_binding.py"
 INTAKE = ROOT / "scripts" / "target_intake_preflight.py"
 INTAKE_MANIFEST = ROOT / "scripts" / "target_intake_manifest.py"
+EXTERNAL_JSON = ROOT / "scripts" / "external_json.py"
 CONSUMERS = {
     name: ROOT / "scripts" / name
     for name in (
@@ -56,6 +57,7 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 INTAKE_CALLER_BOUNDARY_MARKERS = (
     "intake-manifest-caller-pin=payload-and-file-matched",
     "intake-artifact-whole-file-binding=matched",
+    "intake-artifact-path-binding=absolute-single-link-matched",
     "intake-manifest-schema=closed-v2-inventory-exact",
     "intake-manifest-custody=unverified",
     "intake-manifest-pin-authority=unverified",
@@ -321,7 +323,12 @@ def _intake_consumer_errors(name: str, source: str, tree: ast.Module) -> list[st
             for node in ast.walk(main_function)
             if isinstance(node, ast.Call)
             and _call_name(node)
-            in {"_load", "load_unique_json", "load_unique_json_with_bytes"}
+            in {
+                "_load",
+                "load_unique_json",
+                "load_unique_json_with_bytes",
+                "load_unique_json_with_bytes_and_metadata",
+            }
             and _contains_name(node, "arguments")
         ]
         if any(node.lineno < pinned_calls[0].lineno for node in other_reads):
@@ -341,6 +348,54 @@ def _intake_consumer_errors(name: str, source: str, tree: ast.Module) -> list[st
         )
     ):
         errors.append(f"{name} must bind its stable input bytes to its intake item")
+    locator_assignments = [
+        node
+        for node in ast.walk(main_function)
+        if main_function is not None
+        and isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "document_path"
+        and isinstance(node.value, ast.Call)
+        and _call_name(node.value) == "manifest_artifact_path"
+    ]
+    document_reads = [
+        node
+        for node in ast.walk(main_function)
+        if main_function is not None
+        and isinstance(node, ast.Call)
+        and _call_name(node) == "load_unique_json_with_bytes_and_metadata"
+    ]
+    rechecks = [
+        node
+        for node in ast.walk(main_function)
+        if main_function is not None
+        and isinstance(node, ast.Call)
+        and _call_name(node) == "recheck_stable_bytes"
+    ]
+    if not (
+        len(pinned_calls) == 1
+        and len(artifact_binding_calls) == 1
+        and len(locator_assignments) == 1
+        and _contains_name(locator_assignments[0].value, "manifest")
+        and _contains_name(locator_assignments[0].value, "arguments")
+        and len(document_reads) == 1
+        and len(document_reads[0].args) == 1
+        and _contains_name(document_reads[0].args[0], "document_path")
+        and len(rechecks) == 1
+        and len(rechecks[0].args) == 3
+        and _contains_name(rechecks[0].args[0], "document_path")
+        and _contains_name(rechecks[0].args[1], "document_raw")
+        and _contains_name(rechecks[0].args[2], "document_metadata")
+        and isinstance(_keyword_value(rechecks[0], "require_single_link"), ast.Constant)
+        and _keyword_value(rechecks[0], "require_single_link").value is True
+        and pinned_calls[0].lineno < locator_assignments[0].lineno
+        and locator_assignments[0].lineno < document_reads[0].lineno
+        and artifact_binding_calls[0].lineno < rechecks[0].lineno
+    ):
+        errors.append(
+            f"{name} must read and finally recheck its exact single-link intake locator"
+        )
     return errors
 
 
@@ -350,12 +405,14 @@ def causality_errors(
     consumer_sources: dict[str, str] | None = None,
     intake_manifest_source: str | None = None,
     intake_only_sources: dict[str, str] | None = None,
+    external_json_source: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     try:
         binding_tree = ast.parse(binding_source)
         intake_tree = ast.parse(intake_source)
         manifest_tree = ast.parse(intake_manifest_source or "")
+        external_json_tree = ast.parse(external_json_source or "")
     except SyntaxError:
         return ["release execution causality sources are not valid Python"]
 
@@ -366,11 +423,23 @@ def causality_errors(
         manifest_tree,
         "manifest_artifact_sha256_matches",
     )
+    manifest_artifact_path_function = _function(
+        manifest_tree,
+        "manifest_artifact_path",
+    )
+    stable_json_loader = _function(
+        external_json_tree,
+        "load_unique_json_with_bytes_and_metadata",
+    )
+    stable_recheck = _function(external_json_tree, "recheck_stable_bytes")
     if (
         manifest_loader is None
         or manifest_shape is None
         or manifest_canonical is None
         or manifest_artifact is None
+        or manifest_artifact_path_function is None
+        or stable_json_loader is None
+        or stable_recheck is None
     ):
         errors.append("shared closed intake manifest caller binding is missing")
     else:
@@ -409,6 +478,63 @@ def causality_errors(
         ):
             errors.append(
                 "shared intake artifact binding must compare one raw SHA-256 digest"
+            )
+        locator_calls = [
+            _call_name(node) for node in ast.walk(manifest_artifact_path_function)
+        ]
+        if not (
+            locator_calls.count("abspath") == 2
+            and "normcase" not in locator_calls
+            and _contains_name(manifest_artifact_path_function, "identifier")
+            and _contains_name(manifest_artifact_path_function, "supplied_path")
+            and _contains_string(manifest_artifact_path_function, "artifact_path")
+            and any(
+                isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Call)
+                and _call_name(node.value) == "Path"
+                and _contains_name(node.value, "expected")
+                for node in ast.walk(manifest_artifact_path_function)
+            )
+        ):
+            errors.append(
+                "shared intake artifact locator must use exact case-preserving absolute normalization"
+            )
+        stable_loader_calls = [
+            _call_name(node) for node in ast.walk(stable_json_loader)
+        ]
+        recheck_calls = [_call_name(node) for node in ast.walk(stable_recheck)]
+        recheck_reads = [
+            node
+            for node in ast.walk(stable_recheck)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "read_stable_bytes_with_metadata"
+        ]
+        if not (
+            stable_loader_calls.count("read_stable_bytes_with_metadata") == 1
+            and stable_loader_calls.count("parse_unique_json_bytes") == 1
+            and len(recheck_reads) == 1
+            and _contains_name(
+                _keyword_value(recheck_reads[0], "expected_identity"),
+                "metadata",
+            )
+            and recheck_calls.count("stable_file_identity") == 1
+            and recheck_calls.count("compare_digest") == 1
+            and recheck_calls.count("sha256") == 2
+            and _contains_name(stable_recheck, "require_single_link")
+            and sum(
+                isinstance(node, ast.Compare)
+                and isinstance(node.left, ast.Attribute)
+                and node.left.attr == "st_nlink"
+                and len(node.ops) == 1
+                and isinstance(node.ops[0], ast.NotEq)
+                and len(node.comparators) == 1
+                and isinstance(node.comparators[0], ast.Constant)
+                and node.comparators[0].value == 1
+                for node in ast.walk(stable_recheck)
+            ) == 2
+        ):
+            errors.append(
+                "shared stable JSON locator recheck must lock identity, single-link count, and bytes"
             )
         if not all(
             value in (intake_manifest_source or "")
@@ -788,6 +914,9 @@ def main() -> int:
         intake_manifest_source = load_stable_text(
             INTAKE_MANIFEST, max_bytes=MAX_SOURCE_BYTES
         )
+        external_json_source = load_stable_text(
+            EXTERNAL_JSON, max_bytes=MAX_SOURCE_BYTES
+        )
         consumer_sources = {
             name: load_stable_text(path, max_bytes=MAX_SOURCE_BYTES)
             for name, path in CONSUMERS.items()
@@ -805,6 +934,7 @@ def main() -> int:
         consumer_sources,
         intake_manifest_source,
         intake_only_sources,
+        external_json_source,
     )
     if errors:
         for error in errors:
@@ -827,6 +957,7 @@ def main() -> int:
         "standalone-intake-manifest-consumers=seven "
         "standalone-intake-manifest-schema=closed-v2-inventory-exact "
         "standalone-intake-manifest-caller-pin=payload-and-file "
+        "standalone-intake-artifact-locator=absolute-single-link-stable-rechecked "
         "standalone-intake-manifest-custody=unverified "
         "standalone-intake-manifest-pin-authority=unverified "
         "standalone-intake-manifest-rollback-protection=unverified "

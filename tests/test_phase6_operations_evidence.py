@@ -531,6 +531,7 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
                 manifest,
                 "phase6_operations_evidence",
                 reviewed_raw,
+                path=index_path,
             )
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)

@@ -50,13 +50,21 @@ not production acceptance. Every generated manifest and successful command remai
   `--expected-intake-manifest-file-sha256`. Each consumer reads the manifest
   once before any other evidence, requires the exact schema-v2 top level and
   ordered seventeen-item closed inventory, and matches both semantic and byte
-  identities. Each consumer also performs one stable read of its primary
-  `--input` and requires the raw whole-file SHA-256 to equal its own `provided`
-  manifest item; semantic-equivalent reformatting is therefore a replacement,
-  not the reviewed artifact. Do not calculate either expected value inside the
+  identities. Each consumer requires the caller's absolute `--input` locator to
+  equal its own `provided` manifest `artifact_path` after lexical absolute-path
+  normalization without case folding, then reads the manifest locator itself.
+  A different path with identical bytes, a case-only alias, a symlink/reparse
+  path, or a hard-linked file is not the reviewed locator. The first stable
+  read must have exactly one link and its raw whole-file SHA-256 must equal the
+  own item; immediately before success the same manifest locator is stably
+  reread against the captured file identity, single-link count and bytes.
+  Semantic-equivalent reformatting, rename/replacement during the check, or a
+  new hard link is therefore rejected. Do not calculate either expected value inside the
   consumer or
   read it back from the manifest during the check. These pins bind one reviewed
-  authoring snapshot only: caller identity, pin authority, later custody and
+  authoring snapshot and the locator at the final recheck only: caller identity,
+  review-time inode continuity, custody after that recheck, delete/recreate with
+  identical bytes, parent-directory race closure, pin authority and
   global rollback/latest-head protection remain `unverified`, and coordinated
   replacement of both manifest and externally retained pins is outside this
   repository's proof. No digest is embedded in a consumer, so no self-hash
@@ -329,8 +337,9 @@ python scripts/phase0_boundary_approval.py check `
 Exit code 1 means the closed approval, data classification, reviewer references,
 or binding hashes are invalid. Exit code 2 means the approval names a different
 artifact set or requirements digest, the authoring-manifest pins do not match,
-or the approval's raw whole-file SHA-256 differs from its own supplied manifest
-item. Success proves
+the approval `--input` locator differs from its own manifest `artifact_path`,
+or the approval's stable raw whole-file SHA-256/single-link identity differs
+from its own supplied manifest item. Success proves
 only that one approved record binds the same intake manifest content set; it
 does not prove production acceptance, reviewer identity or authority, external
 approval authenticity, or that any target control operated.
@@ -543,7 +552,9 @@ time window, release binding, references, independence, or redaction assertion
 is invalid. Exit code 2 means its environment, review metadata, Sub2 contract,
 target platform inventory, release ledger bytes, release identity, or Phase 0
 intake identity does not match the supplied intake manifest. Success proves the index
-metadata is complete and immutable; it does not verify the external evidence
+metadata at the reviewed locator matches the current single-link file identity
+and bytes through the final recheck; it does not prove later immutability or
+verify the external evidence
 content, provider behavior, or production acceptance. Review the referenced
 write-once objects independently on the target evidence system.
 
@@ -628,11 +639,14 @@ python scripts/phase6_pilot_inputs.py check `
 Exit code 1 means the roster, ownership, release identity, window, review or
 sealed content is invalid. Exit code 2 means the environment or target platform
 inventory binding differs from the supplied manifest, either authoring-manifest
-pin is wrong, or the inventory's raw whole-file SHA-256 differs from its own
-manifest item. Success proves only that
-the approved inputs are complete and immutable. It does not prove that any
-pilot execution occurred, that an alert was delivered, or that the release is
+pin is wrong, the `--input` locator differs from its own manifest
+`artifact_path`, or the inventory's stable raw whole-file SHA-256/single-link
+identity differs from its own manifest item. Success proves only that the
+reviewed locator, current bytes and inventory content match through the final
+recheck; it does not prove that any pilot execution occurred, that an alert was
+delivered, or that the release is
 accepted for production.
+It also does not prove custody or immutability after the final recheck.
 
 ## Phase 6 target pilot evidence index
 

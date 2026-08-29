@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 import re
@@ -121,6 +122,37 @@ def manifest_artifact_sha256_matches(
         and _SHA256.fullmatch(expected) is not None
         and hmac.compare_digest(hashlib.sha256(raw).hexdigest(), expected)
     )
+
+
+def manifest_artifact_path(
+    manifest: Any,
+    identifier: str,
+    supplied_path: Path,
+) -> Path | None:
+    """Return the reviewed locator only when the caller names it exactly."""
+
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(supplied_path, Path)
+        or not supplied_path.is_absolute()
+    ):
+        return None
+    items = manifest.get("items")
+    if not isinstance(items, list):
+        return None
+    matches = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("id") == identifier
+    ]
+    if len(matches) != 1 or matches[0].get("status") != "provided":
+        return None
+    expected = matches[0].get("artifact_path")
+    if not isinstance(expected, str) or not Path(expected).is_absolute():
+        return None
+    if os.path.abspath(expected) != os.path.abspath(supplied_path):
+        return None
+    return Path(expected)
 
 
 def _reviewer_reference(value: Any) -> bool:

@@ -367,12 +367,23 @@ class TargetPhaseArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifest = root / "intake.json"
-            manifest.write_text(
-                json.dumps(closed_manifest({"environment": "staging", "items": []})),
-                encoding="utf-8",
+            synthetic_template = ARTIFACT_PATHS["phase1_platform_evidence"]
+            synthetic = root / "synthetic.json"
+            synthetic.write_bytes(synthetic_template.read_bytes())
+            intake = closed_manifest(
+                {
+                    "environment": "staging",
+                    "items": [{"id": "phase1_platform_evidence"}],
+                }
             )
+            bind_manifest_item_bytes(
+                intake,
+                "phase1_platform_evidence",
+                synthetic.read_bytes(),
+                path=synthetic,
+            )
+            manifest.write_text(json.dumps(intake), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest)
-            synthetic = ARTIFACT_PATHS["phase1_platform_evidence"]
             self.assertEqual(
                 main(
                     [
@@ -398,6 +409,14 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            bind_manifest_item_bytes(
+                intake,
+                "phase1_platform_evidence",
+                duplicate.read_bytes(),
+                path=duplicate,
+            )
+            manifest.write_text(json.dumps(intake), encoding="utf-8")
+            pin_arguments = manifest_pin_arguments(manifest)
             self.assertEqual(
                 main(
                     [
@@ -469,6 +488,7 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                 manifest,
                 "phase5_windows_evidence",
                 evidence_path.read_bytes(),
+                path=evidence_path,
             )
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)

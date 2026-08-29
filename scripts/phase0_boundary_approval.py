@@ -16,10 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.external_json import load_unique_json, load_unique_json_with_bytes
+from scripts.external_json import (
+    load_unique_json,
+    load_unique_json_with_bytes_and_metadata,
+    recheck_stable_bytes,
+)
 from scripts.target_intake_manifest import (
     PinnedIntakeManifestError,
     load_pinned_intake_manifest,
+    manifest_artifact_path,
     manifest_artifact_sha256_matches,
 )
 
@@ -365,8 +370,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    document_path = manifest_artifact_path(
+        manifest,
+        "phase0_boundary_approval",
+        arguments.input,
+    )
+    if document_path is None:
+        print("phase0 approval artifact path binding is invalid", file=sys.stderr)
+        return 2
     try:
-        document, document_raw = load_unique_json_with_bytes(arguments.input)
+        document, document_raw, document_metadata = (
+            load_unique_json_with_bytes_and_metadata(document_path)
+        )
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("phase0-boundary-approval-invalid", file=sys.stderr)
         return 1
@@ -388,10 +403,21 @@ def main(argv: list[str] | None = None) -> int:
     if binding_errors:
         print("; ".join(binding_errors), file=sys.stderr)
         return 2
+    try:
+        recheck_stable_bytes(
+            document_path,
+            document_raw,
+            document_metadata,
+            require_single_link=True,
+        )
+    except OSError:
+        print("phase0 approval artifact path binding changed", file=sys.stderr)
+        return 2
     print(
         "phase0-boundary-approval-bound production_acceptance=false "
         "intake-manifest-caller-pin=payload-and-file-matched "
         "intake-artifact-whole-file-binding=matched "
+        "intake-artifact-path-binding=absolute-single-link-matched "
         "intake-manifest-schema=closed-v2-inventory-exact "
         "intake-manifest-custody=unverified "
         "intake-manifest-pin-authority=unverified "
