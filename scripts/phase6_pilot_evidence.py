@@ -77,14 +77,15 @@ EXECUTION_SCOPE = {
 
 _PAYLOAD_KEYS = {
     "schema_version", "record_type", "index_reference", "synthetic",
-    "index_status", "review_reference", "production_acceptance", "environment",
+    "index_status", "review_reference", "reviewed_at", "production_acceptance", "environment",
     "execution_scope", "bindings", "pilot_subjects", "trace_set_reference",
     "window", "release_execution", "scenarios", "prohibited_content",
 }
 _SEALED_KEYS = _PAYLOAD_KEYS | {"integrity"}
 _BINDING_KEYS = {
     "release_tag", "release_commit", "container_manifest_sha256",
-    "phase6_pilot_inputs_sha256", "target_platform_inventory_sha256",
+    "phase6_pilot_inputs_sha256", "sub2_execution_evidence_sha256",
+    "target_platform_inventory_sha256",
 }
 _SUBJECT_KEYS = {"operator", "security_auditor"}
 _WINDOW_KEYS = {"started_at", "finished_at"}
@@ -167,7 +168,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 2
+        or payload.get("schema_version") != 3
         or payload.get("record_type") != "phase6_pilot_evidence_index"
     ):
         errors.append("Phase 6 pilot evidence index identity is invalid")
@@ -199,6 +200,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     synthetic = payload.get("synthetic")
     reference = payload.get("index_reference")
     review_reference = payload.get("review_reference")
+    reviewed_at = payload.get("reviewed_at")
     environment = payload.get("environment")
     if not isinstance(synthetic, bool) or not _typed_reference(reference, "pilot-evidence-index:"):
         errors.append("Phase 6 pilot evidence index reference is invalid")
@@ -214,6 +216,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
         if (
             payload.get("index_status") != "pending"
             or review_reference is not None
+            or reviewed_at is not None
             or environment != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -259,6 +262,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
                 or _SHA256.fullmatch(bindings[key]) is None
                 for key in (
                     "container_manifest_sha256", "phase6_pilot_inputs_sha256",
+                    "sub2_execution_evidence_sha256",
                     "target_platform_inventory_sha256",
                 )
             )
@@ -280,6 +284,9 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     finished_at = _parse_utc(window.get("finished_at")) if isinstance(window, dict) else None
     if started_at is None or finished_at is None or finished_at <= started_at:
         errors.append("reviewed Phase 6 pilot evidence window is invalid")
+    reviewed = _parse_utc(reviewed_at)
+    if reviewed is None or finished_at is None or reviewed < finished_at:
+        errors.append("reviewed Phase 6 pilot evidence review timestamp is invalid")
 
     executions: list[str] = []
     objects: list[str] = []
@@ -412,6 +419,7 @@ def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
         )
     for identifier, binding_key in (
         ("phase6_pilot_inputs", "phase6_pilot_inputs_sha256"),
+        ("sub2_execution_evidence", "sub2_execution_evidence_sha256"),
         ("target_platform_inventory", "target_platform_inventory_sha256"),
     ):
         matches = [
@@ -428,6 +436,18 @@ def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
             errors.append(
                 f"Phase 6 pilot evidence {identifier} binding does not match this intake manifest"
             )
+    own_items = [
+        item for item in manifest["items"]
+        if isinstance(item, dict) and item.get("id") == "phase6_pilot_evidence"
+    ]
+    if (
+        len(own_items) != 1 or own_items[0].get("status") != "provided"
+        or own_items[0].get("reviewed_by") != document.get("review_reference")
+        or own_items[0].get("reviewed_at") != document.get("reviewed_at")
+    ):
+        errors.append(
+            "Phase 6 pilot evidence review metadata does not match this intake manifest"
+        )
     return errors
 
 

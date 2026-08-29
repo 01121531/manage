@@ -95,12 +95,14 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
                 "synthetic": False,
                 "index_status": "reviewed",
                 "review_reference": "pilot-evidence-review:record-43",
+                "reviewed_at": "2026-08-27T02:00:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
                     "release_commit": "a" * 40,
                     "container_manifest_sha256": "b" * 64,
                     "phase6_pilot_inputs_sha256": "d" * 64,
+                    "sub2_execution_evidence_sha256": "6" * 64,
                     "target_platform_inventory_sha256": "c" * 64,
                 },
                 "pilot_subjects": {
@@ -151,6 +153,7 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
                 "synthetic": False,
                 "index_status": "reviewed",
                 "review_reference": "operations-evidence-review:record-43",
+                "reviewed_at": "2026-08-27T04:15:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -222,6 +225,14 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
                     ("phase6_pilot_evidence", "phase6_pilot_evidence_sha256"),
                     ("target_platform_inventory", "target_platform_inventory_sha256"),
                 )
+            ]
+            + [
+                {
+                    "id": "phase6_operations_evidence",
+                    "status": "provided",
+                    "reviewed_by": "operations-evidence-review:record-43",
+                    "reviewed_at": "2026-08-27T04:15:00Z",
+                }
             ],
         }
 
@@ -231,7 +242,7 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
-        self.assertEqual(self.template["schema_version"], 2)
+        self.assertEqual(self.template["schema_version"], 3)
         self.assertTrue(all(value is None for value in self.template["scenarios"].values()))
         gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
         self.assertIn("python scripts/phase6_operations_evidence.py verify-repository", gate)
@@ -350,6 +361,12 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
             "Phase 6 operations evidence index integrity is invalid",
             index_errors(tampered),
         )
+        early_review = copy.deepcopy(reviewed)
+        early_review["reviewed_at"] = "2026-08-27T03:59:59Z"
+        self.assertIn(
+            "reviewed Phase 6 operations evidence review timestamp is invalid",
+            index_errors(self._reseal(early_review)),
+        )
 
     def test_binding_requires_same_environment_and_three_manifest_artifacts(self) -> None:
         reviewed = self._reviewed()
@@ -363,6 +380,16 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
         manifest["environment"] = "production"
         self.assertIn(
             "Phase 6 operations evidence environment does not match this intake manifest",
+            intake_binding_errors(reviewed, manifest),
+        )
+        manifest["environment"] = "staging"
+        own = next(
+            item for item in manifest["items"]
+            if item["id"] == "phase6_operations_evidence"
+        )
+        own["reviewed_by"] = "operations-evidence-review:record-99"
+        self.assertIn(
+            "Phase 6 operations evidence review metadata does not match this intake manifest",
             intake_binding_errors(reviewed, manifest),
         )
 

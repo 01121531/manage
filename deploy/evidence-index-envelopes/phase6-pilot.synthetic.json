@@ -1,10 +1,11 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "record_type": "phase6_pilot_evidence_index",
   "index_reference": "pilot-evidence-index:synthetic-42",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
   "production_acceptance": false,
   "environment": "production",
   "execution_scope": {
@@ -18,6 +19,7 @@
     "release_commit": null,
     "container_manifest_sha256": null,
     "phase6_pilot_inputs_sha256": null,
+    "sub2_execution_evidence_sha256": null,
     "target_platform_inventory_sha256": null
   },
   "pilot_subjects": {
@@ -63,6 +65,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "c15b55106a85f70c7a9fb29272e012871c03321a8d7c0e4e7aa427a1e92f9a74"
+    "payload_sha256": "864e8d3328cc50cca28af73c0cf5ac3f599954f91b01c6b56bda8d7e9030e282"
   }
 }

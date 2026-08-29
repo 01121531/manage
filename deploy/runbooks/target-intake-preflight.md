@@ -72,10 +72,14 @@ above, change the matching item to this shape:
 }
 ```
 
-Use an opaque ticket or approval reference for `reviewed_by`. The timestamp
-must be canonical UTC ending in `Z`. Recompute SHA-256 after every approved
-artifact change. Do not add inline artifact content or extra manifest fields;
-the schema is closed.
+Use an opaque ticket or approval reference for `reviewed_by`. For the sealed
+Sub2, Phase 6 pilot and Phase 6 operations execution indexes, this value must
+exactly equal the index's sealed `review_reference`, and `reviewed_at` must
+exactly equal its sealed UTC review timestamp. That timestamp cannot precede
+the index execution window's `finished_at`. For other artifact policies the
+timestamp must still be canonical UTC ending in `Z`. Recompute SHA-256 after
+every approved artifact change. Do not add inline artifact content or extra
+manifest fields; the schema is closed.
 
 ## Provider contract envelopes
 
@@ -302,7 +306,11 @@ trace, and immutable evidence-object references; canonical UTC execution time;
 the fixed observation; external artifact SHA-256; `result=passed`; and
 `redaction_confirmed=true`. Bind the index to the deployed release tag, 40-hex
 commit, container-manifest SHA-256, and the exact Sub2 contract and target
-platform inventory SHA-256 values from the same intake manifest. Do not include
+platform inventory SHA-256 values from the same intake manifest. Seal one
+aggregate `review_reference` and `reviewed_at` after the execution window.
+Select the exact successful schema-v2 release execution ledger by whole-file
+SHA-256 and its Phase 0 checkpoint identity; the selector and release triple
+must match an independent parse of that same ledger. Do not include
 supplier URLs, request/response bodies, provider error text, credentials,
 tokens, PAN/CVV, verification codes, or personal contact details.
 
@@ -311,13 +319,15 @@ Verify the sealed index and its same-manifest bindings:
 ```powershell
 python scripts/sub2_execution_evidence.py check `
   --input D:\email-platform-evidence\intake\sub2-execution-evidence-index.json `
-  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json
+  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
 ```
 
 Exit code 1 means the closed index, canonical payload digest, scenario coverage,
 time window, release binding, references, independence, or redaction assertion
-is invalid. Exit code 2 means its environment, Sub2 contract, or target platform
-inventory does not match the supplied intake manifest. Success proves the index
+is invalid. Exit code 2 means its environment, review metadata, Sub2 contract,
+target platform inventory, release ledger bytes, release identity, or Phase 0
+intake identity does not match the supplied intake manifest. Success proves the index
 metadata is complete and immutable; it does not verify the external evidence
 content, provider behavior, or production acceptance. Review the referenced
 write-once objects independently on the target evidence system.
@@ -406,10 +416,11 @@ one-time verification, server-side upload, cleanup, authorization isolation,
 persistent-secret scan, audit-trace replay, and audit-resource replay. Record
 only typed opaque execution, independent reviewer, trace-set and immutable WORM
 object references, UTC timestamps, fixed observations, artifact SHA-256 values,
-and redaction assertions. Bind the sealed index to the release identity and the
-exact Phase 6 pilot inputs and target platform inventory hashes from the same
-intake manifest. The operator and security-auditor subjects must match that
-reviewed pilot roster.
+and redaction assertions. Seal the aggregate review reference and review time
+after the execution window. Bind the sealed index to the release identity and
+the exact Sub2 execution evidence, Phase 6 pilot inputs and target platform
+inventory hashes from the same intake manifest. The operator and
+security-auditor subjects must match that reviewed pilot roster.
 
 Select exactly one successful schema-v2 release execution ledger: either a
 forward ledger with terminal `succeeded` or a Web/API rolling ledger with
@@ -469,7 +480,9 @@ independent reviewer and immutable WORM object references, UTC timestamps, fixed
 observations, and redaction assertions. Bind the index to the exact T41 pilot
 inputs, T42 pilot evidence, target platform inventory and release identity from
 the same intake. Its four role subjects and pilot trace-set reference must match
-those reviewed dependencies.
+those reviewed dependencies. Seal the aggregate review reference and review
+time after the operations execution window; the intake item must repeat those
+two sealed values exactly.
 Copy the exact same release-execution selector from the reviewed pilot index;
 do not choose another ledger for operations signoff or derive expected values
 from the ledger under review.
@@ -569,21 +582,26 @@ python scripts/target_intake_preflight.py preflight `
   --through-phase 3
 ```
 
-Before Phase 4 promotion, additionally require the real Sub2 execution and
-Vault/egress evidence indexes:
+Before Phase 4 promotion, additionally require the selected successful release
+execution ledger, real Sub2 execution and Vault/egress evidence indexes. The
+Sub2 selector must name the same ledger bytes and Phase 0 checkpoint:
 
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 4
 ```
 
 Before Phase 5 promotion, additionally require the reviewed Windows pilot
-input inventory and Windows/business-page evidence index:
+input inventory and Windows/business-page evidence index. The Phase 0
+checkpoint remains mandatory because the selected release ledger is already
+part of the cumulative Phase 4 evidence:
 
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 5
 ```
 

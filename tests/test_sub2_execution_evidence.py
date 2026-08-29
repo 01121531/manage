@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -14,6 +15,7 @@ from scripts.sub2_execution_evidence import (
     main,
     seal_index,
 )
+from tests.test_deploy_release_evidence import _complete_success, _recorder
 
 
 class Sub2ExecutionEvidenceTests(unittest.TestCase):
@@ -33,6 +35,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                 "synthetic": False,
                 "index_status": "reviewed",
                 "review_reference": "sub2-independent-review-record-42",
+                "reviewed_at": "2026-08-26T10:15:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -44,6 +47,17 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                 "window": {
                     "started_at": "2026-08-26T09:00:00Z",
                     "finished_at": "2026-08-26T10:00:00Z",
+                },
+                "release_execution": {
+                    "ledger_type": "forward",
+                    "evidence_object_reference": "worm-release-execution:record-42a",
+                    "evidence_sha256": "f" * 64,
+                    "target_intake": {
+                        "environment": "staging",
+                        "manifest_payload_sha256": "9" * 64,
+                        "requirements_sha256": "a" * 64,
+                        "checkpoint_phase": 0,
+                    },
                 },
             }
         )
@@ -73,7 +87,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             "schema_version": 1,
             "environment": "staging",
             "production_acceptance": False,
-            "requirements_sha256": "e" * 64,
+            "requirements_sha256": "a" * 64,
             "items": [
                 {
                     "id": "sub2_contract",
@@ -85,6 +99,12 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                     "status": "provided",
                     "sha256": bindings["target_platform_inventory_sha256"],
                 },
+                {
+                    "id": "sub2_execution_evidence",
+                    "status": "provided",
+                    "reviewed_by": "sub2-independent-review-record-42",
+                    "reviewed_at": "2026-08-26T10:15:00Z",
+                },
             ],
         }
 
@@ -93,6 +113,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
+        self.assertEqual(self.template["schema_version"], 2)
         self.assertTrue(all(value is None for value in self.template["scenarios"].values()))
         self.assertRegex(self.template["integrity"]["payload_sha256"], r"^[0-9a-f]{64}$")
         quality_gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
@@ -165,6 +186,13 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             with self.subTest(document=document):
                 self.assertTrue(index_errors(document))
 
+        review_before_finish = copy.deepcopy(reviewed)
+        review_before_finish["reviewed_at"] = "2026-08-26T09:59:59Z"
+        self.assertIn(
+            "reviewed Sub2 evidence review timestamp is invalid",
+            index_errors(self._reseal(review_before_finish)),
+        )
+
     def test_release_binding_and_integrity_tamper_fail_closed(self) -> None:
         reviewed = self._reviewed()
         invalid_commit = copy.deepcopy(reviewed)
@@ -217,6 +245,12 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             "Sub2 evidence environment does not match this intake manifest",
             intake_binding_errors(reviewed, wrong_environment),
         )
+        wrong_review = copy.deepcopy(manifest)
+        wrong_review["items"][2]["reviewed_by"] = "sub2-independent-review-record-99"
+        self.assertIn(
+            "Sub2 evidence review metadata does not match this intake manifest",
+            intake_binding_errors(reviewed, wrong_review),
+        )
 
     def test_cli_distinguishes_invalid_content_from_binding_mismatch(self) -> None:
         self.assertEqual(main(["verify-repository"]), 0)
@@ -226,48 +260,39 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             root = Path(temporary)
             index_path = root / "sub2-evidence-index.json"
             manifest_path = root / "intake.json"
+            release_path = root / "forward-release.json"
+            recorder = _recorder()
+            _complete_success(recorder)
+            recorder.write(release_path)
+            reviewed["release_execution"]["evidence_sha256"] = hashlib.sha256(
+                release_path.read_bytes()
+            ).hexdigest()
+            reviewed = self._reseal(reviewed)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
+            def args() -> list[str]:
+                return [
+                    "check",
+                    "--input",
+                    str(index_path),
+                    "--intake-manifest",
+                    str(manifest_path),
+                    "--release-execution-evidence",
+                    str(release_path),
+                ]
+
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
-            self.assertEqual(
-                main(
-                    [
-                        "check",
-                        "--input",
-                        str(index_path),
-                        "--intake-manifest",
-                        str(manifest_path),
-                    ]
-                ),
-                1,
-            )
+            self.assertEqual(main(args()), 1)
             index_path.write_text(json.dumps(reviewed), encoding="utf-8")
-            self.assertEqual(
-                main(
-                    [
-                        "check",
-                        "--input",
-                        str(index_path),
-                        "--intake-manifest",
-                        str(manifest_path),
-                    ]
-                ),
-                0,
-            )
+            self.assertEqual(main(args()), 0)
+            wrong_release = copy.deepcopy(reviewed)
+            wrong_release["bindings"]["release_tag"] = "v9.9.9"
+            index_path.write_text(json.dumps(self._reseal(wrong_release)), encoding="utf-8")
+            self.assertEqual(main(args()), 2)
+            index_path.write_text(json.dumps(reviewed), encoding="utf-8")
             manifest["items"][0]["sha256"] = "f" * 64
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-            self.assertEqual(
-                main(
-                    [
-                        "check",
-                        "--input",
-                        str(index_path),
-                        "--intake-manifest",
-                        str(manifest_path),
-                    ]
-                ),
-                2,
-            )
+            self.assertEqual(main(args()), 2)
 
     def test_runbook_documents_external_index_and_evidence_limit(self) -> None:
         rendered = json.dumps(self.template, ensure_ascii=False).casefold()
@@ -297,6 +322,8 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             "five normalized status outcomes",
             "same-provider-key duplicate replay",
             "unknown reconciliation",
+            "--release-execution-evidence",
+            "aggregate `review_reference` and `reviewed_at`",
             "index metadata only",
             "does not verify the external evidence content",
         ):

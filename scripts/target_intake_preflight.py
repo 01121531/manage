@@ -131,6 +131,11 @@ _ALLOWED_POLICIES = {
 _SUPPLEMENTAL_MATRIX_REFS = {
     "release_execution_evidence": (
         (
+            4,
+            "target_evidence_required",
+            "real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five status outcomes, same-key replay and unknown-reconciliation evidence",
+        ),
+        (
             6,
             "target_evidence_required",
             "real pilot-user end-to-end evidence and independent review",
@@ -710,6 +715,20 @@ def intake_errors(
         )
     if sub2_evidence is not None:
         errors.extend(sub2_evidence_binding_errors(sub2_evidence, document))
+        if release_execution is not None:
+            bindings = sub2_evidence.get("bindings", {})
+            errors.extend(
+                release_execution_identity_alignment_errors(
+                    sub2_evidence.get("release_execution"),
+                    release_execution,
+                    environment=sub2_evidence.get("environment"),
+                    release_tag=bindings.get("release_tag"),
+                    release_commit=bindings.get("release_commit"),
+                    container_manifest_sha256=bindings.get(
+                        "container_manifest_sha256"
+                    ),
+                )
+            )
     phase4_runtime_required = require_complete and (
         required_ids is None or "sub2_execution_evidence" in required_ids
     )

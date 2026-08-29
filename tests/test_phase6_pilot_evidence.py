@@ -87,12 +87,14 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                 "synthetic": False,
                 "index_status": "reviewed",
                 "review_reference": "pilot-evidence-review:record-42",
+                "reviewed_at": "2026-08-27T02:00:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
                     "release_commit": "a" * 40,
                     "container_manifest_sha256": "b" * 64,
                     "phase6_pilot_inputs_sha256": "d" * 64,
+                    "sub2_execution_evidence_sha256": "e" * 64,
                     "target_platform_inventory_sha256": "c" * 64,
                 },
                 "pilot_subjects": {
@@ -147,9 +149,20 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                     "sha256": bindings["target_platform_inventory_sha256"],
                 },
                 {
+                    "id": "sub2_execution_evidence",
+                    "status": "provided",
+                    "sha256": bindings["sub2_execution_evidence_sha256"],
+                },
+                {
                     "id": "phase6_pilot_inputs",
                     "status": "provided",
                     "sha256": bindings["phase6_pilot_inputs_sha256"],
+                },
+                {
+                    "id": "phase6_pilot_evidence",
+                    "status": "provided",
+                    "reviewed_by": "pilot-evidence-review:record-42",
+                    "reviewed_at": "2026-08-27T02:00:00Z",
                 },
             ],
         }
@@ -160,7 +173,7 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
-        self.assertEqual(self.template["schema_version"], 2)
+        self.assertEqual(self.template["schema_version"], 3)
         self.assertTrue(all(value is None for value in self.template["scenarios"].values()))
         gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
         self.assertIn("python scripts/phase6_pilot_evidence.py verify-repository", gate)
@@ -255,11 +268,21 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
         tampered["environment"] = "production"
         self.assertIn("Phase 6 pilot evidence index integrity is invalid", index_errors(tampered))
 
+        early_review = copy.deepcopy(reviewed)
+        early_review["reviewed_at"] = "2026-08-27T01:54:59Z"
+        self.assertIn(
+            "reviewed Phase 6 pilot evidence review timestamp is invalid",
+            index_errors(self._reseal(early_review)),
+        )
+
     def test_binding_requires_same_environment_inputs_and_target_inventory(self) -> None:
         reviewed = self._reviewed()
         manifest = self._manifest(reviewed["bindings"])
         self.assertEqual(intake_binding_errors(reviewed, manifest), [])
-        manifest["items"][1]["sha256"] = "f" * 64
+        next(
+            item for item in manifest["items"]
+            if item["id"] == "phase6_pilot_inputs"
+        )["sha256"] = "f" * 64
         self.assertIn(
             "Phase 6 pilot evidence phase6_pilot_inputs binding does not match this intake manifest",
             intake_binding_errors(reviewed, manifest),
@@ -267,6 +290,29 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
         manifest["environment"] = "production"
         self.assertIn(
             "Phase 6 pilot evidence environment does not match this intake manifest",
+            intake_binding_errors(reviewed, manifest),
+        )
+
+    def test_binding_locks_sub2_evidence_and_manifest_review_metadata(self) -> None:
+        reviewed = self._reviewed()
+        manifest = self._manifest(reviewed["bindings"])
+        sub2 = next(
+            item for item in manifest["items"]
+            if item["id"] == "sub2_execution_evidence"
+        )
+        sub2["sha256"] = "f" * 64
+        self.assertIn(
+            "Phase 6 pilot evidence sub2_execution_evidence binding does not match this intake manifest",
+            intake_binding_errors(reviewed, manifest),
+        )
+        sub2["sha256"] = reviewed["bindings"]["sub2_execution_evidence_sha256"]
+        own = next(
+            item for item in manifest["items"]
+            if item["id"] == "phase6_pilot_evidence"
+        )
+        own["reviewed_at"] = "2026-08-27T02:00:01Z"
+        self.assertIn(
+            "Phase 6 pilot evidence review metadata does not match this intake manifest",
             intake_binding_errors(reviewed, manifest),
         )
 

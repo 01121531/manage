@@ -132,19 +132,21 @@ Release manifest:
 - Phase 6 selected release-execution Phase 0 environment, manifest payload SHA-256, requirements SHA-256 and checkpoint phase:
 - Repository-external write-once Phase 0 checkpoint snapshot path, canonical manifest payload SHA-256 and retention reference:
 - Intake manifest/checkpoint 64 KiB limit, duplicate-key rejection and stable bounded-read result:
-- Twelve registered artifacts bounded stable-read, whole-file SHA-256 and eleven ordinary JSON unique-key parse result:
+- Seventeen registered artifacts bounded stable-read, whole-file SHA-256 and sixteen ordinary JSON unique-key parse result:
 - Standalone artifact check/strict-intake bounded-reader and unique-key parse parity result:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:
 - Final strict current-to-checkpoint six-item equality and release-ledger-to-checkpoint identity result:
+- Phase 4 Sub2 evidence exact release-ledger whole-file selector and target-release alignment result:
+- Phase 4 Sub2 sealed review reference/time, execution window and same-manifest review-metadata result:
 - Phase 6 selected schema-v2 ledger independent parse and successful-terminal result:
-- Phase 6 pilot evidence same-manifest pilot-input and target-inventory SHA-256 bindings:
-- Phase 6 pilot operator/security-auditor subject, trace-set and independent-review references:
+- Phase 6 pilot evidence same-manifest Sub2-evidence, pilot-input and target-inventory SHA-256 bindings:
+- Phase 6 pilot operator/security-auditor subject, trace-set, sealed review reference and post-window review time:
 - Phase 6 pilot UTC window and nine target OIDC/real Mail/Sub2 scenario WORM references:
 - Phase 6 target operations evidence index and canonical payload SHA-256:
 - Phase 6 operations release identity and same-manifest T41/T42/target-inventory bindings:
 - Phase 6 operations/pilot exact release-execution selector equality:
 - Phase 6 Alertmanager, PostgreSQL, Redis, Vault, rollback and training source-artifact SHA-256 values:
-- Phase 6 operations four-role subjects, pilot trace-set and independent-review references:
+- Phase 6 operations four-role subjects, pilot trace-set, sealed review reference and post-window review time:
 - Phase 6 nine alert/restore/rollback/training/audit scenario WORM references and UTC window:
 - Target-environment pilot evidence:
 - Keycloak administrator group subject digest and membership evidence:

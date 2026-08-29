@@ -249,11 +249,17 @@
     {
       "id": "release_execution_evidence",
       "phases": [
+        4,
         6
       ],
-      "purpose": "Repository-external successful schema-v2 forward or rolling release execution ledger selected by the Phase 6 pilot and operations indexes.",
+      "purpose": "Repository-external successful schema-v2 forward or rolling release execution ledger selected by the Phase 4 Sub2, Phase 6 pilot and operations indexes.",
       "artifact_policy": "release_execution_ledger",
       "matrix_refs": [
+        {
+          "phase": 4,
+          "category": "target_evidence_required",
+          "value": "real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five status outcomes, same-key replay and unknown-reconciliation evidence"
+        },
         {
           "phase": 6,
           "category": "target_evidence_required",

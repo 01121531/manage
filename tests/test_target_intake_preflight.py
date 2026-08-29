@@ -358,6 +358,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "index_status": "reviewed",
                     "review_reference": "sub2-independent-review-record-42",
+                    "reviewed_at": "2026-08-26T10:15:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -371,6 +372,25 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "window": {
                         "started_at": "2026-08-26T09:00:00Z",
                         "finished_at": "2026-08-26T10:00:00Z",
+                    },
+                    "release_execution": {
+                        "ledger_type": "forward",
+                        "evidence_object_reference": "worm-release-execution:record-42a",
+                        "evidence_sha256": next(
+                            (
+                                item["sha256"]
+                                for item in manifest["items"]
+                                if item["id"] == "release_execution_evidence"
+                                and item["status"] == "provided"
+                            ),
+                            "f" * 64,
+                        ),
+                        "target_intake": {
+                            "environment": manifest["environment"],
+                            "manifest_payload_sha256": phase0_manifest_sha256,
+                            "requirements_sha256": manifest["requirements_sha256"],
+                            "checkpoint_phase": 0,
+                        },
                     },
                 }
             )
@@ -507,6 +527,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 in {
                     "release_execution_evidence",
                     "phase6_pilot_inputs",
+                    "sub2_execution_evidence",
                     "target_platform_inventory",
                 }
             }
@@ -516,12 +537,16 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "index_status": "reviewed",
                     "review_reference": "pilot-evidence-review:record-42",
+                    "reviewed_at": "2026-08-27T02:00:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
                         "release_commit": "a" * 40,
                         "container_manifest_sha256": "b" * 64,
                         "phase6_pilot_inputs_sha256": hashes["phase6_pilot_inputs"],
+                        "sub2_execution_evidence_sha256": hashes[
+                            "sub2_execution_evidence"
+                        ],
                         "target_platform_inventory_sha256": hashes[
                             "target_platform_inventory"
                         ],
@@ -616,6 +641,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "index_status": "reviewed",
                     "review_reference": "operations-evidence-review:record-43",
+                    "reviewed_at": "2026-08-27T04:15:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -898,7 +924,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
         )
         self.assertEqual(
             {phase: len(identifiers) for phase, identifiers in checkpoints.items()},
-            {0: 6, 1: 7, 2: 8, 3: 9, 4: 11, 5: 13, 6: 17},
+            {0: 6, 1: 7, 2: 8, 3: 9, 4: 12, 5: 14, 6: 17},
         )
         self.assertIn("release_execution_evidence", phase6)
         self.assertEqual(phase6, tuple(item["id"] for item in self.requirements["requirements"]))
@@ -1109,14 +1135,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             def provide(item: dict[str, object], phase0_digest: str = "8" * 64) -> None:
                 artifact = artifacts / f"{item['id']}.json"
+                document = self._artifact_document(
+                    item["id"],
+                    manifest,
+                    phase0_manifest_sha256=phase0_digest,
+                )
                 artifact.write_text(
-                    json.dumps(
-                        self._artifact_document(
-                            item["id"],
-                            manifest,
-                            phase0_manifest_sha256=phase0_digest,
-                        )
-                    ),
+                    json.dumps(document),
                     encoding="utf-8",
                 )
                 item.update(
@@ -1124,8 +1149,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "status": "provided",
                         "artifact_path": str(artifact.resolve()),
                         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                        "reviewed_by": "security-review-ticket-42",
-                        "reviewed_at": "2026-08-26T12:00:00Z",
+                        "reviewed_by": document.get(
+                            "review_reference", "security-review-ticket-42"
+                        ),
+                        "reviewed_at": document.get(
+                            "reviewed_at", "2026-08-26T12:00:00Z"
+                        ),
                         "redaction_confirmed": True,
                     }
                 )
@@ -1141,8 +1170,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 encoding="utf-8",
             )
             phase0_digest = requirements_sha256(checkpoint_manifest)
+            release_item = next(
+                item for item in manifest["items"]
+                if item["id"] == "release_execution_evidence"
+            )
+            provide(release_item, phase0_digest)
             for item in manifest["items"]:
-                if item["id"] not in phase0_ids:
+                if item["id"] not in phase0_ids and item is not release_item:
                     provide(item, phase0_digest)
 
             self.assertEqual(
@@ -1269,6 +1303,52 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     phase0_checkpoint_manifest=changed_checkpoint_path.resolve(),
                 ),
             )
+            sub2_item = next(
+                item for item in manifest["items"]
+                if item["id"] == "sub2_execution_evidence"
+            )
+            sub2_path = Path(sub2_item["artifact_path"])
+            original_sub2_bytes = sub2_path.read_bytes()
+            old_release = json.loads(original_sub2_bytes)
+            old_release["bindings"]["release_tag"] = "v9.9.9"
+            old_release = seal_index(
+                {
+                    key: value
+                    for key, value in old_release.items()
+                    if key != "integrity"
+                }
+            )
+            sub2_path.write_text(json.dumps(old_release), encoding="utf-8")
+            sub2_item["sha256"] = hashlib.sha256(sub2_path.read_bytes()).hexdigest()
+            replay_errors = intake_errors(
+                manifest,
+                self.requirements,
+                repository_root=repository,
+                require_complete=True,
+                phase0_checkpoint_manifest=checkpoint_path.resolve(),
+            )
+            self.assertIn(
+                "release execution target release does not match its index",
+                replay_errors,
+            )
+            self.assertIn(
+                "Phase 6 pilot evidence sub2_execution_evidence binding does not match this intake manifest",
+                replay_errors,
+            )
+            sub2_path.write_bytes(original_sub2_bytes)
+            sub2_item["sha256"] = hashlib.sha256(original_sub2_bytes).hexdigest()
+            sub2_item["reviewed_by"] = "sub2-independent-review-record-99"
+            self.assertIn(
+                "Sub2 evidence review metadata does not match this intake manifest",
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=True,
+                    phase0_checkpoint_manifest=checkpoint_path.resolve(),
+                ),
+            )
+            sub2_item["reviewed_by"] = "sub2-independent-review-record-42"
             release_item = next(
                 item
                 for item in manifest["items"]
@@ -1711,8 +1791,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "status": "provided",
                     "artifact_path": str(artifact.resolve()),
                     "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                    "reviewed_by": "security-review-ticket-42",
-                    "reviewed_at": "2026-08-26T12:00:00Z",
+                    "reviewed_by": evidence["review_reference"],
+                    "reviewed_at": evidence["reviewed_at"],
                     "redaction_confirmed": True,
                 }
             )
@@ -1903,8 +1983,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "status": "provided",
                         "artifact_path": str(artifact.resolve()),
                         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                        "reviewed_by": "security-review-ticket-42",
-                        "reviewed_at": "2026-08-26T12:00:00Z",
+                        "reviewed_by": document.get(
+                            "review_reference", "security-review-ticket-42"
+                        ),
+                        "reviewed_at": document.get(
+                            "reviewed_at", "2026-08-26T12:00:00Z"
+                        ),
                         "redaction_confirmed": True,
                     }
                 )
@@ -1912,6 +1996,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             provide(5)
             provide(13)
+            provide(9)
             provide(14)
             evidence, evidence_path = provide(15)
             errors = intake_errors(
@@ -1994,8 +2079,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "status": "provided",
                         "artifact_path": str(artifact.resolve()),
                         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                        "reviewed_by": "security-review-ticket-43",
-                        "reviewed_at": "2026-08-26T13:00:00Z",
+                        "reviewed_by": document.get(
+                            "review_reference", "security-review-ticket-43"
+                        ),
+                        "reviewed_at": document.get(
+                            "reviewed_at", "2026-08-26T13:00:00Z"
+                        ),
                         "redaction_confirmed": True,
                     }
                 )
@@ -2003,6 +2092,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             provide(5)
             provide(13)
+            provide(9)
             provide(14)
             provide(15)
             operations, operations_path = provide(16)
@@ -2090,14 +2180,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             def provide(item: dict[str, object], phase0_digest: str = "8" * 64) -> None:
                 artifact = root / f"{item['id']}.md"
+                document = self._artifact_document(
+                    item["id"],
+                    manifest,
+                    phase0_manifest_sha256=phase0_digest,
+                )
                 artifact.write_text(
-                    json.dumps(
-                        self._artifact_document(
-                            item["id"],
-                            manifest,
-                            phase0_manifest_sha256=phase0_digest,
-                        )
-                    ),
+                    json.dumps(document),
                     encoding="utf-8",
                 )
                 item.update(
@@ -2105,8 +2194,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "status": "provided",
                         "artifact_path": str(artifact.resolve()),
                         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                        "reviewed_by": "review-ticket-2026-42",
-                        "reviewed_at": "2026-08-26T12:00:00Z",
+                        "reviewed_by": document.get(
+                            "review_reference", "review-ticket-2026-42"
+                        ),
+                        "reviewed_at": document.get(
+                            "reviewed_at", "2026-08-26T12:00:00Z"
+                        ),
                         "redaction_confirmed": True,
                     }
                 )
@@ -2151,8 +2244,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
             )
             self.assertEqual(checkpoint_path.read_bytes(), checkpoint_bytes)
             phase0_digest = requirements_sha256(json.loads(checkpoint_bytes))
+            release_item = next(
+                item for item in manifest["items"]
+                if item["id"] == "release_execution_evidence"
+            )
+            provide(release_item, phase0_digest)
             for item in manifest["items"]:
-                if item["id"] not in phase0_ids:
+                if item["id"] not in phase0_ids and item is not release_item:
                     provide(item, phase0_digest)
             manifest_path.write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
