@@ -23,13 +23,17 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
             [item["path"] for item in first["source_files"]],
             list(contract.SOURCE_FILES),
         )
+        self.assertEqual(
+            first["execution_profile"]["mode"],
+            contract.DIRECT_EXECUTION_MODE,
+        )
         self.assertEqual(contract.validator_contract_errors(first, second), [])
 
     def test_closed_shape_rejects_identity_inventory_and_digest_drift(self) -> None:
         valid = contract.current_validator_contract()
         mutations = []
         for key, value in (
-            ("schema_version", 1),
+            ("schema_version", 2),
             ("kind", "other"),
             ("production_acceptance", True),
             ("authoring_entrypoint", "other:author"),
@@ -63,6 +67,16 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
             "record_sha256"
         ] = "A" * 64
         mutations.append(runtime_digest)
+        stdlib_digest = copy.deepcopy(valid)
+        stdlib_digest["runtime_environment"]["python"][
+            "stdlib_platform_sha256"
+        ] = "A" * 64
+        mutations.append(stdlib_digest)
+        execution_mode = copy.deepcopy(valid)
+        execution_mode["execution_profile"]["mode"] = (
+            contract.SNAPSHOT_EXECUTION_MODE
+        )
+        mutations.append(execution_mode)
 
         for mutated in mutations:
             with self.subTest(mutated=mutated):
@@ -120,6 +134,20 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
         ):
             with self.assertRaises(contract.ValidatorContractError):
                 contract.current_validator_contract()
+
+    def test_runtime_binds_the_stdlib_platform_source_used_by_the_proxy(self) -> None:
+        current = contract.current_validator_contract()
+        stdlib_path = Path(contract.sysconfig.get_path("stdlib")) / "platform.py"
+        self.assertEqual(
+            current["runtime_environment"]["python"][
+                "stdlib_platform_sha256"
+            ],
+            hashlib.sha256(stdlib_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            Path(contract.runtime_platform.python_implementation.__code__.co_filename),
+            stdlib_path,
+        )
 
     def test_loaded_module_can_differ_from_later_on_disk_contract_capture(self) -> None:
         runtime_environment = contract._current_runtime_environment()

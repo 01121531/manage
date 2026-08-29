@@ -17,8 +17,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+while str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 from scripts.verify_phase_acceptance_matrix import matrix_errors
 from scripts.backup_output_policy import (
@@ -1681,12 +1682,18 @@ def main(argv: list[str] | None = None) -> int:
             f"receipt_file_sha256={hashlib.sha256(lineage.receipt_raw).hexdigest()} "
             "generation_validator_contract_sha256="
             f"{requirements_sha256(lineage.receipt['validation_context']['validator_contract'])} "
-            "generation-receipt-locator=self-bound-v5 "
+            "generation-validator-execution-mode="
+            f"{lineage.receipt['validation_context']['validator_contract']['execution_profile']['mode']} "
+            "generation-validator-snapshot-manifest-payload-sha256="
+            f"{lineage.receipt['validation_context']['validator_contract']['execution_profile']['snapshot_manifest_payload_sha256'] or 'not-applicable'} "
+            "generation-validator-snapshot-manifest-file-sha256="
+            f"{lineage.receipt['validation_context']['validator_contract']['execution_profile']['snapshot_manifest_file_sha256'] or 'not-applicable'} "
+            "generation-receipt-locator=self-bound-v6 "
             "generation-history-semantic-replay=every-generation "
             "generation-receipt-evaluation-time=recorded-host-utc "
             "generation-validation-context=receipt-embedded-requirements-matrix-and-validator-contract "
-            "generation-validator-contract=closed-v2-local-source-and-replay-runtime "
-            "generation-validator-on-disk-source-inventory=61-whole-file-sha256-matched "
+            "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile "
+            "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
             "generation-validator-replay-runtime="
             "python-os-distribution-metadata-entrypoint-fingerprint-matched "
             "recovery=read-only-local-revalidation "
@@ -1938,12 +1945,18 @@ def main(argv: list[str] | None = None) -> int:
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "generation_validator_contract_sha256="
             f"{requirements_sha256(validator_contract)} "
+            "generation-validator-execution-mode="
+            f"{validator_contract['execution_profile']['mode']} "
+            "generation-validator-snapshot-manifest-payload-sha256="
+            f"{validator_contract['execution_profile']['snapshot_manifest_payload_sha256'] or 'not-applicable'} "
+            "generation-validator-snapshot-manifest-file-sha256="
+            f"{validator_contract['execution_profile']['snapshot_manifest_file_sha256'] or 'not-applicable'} "
             "generation-acceptance=write-once-receipt "
-            "generation-receipt-locator=self-bound-v5 "
+            "generation-receipt-locator=self-bound-v6 "
             "generation-history-semantic-replay=every-generation "
             "generation-receipt-evaluation-time=recorded-host-utc "
-            "generation-validator-contract=closed-v2-local-source-and-replay-runtime "
-            "generation-validator-on-disk-source-inventory=61-whole-file-sha256-matched "
+            "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile "
+            "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
             "generation-validator-replay-runtime="
             "python-os-distribution-metadata-entrypoint-fingerprint-matched "
             "authoring-validation-context-external-handoff=not-consumed "
@@ -2197,13 +2210,19 @@ def main(argv: list[str] | None = None) -> int:
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "generation_validator_contract_sha256="
             f"{requirements_sha256(historical_validator_contract)} "
+            "generation-validator-execution-mode="
+            f"{historical_validator_contract['execution_profile']['mode']} "
+            "generation-validator-snapshot-manifest-payload-sha256="
+            f"{historical_validator_contract['execution_profile']['snapshot_manifest_payload_sha256'] or 'not-applicable'} "
+            "generation-validator-snapshot-manifest-file-sha256="
+            f"{historical_validator_contract['execution_profile']['snapshot_manifest_file_sha256'] or 'not-applicable'} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "generation-acceptance=write-once-receipt "
-            "generation-receipt-locator=self-bound-v5 "
+            "generation-receipt-locator=self-bound-v6 "
             "generation-history-semantic-replay=every-generation "
             "generation-receipt-evaluation-time=recorded-host-utc "
-            "generation-validator-contract=closed-v2-local-source-and-replay-runtime "
-            "generation-validator-on-disk-source-inventory=61-whole-file-sha256-matched "
+            "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile "
+            "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
             "generation-validator-replay-runtime="
             "python-os-distribution-metadata-entrypoint-fingerprint-matched "
             "authoring-validation-context-external-handoff=not-consumed "
@@ -2784,5 +2803,16 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _direct_script_main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] != "verify-requirements":
+        print(
+            "target-intake-validator-snapshot-launcher-required",
+            file=sys.stderr,
+        )
+        return 1
+    return main(argv)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_direct_script_main())

@@ -39,33 +39,34 @@ not production acceptance. Every generated manifest and successful command remai
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
 - Authoring proceeds through immutable generations while Phase 0–6 evidence is
-  collected. `init` publishes generation 000 and its closed schema-v5 genesis receipt;
+  collected. `init` publishes generation 000 and its closed schema-v6 genesis receipt;
   every later generation is a separate no-replace leaf accepted only when
   `register` has also published its write-once receipt. Never overwrite a prior
   generation or use the editable candidate, an unreceipted leaf, or a receipt
   selected for a different locator as an accepted manifest. Production
   sign-off uses a separately finalized leaf and caller-pinned canonical-payload
   and whole-file SHA-256 values.
-- Every schema-v5 generation receipt self-binds its case-preserving lexical
+- Every schema-v6 generation receipt self-binds its case-preserving lexical
   absolute `receipt_path`; copying identical receipt bytes to another locator
-  does not transfer acceptance. Schema-v1/v2/v3/v4 generation receipts and mixed legacy/v5
+  does not transfer acceptance. Schema-v1/v2/v3/v4/v5 generation receipts and mixed legacy/v6
   chains are incompatible and must be rebuilt under new external names rather
   than promoted or silently rewritten. Because schema-v2 snapshot and
   finalization receipts bind the old generation-receipt digests, rebuild those
   receipts and their result leaves after rebuilding the generation chain; do
-  not transplant an old acceptance receipt onto a schema-v5 lineage.
+  not transplant an old acceptance receipt onto a schema-v6 lineage.
 - Each generation receipt embeds the exact requirements registry, phase
-  acceptance matrix, canonical host-UTC evaluation instant, and closed v2
+  acceptance matrix, canonical host-UTC evaluation instant, and closed v3
   validator contract used for that
   generation. `verify-generation-lineage` replays every receipt/manifest pair
   from terminal to genesis with its own embedded context and recorded instant,
-  and requires every generation's ordered 61-file on-disk verifier source
+  and requires every generation's ordered 65-file verifier source
   inventory and raw whole-file SHA-256 values to equal the current local
-  working-tree bytes. The inventory includes the statically reachable
+  source-snapshot bytes. The inventory includes the statically reachable
   `platform/` modules, package initializers, and shared backup permission helper
   omitted by the former 30-file contract. It also requires an exact current
   replay-runtime fingerprint: Python implementation/version/cache tag/ABI,
-  interpreter executable bytes, OS selection fields, and the version,
+  interpreter executable bytes, the standard-library `platform.py` bytes used
+  by the repository proxy, OS selection fields, and the version,
   `METADATA`, `RECORD`, and top-level import-entrypoint bytes for the eleven
   directly used Python distributions.
   A later policy edit therefore does not reinterpret a legitimate historical
@@ -75,10 +76,21 @@ not production acceptance. Every generated manifest and successful command remai
   contract is not a Git blob, commit, package, or portable release identity;
   line-ending and checkout-byte changes fail closed. Distribution metadata and
   one import entrypoint do not hash every installed dependency file or loaded
-  shared library. Because Python imports the verifier before the inventory is
-  captured and the files are read sequentially, the contract does not prove
-  loaded runtime-code identity, the original authoring runtime identity,
-  original execution, source authority, or an atomic multi-file snapshot.
+  shared library. Operational authoring and recovery must use the clean
+  snapshot launcher below. Its v1 execution profile binds both caller-retained
+  snapshot-manifest digests, exact `-I -B -S -P` flags, a sanitized
+  environment, snapshot working directory, and pre/post member plus loaded
+  local-module origin/digest rechecks. Direct in-process `init`, `register`,
+  `snapshot`, `finalize`, `preflight`, and recovery commands are blocked;
+  direct `verify-requirements` remains a repository-only maintenance check.
+  This proves only that current module loader origins point into the selected
+  snapshot and that named path bytes matched before and after validation. It
+  does not prove the loaded bytecode itself, exclude an in-window ABA swap,
+  prove the snapshot source or
+  caller pins are authoritative, filesystem-wide atomic capture, absence of
+  administrator/ABA replacement, every interpreter, dependency, native library
+  or OS byte, the original historical authoring runtime, or that validation
+  actually ran in the past.
 - Before each of the seven standalone manifest-consumer `check` commands, review
   the current authoring manifest and retain both digest values printed by a
   successful progress
@@ -107,6 +119,38 @@ not production acceptance. Every generated manifest and successful command remai
   repository's proof. No digest is embedded in a consumer, so no self-hash
   cycle is created.
 
+## Prepare and pin the clean validator source snapshot
+
+Prepare the snapshot into a new repository-external directory before any
+authoring or recovery command. Preparation is the only step that copies source:
+it opens the complete 91-member set (65 verifier sources plus 26 repository
+inputs) before reading, performs a second pass, writes members exclusively and
+read-only, publishes the manifest last, and prints its canonical-payload and
+whole-file SHA-256 pins. Review and retain both pins outside the snapshot.
+
+```powershell
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py prepare `
+  --snapshot-output D:\email-platform-evidence\validator-snapshots\target-intake-v6-001
+
+$TargetIntakeSnapshot = "D:\email-platform-evidence\validator-snapshots\target-intake-v6-001"
+$TargetIntakeSnapshotPayloadSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+$TargetIntakeSnapshotFileSha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+$TargetIntakeLauncherArgs = @(
+  "run", "--snapshot", $TargetIntakeSnapshot,
+  "--expected-snapshot-manifest-payload-sha256", $TargetIntakeSnapshotPayloadSha256,
+  "--expected-snapshot-manifest-file-sha256", $TargetIntakeSnapshotFileSha256
+)
+```
+
+Never prepare or repair a snapshot during `verify-generation-lineage` or
+`verify-receipt` recovery: recovery snapshot mutation is not performed. `run`
+accepts only the pre-existing exact tree and
+rechecks it after the child exits. A failed preparation leaves an incomplete
+directory without an accepted manifest; choose a new absent directory rather
+than promoting or repairing it. Read-only mode bits are not an immutable ACL or
+provider custody proof, and the held-open capture narrows ordinary mixed-era
+reads without claiming a filesystem-atomic snapshot.
+
 ## Initialize an incomplete manifest
 
 Create the protected parent directory and its target-platform ACL before this
@@ -114,7 +158,7 @@ step. The output leaf must not already exist; initialization uses exclusive
 creation and never overwrites a previous manifest.
 
 ```powershell
-python scripts/target_intake_preflight.py init `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- init `
   --output D:\email-platform-evidence\intake\staging-target-intake-000.json `
   --receipt-output D:\email-platform-evidence\intake\staging-target-intake-000.receipt.json `
   --environment staging
@@ -154,7 +198,7 @@ from an independently reviewed progress preflight. Register the candidate to a
 new, previously absent output leaf:
 
 ```powershell
-python scripts/target_intake_preflight.py register `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- register `
   --input D:\email-platform-evidence\intake\staging-target-intake-000.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake-000.receipt.json `
   --candidate D:\email-platform-evidence\intake\staging-target-intake-candidate-001.json `
@@ -189,7 +233,7 @@ Recover an `init` or `register` unknown state with the exact four pins printed
 by that failed command and retained outside the mutable generation directory:
 
 ```powershell
-python -B scripts/target_intake_preflight.py verify-generation-lineage `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- verify-generation-lineage `
   --manifest D:\email-platform-evidence\intake\staging-target-intake-001.json `
   --receipt D:\email-platform-evidence\intake\staging-target-intake-001.receipt.json `
   --expected-manifest-payload-sha256 1111111111111111111111111111111111111111111111111111111111111111 `
@@ -198,8 +242,9 @@ python -B scripts/target_intake_preflight.py verify-generation-lineage `
   --expected-receipt-file-sha256 4444444444444444444444444444444444444444444444444444444444444444
 ```
 
-With `python -B`, `verify-generation-lineage` is read-only: it does not create, replace, delete,
-repair, accept, or promote any file. It recursively replays the selected chain
+Through the clean launcher, `verify-generation-lineage` is read-only with
+respect to the selected snapshot and evidence chain: it does not create,
+replace, delete, repair, accept, or promote any file. It recursively replays the selected chain
 to genesis, requires the exact receipt-bound validator source contract for every
 generation, and performs a final identity/bytes/single-link recheck, but always
 reports `production_acceptance=false`. Pins printed by the same failed process
@@ -873,7 +918,7 @@ write-once object and source artifact.
 This mode accepts still-missing items only for intake tracking:
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -896,7 +941,7 @@ Phase 0 items: the Mail and Sub2 contracts, PCI and OIDC decisions, the target
 platform inventory, and the Phase 0 approval that binds all five inputs.
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -916,7 +961,7 @@ once, and creates the output exclusively; it never overwrites an existing
 snapshot:
 
 ```powershell
-python scripts/target_intake_preflight.py snapshot `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- snapshot `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -946,7 +991,7 @@ part of Phase 0); Phase 3 adds the card/identity evidence index (the reviewed
 PCI and OIDC decisions are already part of Phase 0):
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -954,7 +999,7 @@ python scripts/target_intake_preflight.py preflight `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 1
 
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -962,7 +1007,7 @@ python scripts/target_intake_preflight.py preflight `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 2
 
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -976,7 +1021,7 @@ Vault/egress evidence indexes. Both selectors must name the same ledger bytes
 and Phase 0 checkpoint already required since Phase 1:
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -994,7 +1039,7 @@ part of the cumulative Phase 4 evidence. The preflight also proves
 instant is strictly before both artifacts' exclusive `valid_until` values:
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -1008,7 +1053,7 @@ release execution ledger, pilot roster, pilot execution evidence, and
 operations evidence:
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -1025,7 +1070,7 @@ contents are fsynced, publishes with no-replace semantics, performs a stable rea
 both the canonical payload SHA-256 and the exact finalized-file SHA-256:
 
 ```powershell
-python scripts/target_intake_preflight.py finalize `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- finalize `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
   --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
   --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
@@ -1046,7 +1091,7 @@ file. Run the final strict preflight on the finalized leaf with those exact
 caller pins:
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake-final.json `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --expected-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
@@ -1086,7 +1131,7 @@ from the failed command's diagnostic; do not derive them from another mutable
 file beside the receipt:
 
 ```powershell
-python scripts/target_intake_preflight.py verify-receipt `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- verify-receipt `
   --kind snapshot `
   --manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --receipt D:\email-platform-evidence\intake\staging-phase0-checkpoint.receipt.json `
@@ -1100,7 +1145,7 @@ Recover a finalization unknown state by additionally selecting the exact Phase
 0 checkpoint bound by the finalization receipt:
 
 ```powershell
-python scripts/target_intake_preflight.py verify-receipt `
+python -I -B -S -P scripts/target_intake_snapshot_launcher.py @TargetIntakeLauncherArgs -- verify-receipt `
   --kind finalization `
   --manifest D:\email-platform-evidence\intake\staging-target-intake-final.json `
   --receipt D:\email-platform-evidence\intake\staging-target-intake-final.receipt.json `
@@ -1137,24 +1182,26 @@ head. Generation receipts are unsigned local JSON. Self-binding rejects receipt
 copies at another locator, but does not distinguish deleting and recreating the
 same bytes at the same path. Rolling an older manifest, generation receipt and
 all four older pins back as one unit still passes local replay; sequence is not
-a global head. Schema-v5 recovery reruns the current verifier for every
+a global head. Schema-v6 recovery reruns the current verifier for every
 generation using that receipt's embedded requirements/matrix, recorded host UTC,
-exact ordered on-disk source-byte inventory, and matching replay-runtime
-fingerprint. This is deterministic local replay under receipt-bound inputs and
-current matching working-tree/runtime selection; it
-does not authenticate the validation context, make host time trusted, identify
-an authoritative Git commit or portable validator release, prove the loaded
-runtime code, hash all Python/dependency/OS runtime bytes, prove the original
-authoring runtime identity, prove that validation actually ran at authoring
-time, or prove that the sequentially read source files ever
-coexisted as one atomic snapshot. The authoring writer fsyncs the staging file but does not prove
+exact ordered source-snapshot inventory, matching replay-runtime fingerprint and
+clean-snapshot execution profile. This is deterministic local replay under
+receipt-bound inputs inside the current isolated launch window. It does not
+authenticate the validation context, snapshot, launcher or pins, make host time
+trusted, identify an authoritative Git commit or portable validator release,
+hash all interpreter/dependency/native-library/OS runtime bytes, prove the
+original authoring runtime identity, or prove that validation actually ran at
+authoring time. The held-open double capture is not a filesystem-wide atomic
+snapshot and cannot exclude administrator or ABA replacement. The authoring
+writer fsyncs the staging file but does not prove
 crash durability of the later hard-link directory entry, and a parent directory
 can still be replaced between path preparation and publication. Generation
 receipts therefore do not prove reviewer/pin/receipt authority, global
 latest-head selection, cross-host fork prevention or CAS/WORM, trusted time,
-validation-context authority, validator source authority, loaded runtime-code
-identity, original authoring runtime identity, complete runtime identity,
-original execution, source-snapshot atomicity,
+validation-context authority, validator source/pin/launcher authority,
+filesystem-atomic snapshot identity, administrator/ABA replacement exclusion,
+original authoring runtime identity, complete interpreter/dependency/native
+runtime identity, original execution,
 locator continuity, parent-directory race protection, publication crash
 durability, global rollback protection, or custody after the final recheck.
 Snapshot and finalization receipts

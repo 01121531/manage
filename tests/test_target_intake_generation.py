@@ -121,10 +121,10 @@ class TargetIntakeGenerationTests(unittest.TestCase):
 
             self.assertEqual(lineage.manifest, manifest)
             self.assertEqual(lineage.receipt["sequence"], 1)
-            self.assertEqual(lineage.receipt["schema_version"], 5)
+            self.assertEqual(lineage.receipt["schema_version"], 6)
             self.assertEqual(
                 lineage.receipt["kind"],
-                "target_intake_generation_receipt_v5",
+                "target_intake_generation_receipt_v6",
             )
             self.assertEqual(lineage.receipt["receipt_path"], str(receipt_path))
             self.assertEqual(len(lineage.snapshots), 4)
@@ -189,6 +189,15 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                         {
                             "schema_version": 4,
                             "kind": "target_intake_generation_receipt_v4",
+                        }
+                    ),
+                ),
+                (
+                    "v5",
+                    lambda value: value.update(
+                        {
+                            "schema_version": 5,
+                            "kind": "target_intake_generation_receipt_v5",
                         }
                     ),
                 ),

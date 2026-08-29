@@ -551,11 +551,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
 
         for old, new in (
             (
-                'RECEIPT_KIND = "target_intake_generation_receipt_v5"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v6"',
                 'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
             ),
             (
-                'document.get("schema_version") != 5',
+                'document.get("schema_version") != 6',
                 'document.get("schema_version") != 1',
             ),
             (
@@ -888,7 +888,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "schema-v5 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            "schema-v6 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
             requirements,
         )
         self.assertIn(
@@ -896,7 +896,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "closed-v2 validator contract containing declarative authoring/replay entrypoints, an exact ordered 61-file local source inventory with raw whole-file SHA-256 values, and a replay-runtime fingerprint",
+            "closed-v3 validator contract containing declarative authoring/replay entrypoints, an exact ordered 65-file local source inventory with raw whole-file SHA-256 values",
+            requirements,
+        )
+        self.assertIn(
+            "a clean-snapshot execution profile binding the caller-retained snapshot manifest payload/file SHA-256 pins and exact isolated launch controls",
             requirements,
         )
         self.assertIn(
@@ -939,15 +943,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Schema-v5 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/mixed-chain rejection evidence:",
+            "Schema-v6 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/v5/mixed-chain rejection evidence:",
             signoff,
         )
         self.assertIn(
-            "Generation validator-contract canonical SHA-256 plus closed-v2 authoring/replay entrypoints, exact ordered 61-file on-disk source inventory, and Python/OS/distribution metadata-entrypoint replay-runtime fingerprint match:",
+            "Generation validator-contract canonical SHA-256 plus closed-v3 authoring/replay entrypoints, exact ordered 65-file on-disk source inventory, Python/OS/distribution metadata-entrypoint replay-runtime fingerprint, and clean-snapshot execution-profile match:",
             signoff,
         )
         self.assertIn(
-            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source authority, loaded runtime-code identity, complete Python/dependency/OS runtime-code identity, original authoring runtime identity, original validator execution, multi-file source-snapshot atomicity, Git/portable release identity, receipt/pin/reviewer authority, and post-verification custody remain `unverified`:",
+            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source/pin/launcher authority, loaded-bytecode identity, filesystem-atomic snapshot identity, administrator/ABA replacement exclusion, complete interpreter/dependency/native-library/OS runtime-code identity, original authoring runtime identity, original validator execution, Git/portable release identity, receipt/reviewer authority, and post-verification custody remain `unverified`:",
             signoff,
         )
         self.assertIn(

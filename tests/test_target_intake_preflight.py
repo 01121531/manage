@@ -3440,7 +3440,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "recovery=read-only-local-revalidation",
                 output.getvalue(),
             )
-            self.assertIn("generation-receipt-locator=self-bound-v5", output.getvalue())
+            self.assertIn("generation-receipt-locator=self-bound-v6", output.getvalue())
             self.assertIn("generation_validator_contract_sha256=", output.getvalue())
             self.assertIn("authoring-rollback-protection=unverified", output.getvalue())
             self.assertEqual(
@@ -4118,13 +4118,17 @@ class TargetIntakePreflightTests(unittest.TestCase):
         self.assertTrue(runbook.is_file())
         text = runbook.read_text(encoding="utf-8")
         for expected in (
-            "target_intake_preflight.py init",
-            "target_intake_preflight.py register",
-            "target_intake_preflight.py preflight",
-            "target_intake_preflight.py snapshot",
-            "target_intake_preflight.py finalize",
-            "target_intake_preflight.py verify-generation-lineage",
-            "target_intake_preflight.py verify-receipt",
+            "@TargetIntakeLauncherArgs -- init",
+            "@TargetIntakeLauncherArgs -- register",
+            "@TargetIntakeLauncherArgs -- preflight",
+            "@TargetIntakeLauncherArgs -- snapshot",
+            "@TargetIntakeLauncherArgs -- finalize",
+            "@TargetIntakeLauncherArgs -- verify-generation-lineage",
+            "@TargetIntakeLauncherArgs -- verify-receipt",
+            "target_intake_snapshot_launcher.py prepare",
+            "exact `-I -B -S -P` flags",
+            "91-member set",
+            "recovery snapshot mutation",
             "repository-external",
             "production_acceptance=false",
             "never copy live credentials",
@@ -4159,11 +4163,11 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "local schema-v2 receipts",
             "case-preserving lexical absolute `receipt_path`",
-            "Schema-v1/v2/v3/v4 generation receipts and mixed legacy/v5",
+            "Schema-v1/v2/v3/v4/v5 generation receipts and mixed legacy/v6",
             "replays every receipt/manifest pair",
-            "ordered 61-file on-disk verifier source",
+            "ordered 65-file verifier source",
             "replay-runtime fingerprint: Python implementation/version",
-            "loaded runtime-code identity, the original authoring runtime identity",
+            "original historical authoring runtime",
             "Schema-v1 acceptance receipts are incompatible",
             "Rolling an older manifest, generation receipt and",
             "hard-link directory entry",

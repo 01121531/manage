@@ -59,13 +59,16 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-acceptance=write-once-receipt",
-    "generation-receipt-locator=self-bound-v5",
+    "generation-receipt-locator=self-bound-v6",
     "generation-history-semantic-replay=every-generation",
     "generation-receipt-evaluation-time=recorded-host-utc",
-    "generation-validator-contract=closed-v2-local-source-and-replay-runtime",
-    "generation-validator-on-disk-source-inventory=61-whole-file-sha256-matched",
+    "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile",
+    "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
     "generation-validator-replay-runtime=python-os-distribution-metadata-entrypoint-fingerprint-matched",
     "generation_validator_contract_sha256=",
+    "generation-validator-execution-mode=",
+    "generation-validator-snapshot-manifest-payload-sha256=",
+    "generation-validator-snapshot-manifest-file-sha256=",
     "authoring-validation-context-external-handoff=not-consumed",
     "authoring-validation-context-signature=unverified",
     "authoring-validation-context-signer-role-scope=unverified",
@@ -139,6 +142,8 @@ EXPECTED_INTAKE_IDS = (
 )
 EXPECTED_VALIDATOR_SOURCES = (
     "platform/__init__.py",
+    "platform/api/__init__.py",
+    "platform/api/v1/__init__.py",
     "platform/api/v1/routes.py",
     "platform/app.py",
     "platform/audit.py",
@@ -191,6 +196,8 @@ EXPECTED_VALIDATOR_SOURCES = (
     "scripts/target_intake_generation.py",
     "scripts/target_intake_manifest.py",
     "scripts/target_intake_preflight.py",
+    "scripts/target_intake_snapshot_launcher.py",
+    "scripts/target_intake_source_snapshot.py",
     "scripts/target_intake_validator_contract.py",
     "scripts/target_phase_artifacts.py",
     "scripts/target_platform_inventory.py",
@@ -1164,10 +1171,10 @@ def causality_errors(
             and _contains_string(receipt_validation, "receipt_path")
             and _contains_string(genesis_creator, "receipt_path")
             and _contains_string(registration_creator, "receipt_path")
-            and "target_intake_generation_receipt_v5" in (generation_source or "")
-            and 'document.get("schema_version") != 5'
+            and "target_intake_generation_receipt_v6" in (generation_source or "")
+            and 'document.get("schema_version") != 6'
             in (generation_source or "")
-            and (generation_source or "").count('"schema_version": 5') == 2
+            and (generation_source or "").count('"schema_version": 6') == 2
             and _contains_string(receipt_validation, "validation_context")
             and _contains_string(receipt_validation, "evaluated_at")
             and _contains_string(receipt_validation, "requirements")
@@ -1188,7 +1195,7 @@ def causality_errors(
             and _contains_name(genesis_creator, "receipt_errors")
         ):
             errors.append(
-                "generation receipts must use closed schema-v5 self-bound validation contexts"
+                "generation receipts must use closed schema-v6 self-bound validation contexts"
             )
         semantic_calls = {
             _call_name(node)
@@ -1237,12 +1244,14 @@ def causality_errors(
                 "replay_entrypoint",
                 "source_files",
                 "runtime_environment",
+                "execution_profile",
             }
             and
             _contains_string(validator_contract_shape, "authoring_entrypoint")
             and _contains_string(validator_contract_shape, "replay_entrypoint")
             and _contains_string(validator_contract_shape, "source_files")
             and _contains_string(validator_contract_shape, "runtime_environment")
+            and _contains_string(validator_contract_shape, "execution_profile")
             and _contains_name(validator_contract_shape, "SOURCE_FILES")
             and _literal_assignment(validator_contract_tree, "SOURCE_FILES")
             == EXPECTED_VALIDATOR_SOURCES
@@ -1266,6 +1275,7 @@ def causality_errors(
             )
             and _contains_name(distribution_fingerprint, "read_stable_bytes_with_metadata")
             and _contains_string(runtime_environment_shape, "executable_sha256")
+            and _contains_string(runtime_environment_shape, "stdlib_platform_sha256")
             and _contains_string(runtime_environment_shape, "metadata_sha256")
             and _contains_string(runtime_environment_shape, "record_sha256")
             and _contains_string(runtime_environment_shape, "entrypoint_sha256")
@@ -1610,13 +1620,16 @@ def causality_errors(
                 _contains_marker(verify_generation_branch, marker)
                 for marker in (
                     "production_acceptance=false",
-                    "generation-receipt-locator=self-bound-v5",
+                    "generation-receipt-locator=self-bound-v6",
                     "generation-history-semantic-replay=every-generation",
                     "generation-receipt-evaluation-time=recorded-host-utc",
-                    "generation-validator-contract=closed-v2-local-source-and-replay-runtime",
-                    "generation-validator-on-disk-source-inventory=61-whole-file-sha256-matched",
+                    "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile",
+                    "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
                     "generation-validator-replay-runtime=python-os-distribution-metadata-entrypoint-fingerprint-matched",
                     "generation_validator_contract_sha256=",
+                    "generation-validator-execution-mode=",
+                    "generation-validator-snapshot-manifest-payload-sha256=",
+                    "generation-validator-snapshot-manifest-file-sha256=",
                     "authoring-validation-context-external-handoff=not-consumed",
                     "authoring-validation-context-signature=unverified",
                     "authoring-validation-context-signer-role-scope=unverified",
@@ -2240,11 +2253,11 @@ def main() -> int:
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
         "authoring-publication=local-no-replace-readback "
-        "generation-receipt-locator=self-bound-v5 "
+        "generation-receipt-locator=self-bound-v6 "
         "generation-history-semantic-replay=every-generation "
         "generation-receipt-evaluation-time=recorded-host-utc "
-        "generation-validator-contract=closed-v2-local-source-and-replay-runtime "
-        "generation-validator-on-disk-source-inventory=61-whole-file-sha256-matched "
+        "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile "
+        "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
         "generation-validator-replay-runtime="
         "python-os-distribution-metadata-entrypoint-fingerprint-matched "
         "authoring-validation-context-external-handoff=not-consumed "
