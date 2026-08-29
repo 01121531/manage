@@ -327,6 +327,77 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 self.assertNotEqual(mutated, self.intake)
                 self.assertTrue(self.errors(intake=mutated))
 
+    def test_authoring_generation_registration_cannot_be_weakened(self) -> None:
+        for old, new in (
+            (
+                'register = commands.add_parser("register")',
+                'register = commands.add_parser("ignored-register")',
+            ),
+            (
+                '"--expected-input-manifest-payload-sha256",\n        required=True,',
+                '"--expected-input-manifest-payload-sha256",\n        required=False,',
+            ),
+            (
+                'register.add_argument("--input", required=True, type=Path)',
+                'register.add_argument("--ignored-input", required=True, type=Path)',
+            ),
+            ("if len(changed) != 1:", "if len(changed) == 1:"),
+            ("if before != after", "if before == after"),
+            ("base[key] != candidate[key]", "base[key] == candidate[key]"),
+            (
+                "before.get(key) is not None",
+                "before.get(key) is None",
+            ),
+            (
+                'before.get("status") != "missing"',
+                'before.get("status") != "provided"',
+            ),
+            (
+                "_load_unique_json_with_bytes_and_metadata(\n                arguments.input,",
+                "_load_unique_json_with_bytes(\n                arguments.input,",
+            ),
+            (
+                "expected_payload_sha256, requirements_sha256(base)",
+                "requirements_sha256(base), requirements_sha256(base)",
+            ),
+            (
+                "expected_file_sha256,\n                hashlib.sha256(base_raw).hexdigest(),",
+                "hashlib.sha256(base_raw).hexdigest(),\n                hashlib.sha256(base_raw).hexdigest(),",
+            ),
+            (
+                "hashlib.sha256(artifact_raw).hexdigest(),\n                registered_item[\"sha256\"],",
+                "registered_item[\"sha256\"],\n                registered_item[\"sha256\"],",
+            ),
+            (
+                "require_single_link=True,",
+                "require_single_link=False,",
+            ),
+            (
+                "output = prepare_write_once_file(arguments.output)",
+                "output = prepare_write_once_file(arguments.input)",
+            ),
+            (
+                "errors = intake_errors(\n            candidate,",
+                "errors = intake_errors(\n            base,",
+            ),
+            (
+                "output_bytes = _final_manifest_bytes(candidate)",
+                "output_bytes = _final_manifest_bytes(base)",
+            ),
+            (
+                "authoring-generation-fork-protection=unverified",
+                "authoring-generation-fork-protection=verified",
+            ),
+            (
+                "authoring-latest-head=unverified",
+                "authoring-latest-head=verified",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.intake.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+
     def test_final_intake_consumer_selector_comparison_cannot_be_removed(self) -> None:
         for old, new in (
             ("selector != baseline", "selector == baseline"),

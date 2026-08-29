@@ -138,6 +138,7 @@ Release manifest:
 - Phase 6 selected release-execution Phase 0 environment, manifest payload SHA-256, requirements SHA-256 and checkpoint phase:
 - Repository-external write-once Phase 0 checkpoint snapshot path, canonical manifest payload SHA-256 and retention reference:
 - Intake manifest/checkpoint 64 KiB limit, duplicate-key rejection and stable bounded-read result:
+- Authoring immutable-generation chain, previous payload/file caller pins, exactly-one missing-to-provided transition, input/candidate/new-artifact pre/post stable single-link rechecks and fsynced local no-replace/readback result; fork protection, latest-head selection, pin authority, cross-host linearization and post-publication custody `unverified` acknowledgement:
 - Seventeen registered artifacts bounded stable-read, whole-file SHA-256 and sixteen ordinary JSON unique-key parse result:
 - Standalone artifact check/strict-intake bounded-reader and unique-key parse parity result:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -2634,6 +2636,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 ),
                 0,
             )
+
             original = manifest_path.read_bytes()
             self.assertEqual(
                 main(
@@ -2851,6 +2854,250 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 1,
             )
 
+    def test_register_publishes_one_pinned_monotonic_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = create_intake_manifest("staging", self.requirements)
+            base_path = root / "authoring-000.json"
+            base_raw = target_intake._final_manifest_bytes(base)
+            base_path.write_bytes(base_raw)
+
+            artifact = root / "mail-contract.json"
+            document = self._artifact_document("mail_contract")
+            artifact.write_text(json.dumps(document), encoding="utf-8")
+            candidate = copy.deepcopy(base)
+            candidate["items"][1].update(
+                {
+                    "status": "provided",
+                    "artifact_path": str(artifact),
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "reviewed_by": document["review_reference"],
+                    "reviewed_at": document["reviewed_at"],
+                    "redaction_confirmed": True,
+                }
+            )
+            candidate_path = root / "candidate.json"
+            candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
+            output = root / "authoring-001.json"
+
+            arguments = [
+                "register",
+                "--input",
+                str(base_path),
+                "--candidate",
+                str(candidate_path),
+                "--output",
+                str(output),
+                "--expected-input-manifest-payload-sha256",
+                requirements_sha256(base),
+                "--expected-input-manifest-file-sha256",
+                hashlib.sha256(base_raw).hexdigest(),
+            ]
+            self.assertEqual(main(arguments), 0)
+            self.assertEqual(output.read_bytes(), target_intake._final_manifest_bytes(candidate))
+            self.assertEqual(base_path.read_bytes(), base_raw)
+            committed = output.read_bytes()
+            self.assertEqual(main(arguments), 1)
+            self.assertEqual(output.read_bytes(), committed)
+
+    def test_register_rejects_stale_pins_and_nonmonotonic_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = create_intake_manifest("staging", self.requirements)
+            base_path = root / "authoring-000.json"
+            base_raw = target_intake._final_manifest_bytes(base)
+            base_path.write_bytes(base_raw)
+            candidate_path = root / "candidate.json"
+            candidate_path.write_bytes(target_intake._final_manifest_bytes(base))
+            output = root / "authoring-001.json"
+            common = [
+                "register",
+                "--input",
+                str(base_path),
+                "--candidate",
+                str(candidate_path),
+                "--output",
+                str(output),
+                "--expected-input-manifest-payload-sha256",
+                requirements_sha256(base),
+                "--expected-input-manifest-file-sha256",
+            ]
+
+            with mock.patch.object(
+                target_intake,
+                "write_fsynced_temporary_bytes",
+            ) as writer:
+                self.assertEqual(main([*common, "f" * 64]), 1)
+                writer.assert_not_called()
+            self.assertFalse(output.exists())
+
+            base_path.write_bytes(base_raw + b" ")
+            with mock.patch.object(
+                target_intake,
+                "write_fsynced_temporary_bytes",
+            ) as writer:
+                self.assertEqual(
+                    main([*common, hashlib.sha256(base_raw).hexdigest()]),
+                    1,
+                )
+                writer.assert_not_called()
+            self.assertFalse(output.exists())
+
+            base_path.write_bytes(base_raw)
+            changed = copy.deepcopy(base)
+            for item in changed["items"][:2]:
+                item.update(
+                    {
+                        "status": "provided",
+                        "artifact_path": str(root / f"{item['id']}.json"),
+                        "sha256": "a" * 64,
+                        "reviewed_by": "review-record-42",
+                        "reviewed_at": "2026-08-26T12:00:00Z",
+                        "redaction_confirmed": True,
+                    }
+                )
+            candidate_path.write_bytes(target_intake._final_manifest_bytes(changed))
+            with mock.patch.object(
+                target_intake,
+                "write_fsynced_temporary_bytes",
+            ) as writer:
+                self.assertEqual(
+                    main([*common, hashlib.sha256(base_raw).hexdigest()]),
+                    1,
+                )
+                writer.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_register_rechecks_source_artifact_and_preserves_race_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = create_intake_manifest("staging", self.requirements)
+            base_path = root / "authoring-000.json"
+            base_raw = target_intake._final_manifest_bytes(base)
+            base_path.write_bytes(base_raw)
+            artifact = root / "mail-contract.json"
+            document = self._artifact_document("mail_contract")
+            artifact.write_text(json.dumps(document), encoding="utf-8")
+            candidate = copy.deepcopy(base)
+            candidate["items"][1].update(
+                {
+                    "status": "provided",
+                    "artifact_path": str(artifact),
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "reviewed_by": document["review_reference"],
+                    "reviewed_at": document["reviewed_at"],
+                    "redaction_confirmed": True,
+                }
+            )
+            candidate_path = root / "candidate.json"
+            candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
+            output = root / "authoring-001.json"
+            arguments = [
+                "register",
+                "--input",
+                str(base_path),
+                "--candidate",
+                str(candidate_path),
+                "--output",
+                str(output),
+                "--expected-input-manifest-payload-sha256",
+                requirements_sha256(base),
+                "--expected-input-manifest-file-sha256",
+                hashlib.sha256(base_raw).hexdigest(),
+            ]
+
+            real_intake_errors = target_intake.intake_errors
+            validation_count = 0
+
+            def replace_base_after_candidate_validation(*args, **kwargs):
+                nonlocal validation_count
+                errors = real_intake_errors(*args, **kwargs)
+                validation_count += 1
+                if validation_count == 2:
+                    replacement = root / "replacement.json"
+                    replacement.write_bytes(base_raw)
+                    replacement.replace(base_path)
+                return errors
+
+            with mock.patch.object(
+                target_intake,
+                "intake_errors",
+                side_effect=replace_base_after_candidate_validation,
+            ):
+                self.assertEqual(main(arguments), 1)
+            self.assertFalse(output.exists())
+
+            base_path.write_bytes(base_raw)
+            foreign = b"foreign-winner\n"
+
+            def publish_foreign_winner(_temporary: Path, destination: Path) -> None:
+                destination.write_bytes(foreign)
+                raise FileExistsError("publication race")
+
+            with mock.patch.object(
+                target_intake,
+                "publish_write_once_file",
+                side_effect=publish_foreign_winner,
+            ):
+                self.assertEqual(main(arguments), 1)
+            self.assertEqual(output.read_bytes(), foreign)
+
+    def test_register_allows_explicit_forks_but_reports_them_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = create_intake_manifest("staging", self.requirements)
+            base_path = root / "authoring-000.json"
+            base_raw = target_intake._final_manifest_bytes(base)
+            base_path.write_bytes(base_raw)
+            outputs: list[Path] = []
+            messages: list[str] = []
+            for index, identifier in enumerate(("sub2_contract", "mail_contract")):
+                artifact = root / f"{identifier}.json"
+                document = self._artifact_document(identifier)
+                artifact.write_text(json.dumps(document), encoding="utf-8")
+                candidate = copy.deepcopy(base)
+                candidate["items"][index].update(
+                    {
+                        "status": "provided",
+                        "artifact_path": str(artifact),
+                        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                        "reviewed_by": document["review_reference"],
+                        "reviewed_at": document["reviewed_at"],
+                        "redaction_confirmed": True,
+                    }
+                )
+                candidate_path = root / f"candidate-{index}.json"
+                candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
+                output = root / f"authoring-001-{index}.json"
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "register",
+                            "--input",
+                            str(base_path),
+                            "--candidate",
+                            str(candidate_path),
+                            "--output",
+                            str(output),
+                            "--expected-input-manifest-payload-sha256",
+                            requirements_sha256(base),
+                            "--expected-input-manifest-file-sha256",
+                            hashlib.sha256(base_raw).hexdigest(),
+                        ]
+                    )
+                self.assertEqual(result, 0)
+                outputs.append(output)
+                messages.append(stdout.getvalue())
+            self.assertTrue(all(output.exists() for output in outputs))
+            self.assertTrue(
+                all(
+                    "authoring-generation-fork-protection=unverified" in message
+                    and "authoring-latest-head=unverified" in message
+                    for message in messages
+                )
+            )
+
     def test_cli_rejects_final_pins_on_nonfinal_progress_checks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             manifest_path = Path(temporary) / "target-intake.json"
@@ -3014,6 +3261,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
         text = runbook.read_text(encoding="utf-8")
         for expected in (
             "target_intake_preflight.py init",
+            "target_intake_preflight.py register",
             "target_intake_preflight.py preflight",
             "target_intake_preflight.py snapshot",
             "target_intake_preflight.py finalize",
@@ -3051,6 +3299,9 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "Pin authority, custody after publication, and",
             "global rollback protection therefore remain `unverified`",
+            "change exactly one `missing` item",
+            "fork protection, latest-head selection, pin",
+            "successful command does not discover or certify a global latest",
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, text)

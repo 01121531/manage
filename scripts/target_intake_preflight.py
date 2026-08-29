@@ -32,8 +32,11 @@ from scripts.external_json import (
     StableFileError as _StableFileError,
     has_link_or_reparse_ancestor as _has_link_or_reparse_ancestor,
     is_link_or_reparse as _is_link_or_reparse,
+    load_unique_json_with_bytes_and_metadata as _load_unique_json_with_bytes_and_metadata,
     parse_unique_json_bytes,
     read_stable_bytes as _read_stable_bytes,
+    read_stable_bytes_with_metadata as _read_stable_bytes_with_metadata,
+    recheck_stable_bytes as _recheck_stable_bytes,
 )
 from scripts.target_intake_manifest import (
     ITEM_KEYS as _ITEM_KEYS,
@@ -244,7 +247,10 @@ def requirements_errors(document: Any, matrix: Any) -> list[str]:
         errors.append("target intake requirements identity is invalid")
     if document.get("production_acceptance") is not False:
         errors.append("target intake requirements must not claim production acceptance")
-    if document.get("manifest_policy") != "repository_external_metadata_only":
+    if (
+        document.get("manifest_policy")
+        != "repository_external_immutable_generation_metadata_only"
+    ):
         errors.append("target intake manifest policy is invalid")
 
     requirements = document.get("requirements")
@@ -342,6 +348,61 @@ def create_intake_manifest(environment: str, requirements: Any) -> dict[str, Any
             if isinstance(item, dict)
         ],
     }
+
+
+def manifest_registration_item_id(base: Any, candidate: Any) -> str | None:
+    """Return the one missing-to-provided item in an immutable generation step."""
+
+    if not isinstance(base, dict) or not isinstance(candidate, dict):
+        return None
+    if set(base) != _MANIFEST_KEYS or set(candidate) != _MANIFEST_KEYS:
+        return None
+    if any(base[key] != candidate[key] for key in _MANIFEST_KEYS - {"items"}):
+        return None
+    base_items = base.get("items")
+    candidate_items = candidate.get("items")
+    if not isinstance(base_items, list) or not isinstance(candidate_items, list):
+        return None
+    if len(base_items) != len(_REQUIRED_IDS) or len(candidate_items) != len(
+        base_items
+    ):
+        return None
+    if [item.get("id") if isinstance(item, dict) else None for item in base_items] != list(
+        _REQUIRED_IDS
+    ):
+        return None
+    if [
+        item.get("id") if isinstance(item, dict) else None
+        for item in candidate_items
+    ] != list(_REQUIRED_IDS):
+        return None
+    changed = [
+        (before, after)
+        for before, after in zip(base_items, candidate_items, strict=True)
+        if before != after
+    ]
+    if len(changed) != 1:
+        return None
+    before, after = changed[0]
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None
+    identifier = before.get("id")
+    expected_keys = (
+        _RELEASE_ITEM_KEYS
+        if identifier == "release_execution_evidence"
+        else _ITEM_KEYS
+    )
+    metadata_keys = expected_keys - {"id", "status"}
+    if (
+        set(before) != expected_keys
+        or set(after) != expected_keys
+        or after.get("id") != identifier
+        or before.get("status") != "missing"
+        or after.get("status") != "provided"
+        or any(before.get(key) is not None for key in metadata_keys)
+    ):
+        return None
+    return identifier if isinstance(identifier, str) else None
 
 
 def _parse_utc(value: Any) -> datetime | None:
@@ -1333,6 +1394,18 @@ def _parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--input", required=True, type=Path)
     snapshot.add_argument("--output", required=True, type=Path)
     snapshot.add_argument("--environment", required=True)
+    register = commands.add_parser("register")
+    register.add_argument("--input", required=True, type=Path)
+    register.add_argument("--candidate", required=True, type=Path)
+    register.add_argument("--output", required=True, type=Path)
+    register.add_argument(
+        "--expected-input-manifest-payload-sha256",
+        required=True,
+    )
+    register.add_argument(
+        "--expected-input-manifest-file-sha256",
+        required=True,
+    )
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--input", required=True, type=Path)
     finalize.add_argument("--output", required=True, type=Path)
@@ -1390,6 +1463,155 @@ def main(argv: list[str] | None = None) -> int:
             print("target-intake-init-failed", file=sys.stderr)
             return 1
         print("target-intake-created production_acceptance=false status=incomplete")
+        return 0
+    if arguments.command == "register":
+        path_errors = (
+            _manifest_path_errors(arguments.input, must_exist=True)
+            + _manifest_path_errors(arguments.candidate, must_exist=True)
+            + _manifest_path_errors(arguments.output, must_exist=False)
+        )
+        if path_errors:
+            print("; ".join(path_errors), file=sys.stderr)
+            return 1
+        try:
+            base, base_raw, base_metadata = _load_unique_json_with_bytes_and_metadata(
+                arguments.input,
+                max_bytes=_MAX_MANIFEST_BYTES,
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, _StableFileError):
+            print("target-intake-register-input-invalid", file=sys.stderr)
+            return 1
+        expected_payload_sha256 = arguments.expected_input_manifest_payload_sha256
+        expected_file_sha256 = arguments.expected_input_manifest_file_sha256
+        if (
+            _SHA256.fullmatch(expected_payload_sha256) is None
+            or _SHA256.fullmatch(expected_file_sha256) is None
+            or not hmac.compare_digest(expected_payload_sha256, requirements_sha256(base))
+            or not hmac.compare_digest(
+                expected_file_sha256,
+                hashlib.sha256(base_raw).hexdigest(),
+            )
+        ):
+            print("target-intake-register-input-pin-mismatch", file=sys.stderr)
+            return 1
+        errors = intake_errors(
+            base,
+            requirements,
+            require_complete=False,
+            evaluated_at=evaluated_at,
+        )
+        if errors:
+            print("; ".join(errors), file=sys.stderr)
+            return 1
+        try:
+            candidate, candidate_raw, candidate_metadata = (
+                _load_unique_json_with_bytes_and_metadata(
+                    arguments.candidate,
+                    max_bytes=_MAX_MANIFEST_BYTES,
+                )
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, _StableFileError):
+            print("target-intake-register-candidate-invalid", file=sys.stderr)
+            return 1
+        registered_item_id = manifest_registration_item_id(base, candidate)
+        if registered_item_id is None:
+            print("target-intake-register-transition-invalid", file=sys.stderr)
+            return 1
+        errors = intake_errors(
+            candidate,
+            requirements,
+            require_complete=False,
+            evaluated_at=evaluated_at,
+        )
+        if errors:
+            print("; ".join(errors), file=sys.stderr)
+            return 1
+        registered_item = next(
+            item for item in candidate["items"] if item["id"] == registered_item_id
+        )
+        try:
+            artifact_path = Path(registered_item["artifact_path"])
+            artifact_raw, artifact_metadata = _read_stable_bytes_with_metadata(
+                artifact_path,
+                max_bytes=_MAX_ARTIFACT_BYTES,
+            )
+            if not hmac.compare_digest(
+                hashlib.sha256(artifact_raw).hexdigest(),
+                registered_item["sha256"],
+            ):
+                raise _StableFileError("read")
+        except (OSError, TypeError, _StableFileError):
+            print("target-intake-register-artifact-invalid", file=sys.stderr)
+            return 1
+        output_bytes = _final_manifest_bytes(candidate)
+        if len(output_bytes) > _MAX_MANIFEST_BYTES:
+            print("target-intake-register-failed", file=sys.stderr)
+            return 1
+        temporary: Path | None = None
+        try:
+            _recheck_stable_bytes(
+                arguments.input,
+                base_raw,
+                base_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            _recheck_stable_bytes(
+                arguments.candidate,
+                candidate_raw,
+                candidate_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            _recheck_stable_bytes(
+                artifact_path,
+                artifact_raw,
+                artifact_metadata,
+                max_bytes=_MAX_ARTIFACT_BYTES,
+                require_single_link=True,
+            )
+            output = prepare_write_once_file(arguments.output)
+            temporary = write_fsynced_temporary_bytes(output, output_bytes)
+            publish_write_once_file(temporary, output)
+            readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
+            if not hmac.compare_digest(readback, output_bytes):
+                raise OSError("authoring generation publication readback mismatch")
+            _recheck_stable_bytes(
+                arguments.input,
+                base_raw,
+                base_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            _recheck_stable_bytes(
+                arguments.candidate,
+                candidate_raw,
+                candidate_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            _recheck_stable_bytes(
+                artifact_path,
+                artifact_raw,
+                artifact_metadata,
+                max_bytes=_MAX_ARTIFACT_BYTES,
+                require_single_link=True,
+            )
+        except (OSError, ValueError, _StableFileError):
+            print("target-intake-register-failed", file=sys.stderr)
+            return 1
+        finally:
+            discard_claimed_temporary_file(temporary)
+        print(
+            "target-intake-generation-registered production_acceptance=false "
+            f"registered_item={registered_item_id} "
+            f"manifest_payload_sha256={requirements_sha256(candidate)} "
+            f"manifest_file_sha256={hashlib.sha256(output_bytes).hexdigest()} "
+            "authoring-publication=local-no-replace-readback "
+            "authoring-generation-fork-protection=unverified "
+            "authoring-latest-head=unverified authoring-pin-authority=unverified "
+            "authoring-post-publication-custody=unverified"
+        )
         return 0
     if arguments.command == "snapshot":
         output_errors = _manifest_path_errors(arguments.output, must_exist=False)

@@ -54,6 +54,13 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
     "final-manifest-pin-authority=unverified",
     "final-manifest-rollback-protection=unverified",
 )
+AUTHORING_GENERATION_BOUNDARY_MARKERS = (
+    "authoring-publication=local-no-replace-readback",
+    "authoring-generation-fork-protection=unverified",
+    "authoring-latest-head=unverified",
+    "authoring-pin-authority=unverified",
+    "authoring-post-publication-custody=unverified",
+)
 INTAKE_CALLER_BOUNDARY_MARKERS = (
     "intake-manifest-caller-pin=payload-and-file-matched",
     "intake-artifact-whole-file-binding=matched",
@@ -235,10 +242,59 @@ def _contains_string(node: ast.AST | None, value: str) -> bool:
     )
 
 
+def _contains_marker(node: ast.AST | None, value: str) -> bool:
+    return node is not None and any(
+        isinstance(item, ast.Constant)
+        and isinstance(item.value, str)
+        and value in item.value
+        for item in ast.walk(node)
+    )
+
+
 def _contains_name(node: ast.AST | None, value: str) -> bool:
     return node is not None and any(
         isinstance(item, ast.Name) and item.id == value
         for item in ast.walk(node)
+    )
+
+
+def _command_branch(function: ast.FunctionDef, command: str) -> ast.If | None:
+    return next(
+        (
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and len(node.test.ops) == 1
+            and isinstance(node.test.ops[0], ast.Eq)
+            and _contains_string(node.test, command)
+            and any(
+                isinstance(item, ast.Attribute)
+                and item.attr == "command"
+                for item in ast.walk(node.test)
+            )
+        ),
+        None,
+    )
+
+
+def _required_parser_argument(
+    function: ast.FunctionDef,
+    receiver: str,
+    option: str,
+) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and _call_name(node) == "add_argument"
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == receiver
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == option
+        and isinstance(_keyword_value(node, "required"), ast.Constant)
+        and _keyword_value(node, "required").value is True
+        for node in ast.walk(function)
     )
 
 
@@ -743,6 +799,162 @@ def causality_errors(
             errors.append("final strict intake must require both caller-pinned digests")
         if not _has_final_manifest_boundary_output(intake_tree):
             errors.append("final strict intake must report manifest custody boundaries")
+    parser_function = _function(intake_tree, "_parser")
+    registration = _function(intake_tree, "manifest_registration_item_id")
+    register_branch = (
+        _command_branch(main_function, "register") if main_function is not None else None
+    )
+    if parser_function is None or registration is None or register_branch is None:
+        errors.append("immutable authoring generation registration contract is missing")
+    else:
+        required_options = {
+            "--input",
+            "--candidate",
+            "--output",
+            "--expected-input-manifest-payload-sha256",
+            "--expected-input-manifest-file-sha256",
+        }
+        if not _contains_string(parser_function, "register") or not all(
+            _required_parser_argument(parser_function, "register", option)
+            for option in required_options
+        ):
+            errors.append("authoring generation registration must require base pins and paths")
+        changed_len_guard = any(
+            isinstance(node, ast.Compare)
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.NotEq)
+            and isinstance(node.left, ast.Call)
+            and _call_name(node.left) == "len"
+            and _contains_name(node.left, "changed")
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Constant)
+            and node.comparators[0].value == 1
+            for node in ast.walk(registration)
+        )
+        exact_change_guard = any(
+            isinstance(node, ast.Compare)
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.NotEq)
+            and _contains_name(node, "before")
+            and _contains_name(node, "after")
+            for node in ast.walk(registration)
+        )
+        top_level_guard = any(
+            isinstance(node, ast.Compare)
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.NotEq)
+            and _contains_name(node, "base")
+            and _contains_name(node, "candidate")
+            and _contains_name(node, "key")
+            for node in ast.walk(registration)
+        )
+        missing_metadata_guard = any(
+            isinstance(node, ast.Compare)
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.IsNot)
+            and isinstance(node.comparators[0], ast.Constant)
+            and node.comparators[0].value is None
+            and _contains_name(node, "before")
+            and _contains_name(node, "key")
+            for node in ast.walk(registration)
+        )
+        if not (
+            changed_len_guard
+            and exact_change_guard
+            and top_level_guard
+            and missing_metadata_guard
+            and _contains_name(registration, "_REQUIRED_IDS")
+            and _contains_string(registration, "missing")
+            and _contains_string(registration, "provided")
+            and _contains_string(registration, "items")
+            and _contains_string(registration, "id")
+            and _contains_string(registration, "status")
+        ):
+            errors.append("authoring generation must change exactly one missing item to provided")
+        register_calls = [
+            _call_name(node)
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+        ]
+        single_link_rechecks = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "_recheck_stable_bytes"
+            and isinstance(_keyword_value(node, "require_single_link"), ast.Constant)
+            and _keyword_value(node, "require_single_link").value is True
+        ]
+        artifact_digest_checks = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "compare_digest"
+            and _contains_name(node, "artifact_raw")
+            and _contains_string(node, "sha256")
+        ]
+        output_claims = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "prepare_write_once_file"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Attribute)
+            and node.args[0].attr == "output"
+        ]
+        candidate_validations = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "intake_errors"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "candidate"
+            and isinstance(_keyword_value(node, "require_complete"), ast.Constant)
+            and _keyword_value(node, "require_complete").value is False
+        ]
+        candidate_publications = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "_final_manifest_bytes"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "candidate"
+        ]
+        if not (
+            register_calls.count("_load_unique_json_with_bytes_and_metadata") >= 2
+            and register_calls.count("intake_errors") >= 2
+            and register_calls.count("_read_stable_bytes_with_metadata") >= 1
+            and len(single_link_rechecks) >= 6
+            and len(artifact_digest_checks) >= 1
+            and len(output_claims) == 1
+            and len(candidate_validations) == 1
+            and len(candidate_publications) == 1
+            and {
+                "prepare_write_once_file",
+                "write_fsynced_temporary_bytes",
+                "publish_write_once_file",
+                "_read_stable_bytes",
+            }.issubset(register_calls)
+            and _compare_digest_call(
+                register_branch,
+                "expected_payload_sha256",
+                "base",
+            )
+            and _compare_digest_call(
+                register_branch,
+                "expected_file_sha256",
+                "base_raw",
+            )
+        ):
+            errors.append(
+                "authoring generation must pin, validate, recheck and publish without replace"
+            )
+        if not all(
+            _contains_marker(register_branch, marker)
+            for marker in AUTHORING_GENERATION_BOUNDARY_MARKERS
+        ):
+            errors.append("authoring generation trust boundaries must remain unverified")
     if not (
         _has_dict_constant(create_manifest, "schema_version", 2)
         and _contains_string(create_manifest, "release_execution_review_subject")
@@ -954,6 +1166,10 @@ def main() -> int:
         "final-manifest-caller-pin=payload-and-file "
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
+        "authoring-publication=local-no-replace-readback "
+        "authoring-generation-fork-protection=unverified "
+        "authoring-latest-head=unverified authoring-pin-authority=unverified "
+        "authoring-post-publication-custody=unverified "
         "standalone-intake-manifest-consumers=seven "
         "standalone-intake-manifest-schema=closed-v2-inventory-exact "
         "standalone-intake-manifest-caller-pin=payload-and-file "

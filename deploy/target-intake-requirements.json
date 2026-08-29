@@ -5,7 +5,7 @@
     "14"
   ],
   "production_acceptance": false,
-  "manifest_policy": "repository_external_metadata_only",
+  "manifest_policy": "repository_external_immutable_generation_metadata_only",
   "requirements": [
     {
       "id": "sub2_contract",

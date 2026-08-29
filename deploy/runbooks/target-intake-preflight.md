@@ -38,10 +38,12 @@ not production acceptance. Every generated manifest and successful command remai
   error contracts remain authoritative.
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
-- The authoring manifest is intentionally mutable while Phase 0–6 evidence is
-  collected. It is not a write-once artifact merely because `init` creates its
-  first leaf exclusively. Production sign-off uses a separately finalized
-  leaf and caller-pinned canonical-payload and whole-file SHA-256 values.
+- Authoring proceeds through immutable generations while Phase 0–6 evidence is
+  collected. `init` exclusively creates generation 000; every later generation
+  is a separate no-replace leaf produced by `register`. Never overwrite a prior
+  generation or use the editable candidate as an accepted manifest. Production
+  sign-off uses a separately finalized leaf and caller-pinned canonical-payload
+  and whole-file SHA-256 values.
 - Before each of the seven standalone manifest-consumer `check` commands, review
   the current authoring manifest and retain both digest values printed by a
   successful progress
@@ -78,7 +80,7 @@ creation and never overwrites a previous manifest.
 
 ```powershell
 python scripts/target_intake_preflight.py init `
-  --output D:\email-platform-evidence\intake\staging-target-intake.json `
+  --output D:\email-platform-evidence\intake\staging-target-intake-000.json `
   --environment staging
 ```
 
@@ -94,7 +96,10 @@ reviews.
 ## Register one reviewed artifact
 
 After an independent reviewer confirms that the material follows the boundary
-above, change the matching item to this shape:
+above, copy the selected current generation to a separate candidate file and
+change exactly one `missing` item to this shape. Do not edit the selected input
+generation. Every other item and every top-level field must remain byte-for-byte
+equivalent after JSON parsing:
 
 ```json
 {
@@ -107,6 +112,32 @@ above, change the matching item to this shape:
   "redaction_confirmed": true
 }
 ```
+
+Retain the current generation's canonical-payload and whole-file SHA-256 values
+from an independently reviewed progress preflight. Register the candidate to a
+new, previously absent output leaf:
+
+```powershell
+python scripts/target_intake_preflight.py register `
+  --input D:\email-platform-evidence\intake\staging-target-intake-000.json `
+  --candidate D:\email-platform-evidence\intake\staging-target-intake-candidate-001.json `
+  --output D:\email-platform-evidence\intake\staging-target-intake-001.json `
+  --expected-input-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-input-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+```
+
+`register` checks both caller pins before reading the candidate, validates the
+complete candidate and the newly registered artifact, and rechecks the input,
+candidate and artifact identities, bytes and single-link state immediately
+before and after fsynced no-replace publication. Its printed payload/file
+digests identify the new generation and are the candidate pins for the next
+independently approved step. A concurrent writer to the same output cannot
+overwrite the winner. Writers can still choose different output names from the
+same base and create forks, so fork protection, latest-head selection, pin
+authority, cross-host linearization and post-publication custody remain
+`unverified`. Change control must select and retain the intended current
+generation; a successful command does not discover or certify a global latest
+head.
 
 The provided `release_execution_evidence` item has one additional closed
 field. Copy the exact four-field selector from every consuming evidence index;
