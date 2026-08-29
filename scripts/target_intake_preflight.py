@@ -510,7 +510,7 @@ def _artifact_errors(
             )
     if identifier == "phase6_pilot_inputs" and artifact_bytes is not None:
         validated_document = artifact_document
-        if pilot_input_errors(validated_document):
+        if pilot_input_errors(validated_document, evaluated_at=evaluated_at):
             errors.append("phase6_pilot_inputs envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -529,7 +529,7 @@ def _artifact_errors(
                 )
     if identifier == "phase6_pilot_evidence" and artifact_bytes is not None:
         validated_document = artifact_document
-        if pilot_evidence_errors(validated_document):
+        if pilot_evidence_errors(validated_document, evaluated_at=evaluated_at):
             errors.append("phase6_pilot_evidence envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -537,7 +537,7 @@ def _artifact_errors(
             )
     if identifier == "phase6_operations_evidence" and artifact_bytes is not None:
         validated_document = artifact_document
-        if operations_evidence_errors(validated_document):
+        if operations_evidence_errors(validated_document, evaluated_at=evaluated_at):
             errors.append("phase6_operations_evidence envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -704,21 +704,30 @@ def intake_errors(
             if (
                 identifier == "phase6_pilot_inputs"
                 and isinstance(validated_document, dict)
-                and not pilot_input_errors(validated_document)
+                and not pilot_input_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 phase6_pilot_inputs = validated_document
             if (
                 identifier == "phase6_pilot_evidence"
                 and isinstance(validated_document, dict)
-                and not pilot_evidence_errors(validated_document)
+                and not pilot_evidence_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 phase6_pilot_evidence = validated_document
             if (
                 identifier == "phase6_operations_evidence"
                 and isinstance(validated_document, dict)
-                and not operations_evidence_errors(validated_document)
+                and not operations_evidence_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 phase6_operations_evidence = validated_document
@@ -842,6 +851,7 @@ def intake_errors(
                 pilot_input_alignment_errors(
                     phase6_pilot_evidence,
                     phase6_pilot_inputs,
+                    evaluated_at=evaluation_time,
                 )
             )
         if release_execution is not None:
@@ -871,6 +881,7 @@ def intake_errors(
                     phase6_operations_evidence,
                     phase6_pilot_inputs,
                     phase6_pilot_evidence,
+                    evaluated_at=evaluation_time,
                 )
             )
         if release_execution is not None:

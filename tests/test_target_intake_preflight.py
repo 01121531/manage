@@ -527,6 +527,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "inventory_status": "reviewed",
                     "review_reference": "pilot-review-ref:record-42",
+                    "reviewed_at": "2026-08-27T00:30:00Z",
+                    "valid_until": "2099-08-27T05:30:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -544,8 +546,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "change_reference": "change-record:pilot-42",
                         "approval_reference": "change-approval:pilot-42",
                         "starts_at": "2026-08-27T01:00:00Z",
-                        "rollback_decision_deadline": "2026-08-27T01:30:00Z",
-                        "finishes_at": "2026-08-27T02:00:00Z",
+                        "rollback_decision_deadline": "2026-08-27T03:00:00Z",
+                        "finishes_at": "2026-08-27T05:00:00Z",
                     },
                 }
             )
@@ -584,6 +586,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "index_status": "reviewed",
                     "review_reference": "pilot-evidence-review:record-42",
                     "reviewed_at": "2026-08-27T02:00:00Z",
+                    "valid_until": "2099-08-27T05:00:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -688,6 +691,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "index_status": "reviewed",
                     "review_reference": "operations-evidence-review:record-43",
                     "reviewed_at": "2026-08-27T04:15:00Z",
+                    "valid_until": "2099-08-27T05:15:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -709,7 +713,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     },
                     "pilot_trace_set_reference": "pilot-trace-set:record-42",
                     "window": {
-                        "started_at": "2026-08-27T00:00:00Z",
+                        "started_at": "2026-08-27T02:00:00Z",
                         "finished_at": "2026-08-27T04:00:00Z",
                     },
                     "release_execution": {

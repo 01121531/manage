@@ -126,6 +126,7 @@ Release manifest:
 - Phase 6 CI rehearsal evidence, file SHA-256 and payload SHA-256 (preflight only):
 - Phase 6 pilot input inventory, payload SHA-256 and same-manifest target inventory binding:
 - Phase 6 pilot opaque roster/ownership references and approved UTC maintenance window:
+- Phase 6 pilot-input sealed review/valid-until and maintenance-window validity result:
 - Phase 6 target pilot evidence index and canonical payload SHA-256:
 - Phase 6 pilot evidence release tag, commit and container-manifest SHA-256:
 - Phase 6 selected release-execution ledger type, WORM reference and whole-file SHA-256:
@@ -146,12 +147,14 @@ Release manifest:
 - Phase 6 selected schema-v2 ledger independent parse and successful-terminal result:
 - Phase 6 pilot evidence same-manifest Sub2-evidence, pilot-input and target-inventory SHA-256 bindings:
 - Phase 6 pilot operator/security-auditor subject, trace-set, sealed review reference and post-window review time:
+- Phase 6 pilot execution containment and pre-deadline reviewed result:
 - Phase 6 pilot UTC window and nine target OIDC/real Mail/Sub2 scenario WORM references:
 - Phase 6 target operations evidence index and canonical payload SHA-256:
 - Phase 6 operations release identity and same-manifest T41/T42/target-inventory bindings:
 - Phase 6 operations/pilot exact release-execution selector equality:
 - Phase 6 Alertmanager, PostgreSQL, Redis, Vault, rollback and training source-artifact SHA-256 values:
 - Phase 6 operations four-role subjects, pilot trace-set, sealed review reference and post-window review time:
+- Phase 6 operations post-pilot/maintenance-window/rollback-deadline and review-validity result:
 - Phase 6 nine alert/restore/rollback/training/audit scenario WORM references and UTC window:
 - Target-environment pilot evidence:
 - Keycloak administrator group subject digest and membership evidence:

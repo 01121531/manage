@@ -73,18 +73,19 @@ above, change the matching item to this shape:
 ```
 
 Use an opaque ticket or approval reference for `reviewed_by`. For the sealed
-Mail/Sub2 provider contracts, every Phase 1–5 execution index, the Windows pilot
-input inventory, the Sub2 and Vault/egress indexes, and the Phase 6 pilot and
-operations indexes, this value must exactly equal the artifact's sealed
+Mail/Sub2 provider contracts, every Phase 1–5 execution index, the Windows and
+Phase 6 pilot input inventories, the Sub2 and Vault/egress indexes, and the
+Phase 6 pilot and operations indexes, this value must exactly equal the artifact's sealed
 `review_reference`; `reviewed_at` must exactly equal its sealed UTC review
 timestamp. Execution-index review cannot precede `finished_at`. Provider
 contract review must fall between source capture and the exclusive
-`valid_until`. Phase 1–5, Sub2, Vault/egress and Windows input artifacts are
-also usable only in the half-open interval `[reviewed_at, valid_until)`. One
+`valid_until`. Phase 1–6 execution evidence, Sub2, Vault/egress, Windows inputs
+and Phase 6 pilot inputs are usable only in the half-open interval
+`[reviewed_at, valid_until)`. One
 preflight captures one UTC evaluation instant and passes it through the Phase 0
 checkpoint, provider-contract runtime conformance and every evidence validator;
-it never refreshes the clock between artifacts. For artifact policies without
-a sealed review time, the manifest timestamp must still be canonical UTC ending
+it never refreshes the clock between artifacts or dependency replays. For the
+remaining artifact policies without a sealed review time, the manifest timestamp must still be canonical UTC ending
 in `Z`. Recompute SHA-256 after every approved artifact change. Do not add
 inline artifact content or extra manifest fields; the schema is closed.
 
@@ -428,15 +429,19 @@ handles, credentials, tokens, or free-form participant notes.
 Assign a distinct pilot subject and roster entry to every role. Record distinct
 opaque owners for pilot coordination, target operators, the approved alert
 receiver, and maintenance execution. The independent inventory reviewer must
-not be one of the pilot subjects or owners. The approved maintenance window
-must use canonical UTC and satisfy: start before rollback decision deadline,
-and rollback decision deadline before finish. Do not add an inferred duration,
+not be one of the pilot subjects or owners. Seal `reviewed_at` and exclusive
+`valid_until`; strict verification requires `reviewed_at <= starts_at <
+rollback_decision_deadline < finishes_at < valid_until` and evaluates the
+inventory inside `[reviewed_at, valid_until)`. The current check does not need
+to occur during the maintenance window, so the same record remains verifiable
+after execution while its review is current. Do not add an inferred duration,
 capacity, or local-time conversion to the inventory.
 
 Bind the inventory to the deployed release tag, 40-hex commit, container
 manifest SHA-256, the same environment, and the exact target platform inventory
-SHA-256 from the intake manifest. Then verify its closed schema, canonical
-payload digest and binding:
+SHA-256 from the intake manifest. Its own manifest item must repeat the sealed
+review reference and time. Then verify its closed schema, canonical payload
+digest, review validity and binding:
 
 ```powershell
 python scripts/phase6_pilot_inputs.py check `
@@ -464,8 +469,12 @@ one-time verification, server-side upload, cleanup, authorization isolation,
 persistent-secret scan, audit-trace replay, and audit-resource replay. Record
 only typed opaque execution, independent reviewer, trace-set and immutable WORM
 object references, UTC timestamps, fixed observations, artifact SHA-256 values,
-and redaction assertions. Seal the aggregate review reference and review time
-after the execution window. Bind the sealed index to the release identity and
+and redaction assertions. The pilot window must begin no earlier than the
+approved maintenance start and finish strictly before the rollback decision
+deadline. Seal the aggregate review reference and review time after the
+execution window and no later than that decision deadline, plus an exclusive
+`valid_until`; strict verification must occur inside that review-validity
+interval. Bind the sealed index to the release identity and
 the exact Sub2 execution evidence, Phase 6 pilot inputs and target platform
 inventory hashes from the same intake manifest. The operator and
 security-auditor subjects must match that reviewed pilot roster.
@@ -523,14 +532,23 @@ internal and external check passes. Complete the reviewed four-role training
 session and all five existing tabletop cases, then replay one delivered alert
 through its tenant-scoped redacted audit trace.
 
+Operations may begin only after the pilot evidence has been independently
+reviewed. The complete operations window must remain strictly inside the
+approved maintenance window and finish before the pilot evidence expires. The
+`release_bound_rollback` scenario must execute no later than the approved
+rollback decision deadline.
+
 Record only the six fixed source-artifact SHA-256 values, typed opaque execution,
 independent reviewer and immutable WORM object references, UTC timestamps, fixed
 observations, and redaction assertions. Bind the index to the exact T41 pilot
 inputs, T42 pilot evidence, target platform inventory and release identity from
 the same intake. Its four role subjects and pilot trace-set reference must match
 those reviewed dependencies. Seal the aggregate review reference and review
-time after the operations execution window; the intake item must repeat those
-two sealed values exactly.
+time after the operations execution window, together with an exclusive
+`valid_until`; strict verification must occur inside `[reviewed_at,
+valid_until)`. The intake item must repeat the sealed review reference and time
+exactly. A post-maintenance review is allowed, but it does not move or enlarge
+the sealed execution window.
 Copy the exact same release-execution selector from the reviewed pilot index;
 do not choose another ledger for operations signoff or derive expected values
 from the ledger under review.

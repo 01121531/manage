@@ -38,6 +38,8 @@ _PAYLOAD_KEYS = {
     "synthetic",
     "inventory_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "environment",
     "bindings",
@@ -140,11 +142,15 @@ def _parse_utc(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo == timezone.utc else None
 
 
-def _payload_errors(payload: dict[str, Any]) -> list[str]:
+def _payload_errors(
+    payload: dict[str, Any],
+    *,
+    evaluated_at: datetime,
+) -> list[str]:
     errors: list[str] = []
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 1
+        or payload.get("schema_version") != 2
         or payload.get("record_type") != "phase6_pilot_inputs"
     ):
         errors.append("Phase 6 pilot input inventory identity is invalid")
@@ -173,6 +179,8 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     synthetic = payload.get("synthetic")
     reference = payload.get("inventory_reference")
     review_reference = payload.get("review_reference")
+    reviewed_at = payload.get("reviewed_at")
+    valid_until = payload.get("valid_until")
     environment = payload.get("environment")
     if not isinstance(synthetic, bool) or not _safe_reference(reference):
         errors.append("Phase 6 pilot input inventory reference is invalid")
@@ -191,6 +199,8 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
             not reference.startswith("synthetic-")
             or payload.get("inventory_status") != "pending"
             or review_reference is not None
+            or reviewed_at is not None
+            or valid_until is not None
             or environment != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -286,17 +296,27 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
         started_at = _parse_utc(window.get("starts_at"))
         deadline = _parse_utc(window.get("rollback_decision_deadline"))
         finished_at = _parse_utc(window.get("finishes_at"))
+        reviewed = _parse_utc(reviewed_at)
+        expires = _parse_utc(valid_until)
         if (
             started_at is None
             or deadline is None
             or finished_at is None
-            or not started_at < deadline < finished_at
+            or reviewed is None
+            or expires is None
+            or not reviewed <= started_at < deadline < finished_at < expires
         ):
-            errors.append("Phase 6 pilot maintenance window is invalid")
+            errors.append("Phase 6 pilot maintenance window or review validity is invalid")
+        elif not reviewed <= evaluated_at < expires:
+            errors.append("reviewed Phase 6 pilot inputs are not currently valid")
     return errors
 
 
-def inventory_errors(document: Any) -> list[str]:
+def inventory_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
     if not isinstance(document, dict) or set(document) != _SEALED_KEYS:
         return ["Phase 6 pilot input inventory top-level schema is invalid"]
     integrity = document.get("integrity")
@@ -308,7 +328,8 @@ def inventory_errors(document: Any) -> list[str]:
         or integrity["payload_sha256"] != _canonical_digest(payload)
     ):
         return ["Phase 6 pilot input inventory integrity is invalid"]
-    return _payload_errors(payload)
+    evaluation_time = evaluated_at or datetime.now(timezone.utc)
+    return _payload_errors(payload, evaluated_at=evaluation_time)
 
 
 def repository_contract_errors() -> list[str]:
@@ -346,6 +367,20 @@ def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
         errors.append(
             "Phase 6 pilot inputs target_platform_inventory binding does not match this intake manifest"
         )
+    own_items = [
+        item
+        for item in manifest["items"]
+        if isinstance(item, dict) and item.get("id") == "phase6_pilot_inputs"
+    ]
+    if (
+        len(own_items) != 1
+        or own_items[0].get("status") != "provided"
+        or own_items[0].get("reviewed_by") != document.get("review_reference")
+        or own_items[0].get("reviewed_at") != document.get("reviewed_at")
+    ):
+        errors.append(
+            "Phase 6 pilot input review metadata does not match this intake manifest"
+        )
     return errors
 
 
@@ -367,13 +402,17 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluated_at = datetime.now(timezone.utc)
     if arguments.command == "verify-repository":
         try:
             document = _load(INVENTORY)
         except (OSError, UnicodeError, json.JSONDecodeError):
             print("phase6-pilot-input-inventory-invalid", file=sys.stderr)
             return 1
-        errors = inventory_errors(document) + repository_contract_errors()
+        errors = inventory_errors(
+            document,
+            evaluated_at=evaluated_at,
+        ) + repository_contract_errors()
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
@@ -388,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("phase6-pilot-input-inventory-invalid", file=sys.stderr)
         return 1
-    errors = inventory_errors(document)
+    errors = inventory_errors(document, evaluated_at=evaluated_at)
     if not errors and document.get("synthetic") is not False:
         errors.append("Phase 6 pilot input inventory must be reviewed non-synthetic material")
     if errors:

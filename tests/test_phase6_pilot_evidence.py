@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -25,6 +26,9 @@ from scripts.phase6_pilot_inputs import (
 from tests.test_deploy_release_evidence import _complete_success, _recorder
 
 
+EVALUATED_AT = datetime(2026, 8, 29, tzinfo=timezone.utc)
+
+
 class Phase6PilotEvidenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.template = json.loads(EVIDENCE_INDEX.read_text(encoding="utf-8"))
@@ -43,6 +47,8 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                 "synthetic": False,
                 "inventory_status": "reviewed",
                 "review_reference": "pilot-review-ref:record-42",
+                "reviewed_at": "2026-08-27T00:30:00Z",
+                "valid_until": "2099-08-27T05:30:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -60,8 +66,8 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                     "change_reference": "change-record:pilot-42",
                     "approval_reference": "change-approval:pilot-42",
                     "starts_at": "2026-08-27T01:00:00Z",
-                    "rollback_decision_deadline": "2026-08-27T01:30:00Z",
-                    "finishes_at": "2026-08-27T02:00:00Z",
+                    "rollback_decision_deadline": "2026-08-27T03:00:00Z",
+                    "finishes_at": "2026-08-27T05:00:00Z",
                 },
             }
         )
@@ -88,6 +94,7 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                 "index_status": "reviewed",
                 "review_reference": "pilot-evidence-review:record-42",
                 "reviewed_at": "2026-08-27T02:00:00Z",
+                "valid_until": "2099-08-27T05:00:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -173,7 +180,8 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
-        self.assertEqual(self.template["schema_version"], 3)
+        self.assertEqual(self.template["schema_version"], 4)
+        self.assertIsNone(self.template["valid_until"])
         self.assertTrue(all(value is None for value in self.template["scenarios"].values()))
         gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
         self.assertIn("python scripts/phase6_pilot_evidence.py verify-repository", gate)
@@ -192,6 +200,28 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
         )
         for forbidden in ("local_test", "sqlite", "fake_mail", "fake_sub2"):
             self.assertNotIn(forbidden, json.dumps(self.template).casefold())
+
+    def test_review_validity_is_half_open_and_pilot_precedes_rollback_deadline(self) -> None:
+        reviewed = self._reviewed()
+        pilot_inputs = self._pilot_inputs()
+        self.assertEqual(index_errors(reviewed, evaluated_at=EVALUATED_AT), [])
+        expired = copy.deepcopy(reviewed)
+        expired["valid_until"] = "2026-08-29T00:00:00Z"
+        self.assertIn(
+            "reviewed Phase 6 pilot evidence is not currently valid",
+            index_errors(self._reseal(expired), evaluated_at=EVALUATED_AT),
+        )
+        late = copy.deepcopy(reviewed)
+        late["window"]["finished_at"] = "2026-08-27T03:00:00Z"
+        late["reviewed_at"] = "2026-08-27T03:00:00Z"
+        self.assertIn(
+            "Phase 6 pilot evidence window or review is outside the approved pre-rollback interval",
+            pilot_input_alignment_errors(
+                self._reseal(late),
+                pilot_inputs,
+                evaluated_at=EVALUATED_AT,
+            ),
+        )
 
     def test_scenario_inventory_actor_observation_and_passed_result_are_exact(self) -> None:
         reviewed = self._reviewed()
@@ -271,7 +301,7 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
         early_review = copy.deepcopy(reviewed)
         early_review["reviewed_at"] = "2026-08-27T01:54:59Z"
         self.assertIn(
-            "reviewed Phase 6 pilot evidence review timestamp is invalid",
+            "reviewed Phase 6 pilot evidence review validity is invalid",
             index_errors(self._reseal(early_review)),
         )
 

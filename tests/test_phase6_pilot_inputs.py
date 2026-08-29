@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -15,6 +16,9 @@ from scripts.phase6_pilot_inputs import (
     repository_contract_errors,
     seal_inventory,
 )
+
+
+EVALUATED_AT = datetime(2026, 8, 29, tzinfo=timezone.utc)
 
 
 class Phase6PilotInputsTests(unittest.TestCase):
@@ -34,6 +38,8 @@ class Phase6PilotInputsTests(unittest.TestCase):
                 "synthetic": False,
                 "inventory_status": "reviewed",
                 "review_reference": "pilot-review-ref:record-42",
+                "reviewed_at": "2026-08-27T00:30:00Z",
+                "valid_until": "2099-08-27T05:30:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -80,7 +86,13 @@ class Phase6PilotInputsTests(unittest.TestCase):
                     "id": "target_platform_inventory",
                     "status": "provided",
                     "sha256": inventory_sha256,
-                }
+                },
+                {
+                    "id": "phase6_pilot_inputs",
+                    "status": "provided",
+                    "reviewed_by": "pilot-review-ref:record-42",
+                    "reviewed_at": "2026-08-27T00:30:00Z",
+                },
             ],
         }
 
@@ -90,6 +102,9 @@ class Phase6PilotInputsTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["inventory_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
+        self.assertEqual(self.template["schema_version"], 2)
+        self.assertIsNone(self.template["reviewed_at"])
+        self.assertIsNone(self.template["valid_until"])
         self.assertTrue(
             all(
                 role["participant_reference"] is None
@@ -145,6 +160,26 @@ class Phase6PilotInputsTests(unittest.TestCase):
         for document in (reversed_window, offset, same_record):
             self.assertTrue(inventory_errors(self._reseal(document)))
 
+    def test_review_validity_contains_maintenance_and_is_half_open(self) -> None:
+        reviewed = self._reviewed()
+        self.assertEqual(
+            inventory_errors(reviewed, evaluated_at=EVALUATED_AT),
+            [],
+        )
+        future = copy.deepcopy(reviewed)
+        future["reviewed_at"] = "2026-08-30T00:00:00Z"
+        expired = copy.deepcopy(reviewed)
+        expired["valid_until"] = "2026-08-29T00:00:00Z"
+        uncovered = copy.deepcopy(reviewed)
+        uncovered["valid_until"] = uncovered["maintenance_window"]["finishes_at"]
+        for document in (future, expired, uncovered):
+            self.assertTrue(
+                inventory_errors(
+                    self._reseal(document),
+                    evaluated_at=EVALUATED_AT,
+                )
+            )
+
     def test_release_integrity_unknown_fields_and_sensitive_claims_fail_closed(self) -> None:
         reviewed = self._reviewed()
         bad_commit = copy.deepcopy(reviewed)
@@ -175,6 +210,12 @@ class Phase6PilotInputsTests(unittest.TestCase):
         manifest["environment"] = "production"
         self.assertIn(
             "Phase 6 pilot inputs environment does not match this intake manifest",
+            intake_binding_errors(reviewed, manifest),
+        )
+        manifest["environment"] = "staging"
+        manifest["items"][1]["reviewed_at"] = "2026-08-27T00:31:00Z"
+        self.assertIn(
+            "Phase 6 pilot input review metadata does not match this intake manifest",
             intake_binding_errors(reviewed, manifest),
         )
 

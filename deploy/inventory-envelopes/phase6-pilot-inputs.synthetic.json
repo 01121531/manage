@@ -1,10 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "phase6_pilot_inputs",
   "inventory_reference": "synthetic-phase6-pilot-inputs",
   "synthetic": true,
   "inventory_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -59,6 +61,6 @@
     "contains_verification_code_values": false
   },
   "integrity": {
-    "payload_sha256": "a2bb4ae93b862713ff5e5e54f972e9cacf1ed04bfd9a0e7ac49e70bb46a54731"
+    "payload_sha256": "b5354e272d0e62e9331a1e14fff5d544dc7071f7911824f80d620aa3d7aa2f31"
   }
 }

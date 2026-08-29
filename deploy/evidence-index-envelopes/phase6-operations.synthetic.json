@@ -1,11 +1,12 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "record_type": "phase6_operations_evidence_index",
   "index_reference": "operations-evidence-index:synthetic-43",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
   "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "execution_scope": {
@@ -78,6 +79,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "139fa0503cbb9eb3eeca9826986cc51e20ba9c703d775b6973b22b4aa5ca05a7"
+    "payload_sha256": "87626a1a77886d25974be30f4233b8a0aaab152cf97f89b97a7efe2c8cee26b1"
   }
 }

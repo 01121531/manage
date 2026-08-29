@@ -99,7 +99,8 @@ EXECUTION_SCOPE = {
 
 _PAYLOAD_KEYS = {
     "schema_version", "record_type", "index_reference", "synthetic",
-    "index_status", "review_reference", "reviewed_at", "production_acceptance", "environment",
+    "index_status", "review_reference", "reviewed_at", "valid_until",
+    "production_acceptance", "environment",
     "execution_scope", "bindings", "role_subjects", "pilot_trace_set_reference",
     "window", "release_execution", "artifact_digests", "scenarios", "prohibited_content",
 }
@@ -186,11 +187,15 @@ def _parse_utc(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo == timezone.utc else None
 
 
-def _payload_errors(payload: dict[str, Any]) -> list[str]:
+def _payload_errors(
+    payload: dict[str, Any],
+    *,
+    evaluated_at: datetime,
+) -> list[str]:
     errors: list[str] = []
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 3
+        or payload.get("schema_version") != 4
         or payload.get("record_type") != "phase6_operations_evidence_index"
     ):
         errors.append("Phase 6 operations evidence index identity is invalid")
@@ -226,6 +231,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     reference = payload.get("index_reference")
     review_reference = payload.get("review_reference")
     reviewed_at = payload.get("reviewed_at")
+    valid_until = payload.get("valid_until")
     environment = payload.get("environment")
     if (
         not isinstance(synthetic, bool)
@@ -245,6 +251,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
             payload.get("index_status") != "pending"
             or review_reference is not None
             or reviewed_at is not None
+            or valid_until is not None
             or environment != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -330,8 +337,17 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     if started_at is None or finished_at is None or finished_at <= started_at:
         errors.append("reviewed Phase 6 operations evidence window is invalid")
     reviewed = _parse_utc(reviewed_at)
-    if reviewed is None or finished_at is None or reviewed < finished_at:
-        errors.append("reviewed Phase 6 operations evidence review timestamp is invalid")
+    expires = _parse_utc(valid_until)
+    if (
+        reviewed is None
+        or expires is None
+        or finished_at is None
+        or reviewed < finished_at
+        or expires <= reviewed
+    ):
+        errors.append("reviewed Phase 6 operations evidence review validity is invalid")
+    elif not reviewed <= evaluated_at < expires:
+        errors.append("reviewed Phase 6 operations evidence is not currently valid")
 
     executions: list[str] = []
     objects: list[str] = []
@@ -385,7 +401,11 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
-def index_errors(document: Any) -> list[str]:
+def index_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
     if not isinstance(document, dict) or set(document) != _SEALED_KEYS:
         return ["Phase 6 operations evidence index top-level schema is invalid"]
     integrity = document.get("integrity")
@@ -397,7 +417,8 @@ def index_errors(document: Any) -> list[str]:
         or integrity["payload_sha256"] != _canonical_digest(payload)
     ):
         return ["Phase 6 operations evidence index integrity is invalid"]
-    return _payload_errors(payload)
+    evaluation_time = evaluated_at or datetime.now(timezone.utc)
+    return _payload_errors(payload, evaluated_at=evaluation_time)
 
 
 def repository_contract_errors() -> list[str]:
@@ -413,18 +434,27 @@ def phase6_alignment_errors(
     document: Any,
     pilot_inputs: Any,
     pilot_evidence: Any,
+    *,
+    evaluated_at: datetime | None = None,
 ) -> list[str]:
-    if pilot_input_errors(pilot_inputs):
+    evaluation_time = evaluated_at or datetime.now(timezone.utc)
+    if index_errors(document, evaluated_at=evaluation_time):
+        return ["Phase 6 operations evidence index is invalid"]
+    if pilot_input_errors(pilot_inputs, evaluated_at=evaluation_time):
         return ["Phase 6 operations evidence pilot inputs are invalid"]
     if pilot_inputs.get("synthetic") is not False or pilot_inputs.get("inventory_status") != "reviewed":
         return ["Phase 6 operations evidence requires reviewed non-synthetic pilot inputs"]
-    if pilot_evidence_errors(pilot_evidence):
+    if pilot_evidence_errors(pilot_evidence, evaluated_at=evaluation_time):
         return ["Phase 6 operations evidence pilot evidence is invalid"]
     if pilot_evidence.get("synthetic") is not False or pilot_evidence.get("index_status") != "reviewed":
         return ["Phase 6 operations evidence requires reviewed non-synthetic pilot evidence"]
 
     errors: list[str] = []
-    dependency_alignment = pilot_input_alignment_errors(pilot_evidence, pilot_inputs)
+    dependency_alignment = pilot_input_alignment_errors(
+        pilot_evidence,
+        pilot_inputs,
+        evaluated_at=evaluation_time,
+    )
     if dependency_alignment:
         errors.append("Phase 6 operations evidence reviewed dependencies are not aligned")
     environments = {
@@ -446,6 +476,59 @@ def phase6_alignment_errors(
     if document.get("release_execution") != pilot_evidence.get("release_execution"):
         errors.append(
             "Phase 6 operations evidence release execution does not match the reviewed pilot evidence"
+        )
+
+    operations_window = document.get("window")
+    maintenance = pilot_inputs.get("maintenance_window")
+    scenarios = document.get("scenarios")
+    operations_started = (
+        _parse_utc(operations_window.get("started_at"))
+        if isinstance(operations_window, dict)
+        else None
+    )
+    operations_finished = (
+        _parse_utc(operations_window.get("finished_at"))
+        if isinstance(operations_window, dict)
+        else None
+    )
+    maintenance_started = (
+        _parse_utc(maintenance.get("starts_at")) if isinstance(maintenance, dict) else None
+    )
+    rollback_deadline = (
+        _parse_utc(maintenance.get("rollback_decision_deadline"))
+        if isinstance(maintenance, dict)
+        else None
+    )
+    maintenance_finished = (
+        _parse_utc(maintenance.get("finishes_at")) if isinstance(maintenance, dict) else None
+    )
+    pilot_reviewed = _parse_utc(pilot_evidence.get("reviewed_at"))
+    pilot_valid_until = _parse_utc(pilot_evidence.get("valid_until"))
+    rollback = scenarios.get("release_bound_rollback") if isinstance(scenarios, dict) else None
+    rollback_executed = (
+        _parse_utc(rollback.get("executed_at")) if isinstance(rollback, dict) else None
+    )
+    if (
+        operations_started is None
+        or operations_finished is None
+        or maintenance_started is None
+        or maintenance_finished is None
+        or pilot_reviewed is None
+        or pilot_valid_until is None
+        or not maintenance_started <= operations_started < operations_finished < maintenance_finished
+        or operations_started < pilot_reviewed
+        or operations_finished >= pilot_valid_until
+    ):
+        errors.append(
+            "Phase 6 operations evidence window is outside the approved post-pilot interval"
+        )
+    if (
+        rollback_executed is None
+        or rollback_deadline is None
+        or rollback_executed > rollback_deadline
+    ):
+        errors.append(
+            "Phase 6 operations rollback execution is after the approved decision deadline"
         )
 
     document_bindings = document.get("bindings")
@@ -563,13 +646,17 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluated_at = datetime.now(timezone.utc)
     if arguments.command == "verify-repository":
         try:
             document = _load(EVIDENCE_INDEX)
         except (OSError, UnicodeError, json.JSONDecodeError):
             print("phase6-operations-evidence-index-invalid", file=sys.stderr)
             return 1
-        errors = index_errors(document) + repository_contract_errors()
+        errors = index_errors(
+            document,
+            evaluated_at=evaluated_at,
+        ) + repository_contract_errors()
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
@@ -586,13 +673,18 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("phase6-operations-evidence-index-invalid", file=sys.stderr)
         return 1
-    errors = index_errors(document)
+    errors = index_errors(document, evaluated_at=evaluated_at)
     if not errors and document.get("synthetic") is not False:
         errors.append("Phase 6 operations evidence index must be reviewed non-synthetic material")
     if errors:
         print("; ".join(errors), file=sys.stderr)
         return 1
-    binding_errors = phase6_alignment_errors(document, pilot_inputs, pilot_evidence)
+    binding_errors = phase6_alignment_errors(
+        document,
+        pilot_inputs,
+        pilot_evidence,
+        evaluated_at=evaluated_at,
+    )
     binding_errors += intake_binding_errors(document, manifest)
     bindings = document.get("bindings", {})
     binding_errors += release_execution_alignment_errors(

@@ -77,7 +77,8 @@ EXECUTION_SCOPE = {
 
 _PAYLOAD_KEYS = {
     "schema_version", "record_type", "index_reference", "synthetic",
-    "index_status", "review_reference", "reviewed_at", "production_acceptance", "environment",
+    "index_status", "review_reference", "reviewed_at", "valid_until",
+    "production_acceptance", "environment",
     "execution_scope", "bindings", "pilot_subjects", "trace_set_reference",
     "window", "release_execution", "scenarios", "prohibited_content",
 }
@@ -164,11 +165,15 @@ def _parse_utc(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo == timezone.utc else None
 
 
-def _payload_errors(payload: dict[str, Any]) -> list[str]:
+def _payload_errors(
+    payload: dict[str, Any],
+    *,
+    evaluated_at: datetime,
+) -> list[str]:
     errors: list[str] = []
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 3
+        or payload.get("schema_version") != 4
         or payload.get("record_type") != "phase6_pilot_evidence_index"
     ):
         errors.append("Phase 6 pilot evidence index identity is invalid")
@@ -201,6 +206,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     reference = payload.get("index_reference")
     review_reference = payload.get("review_reference")
     reviewed_at = payload.get("reviewed_at")
+    valid_until = payload.get("valid_until")
     environment = payload.get("environment")
     if not isinstance(synthetic, bool) or not _typed_reference(reference, "pilot-evidence-index:"):
         errors.append("Phase 6 pilot evidence index reference is invalid")
@@ -217,6 +223,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
             payload.get("index_status") != "pending"
             or review_reference is not None
             or reviewed_at is not None
+            or valid_until is not None
             or environment != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -285,8 +292,17 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     if started_at is None or finished_at is None or finished_at <= started_at:
         errors.append("reviewed Phase 6 pilot evidence window is invalid")
     reviewed = _parse_utc(reviewed_at)
-    if reviewed is None or finished_at is None or reviewed < finished_at:
-        errors.append("reviewed Phase 6 pilot evidence review timestamp is invalid")
+    expires = _parse_utc(valid_until)
+    if (
+        reviewed is None
+        or expires is None
+        or finished_at is None
+        or reviewed < finished_at
+        or expires <= reviewed
+    ):
+        errors.append("reviewed Phase 6 pilot evidence review validity is invalid")
+    elif not reviewed <= evaluated_at < expires:
+        errors.append("reviewed Phase 6 pilot evidence is not currently valid")
 
     executions: list[str] = []
     objects: list[str] = []
@@ -340,7 +356,11 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
-def index_errors(document: Any) -> list[str]:
+def index_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
     if not isinstance(document, dict) or set(document) != _SEALED_KEYS:
         return ["Phase 6 pilot evidence index top-level schema is invalid"]
     integrity = document.get("integrity")
@@ -352,7 +372,8 @@ def index_errors(document: Any) -> list[str]:
         or integrity["payload_sha256"] != _canonical_digest(payload)
     ):
         return ["Phase 6 pilot evidence index integrity is invalid"]
-    return _payload_errors(payload)
+    evaluation_time = evaluated_at or datetime.now(timezone.utc)
+    return _payload_errors(payload, evaluated_at=evaluation_time)
 
 
 def repository_contract_errors() -> list[str]:
@@ -361,8 +382,16 @@ def repository_contract_errors() -> list[str]:
     return []
 
 
-def pilot_input_alignment_errors(document: Any, pilot_inputs: Any) -> list[str]:
-    if inventory_errors(pilot_inputs):
+def pilot_input_alignment_errors(
+    document: Any,
+    pilot_inputs: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    evaluation_time = evaluated_at or datetime.now(timezone.utc)
+    if index_errors(document, evaluated_at=evaluation_time):
+        return ["Phase 6 pilot evidence index is invalid"]
+    if inventory_errors(pilot_inputs, evaluated_at=evaluation_time):
         return ["Phase 6 pilot evidence pilot inputs are invalid"]
     if pilot_inputs.get("synthetic") is not False or pilot_inputs.get("inventory_status") != "reviewed":
         return ["Phase 6 pilot evidence requires reviewed non-synthetic pilot inputs"]
@@ -376,6 +405,31 @@ def pilot_input_alignment_errors(document: Any, pilot_inputs: Any) -> list[str]:
     } if isinstance(roles, dict) else {}
     if document.get("pilot_subjects") != expected:
         errors.append("Phase 6 pilot evidence subjects do not match the reviewed pilot inputs")
+    window = document.get("window")
+    maintenance = pilot_inputs.get("maintenance_window")
+    pilot_started = _parse_utc(window.get("started_at")) if isinstance(window, dict) else None
+    pilot_finished = _parse_utc(window.get("finished_at")) if isinstance(window, dict) else None
+    pilot_reviewed = _parse_utc(document.get("reviewed_at"))
+    maintenance_started = (
+        _parse_utc(maintenance.get("starts_at")) if isinstance(maintenance, dict) else None
+    )
+    rollback_deadline = (
+        _parse_utc(maintenance.get("rollback_decision_deadline"))
+        if isinstance(maintenance, dict)
+        else None
+    )
+    if (
+        pilot_started is None
+        or pilot_finished is None
+        or pilot_reviewed is None
+        or maintenance_started is None
+        or rollback_deadline is None
+        or not maintenance_started <= pilot_started < pilot_finished < rollback_deadline
+        or pilot_reviewed > rollback_deadline
+    ):
+        errors.append(
+            "Phase 6 pilot evidence window or review is outside the approved pre-rollback interval"
+        )
     evidence_bindings = document.get("bindings")
     input_bindings = pilot_inputs.get("bindings")
     release_keys = ("release_tag", "release_commit", "container_manifest_sha256")
@@ -471,13 +525,17 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluated_at = datetime.now(timezone.utc)
     if arguments.command == "verify-repository":
         try:
             document = _load(EVIDENCE_INDEX)
         except (OSError, UnicodeError, json.JSONDecodeError):
             print("phase6-pilot-evidence-index-invalid", file=sys.stderr)
             return 1
-        errors = index_errors(document) + repository_contract_errors()
+        errors = index_errors(
+            document,
+            evaluated_at=evaluated_at,
+        ) + repository_contract_errors()
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
@@ -493,13 +551,17 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("phase6-pilot-evidence-index-invalid", file=sys.stderr)
         return 1
-    errors = index_errors(document)
+    errors = index_errors(document, evaluated_at=evaluated_at)
     if not errors and document.get("synthetic") is not False:
         errors.append("Phase 6 pilot evidence index must be reviewed non-synthetic material")
     if errors:
         print("; ".join(errors), file=sys.stderr)
         return 1
-    binding_errors = pilot_input_alignment_errors(document, pilot_inputs)
+    binding_errors = pilot_input_alignment_errors(
+        document,
+        pilot_inputs,
+        evaluated_at=evaluated_at,
+    )
     binding_errors += intake_binding_errors(document, manifest)
     bindings = document.get("bindings", {})
     binding_errors += release_execution_alignment_errors(

@@ -283,7 +283,7 @@
       "phases": [
         6
       ],
-      "purpose": "Approved pilot-role roster, operator ownership, alert-receiver ownership, maintenance window and target development/demo data-provenance and access-control evidence; use opaque references rather than personal data where possible.",
+      "purpose": "Reviewed pilot-role roster, operator and alert-receiver ownership, and approved maintenance window sealed with an exclusive validity bound that contains the full window; target development/demo data-provenance and access-control evidence must remain repository-external and use opaque references rather than personal data where possible.",
       "artifact_policy": "reviewed_inventory",
       "matrix_refs": [
         {
@@ -303,7 +303,7 @@
       "phases": [
         6
       ],
-      "purpose": "Repository-external evidence index for real pilot-user end-to-end execution and independent review.",
+      "purpose": "Repository-external evidence index for real pilot-user end-to-end execution fully inside the approved pre-rollback maintenance interval, followed by independent review with an exclusive validity bound.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
@@ -318,7 +318,7 @@
       "phases": [
         6
       ],
-      "purpose": "Repository-external evidence index for alert delivery, backup restore, rollback, training, audit-trace and non-production data-boundary controls, including immutable evidence locations.",
+      "purpose": "Repository-external evidence index for post-pilot-review alert delivery, backup restore, rollback, training, audit-trace and non-production data-boundary controls inside the approved maintenance window, with rollback executed by the decision deadline, immutable evidence locations and an exclusive review-validity bound.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {

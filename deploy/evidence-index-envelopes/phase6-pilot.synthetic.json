@@ -1,11 +1,12 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "record_type": "phase6_pilot_evidence_index",
   "index_reference": "pilot-evidence-index:synthetic-42",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
   "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "execution_scope": {
@@ -65,6 +66,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "864e8d3328cc50cca28af73c0cf5ac3f599954f91b01c6b56bda8d7e9030e282"
+    "payload_sha256": "8efdda53ff6e2515ed1304594a31497d1a2f4dc049e19aa06c44c8b8c153eb93"
   }
 }
