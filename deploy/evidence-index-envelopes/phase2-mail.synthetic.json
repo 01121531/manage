@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "phase2_mail_evidence_index",
   "index_reference": "synthetic-phase2-mail-index",
   "synthetic": true,
@@ -17,6 +17,17 @@
   "window": {
     "started_at": null,
     "finished_at": null
+  },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
   },
   "scenarios": {
     "mail_concurrency": null,
@@ -37,6 +48,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "8f1c48629de904e6ad032daf506111283c3d75659ba97aff1e8db5deeeb27547"
+    "payload_sha256": "9052852a8e972090d59125ae93ad5f1de99b3162dfe98bfa2de7196c5f71e91f"
   }
 }

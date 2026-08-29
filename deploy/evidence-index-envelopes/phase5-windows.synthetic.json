@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "phase5_windows_evidence_index",
   "index_reference": "synthetic-phase5-windows-index",
   "synthetic": true,
@@ -17,6 +17,17 @@
   "window": {
     "started_at": null,
     "finished_at": null
+  },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
   },
   "scenarios": {
     "windows_exe_login": null,
@@ -37,6 +48,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "fdbcedf7932bf740053de47f9998c0773cb85e3b48a060d05e21ec6f81847859"
+    "payload_sha256": "ee79b15944e9ede689382640a893e484d0886dd6b5dc9331a6a284d4b4ab69ff"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "phase1_platform_evidence_index",
   "index_reference": "synthetic-phase1-platform-index",
   "synthetic": true,
@@ -16,6 +16,17 @@
   "window": {
     "started_at": null,
     "finished_at": null
+  },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
   },
   "scenarios": {
     "keycloak_login_authorization": null,
@@ -37,6 +48,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "dec258b175701be90dc29c776fddcf092db60939b1a49742f6464d9fbd0231ba"
+    "payload_sha256": "fb16f02e698c36e790a1ec94640c7b68216556bab084f9187be3114615db5890"
   }
 }

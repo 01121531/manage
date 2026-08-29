@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import unittest
@@ -28,6 +29,18 @@ class ProviderContractConformanceTests(unittest.TestCase):
                 "synthetic": False,
                 "provider_reference": "sub2-provider-contract-42",
                 "review_reference": "sub2-independent-review-42",
+                "reviewed_at": "2026-08-26T10:00:00Z",
+                "source_provenance": {
+                    "provider_scope": {
+                        "environment": "production",
+                        "provider_account_reference": "sub2-provider-account-scope-42",
+                    },
+                    "source_document_reference": "sub2-api-contract-document-42",
+                    "source_version_reference": "sub2-api-contract-version-7",
+                    "source_sha256": "a" * 64,
+                    "captured_at": "2026-08-26T09:00:00Z",
+                    "valid_until": "2099-08-26T09:00:00Z",
+                },
             }
         )
         workflow = document["capabilities"]["workflow"]
@@ -240,6 +253,35 @@ class ProviderContractConformanceTests(unittest.TestCase):
         )
         reviewed = self._reviewed_sub2()
         self.assertEqual(contract_errors(reviewed, expected_type="sub2"), [])
+
+    def test_reviewed_contract_requires_current_scoped_source_provenance(self) -> None:
+        reviewed = self._reviewed_sub2()
+        mutations = []
+        wrong_scope = copy.deepcopy(reviewed)
+        wrong_scope["source_provenance"]["provider_scope"][
+            "provider_account_reference"
+        ] = "tbd"
+        mutations.append(wrong_scope)
+        wrong_digest = copy.deepcopy(reviewed)
+        wrong_digest["source_provenance"]["source_sha256"] = "A" * 64
+        mutations.append(wrong_digest)
+        review_before_capture = copy.deepcopy(reviewed)
+        review_before_capture["reviewed_at"] = "2026-08-26T08:00:00Z"
+        mutations.append(review_before_capture)
+        expired = copy.deepcopy(reviewed)
+        expired["source_provenance"]["valid_until"] = "2026-08-27T09:00:00Z"
+        mutations.append(expired)
+
+        evaluated_at = datetime(2026, 8, 28, tzinfo=timezone.utc)
+        for document in mutations:
+            with self.subTest(document=document["source_provenance"]):
+                self.assertTrue(
+                    contract_errors(
+                        document,
+                        expected_type="sub2",
+                        evaluated_at=evaluated_at,
+                    )
+                )
 
     def test_sub2_workflow_rejects_missing_phase_idempotency_and_query_semantics(self) -> None:
         reviewed = self._reviewed_sub2()

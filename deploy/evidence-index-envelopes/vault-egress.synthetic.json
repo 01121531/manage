@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "vault_egress_evidence_index",
   "index_reference": "synthetic-vault-egress-evidence-index",
   "synthetic": true,
@@ -17,6 +17,17 @@
   "window": {
     "started_at": null,
     "finished_at": null
+  },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
   },
   "scenarios": {
     "vault_api_cards_allowed": null,
@@ -51,6 +62,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "6f6509885273dc7cc49b62feca76112cf222146dcc5228084af92b426b757c76"
+    "payload_sha256": "16801a9a41b8789585ced7f90fe228f393724d12c7024ed1d4f6ce0c711a34ef"
   }
 }

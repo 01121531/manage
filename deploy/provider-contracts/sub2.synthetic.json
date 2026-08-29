@@ -1,9 +1,21 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "contract_type": "sub2",
   "provider_reference": "synthetic-sub2-contract",
   "synthetic": true,
   "review_reference": null,
+  "reviewed_at": null,
+  "source_provenance": {
+    "provider_scope": {
+      "environment": null,
+      "provider_account_reference": null
+    },
+    "source_document_reference": null,
+    "source_version_reference": null,
+    "source_sha256": null,
+    "captured_at": null,
+    "valid_until": null
+  },
   "production_acceptance": false,
   "transport": {
     "https_required": true,

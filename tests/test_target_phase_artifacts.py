@@ -89,6 +89,7 @@ class TargetPhaseArtifactTests(unittest.TestCase):
     def test_binding_requires_the_exact_same_manifest_artifact_hashes(self) -> None:
         manifest = {
             "environment": "staging",
+            "requirements_sha256": "e" * 64,
             "items": [
                 {
                     "id": identifier,
@@ -130,6 +131,14 @@ class TargetPhaseArtifactTests(unittest.TestCase):
             document["environment"] = "staging"
             for dependency in dependencies:
                 document["bindings"][f"{dependency}_sha256"] = hashes[dependency]
+            if identifier != "windows_pilot_inputs":
+                document["release_execution"]["target_intake"].update(
+                    {
+                        "environment": "staging",
+                        "requirements_sha256": "e" * 64,
+                        "checkpoint_phase": 0,
+                    }
+                )
             with self.subTest(identifier=identifier, state="aligned"):
                 self.assertEqual(
                     intake_binding_errors(

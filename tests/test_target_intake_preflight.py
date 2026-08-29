@@ -321,6 +321,25 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "started_at": "2026-08-26T11:00:00Z",
                         "finished_at": "2026-08-26T12:00:00Z",
                     },
+                    "release_execution": {
+                        "ledger_type": "forward",
+                        "evidence_object_reference": "worm-release-execution:record-42a",
+                        "evidence_sha256": next(
+                            (
+                                item["sha256"]
+                                for item in manifest["items"]
+                                if item["id"] == "release_execution_evidence"
+                                and item["status"] == "provided"
+                            ),
+                            "f" * 64,
+                        ),
+                        "target_intake": {
+                            "environment": manifest["environment"],
+                            "manifest_payload_sha256": phase0_manifest_sha256,
+                            "requirements_sha256": manifest["requirements_sha256"],
+                            "checkpoint_phase": 0,
+                        },
+                    },
                 }
             )
             document["scenarios"] = {
@@ -443,6 +462,25 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "window": {
                         "started_at": "2026-08-26T09:00:00Z",
                         "finished_at": "2026-08-26T10:00:00Z",
+                    },
+                    "release_execution": {
+                        "ledger_type": "forward",
+                        "evidence_object_reference": "worm-release-execution:record-42a",
+                        "evidence_sha256": next(
+                            (
+                                item["sha256"]
+                                for item in manifest["items"]
+                                if item["id"] == "release_execution_evidence"
+                                and item["status"] == "provided"
+                            ),
+                            "f" * 64,
+                        ),
+                        "target_intake": {
+                            "environment": manifest["environment"],
+                            "manifest_payload_sha256": phase0_manifest_sha256,
+                            "requirements_sha256": manifest["requirements_sha256"],
+                            "checkpoint_phase": 0,
+                        },
                     },
                 }
             )
@@ -711,6 +749,18 @@ class TargetIntakePreflightTests(unittest.TestCase):
         document["synthetic"] = False
         if "provider_reference" in document:
             document["provider_reference"] = f"{identifier}-provider-record-42"
+            document["reviewed_at"] = "2026-08-26T12:00:00Z"
+            document["source_provenance"] = {
+                "provider_scope": {
+                    "environment": "staging",
+                    "provider_account_reference": f"{identifier}-account-scope-42",
+                },
+                "source_document_reference": f"{identifier}-source-document-42",
+                "source_version_reference": f"{identifier}-source-version-42",
+                "source_sha256": "a" * 64,
+                "captured_at": "2026-08-26T10:00:00Z",
+                "valid_until": "2099-08-26T10:00:00Z",
+            }
         else:
             document["decision_reference"] = f"{identifier}-decision-record-42"
             document["decision_status"] = "approved"
@@ -924,7 +974,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
         )
         self.assertEqual(
             {phase: len(identifiers) for phase, identifiers in checkpoints.items()},
-            {0: 6, 1: 7, 2: 8, 3: 9, 4: 12, 5: 14, 6: 17},
+            {0: 6, 1: 8, 2: 9, 3: 10, 4: 12, 5: 14, 6: 17},
         )
         self.assertIn("release_execution_evidence", phase6)
         self.assertEqual(phase6, tuple(item["id"] for item in self.requirements["requirements"]))
@@ -977,8 +1027,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "status": "provided",
                         "artifact_path": str(artifact.resolve()),
                         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                        "reviewed_by": "review-ticket-2026-42",
-                        "reviewed_at": "2026-08-26T12:00:00Z",
+                        "reviewed_by": document.get(
+                            "review_reference", "review-ticket-2026-42"
+                        ),
+                        "reviewed_at": document.get(
+                            "reviewed_at", "2026-08-26T12:00:00Z"
+                        ),
                         "redaction_confirmed": True,
                     }
                 )
@@ -1279,14 +1333,14 @@ class TargetIntakePreflightTests(unittest.TestCase):
             changed_checkpoint_sub2 = next(
                 item
                 for item in changed_checkpoint["items"]
-                if item["id"] == "sub2_contract"
+                if item["id"] == "card_pci_boundary"
             )
             changed_checkpoint_sub2["reviewed_at"] = "2026-08-27T12:00:00Z"
             matching_current = copy.deepcopy(manifest)
             next(
                 item
                 for item in matching_current["items"]
-                if item["id"] == "sub2_contract"
+                if item["id"] == "card_pci_boundary"
             )["reviewed_at"] = "2026-08-27T12:00:00Z"
             changed_checkpoint_path = root / "changed-phase0-checkpoint.json"
             changed_checkpoint_path.write_text(
@@ -1335,6 +1389,35 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "Phase 6 pilot evidence sub2_execution_evidence binding does not match this intake manifest",
                 replay_errors,
             )
+            for identifier, reseal in (
+                ("phase1_platform_evidence", seal_target_phase_artifact),
+                ("vault_egress_evidence", seal_vault_egress_index),
+            ):
+                item = next(
+                    entry for entry in manifest["items"] if entry["id"] == identifier
+                )
+                path = Path(item["artifact_path"])
+                original = path.read_bytes()
+                changed = json.loads(original)
+                changed["release_execution"]["evidence_sha256"] = "f" * 64
+                changed = reseal(
+                    {key: value for key, value in changed.items() if key != "integrity"}
+                )
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                item["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                with self.subTest(identifier=identifier):
+                    self.assertIn(
+                        "release execution whole-file digest does not match its selector",
+                        intake_errors(
+                            manifest,
+                            self.requirements,
+                            repository_root=repository,
+                            require_complete=True,
+                            phase0_checkpoint_manifest=checkpoint_path.resolve(),
+                        ),
+                    )
+                path.write_bytes(original)
+                item["sha256"] = hashlib.sha256(original).hexdigest()
             sub2_path.write_bytes(original_sub2_bytes)
             sub2_item["sha256"] = hashlib.sha256(original_sub2_bytes).hexdigest()
             sub2_item["reviewed_by"] = "sub2-independent-review-record-99"
@@ -1450,6 +1533,54 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertIn(
                 "mail_contract provider contract must be reviewed non-synthetic material",
                 errors,
+            )
+
+    def test_preflight_binds_provider_scope_and_sealed_review_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            manifest = create_intake_manifest("staging", self.requirements)
+            document = self._artifact_document("mail_contract", manifest)
+            artifact = root / "mail-contract.json"
+            artifact.write_text(json.dumps(document), encoding="utf-8")
+            item = next(
+                entry for entry in manifest["items"] if entry["id"] == "mail_contract"
+            )
+            item.update(
+                {
+                    "status": "provided",
+                    "artifact_path": str(artifact.resolve()),
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "reviewed_by": "different-review-record-42",
+                    "reviewed_at": document["reviewed_at"],
+                    "redaction_confirmed": True,
+                }
+            )
+            self.assertIn(
+                "mail_contract review metadata does not match this intake manifest",
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=False,
+                ),
+            )
+
+            item["reviewed_by"] = document["review_reference"]
+            document["source_provenance"]["provider_scope"]["environment"] = (
+                "production"
+            )
+            artifact.write_text(json.dumps(document), encoding="utf-8")
+            item["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            self.assertIn(
+                "mail_contract provider scope does not match this intake manifest",
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=False,
+                ),
             )
 
     def test_preflight_rejects_duplicate_keys_in_registered_json_artifact(self) -> None:

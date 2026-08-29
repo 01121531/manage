@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -28,12 +29,23 @@ _TOP_LEVEL_KEYS = {
     "provider_reference",
     "synthetic",
     "review_reference",
+    "reviewed_at",
+    "source_provenance",
     "production_acceptance",
     "transport",
     "capabilities",
     "field_shapes",
     "redaction",
 }
+_SOURCE_PROVENANCE_KEYS = {
+    "provider_scope",
+    "source_document_reference",
+    "source_version_reference",
+    "source_sha256",
+    "captured_at",
+    "valid_until",
+}
+_PROVIDER_SCOPE_KEYS = {"environment", "provider_account_reference"}
 _TRANSPORT_KEYS = {
     "https_required",
     "redirect_policy",
@@ -134,6 +146,12 @@ _SUB2_OPERATION_PHASES = {
 }
 _REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _FIELD_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_ENVIRONMENT = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+_UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z$"
+)
 _PLACEHOLDERS = {"example", "placeholder", "tbd", "todo", "unknown"}
 _EXPECTED_SUB2_GAP = [
     "sub2 provider workflow is unverified",
@@ -148,6 +166,16 @@ def _safe_reference(value: Any) -> bool:
         and _REFERENCE.fullmatch(value) is not None
         and value.casefold() not in _PLACEHOLDERS
     )
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
 
 
 def _field_names(value: Any, *, nonempty: bool = True) -> bool:
@@ -169,10 +197,15 @@ def _status_codes(value: Any) -> bool:
     return value == sorted(set(value))
 
 
-def _common_errors(document: dict[str, Any], expected_type: str | None) -> list[str]:
+def _common_errors(
+    document: dict[str, Any],
+    expected_type: str | None,
+    *,
+    evaluated_at: datetime | None,
+) -> list[str]:
     errors: list[str] = []
     contract_type = document.get("contract_type")
-    expected_schema = {"mail": 1, "sub2": 2}.get(contract_type)
+    expected_schema = {"mail": 2, "sub2": 3}.get(contract_type)
     if contract_type not in {"mail", "sub2"} or document.get(
         "schema_version"
     ) != expected_schema:
@@ -184,13 +217,63 @@ def _common_errors(document: dict[str, Any], expected_type: str | None) -> list[
     provider_reference = document.get("provider_reference")
     synthetic = document.get("synthetic")
     review_reference = document.get("review_reference")
+    reviewed_at = document.get("reviewed_at")
+    source = document.get("source_provenance")
     if not _safe_reference(provider_reference) or not isinstance(synthetic, bool):
         errors.append("provider contract reference is invalid")
     elif synthetic:
-        if not provider_reference.startswith("synthetic-") or review_reference is not None:
+        if (
+            not provider_reference.startswith("synthetic-")
+            or review_reference is not None
+            or reviewed_at is not None
+            or source
+            != {
+                "provider_scope": {
+                    "environment": None,
+                    "provider_account_reference": None,
+                },
+                "source_document_reference": None,
+                "source_version_reference": None,
+                "source_sha256": None,
+                "captured_at": None,
+                "valid_until": None,
+            }
+        ):
             errors.append("synthetic provider contract review metadata is invalid")
-    elif not _safe_reference(review_reference):
-        errors.append("real provider contract requires a review reference")
+    else:
+        reviewed = _parse_utc(reviewed_at)
+        captured = (
+            _parse_utc(source.get("captured_at")) if isinstance(source, dict) else None
+        )
+        valid_until = (
+            _parse_utc(source.get("valid_until")) if isinstance(source, dict) else None
+        )
+        if not _safe_reference(review_reference) or reviewed is None:
+            errors.append("real provider contract requires canonical review metadata")
+        if (
+            not isinstance(source, dict)
+            or set(source) != _SOURCE_PROVENANCE_KEYS
+            or not isinstance(source.get("provider_scope"), dict)
+            or set(source["provider_scope"]) != _PROVIDER_SCOPE_KEYS
+            or not isinstance(source["provider_scope"].get("environment"), str)
+            or _ENVIRONMENT.fullmatch(source["provider_scope"]["environment"])
+            is None
+            or source["provider_scope"]["environment"].casefold() in _PLACEHOLDERS
+            or not _safe_reference(
+                source["provider_scope"].get("provider_account_reference")
+            )
+            or not _safe_reference(source.get("source_document_reference"))
+            or not _safe_reference(source.get("source_version_reference"))
+            or not isinstance(source.get("source_sha256"), str)
+            or _SHA256.fullmatch(source["source_sha256"]) is None
+            or captured is None
+            or valid_until is None
+        ):
+            errors.append("real provider contract source provenance is invalid")
+        elif reviewed is not None and not captured <= reviewed < valid_until:
+            errors.append("real provider contract source timeline is invalid")
+        elif valid_until <= (evaluated_at or datetime.now(timezone.utc)):
+            errors.append("real provider contract source provenance is expired")
 
     transport = document.get("transport")
     if not isinstance(transport, dict) or set(transport) != _TRANSPORT_KEYS:
@@ -431,10 +514,15 @@ def _sub2_errors(capabilities: Any, *, synthetic: bool) -> list[str]:
     return errors
 
 
-def contract_errors(document: Any, *, expected_type: str | None = None) -> list[str]:
+def contract_errors(
+    document: Any,
+    *,
+    expected_type: str | None = None,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
     if not isinstance(document, dict) or set(document) != _TOP_LEVEL_KEYS:
         return ["provider contract top-level schema is invalid"]
-    errors = _common_errors(document, expected_type)
+    errors = _common_errors(document, expected_type, evaluated_at=evaluated_at)
     if document.get("contract_type") == "mail":
         capabilities = document.get("capabilities")
         errors.extend(_mail_errors(capabilities))

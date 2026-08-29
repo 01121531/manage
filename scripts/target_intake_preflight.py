@@ -131,6 +131,11 @@ _ALLOWED_POLICIES = {
 _SUPPLEMENTAL_MATRIX_REFS = {
     "release_execution_evidence": (
         (
+            1,
+            "target_evidence_required",
+            "target PostgreSQL, Redis, TLS, secret-manager, backup and CI release evidence",
+        ),
+        (
             4,
             "target_evidence_required",
             "real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five status outcomes, same-key replay and unknown-reconciliation evidence",
@@ -698,6 +703,31 @@ def intake_errors(
             errors.append(f"{identifier} status is invalid")
     if phase0_approval is not None:
         errors.extend(intake_binding_errors(phase0_approval, document))
+    for identifier, contract in provider_contracts.items():
+        source = contract.get("source_provenance")
+        scope = source.get("provider_scope") if isinstance(source, dict) else None
+        if (
+            not isinstance(scope, dict)
+            or scope.get("environment") != document.get("environment")
+        ):
+            errors.append(
+                f"{identifier} provider scope does not match this intake manifest"
+            )
+        own_items = [
+            item
+            for item in document["items"]
+            if isinstance(item, dict) and item.get("id") == identifier
+        ]
+        if (
+            len(own_items) != 1
+            or own_items[0].get("status") != "provided"
+            or own_items[0].get("reviewed_by")
+            != contract.get("review_reference")
+            or own_items[0].get("reviewed_at") != contract.get("reviewed_at")
+        ):
+            errors.append(
+                f"{identifier} review metadata does not match this intake manifest"
+            )
     if (
         target_inventory is not None
         and target_inventory.get("environment") != document.get("environment")
@@ -713,6 +743,20 @@ def intake_errors(
                 expected_type=identifier,
             )
         )
+        if identifier != "windows_pilot_inputs" and release_execution is not None:
+            bindings = artifact.get("bindings", {})
+            errors.extend(
+                release_execution_identity_alignment_errors(
+                    artifact.get("release_execution"),
+                    release_execution,
+                    environment=artifact.get("environment"),
+                    release_tag=bindings.get("release_tag"),
+                    release_commit=bindings.get("release_commit"),
+                    container_manifest_sha256=bindings.get(
+                        "container_manifest_sha256"
+                    ),
+                )
+            )
     if sub2_evidence is not None:
         errors.extend(sub2_evidence_binding_errors(sub2_evidence, document))
         if release_execution is not None:
@@ -739,6 +783,20 @@ def intake_errors(
             )
     if vault_egress_evidence is not None:
         errors.extend(vault_egress_binding_errors(vault_egress_evidence, document))
+        if release_execution is not None:
+            bindings = vault_egress_evidence.get("bindings", {})
+            errors.extend(
+                release_execution_identity_alignment_errors(
+                    vault_egress_evidence.get("release_execution"),
+                    release_execution,
+                    environment=vault_egress_evidence.get("environment"),
+                    release_tag=bindings.get("release_tag"),
+                    release_commit=bindings.get("release_commit"),
+                    container_manifest_sha256=bindings.get(
+                        "container_manifest_sha256"
+                    ),
+                )
+            )
     if phase6_pilot_inputs is not None:
         errors.extend(pilot_input_binding_errors(phase6_pilot_inputs, document))
     if phase6_pilot_evidence is not None:

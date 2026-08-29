@@ -17,6 +17,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.external_json import MAX_INTAKE_JSON_BYTES, load_unique_json
+from scripts.release_execution_binding import (
+    release_execution_alignment_errors,
+    selector_errors as release_execution_selector_errors,
+)
 
 
 ARTIFACT_PATHS = {
@@ -104,6 +108,7 @@ _EVIDENCE_PAYLOAD_KEYS = {
     "environment",
     "bindings",
     "window",
+    "release_execution",
     "scenarios",
     "prohibited_content",
 }
@@ -252,7 +257,7 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
     payload = {key: value for key, value in document.items() if key != "integrity"}
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 1
+        or payload.get("schema_version") != 2
         or payload.get("record_type") != _RECORD_TYPES[identifier]
         or payload.get("production_acceptance") is not False
     ):
@@ -286,6 +291,9 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
             or window != {"started_at": None, "finished_at": None}
+            or release_execution_selector_errors(
+                payload.get("release_execution"), synthetic=True
+            )
             or not isinstance(scenarios, dict)
             or any(value is not None for value in scenarios.values())
         ):
@@ -313,6 +321,18 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
             )
         ):
             errors.append(f"reviewed {label} release or intake binding is invalid")
+    errors.extend(
+        f"{label} {error}"
+        for error in release_execution_selector_errors(
+            payload.get("release_execution"),
+            synthetic=False,
+            environment=(
+                payload.get("environment")
+                if isinstance(payload.get("environment"), str)
+                else None
+            ),
+        )
+    )
     started_at = _parse_utc(window.get("started_at")) if isinstance(window, dict) else None
     finished_at = _parse_utc(window.get("finished_at")) if isinstance(window, dict) else None
     if started_at is None or finished_at is None or finished_at <= started_at:
@@ -470,6 +490,23 @@ def intake_binding_errors(document: Any, manifest: Any, *, expected_type: str) -
     errors: list[str] = []
     if document.get("environment") != manifest.get("environment"):
         errors.append(f"{label} environment does not match this intake manifest")
+    if expected_type != "windows_pilot_inputs":
+        release_execution = document.get("release_execution")
+        target_intake = (
+            release_execution.get("target_intake")
+            if isinstance(release_execution, dict)
+            else None
+        )
+        if (
+            not isinstance(target_intake, dict)
+            or target_intake.get("environment") != manifest.get("environment")
+            or target_intake.get("requirements_sha256")
+            != manifest.get("requirements_sha256")
+            or target_intake.get("checkpoint_phase") != 0
+        ):
+            errors.append(
+                f"{label} release execution intake does not match this intake manifest"
+            )
     targets = (
         ("target_platform_inventory",)
         if expected_type == "windows_pilot_inputs"
@@ -515,6 +552,7 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--input", required=True, type=Path)
     check.add_argument("--expected-type", required=True, choices=tuple(ARTIFACT_PATHS))
     check.add_argument("--intake-manifest", required=True, type=Path)
+    check.add_argument("--release-execution-evidence", type=Path)
     return parser
 
 
@@ -547,6 +585,21 @@ def main(argv: list[str] | None = None) -> int:
         manifest,
         expected_type=arguments.expected_type,
     )
+    if arguments.expected_type != "windows_pilot_inputs":
+        if arguments.release_execution_evidence is None:
+            binding_errors.append("target evidence requires release execution evidence")
+        else:
+            bindings = document.get("bindings", {})
+            binding_errors += release_execution_alignment_errors(
+                document.get("release_execution"),
+                arguments.release_execution_evidence,
+                environment=document.get("environment"),
+                release_tag=bindings.get("release_tag"),
+                release_commit=bindings.get("release_commit"),
+                container_manifest_sha256=bindings.get(
+                    "container_manifest_sha256"
+                ),
+            )
     if binding_errors:
         print("; ".join(binding_errors), file=sys.stderr)
         return 2

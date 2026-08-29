@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "phase3_card_evidence_index",
   "index_reference": "synthetic-phase3-card-index",
   "synthetic": true,
@@ -19,6 +19,17 @@
     "started_at": null,
     "finished_at": null
   },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
+  },
   "scenarios": {
     "postgres_concurrent_allocation": null,
     "target_migration": null,
@@ -36,6 +47,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "84d38a4b4989cd1838db9340c509b02ef14848bf40590b8c9e1e7ec368912aca"
+    "payload_sha256": "de61137b69757419f57a0a4eef58d75a275faf8ca6efb60034b4aa32d44ad6e8"
   }
 }

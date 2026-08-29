@@ -47,6 +47,17 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                     "started_at": "2026-08-26T09:00:00Z",
                     "finished_at": "2026-08-26T10:00:00Z",
                 },
+                "release_execution": {
+                    "ledger_type": "forward",
+                    "evidence_object_reference": "worm-release-execution:record-42",
+                    "evidence_sha256": "f" * 64,
+                    "target_intake": {
+                        "environment": "staging",
+                        "manifest_payload_sha256": "1" * 64,
+                        "requirements_sha256": "e" * 64,
+                        "checkpoint_phase": 0,
+                    },
+                },
             }
         )
         document["scenarios"] = {
@@ -184,11 +195,33 @@ class VaultEgressEvidenceTests(unittest.TestCase):
             root = Path(temporary)
             index_path = root / "vault-egress-index.json"
             manifest_path = root / "intake.json"
+            release_path = root / "release.json"
+            release_path.write_text("{}", encoding="utf-8")
+            bound_args = [
+                "--release-execution-evidence",
+                str(release_path),
+            ]
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
             self.assertEqual(main(["check", "--input", str(index_path), "--intake-manifest", str(manifest_path)]), 1)
             index_path.write_text(json.dumps(reviewed), encoding="utf-8")
-            self.assertEqual(main(["check", "--input", str(index_path), "--intake-manifest", str(manifest_path)]), 0)
+            with mock.patch(
+                "scripts.vault_egress_evidence.release_execution_alignment_errors",
+                return_value=[],
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "check",
+                            "--input",
+                            str(index_path),
+                            "--intake-manifest",
+                            str(manifest_path),
+                            *bound_args,
+                        ]
+                    ),
+                    0,
+                )
             with mock.patch(
                 "scripts.vault_egress_evidence.repository_control_errors",
                 return_value=["repository control drift"],
@@ -201,13 +234,26 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                             str(index_path),
                             "--intake-manifest",
                             str(manifest_path),
+                            *bound_args,
                         ]
                     ),
                     3,
                 )
             manifest["items"][1]["sha256"] = "f" * 64
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-            self.assertEqual(main(["check", "--input", str(index_path), "--intake-manifest", str(manifest_path)]), 2)
+            self.assertEqual(
+                main(
+                    [
+                        "check",
+                        "--input",
+                        str(index_path),
+                        "--intake-manifest",
+                        str(manifest_path),
+                        *bound_args,
+                    ]
+                ),
+                2,
+            )
 
     def test_runbook_states_external_scope_and_evidence_limit(self) -> None:
         rendered = json.dumps(self.template, ensure_ascii=False).casefold()

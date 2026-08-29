@@ -73,10 +73,12 @@ above, change the matching item to this shape:
 ```
 
 Use an opaque ticket or approval reference for `reviewed_by`. For the sealed
-Sub2, Phase 6 pilot and Phase 6 operations execution indexes, this value must
+Mail/Sub2 provider contracts and the Sub2, Phase 6 pilot and Phase 6 operations
+execution indexes, this value must
 exactly equal the index's sealed `review_reference`, and `reviewed_at` must
 exactly equal its sealed UTC review timestamp. That timestamp cannot precede
-the index execution window's `finished_at`. For other artifact policies the
+an execution index's `finished_at`. For provider contracts it must fall between
+the source capture time and the exclusive `valid_until`. For other artifact policies the
 timestamp must still be canonical UTC ending in `Z`. Recompute SHA-256 after
 every approved artifact change. Do not add inline artifact content or extra
 manifest fields; the schema is closed.
@@ -87,12 +89,19 @@ The committed `deploy/provider-contracts/*.synthetic.json` files document the
 closed Mail and Sub2 field-shape envelopes. Copy only the relevant shape to the
 protected external intake directory, replace its capability mappings with the
 reviewed provider facts, set `synthetic=false`, and record opaque
-`provider_reference` and `review_reference` values. Synthetic contracts cannot
+`provider_reference` and `review_reference` values. Mail schema v2 and Sub2
+schema v3 also require a closed `source_provenance`: the target environment and
+opaque provider-account scope; opaque source-document and source-version
+references; the lowercase SHA-256 of the immutable, redacted external source
+capture; and canonical UTC `captured_at` and exclusive `valid_until`. Seal the
+contract's `reviewed_at` between those timestamps. Strict intake rejects an
+expired contract, a scope environment different from the intake environment,
+or manifest review metadata different from the contract. Synthetic contracts cannot
 satisfy strict intake, and the envelope must never contain example values,
 credentials, message content, verification codes, provider URLs, request or
 response bodies, or cardholder data.
 
-The Sub2 schema-v2 workflow is deliberately pending in the repository template.
+The Sub2 schema-v3 workflow is deliberately pending in the repository template.
 Populate all four ordered operations (`balance_check`,
 `authorization_exchange`, `create`, and `status_query`) with opaque operation
 references, HTTP methods, and request/response field names only. Declare whether
@@ -266,8 +275,12 @@ independent-reviewer, correlation and immutable evidence-object references,
 canonical UTC time, its fixed observation, external-object SHA-256,
 `result=passed`, and `redaction_confirmed=true`. Set `synthetic=false`, the
 status to `reviewed`, and bind the artifact to the same manifest environment
-and exact prerequisite item hashes. The evidence indexes also bind the release
-tag, 40-hex commit and immutable container-manifest SHA-256.
+and exact prerequisite item hashes. Every execution evidence index also selects
+the same successful schema-v2 release ledger by typed WORM reference, whole-file
+SHA-256 and Phase 0 checkpoint identity. Its release tag, 40-hex commit and
+immutable container-manifest SHA-256 must match an independent parse of that
+ledger. `windows_pilot_inputs` is a pre-execution inventory and therefore does
+not carry a release selector.
 
 Check any reviewed artifact with its exact type, for example:
 
@@ -275,7 +288,8 @@ Check any reviewed artifact with its exact type, for example:
 python scripts/target_phase_artifacts.py check `
   --input D:\email-platform-evidence\intake\phase2-mail-evidence-index.json `
   --expected-type phase2_mail_evidence `
-  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json
+  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
 ```
 
 Allowed types are `phase1_platform_evidence`, `phase2_mail_evidence`,
@@ -352,13 +366,16 @@ reviewer, trace and immutable evidence-object references, canonical UTC time,
 the fixed observation, artifact SHA-256, `result=passed`, and explicit
 redaction. Bind the sealed index to the release tag, 40-hex commit, container
 manifest, and the exact Sub2 contract and target platform inventory hashes from
-the same intake manifest. Do not record Vault addresses or responses, supplier
+the same intake manifest. Select the same successful schema-v2 release ledger
+by typed WORM reference, whole-file digest and Phase 0 checkpoint identity; the
+release triple must match the independently parsed ledger. Do not record Vault addresses or responses, supplier
 URLs or bodies, credentials, tokens, PAN/CVV, verification codes, or identities.
 
 ```powershell
 python scripts/vault_egress_evidence.py check `
   --input D:\email-platform-evidence\intake\vault-egress-evidence-index.json `
-  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json
+  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
 ```
 
 Exit code 1 means the sealed content or scenario coverage is invalid; exit code
@@ -563,7 +580,9 @@ release. A newly approved Phase 0 contract requires a new checkpoint and a new
 release execution ledger.
 
 Advance through the intermediate phases only after each phase's typed external
-material is reviewed and registered. Phase 1 adds the platform evidence index;
+material is reviewed and registered. The successful release execution ledger
+and frozen Phase 0 checkpoint become cumulative requirements at Phase 1 because
+every Phase 1–5 execution index selects that ledger. Phase 1 adds the platform evidence index;
 Phase 2 adds the real Mail evidence index (the reviewed Mail contract is already
 part of Phase 0); Phase 3 adds the card/identity evidence index (the reviewed
 PCI and OIDC decisions are already part of Phase 0):
@@ -571,20 +590,23 @@ PCI and OIDC decisions are already part of Phase 0):
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 1
 
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 2
 
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 3
 ```
 
-Before Phase 4 promotion, additionally require the selected successful release
-execution ledger, real Sub2 execution and Vault/egress evidence indexes. The
-Sub2 selector must name the same ledger bytes and Phase 0 checkpoint:
+Before Phase 4 promotion, additionally require the real Sub2 execution and
+Vault/egress evidence indexes. Both selectors must name the same ledger bytes
+and Phase 0 checkpoint already required since Phase 1:
 
 ```powershell
 python scripts/target_intake_preflight.py preflight `

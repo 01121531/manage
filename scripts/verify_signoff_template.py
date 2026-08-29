@@ -124,6 +124,8 @@ def main() -> int:
         "Phase 6 selected release-execution ledger type, WORM reference and whole-file SHA-256:",
         "Phase 6 selected release-execution Phase 0 environment, manifest payload SHA-256, requirements SHA-256 and checkpoint phase:",
         "Phase 6 selected schema-v2 ledger independent parse and successful-terminal result:",
+        "Mail/Sub2 provider scope, external source version/SHA-256, capture/review/valid-until UTC and same-manifest review result:",
+        "Phase 1–5 execution-index exact release-ledger selectors and target-release alignment result:",
         "Phase 4 Sub2 evidence exact release-ledger whole-file selector and target-release alignment result:",
         "Phase 4 Sub2 sealed review reference/time, execution window and same-manifest review-metadata result:",
         "Phase 6 pilot evidence same-manifest Sub2-evidence, pilot-input and target-inventory SHA-256 bindings:",
