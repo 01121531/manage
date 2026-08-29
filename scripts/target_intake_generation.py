@@ -28,10 +28,11 @@ from scripts.target_intake_manifest import (
     canonical_payload_sha256,
     manifest_shape_errors,
 )
+from scripts.target_intake_validator_contract import validator_contract_shape_errors
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECEIPT_KIND = "target_intake_generation_receipt_v3"
+RECEIPT_KIND = "target_intake_generation_receipt_v4"
 RECEIPT_KEYS = {
     "schema_version",
     "kind",
@@ -47,6 +48,7 @@ VALIDATION_CONTEXT_KEYS = {
     "evaluated_at",
     "requirements",
     "phase_acceptance_matrix",
+    "validator_contract",
 }
 MANIFEST_SELECTOR_KEYS = {
     "path",
@@ -111,16 +113,19 @@ def _validation_context(
     evaluated_at: str,
     requirements: Any,
     phase_acceptance_matrix: Any,
+    validator_contract: Any,
 ) -> dict[str, Any]:
     context = {
         "evaluated_at": evaluated_at,
         "requirements": requirements,
         "phase_acceptance_matrix": phase_acceptance_matrix,
+        "validator_contract": validator_contract,
     }
     if (
         _parse_recorded_utc(evaluated_at) is None
         or not isinstance(requirements, dict)
         or not isinstance(phase_acceptance_matrix, dict)
+        or validator_contract_shape_errors(validator_contract)
     ):
         raise GenerationLineageError()
     return context
@@ -232,7 +237,7 @@ def receipt_errors(document: Any) -> list[str]:
         return ["generation receipt top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 3
+        document.get("schema_version") != 4
         or document.get("kind") != RECEIPT_KIND
         or document.get("production_acceptance") is not False
         or not _external_output_locator(document.get("receipt_path"))
@@ -245,6 +250,7 @@ def receipt_errors(document: Any) -> list[str]:
         or _parse_recorded_utc(context.get("evaluated_at")) is None
         or not isinstance(context.get("requirements"), dict)
         or not isinstance(context.get("phase_acceptance_matrix"), dict)
+        or validator_contract_shape_errors(context.get("validator_contract"))
     ):
         errors.append("generation receipt validation context is invalid")
     sequence = document.get("sequence")
@@ -320,11 +326,12 @@ def create_genesis_receipt(
     evaluated_at: str,
     requirements: dict[str, Any],
     phase_acceptance_matrix: dict[str, Any],
+    validator_contract: dict[str, Any],
 ) -> dict[str, Any]:
     if any(item.get("status") != "missing" for item in manifest.get("items", [])):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 3,
+        "schema_version": 4,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
         "receipt_path": os.path.abspath(receipt_path),
@@ -333,7 +340,7 @@ def create_genesis_receipt(
         "predecessor": None,
         "registered_item": None,
         "validation_context": _validation_context(
-            evaluated_at, requirements, phase_acceptance_matrix
+            evaluated_at, requirements, phase_acceptance_matrix, validator_contract
         ),
     }
     if receipt_errors(receipt):
@@ -356,6 +363,7 @@ def create_registration_receipt(
     evaluated_at: str,
     requirements: dict[str, Any],
     phase_acceptance_matrix: dict[str, Any],
+    validator_contract: dict[str, Any],
 ) -> dict[str, Any]:
     if (
         manifest_registration_item_id(predecessor.manifest, manifest)
@@ -364,7 +372,7 @@ def create_registration_receipt(
     ):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 3,
+        "schema_version": 4,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
         "receipt_path": os.path.abspath(receipt_path),
@@ -388,7 +396,7 @@ def create_registration_receipt(
             "candidate_file_sha256": hashlib.sha256(candidate_raw).hexdigest(),
         },
         "validation_context": _validation_context(
-            evaluated_at, requirements, phase_acceptance_matrix
+            evaluated_at, requirements, phase_acceptance_matrix, validator_contract
         ),
     }
     if receipt_errors(receipt):

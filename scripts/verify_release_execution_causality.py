@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BINDING = ROOT / "scripts" / "release_execution_binding.py"
 INTAKE = ROOT / "scripts" / "target_intake_preflight.py"
 GENERATION = ROOT / "scripts" / "target_intake_generation.py"
+VALIDATOR_CONTRACT = ROOT / "scripts" / "target_intake_validator_contract.py"
 ACCEPTANCE = ROOT / "scripts" / "target_intake_acceptance.py"
 INTAKE_MANIFEST = ROOT / "scripts" / "target_intake_manifest.py"
 EXTERNAL_JSON = ROOT / "scripts" / "external_json.py"
@@ -58,12 +59,19 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-acceptance=write-once-receipt",
-    "generation-receipt-locator=self-bound-v3",
+    "generation-receipt-locator=self-bound-v4",
     "generation-history-semantic-replay=every-generation",
     "generation-receipt-evaluation-time=recorded-host-utc",
+    "generation-validator-contract=closed-v1-exact-source-inventory",
+    "generation-validator-on-disk-source-inventory=whole-file-sha256-matched",
+    "generation_validator_contract_sha256=",
     "authoring-validation-context-authority=unverified",
     "authoring-trusted-time=unverified",
-    "authoring-validator-version=unverified",
+    "authoring-validator-source-authority=unverified",
+    "authoring-validator-runtime-identity=unverified",
+    "authoring-validator-runtime=unverified",
+    "authoring-validator-execution=unverified",
+    "authoring-validator-source-snapshot-atomicity=unverified",
     "selected-lineage=caller-pinned-local-receipt-chain-validated",
     "authoring-publication=local-no-replace-readback",
     "authoring-generation-fork-protection=unverified",
@@ -120,6 +128,38 @@ EXPECTED_INTAKE_IDS = (
     "phase6_pilot_evidence",
     "phase6_operations_evidence",
 )
+EXPECTED_VALIDATOR_SOURCES = (
+    "scripts/backup_output_policy.py",
+    "scripts/check_internal_tls_expiry.py",
+    "scripts/decision_envelope_validation.py",
+    "scripts/deploy_release_evidence.py",
+    "scripts/external_json.py",
+    "scripts/external_text.py",
+    "scripts/external_yaml.py",
+    "scripts/phase0_boundary_approval.py",
+    "scripts/phase6_operations_evidence.py",
+    "scripts/phase6_pilot_evidence.py",
+    "scripts/phase6_pilot_inputs.py",
+    "scripts/phase6_rehearsal.py",
+    "scripts/private_secret_file.py",
+    "scripts/provider_contract_conformance.py",
+    "scripts/release_execution_binding.py",
+    "scripts/rollback_release_evidence.py",
+    "scripts/rolling_release_evidence.py",
+    "scripts/sub2_execution_evidence.py",
+    "scripts/target_intake_acceptance.py",
+    "scripts/target_intake_generation.py",
+    "scripts/target_intake_manifest.py",
+    "scripts/target_intake_preflight.py",
+    "scripts/target_intake_validator_contract.py",
+    "scripts/target_phase_artifacts.py",
+    "scripts/target_platform_inventory.py",
+    "scripts/tls_runtime_identity.py",
+    "scripts/training_evidence.py",
+    "scripts/vault_egress_evidence.py",
+    "scripts/verify_phase_acceptance_matrix.py",
+    "scripts/verify_vault_isolation.py",
+)
 
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
@@ -146,6 +186,129 @@ def _literal_assignment(tree: ast.Module, name: str) -> object | None:
             except (ValueError, TypeError):
                 return None
     return None
+
+
+def _recovery_callgraph_errors(sources: dict[str, str]) -> list[str]:
+    """Reject mutations reachable from the generation recovery read path."""
+    trees: dict[str, ast.Module] = {}
+    functions: dict[tuple[str, str], ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    imported_symbols: dict[str, dict[str, tuple[str, str]]] = {}
+    imported_modules: dict[str, dict[str, str]] = {}
+    for path, source in sources.items():
+        module = path.removesuffix(".py").replace("/", ".")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return ["generation recovery validator sources are not valid Python"]
+        trees[module] = tree
+        functions.update(
+            {
+                (module, node.name): node
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+        )
+        imported_symbols[module] = {}
+        imported_modules[module] = {}
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    imported_symbols[module][alias.asname or alias.name] = (
+                        node.module,
+                        alias.name,
+                    )
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported_modules[module][alias.asname or alias.name] = alias.name
+
+    forbidden_leaf_calls = {
+        "write",
+        "write_bytes",
+        "write_text",
+        "unlink",
+        "rename",
+        "remove",
+        "rmdir",
+        "mkdir",
+        "makedirs",
+        "link",
+        "symlink",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+    }
+    forbidden_modules = {
+        "subprocess",
+        "importlib",
+        "socket",
+        "urllib",
+        "requests",
+        "httpx",
+    }
+    pending = [
+        ("scripts.target_intake_preflight", "_generation_semantic_replay_errors"),
+        ("scripts.target_intake_generation", "load_generation_lineage"),
+        ("scripts.target_intake_generation", "recheck_generation_lineage"),
+        ("scripts.target_intake_validator_contract", "current_validator_contract"),
+    ]
+    seen: set[tuple[str, str]] = set()
+    while pending:
+        identity = pending.pop()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        function = functions.get(identity)
+        if function is None:
+            return ["generation recovery read-only call graph is incomplete"]
+        module = identity[0]
+        for call in (
+            node for node in ast.walk(function) if isinstance(node, ast.Call)
+        ):
+            leaf = _call_name(call)
+            if leaf == "open":
+                mode = None
+                if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
+                    mode = call.args[1].value
+                mode_keyword = _keyword_value(call, "mode")
+                if isinstance(mode_keyword, ast.Constant):
+                    mode = mode_keyword.value
+                if isinstance(mode, str) and any(flag in mode for flag in "wax+"):
+                    return ["generation recovery call graph must remain read-only"]
+            if leaf in forbidden_leaf_calls:
+                return ["generation recovery call graph must remain read-only"]
+            target: tuple[str, str] | None = None
+            if isinstance(call.func, ast.Name):
+                if (module, call.func.id) in functions:
+                    target = (module, call.func.id)
+                elif call.func.id in imported_symbols[module]:
+                    target = imported_symbols[module][call.func.id]
+            elif (
+                isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id in imported_modules[module]
+            ):
+                imported_module = imported_modules[module][call.func.value.id]
+                if imported_module in {"os", "shutil"} and call.func.attr in {
+                    "replace",
+                    "rename",
+                    "remove",
+                    "unlink",
+                    "rmdir",
+                    "mkdir",
+                    "makedirs",
+                    "link",
+                    "symlink",
+                }:
+                    return ["generation recovery call graph must remain read-only"]
+                if imported_module.split(".")[0] in forbidden_modules:
+                    return ["generation recovery call graph must remain read-only"]
+                target = (imported_module, call.func.attr)
+            if target in functions and target not in seen:
+                pending.append(target)
+            elif target is not None and target[0].split(".")[0] in forbidden_modules:
+                return ["generation recovery call graph must remain read-only"]
+    return []
 
 
 def _call_name(node: ast.AST | None) -> str | None:
@@ -514,6 +677,8 @@ def causality_errors(
     external_json_source: str | None = None,
     generation_source: str | None = None,
     acceptance_source: str | None = None,
+    validator_contract_source: str | None = None,
+    validator_sources: dict[str, str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     try:
@@ -523,8 +688,10 @@ def causality_errors(
         external_json_tree = ast.parse(external_json_source or "")
         generation_tree = ast.parse(generation_source or "")
         acceptance_tree = ast.parse(acceptance_source or "")
+        validator_contract_tree = ast.parse(validator_contract_source or "")
     except SyntaxError:
         return ["release execution causality sources are not valid Python"]
+    errors.extend(_recovery_callgraph_errors(validator_sources or {}))
 
     manifest_loader = _function(manifest_tree, "load_pinned_intake_manifest")
     manifest_shape = _function(manifest_tree, "manifest_shape_errors")
@@ -888,6 +1055,15 @@ def causality_errors(
     generation_semantic_replay = _function(
         intake_tree, "_generation_semantic_replay_errors"
     )
+    current_validator_contract = _function(
+        validator_contract_tree, "current_validator_contract"
+    )
+    validator_contract_validation = _function(
+        validator_contract_tree, "validator_contract_errors"
+    )
+    validator_contract_shape = _function(
+        validator_contract_tree, "validator_contract_shape_errors"
+    )
     init_branch = (
         _command_branch(main_function, "init") if main_function is not None else None
     )
@@ -909,6 +1085,9 @@ def causality_errors(
         or lineage_loader is None
         or lineage_recheck is None
         or generation_semantic_replay is None
+        or current_validator_contract is None
+        or validator_contract_validation is None
+        or validator_contract_shape is None
         or init_branch is None
         or register_branch is None
         or verify_generation_branch is None
@@ -920,14 +1099,15 @@ def causality_errors(
             and _contains_string(receipt_validation, "receipt_path")
             and _contains_string(genesis_creator, "receipt_path")
             and _contains_string(registration_creator, "receipt_path")
-            and "target_intake_generation_receipt_v3" in (generation_source or "")
-            and 'document.get("schema_version") != 3'
+            and "target_intake_generation_receipt_v4" in (generation_source or "")
+            and 'document.get("schema_version") != 4'
             in (generation_source or "")
-            and (generation_source or "").count('"schema_version": 3') == 2
+            and (generation_source or "").count('"schema_version": 4') == 2
             and _contains_string(receipt_validation, "validation_context")
             and _contains_string(receipt_validation, "evaluated_at")
             and _contains_string(receipt_validation, "requirements")
             and _contains_string(receipt_validation, "phase_acceptance_matrix")
+            and _contains_string(receipt_validation, "validator_contract")
             and (generation_source or "").count(
                 '"receipt_path": os.path.abspath(receipt_path)'
             )
@@ -943,7 +1123,7 @@ def causality_errors(
             and _contains_name(genesis_creator, "receipt_errors")
         ):
             errors.append(
-                "generation receipts must use closed schema-v3 self-bound validation contexts"
+                "generation receipts must use closed schema-v4 self-bound validation contexts"
             )
         semantic_calls = {
             _call_name(node)
@@ -952,6 +1132,8 @@ def causality_errors(
         }
         if not (
             "parse_unique_json_bytes" in semantic_calls
+            and "current_validator_contract" in semantic_calls
+            and "validator_contract_errors" in semantic_calls
             and "requirements_errors" in semantic_calls
             and "intake_errors" in semantic_calls
             and "compare_digest" in semantic_calls
@@ -961,6 +1143,62 @@ def causality_errors(
         ):
             errors.append(
                 "generation history must replay every receipt-bound semantic context"
+            )
+        validator_contract_calls = {
+            _call_name(node)
+            for node in ast.walk(current_validator_contract)
+            if isinstance(node, ast.Call)
+        }
+        replay_contract_loops = [
+            node
+            for node in ast.walk(generation_semantic_replay)
+            if isinstance(node, ast.For)
+            and _contains_name(node, "snapshots")
+            and any(
+                isinstance(child, ast.Call)
+                and _call_name(child) == "validator_contract_errors"
+                for child in ast.walk(node)
+            )
+        ]
+        if not (
+            _literal_assignment(
+                validator_contract_tree, "VALIDATOR_CONTRACT_KEYS"
+            )
+            == {
+                "schema_version",
+                "kind",
+                "production_acceptance",
+                "authoring_entrypoint",
+                "replay_entrypoint",
+                "source_files",
+            }
+            and
+            _contains_string(validator_contract_shape, "authoring_entrypoint")
+            and _contains_string(validator_contract_shape, "replay_entrypoint")
+            and _contains_string(validator_contract_shape, "source_files")
+            and _contains_name(validator_contract_shape, "SOURCE_FILES")
+            and _literal_assignment(validator_contract_tree, "SOURCE_FILES")
+            == EXPECTED_VALIDATOR_SOURCES
+            and "read_stable_bytes_with_metadata" in validator_contract_calls
+            and "sha256" in validator_contract_calls
+            and any(
+                isinstance(node, ast.Compare)
+                and isinstance(node.left, ast.Attribute)
+                and node.left.attr == "st_nlink"
+                and len(node.ops) == 1
+                and isinstance(node.ops[0], ast.NotEq)
+                and len(node.comparators) == 1
+                and isinstance(node.comparators[0], ast.Constant)
+                and node.comparators[0].value == 1
+                for node in ast.walk(current_validator_contract)
+            )
+            and _contains_name(validator_contract_validation, "expected")
+            and "return [] if document == expected else ["
+            in (validator_contract_source or "")
+            and len(replay_contract_loops) == 1
+        ):
+            errors.append(
+                "generation replay must bind the exact closed on-disk validator source inventory"
             )
         required_options = {
             "--input",
@@ -1171,12 +1409,21 @@ def causality_errors(
         ]
         if not (
             init_calls.count("publish_write_once_file") == 2
+            and init_calls.count("current_validator_contract") == 1
             and init_calls.count("_read_stable_bytes_with_metadata") >= 2
             and len(init_single_link_rechecks) == 2
             and len(genesis_receipt_calls) == 1
             and len(genesis_receipt_calls[0].args) >= 2
             and isinstance(genesis_receipt_calls[0].args[1], ast.Attribute)
             and genesis_receipt_calls[0].args[1].attr == "receipt_output"
+            and isinstance(
+                _keyword_value(genesis_receipt_calls[0], "validator_contract"),
+                ast.Name,
+            )
+            and _keyword_value(
+                genesis_receipt_calls[0], "validator_contract"
+            ).id
+            == "validator_contract"
             and len(registration_receipt_calls) == 1
             and isinstance(
                 _keyword_value(registration_receipt_calls[0], "receipt_path"),
@@ -1187,6 +1434,16 @@ def causality_errors(
                 "receipt_path",
             ).attr
             == "receipt_output"
+            and isinstance(
+                _keyword_value(
+                    registration_receipt_calls[0], "validator_contract"
+                ),
+                ast.Name,
+            )
+            and _keyword_value(
+                registration_receipt_calls[0], "validator_contract"
+            ).id
+            == "historical_validator_contract"
             and all(
                 _contains_marker(branch, marker)
                 for branch in (init_branch, register_branch)
@@ -1265,12 +1522,19 @@ def causality_errors(
                 _contains_marker(verify_generation_branch, marker)
                 for marker in (
                     "production_acceptance=false",
-                    "generation-receipt-locator=self-bound-v3",
+                    "generation-receipt-locator=self-bound-v4",
                     "generation-history-semantic-replay=every-generation",
                     "generation-receipt-evaluation-time=recorded-host-utc",
+                    "generation-validator-contract=closed-v1-exact-source-inventory",
+                    "generation-validator-on-disk-source-inventory=whole-file-sha256-matched",
+                    "generation_validator_contract_sha256=",
                     "authoring-validation-context-authority=unverified",
                     "authoring-trusted-time=unverified",
-                    "authoring-validator-version=unverified",
+                    "authoring-validator-source-authority=unverified",
+                    "authoring-validator-runtime-identity=unverified",
+                    "authoring-validator-runtime=unverified",
+                    "authoring-validator-execution=unverified",
+                    "authoring-validator-source-snapshot-atomicity=unverified",
                     "recovery=read-only-local-revalidation",
                     "authoring-receipt-authority=unverified",
                     "authoring-pin-authority=unverified",
@@ -1824,6 +2088,13 @@ def main() -> int:
         acceptance_source = load_stable_text(
             ACCEPTANCE, max_bytes=MAX_SOURCE_BYTES
         )
+        validator_contract_source = load_stable_text(
+            VALIDATOR_CONTRACT, max_bytes=MAX_SOURCE_BYTES
+        )
+        validator_sources = {
+            path: load_stable_text(ROOT / path, max_bytes=MAX_SOURCE_BYTES)
+            for path in EXPECTED_VALIDATOR_SOURCES
+        }
         intake_manifest_source = load_stable_text(
             INTAKE_MANIFEST, max_bytes=MAX_SOURCE_BYTES
         )
@@ -1850,6 +2121,8 @@ def main() -> int:
         external_json_source,
         generation_source,
         acceptance_source,
+        validator_contract_source,
+        validator_sources,
     )
     if errors:
         for error in errors:
@@ -1870,12 +2143,18 @@ def main() -> int:
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
         "authoring-publication=local-no-replace-readback "
-        "generation-receipt-locator=self-bound-v3 "
+        "generation-receipt-locator=self-bound-v4 "
         "generation-history-semantic-replay=every-generation "
         "generation-receipt-evaluation-time=recorded-host-utc "
+        "generation-validator-contract=closed-v1-exact-source-inventory "
+        "generation-validator-on-disk-source-inventory=whole-file-sha256-matched "
         "authoring-validation-context-authority=unverified "
         "authoring-trusted-time=unverified "
-        "authoring-validator-version=unverified "
+        "authoring-validator-source-authority=unverified "
+        "authoring-validator-runtime-identity=unverified "
+        "authoring-validator-runtime=unverified "
+        "authoring-validator-execution=unverified "
+        "authoring-validator-source-snapshot-atomicity=unverified "
         "authoring-generation-fork-protection=unverified "
         "authoring-latest-head=unverified authoring-pin-authority=unverified "
         "authoring-receipt-authority=unverified "

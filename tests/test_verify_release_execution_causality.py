@@ -13,6 +13,8 @@ from scripts.verify_release_execution_causality import (
     INTAKE,
     INTAKE_MANIFEST,
     INTAKE_ONLY_CONSUMERS,
+    VALIDATOR_CONTRACT,
+    EXPECTED_VALIDATOR_SOURCES,
     causality_errors,
 )
 
@@ -25,6 +27,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.external_json = EXTERNAL_JSON.read_text(encoding="utf-8")
         self.generation = GENERATION.read_text(encoding="utf-8")
         self.acceptance = ACCEPTANCE.read_text(encoding="utf-8")
+        self.validator_contract = VALIDATOR_CONTRACT.read_text(encoding="utf-8")
+        self.validator_sources = {
+            path: Path(path).read_text(encoding="utf-8")
+            for path in EXPECTED_VALIDATOR_SOURCES
+        }
         self.consumers = {
             name: path.read_text(encoding="utf-8")
             for name, path in CONSUMERS.items()
@@ -45,6 +52,8 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         external_json: str | None = None,
         generation: str | None = None,
         acceptance: str | None = None,
+        validator_contract: str | None = None,
+        validator_sources: dict[str, str] | None = None,
     ) -> list[str]:
         return causality_errors(
             self.binding if binding is None else binding,
@@ -59,6 +68,12 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             self.external_json if external_json is None else external_json,
             self.generation if generation is None else generation,
             self.acceptance if acceptance is None else acceptance,
+            (
+                self.validator_contract
+                if validator_contract is None
+                else validator_contract
+            ),
+            self.validator_sources if validator_sources is None else validator_sources,
         )
 
     def test_current_contract_passes_and_is_in_the_quality_gate(self) -> None:
@@ -520,6 +535,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 "authoring-latest-head=unverified",
                 "authoring-latest-head=verified",
             ),
+            (
+                "validator_contract=validator_contract,",
+                "validator_contract={},",
+            ),
+            (
+                "validator_contract=historical_validator_contract,",
+                "validator_contract={},",
+            ),
         ):
             with self.subTest(old=old):
                 mutated = self.intake.replace(old, new, 1)
@@ -528,11 +551,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
 
         for old, new in (
             (
-                'RECEIPT_KIND = "target_intake_generation_receipt_v3"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v4"',
                 'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
             ),
             (
-                'document.get("schema_version") != 3',
+                'document.get("schema_version") != 4',
                 'document.get("schema_version") != 1',
             ),
             (
@@ -567,6 +590,61 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 mutated = self.generation.replace(old, new, 1)
                 self.assertNotEqual(mutated, self.generation)
                 self.assertTrue(self.errors(generation=mutated))
+
+    def test_generation_validator_contract_cannot_be_weakened(self) -> None:
+        for old, new in (
+            (
+                '    "scripts/provider_contract_conformance.py",\n',
+                "",
+            ),
+            (
+                '"authoring_entrypoint",\n',
+                '"ignored_authoring_entrypoint",\n',
+            ),
+            (
+                "return [] if document == expected else [",
+                "return [\"generation validator contract is invalid\"] if document == expected else [] # ",
+            ),
+            (
+                "raw, metadata = read_stable_bytes_with_metadata(",
+                "raw, metadata = ignored_read_stable_bytes_with_metadata(",
+            ),
+            (
+                "if metadata.st_nlink != 1:",
+                "if metadata.st_nlink == 1:",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.validator_contract.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.validator_contract)
+                self.assertTrue(self.errors(validator_contract=mutated))
+
+        moved_outside_loop = self.intake.replace(
+            "                or validator_contract_errors(\n"
+            "                    context[\"validator_contract\"], expected_validator_contract\n"
+            "                )\n",
+            "",
+            1,
+        )
+        self.assertNotEqual(moved_outside_loop, self.intake)
+        self.assertTrue(self.errors(intake=moved_outside_loop))
+
+        reachable_write = self.validator_contract.replace(
+            "def current_validator_contract() -> dict[str, Any]:\n",
+            "def current_validator_contract() -> dict[str, Any]:\n"
+            "    Path('forbidden').write_bytes(b'x')\n",
+            1,
+        )
+        mutated_sources = dict(self.validator_sources)
+        mutated_sources["scripts/target_intake_validator_contract.py"] = (
+            reachable_write
+        )
+        self.assertTrue(
+            self.errors(
+                validator_contract=reachable_write,
+                validator_sources=mutated_sources,
+            )
+        )
 
     def test_final_intake_consumer_selector_comparison_cannot_be_removed(self) -> None:
         for old, new in (
@@ -770,11 +848,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "schema-v3 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            "schema-v4 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
             requirements,
         )
         self.assertIn(
             "Recovery replays every receipt/manifest pair to genesis with its own embedded validation context and recorded time",
+            requirements,
+        )
+        self.assertIn(
+            "closed-v1 validator contract containing declarative authoring/replay entrypoints plus an exact ordered inventory",
             requirements,
         )
         self.assertIn(
@@ -817,11 +899,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Schema-v3 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/mixed-chain rejection evidence:",
+            "Schema-v4 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/mixed-chain rejection evidence:",
             signoff,
         )
         self.assertIn(
-            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, original validator execution/version identity, receipt/pin/reviewer authority, and post-verification custody remain `unverified`:",
+            "Generation validator-contract canonical SHA-256 plus closed-v1 authoring/replay entrypoints and exact ordered on-disk source inventory match:",
+            signoff,
+        )
+        self.assertIn(
+            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source authority, loaded runtime-code identity, Python/dependency/OS runtime identity, original validator execution, multi-file source-snapshot atomicity, Git/portable release identity, receipt/pin/reviewer authority, and post-verification custody remain `unverified`:",
             signoff,
         )
         self.assertIn(

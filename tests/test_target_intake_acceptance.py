@@ -24,6 +24,7 @@ from scripts.target_intake_generation import (
 )
 from scripts.target_intake_manifest import canonical_payload_sha256
 from scripts.target_intake_preflight import create_intake_manifest
+from scripts.target_intake_validator_contract import current_validator_contract
 
 
 class TargetIntakeAcceptanceTests(unittest.TestCase):
@@ -36,6 +37,7 @@ class TargetIntakeAcceptanceTests(unittest.TestCase):
         self.matrix = json.loads(
             Path("deploy/phase-acceptance-matrix.json").read_text(encoding="utf-8")
         )
+        self.validator_contract = current_validator_contract()
 
     @staticmethod
     def _pins(document: dict, raw: bytes) -> tuple[str, str]:
@@ -55,6 +57,7 @@ class TargetIntakeAcceptanceTests(unittest.TestCase):
             evaluated_at="2026-08-29T00:00:00.000000Z",
             requirements=self.requirements,
             phase_acceptance_matrix=self.matrix,
+            validator_contract=self.validator_contract,
         )
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)

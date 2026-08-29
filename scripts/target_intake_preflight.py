@@ -56,6 +56,11 @@ from scripts.target_intake_generation import (
     receipt_bytes,
     recheck_generation_lineage,
 )
+from scripts.target_intake_validator_contract import (
+    ValidatorContractError,
+    current_validator_contract,
+    validator_contract_errors,
+)
 from scripts.target_intake_acceptance import (
     AcceptanceReceiptError,
     acceptance_receipt_bytes,
@@ -1243,6 +1248,7 @@ def _generation_semantic_replay_errors(lineage: Any) -> list[str]:
     """Replay every generation under its receipt-bound context and host time."""
 
     try:
+        expected_validator_contract = current_validator_contract()
         snapshots = lineage.snapshots
         if not snapshots or len(snapshots) % 2:
             raise ValueError("invalid snapshot pairs")
@@ -1255,6 +1261,9 @@ def _generation_semantic_replay_errors(lineage: Any) -> list[str]:
             matrix = context["phase_acceptance_matrix"]
             if (
                 evaluated_at is None
+                or validator_contract_errors(
+                    context["validator_contract"], expected_validator_contract
+                )
                 or requirements_errors(requirements, matrix)
                 or not hmac.compare_digest(
                     requirements_sha256(requirements),
@@ -1276,22 +1285,26 @@ def _generation_semantic_replay_errors(lineage: Any) -> list[str]:
         UnicodeError,
         ValueError,
         json.JSONDecodeError,
+        ValidatorContractError,
     ):
         return ["target intake generation historical semantic replay is invalid"]
     return []
 
 
-def _generation_terminal_context(lineage: Any) -> tuple[Any, Any, datetime] | None:
+def _generation_terminal_context(
+    lineage: Any,
+) -> tuple[Any, Any, Any, datetime] | None:
     try:
         context = lineage.receipt["validation_context"]
         evaluated_at = _parse_utc(context["evaluated_at"])
         requirements = context["requirements"]
         matrix = context["phase_acceptance_matrix"]
+        validator_contract = context["validator_contract"]
     except (AttributeError, KeyError, TypeError):
         return None
     if evaluated_at is None or requirements_errors(requirements, matrix):
         return None
-    return requirements, matrix, evaluated_at
+    return requirements, matrix, validator_contract, evaluated_at
 
 
 def _load_validated_phase_checkpoint(
@@ -1399,7 +1412,7 @@ def _snapshot_acceptance_identity_errors(acceptance: Any) -> list[str]:
     context = _generation_terminal_context(acceptance.source_lineage)
     if lineage_errors or context is None:
         return ["snapshot receipt source generation semantics are invalid"]
-    requirements, matrix, _ = context
+    requirements, matrix, _, _ = context
     receipt = acceptance.receipt
     evaluated_at = _parse_utc(receipt.get("evaluated_at"))
     if evaluated_at is None:
@@ -1436,7 +1449,7 @@ def _finalization_acceptance_identity_errors(
     context = _generation_terminal_context(acceptance.source_lineage)
     if lineage_errors or context is None:
         return ["finalization receipt source generation semantics are invalid"]
-    historical_requirements, _, _ = context
+    historical_requirements, _, _, _ = context
     try:
         evaluated_at = _parse_utc(acceptance.receipt.get("evaluated_at"))
         checkpoint_path = Path(
@@ -1666,14 +1679,22 @@ def main(argv: list[str] | None = None) -> int:
             f"manifest_file_sha256={hashlib.sha256(lineage.manifest_raw).hexdigest()} "
             f"receipt_payload_sha256={requirements_sha256(lineage.receipt)} "
             f"receipt_file_sha256={hashlib.sha256(lineage.receipt_raw).hexdigest()} "
-            "generation-receipt-locator=self-bound-v3 "
+            "generation_validator_contract_sha256="
+            f"{requirements_sha256(lineage.receipt['validation_context']['validator_contract'])} "
+            "generation-receipt-locator=self-bound-v4 "
             "generation-history-semantic-replay=every-generation "
             "generation-receipt-evaluation-time=recorded-host-utc "
-            "generation-validation-context=receipt-embedded-requirements-and-matrix "
+            "generation-validation-context=receipt-embedded-requirements-matrix-and-validator-contract "
+            "generation-validator-contract=closed-v1-exact-source-inventory "
+            "generation-validator-on-disk-source-inventory=whole-file-sha256-matched "
             "recovery=read-only-local-revalidation "
             "authoring-validation-context-authority=unverified "
             "authoring-trusted-time=unverified "
-            "authoring-validator-version=unverified "
+            "authoring-validator-source-authority=unverified "
+            "authoring-validator-runtime-identity=unverified "
+            "authoring-validator-runtime=unverified "
+            "authoring-validator-execution=unverified "
+            "authoring-validator-source-snapshot-atomicity=unverified "
             "authoring-receipt-authority=unverified "
             "authoring-pin-authority=unverified "
             "authoring-latest-head=unverified "
@@ -1804,6 +1825,11 @@ def main(argv: list[str] | None = None) -> int:
             arguments.receipt_output
         ):
             path_errors.append("manifest and receipt outputs must be distinct")
+        try:
+            validator_contract = current_validator_contract()
+        except ValidatorContractError:
+            print("target-intake-validator-contract-invalid", file=sys.stderr)
+            return 1
         manifest = create_intake_manifest(arguments.environment, requirements)
         errors = path_errors + intake_errors(
             manifest,
@@ -1838,6 +1864,7 @@ def main(argv: list[str] | None = None) -> int:
                 evaluated_at=_utc_timestamp(evaluated_at),
                 requirements=requirements,
                 phase_acceptance_matrix=matrix,
+                validator_contract=validator_contract,
             )
             receipt_raw = receipt_bytes(receipt)
             receipt_output = prepare_write_once_file(arguments.receipt_output)
@@ -1899,13 +1926,21 @@ def main(argv: list[str] | None = None) -> int:
             f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
             f"generation_receipt_payload_sha256={requirements_sha256(receipt)} "
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
+            "generation_validator_contract_sha256="
+            f"{requirements_sha256(validator_contract)} "
             "generation-acceptance=write-once-receipt "
-            "generation-receipt-locator=self-bound-v3 "
+            "generation-receipt-locator=self-bound-v4 "
             "generation-history-semantic-replay=every-generation "
             "generation-receipt-evaluation-time=recorded-host-utc "
+            "generation-validator-contract=closed-v1-exact-source-inventory "
+            "generation-validator-on-disk-source-inventory=whole-file-sha256-matched "
             "authoring-validation-context-authority=unverified "
             "authoring-trusted-time=unverified "
-            "authoring-validator-version=unverified "
+            "authoring-validator-source-authority=unverified "
+            "authoring-validator-runtime-identity=unverified "
+            "authoring-validator-runtime=unverified "
+            "authoring-validator-execution=unverified "
+            "authoring-validator-source-snapshot-atomicity=unverified "
             "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "
             "authoring-receipt-authority=unverified "
@@ -1956,7 +1991,12 @@ def main(argv: list[str] | None = None) -> int:
         if lineage_errors or context is None:
             print("target-intake-register-lineage-invalid", file=sys.stderr)
             return 1
-        historical_requirements, historical_matrix, _ = context
+        (
+            historical_requirements,
+            historical_matrix,
+            historical_validator_contract,
+            _,
+        ) = context
         base = lineage.manifest
         base_raw = lineage.manifest_raw
         errors = intake_errors(
@@ -2071,6 +2111,7 @@ def main(argv: list[str] | None = None) -> int:
                 evaluated_at=_utc_timestamp(evaluated_at),
                 requirements=historical_requirements,
                 phase_acceptance_matrix=historical_matrix,
+                validator_contract=historical_validator_contract,
             )
             receipt_raw = receipt_bytes(receipt)
             receipt_output = prepare_write_once_file(arguments.receipt_output)
@@ -2134,14 +2175,22 @@ def main(argv: list[str] | None = None) -> int:
             f"manifest_file_sha256={hashlib.sha256(output_bytes).hexdigest()} "
             f"generation_receipt_payload_sha256={requirements_sha256(receipt)} "
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
+            "generation_validator_contract_sha256="
+            f"{requirements_sha256(historical_validator_contract)} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "generation-acceptance=write-once-receipt "
-            "generation-receipt-locator=self-bound-v3 "
+            "generation-receipt-locator=self-bound-v4 "
             "generation-history-semantic-replay=every-generation "
             "generation-receipt-evaluation-time=recorded-host-utc "
+            "generation-validator-contract=closed-v1-exact-source-inventory "
+            "generation-validator-on-disk-source-inventory=whole-file-sha256-matched "
             "authoring-validation-context-authority=unverified "
             "authoring-trusted-time=unverified "
-            "authoring-validator-version=unverified "
+            "authoring-validator-source-authority=unverified "
+            "authoring-validator-runtime-identity=unverified "
+            "authoring-validator-runtime=unverified "
+            "authoring-validator-execution=unverified "
+            "authoring-validator-source-snapshot-atomicity=unverified "
             "authoring-publication=local-no-replace-readback "
             "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "

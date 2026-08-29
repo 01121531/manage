@@ -74,6 +74,7 @@ from scripts.target_intake_preflight import (
     requirements_errors,
     requirements_sha256,
 )
+from scripts.target_intake_validator_contract import current_validator_contract
 from tests.test_deploy_release_evidence import (
     IMAGES as DEPLOY_IMAGES,
     ROLLBACK as DEPLOY_ROLLBACK,
@@ -86,6 +87,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
     def setUp(self) -> None:
         self.matrix = json.loads(MATRIX.read_text(encoding="utf-8"))
         self.requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
+        self.validator_contract = current_validator_contract()
         runtime_patch = mock.patch.object(
             target_intake,
             "runtime_conformance_errors",
@@ -110,6 +112,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
             evaluated_at="2026-08-29T00:00:00.000000Z",
             requirements=self.requirements,
             phase_acceptance_matrix=self.matrix,
+            validator_contract=self.validator_contract,
         )
         raw = receipt_bytes(receipt)
         receipt_path.write_bytes(raw)
@@ -3437,7 +3440,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "recovery=read-only-local-revalidation",
                 output.getvalue(),
             )
-            self.assertIn("generation-receipt-locator=self-bound-v3", output.getvalue())
+            self.assertIn("generation-receipt-locator=self-bound-v4", output.getvalue())
+            self.assertIn("generation_validator_contract_sha256=", output.getvalue())
             self.assertIn("authoring-rollback-protection=unverified", output.getvalue())
             self.assertEqual(
                 before,
@@ -4155,10 +4159,10 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "local schema-v2 receipts",
             "case-preserving lexical absolute `receipt_path`",
-            "Schema-v1/v2 generation receipts and mixed legacy/v3",
+            "Schema-v1/v2/v3 generation receipts and mixed legacy/v4",
             "replays every receipt/manifest pair",
-            "embedded requirements/matrix and recorded host",
-            "historical validator identity",
+            "exact ordered on-disk source-byte inventory",
+            "loaded runtime-code identity, Python/dependency/OS",
             "Schema-v1 acceptance receipts are incompatible",
             "Rolling an older manifest, generation receipt and",
             "hard-link directory entry",
