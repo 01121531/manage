@@ -378,6 +378,26 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 "finalization-receipt-authority=unverified",
                 "finalization-receipt-authority=verified",
             ),
+            (
+                'verify_receipt = commands.add_parser("verify-receipt")',
+                'verify_receipt = commands.add_parser("ignored-verify-receipt")',
+            ),
+            (
+                '"--expected-receipt-payload-sha256",\n        required=True,',
+                '"--expected-receipt-payload-sha256",\n        required=False,',
+            ),
+            (
+                'evaluated_at = _parse_utc(acceptance.receipt.get("evaluated_at"))',
+                'evaluated_at = ignored_parse_utc(acceptance.receipt.get("evaluated_at"))',
+            ),
+            (
+                "parent-directory-race-protection=unverified",
+                "parent-directory-race-protection=verified",
+            ),
+            (
+                "publication-crash-durability=unverified",
+                "publication-crash-durability=verified",
+            ),
         ):
             with self.subTest(intake_old=old):
                 mutated = self.intake.replace(old, new, 1)
@@ -392,6 +412,18 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             (
                 'document.get("kind") != FINALIZATION_RECEIPT_KIND',
                 'document.get("kind") != IGNORED_FINALIZATION_RECEIPT_KIND',
+            ),
+            (
+                'document.get("schema_version") != 2',
+                'document.get("schema_version") != 1',
+            ),
+            (
+                'os.path.abspath(receipt_path) != receipt.get("receipt_path")',
+                'os.path.abspath(receipt_path) == receipt.get("receipt_path")',
+            ),
+            (
+                '"receipt_path": os.path.abspath(receipt_path),',
+                '"ignored_receipt_path": os.path.abspath(receipt_path),',
             ),
             ("generation_lineage_contains(", "ignored_generation_lineage_contains("),
             ("require_single_link=True", "require_single_link=False"),
@@ -678,7 +710,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "they do not authenticate the pin or receipt source, make host time trusted, prevent later deletion/recreation, prove provider-native custody, select a global latest head, prevent cross-host forks, or prove global rollback protection",
+            "they do not authenticate the pin or receipt source, make host time trusted, prevent rollback of the result/receipt/four-pin set as one unit, distinguish same-path same-bytes deletion and recreation",
+            requirements,
+        )
+        self.assertIn(
+            "Each receipt self-binds its case-preserving lexical absolute locator",
+            requirements,
+        )
+        self.assertIn(
+            "read-only verify-receipt command",
             requirements,
         )
         signoff = Path("deploy/production-signoff-template.md").read_text(
@@ -709,7 +749,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Snapshot receipt exact source-generation/result-checkpoint binding, recorded host evaluation window, local no-replace/readback, orphan/unknown disposition, and receipt-authority/trusted-time/post-publication-custody `unverified` acknowledgement:",
+            "Schema-v2 snapshot receipt self-bound locator, exact source-generation/result-checkpoint binding, recorded host evaluation window, local no-replace/readback, orphan/unknown disposition, and receipt-authority/trusted-time/parent-directory-race/publication-crash-durability/post-publication-custody `unverified` acknowledgement:",
             signoff,
         )
         self.assertIn(

@@ -68,12 +68,18 @@ AUTHORING_GENERATION_BOUNDARY_MARKERS = (
 )
 ACCEPTANCE_BOUNDARY_MARKERS = (
     "snapshot-acceptance=write-once-receipt",
+    "snapshot-receipt-locator=self-bound-v2",
     "snapshot-receipt-authority=unverified",
+    "snapshot-parent-directory-race-protection=unverified",
+    "snapshot-publication-crash-durability=unverified",
     "snapshot-post-publication-custody=unverified",
     "phase0-snapshot-acceptance=caller-pinned-local-receipt-validated",
     "finalization-acceptance=write-once-receipt",
+    "finalization-receipt-locator=self-bound-v2",
     "finalization-receipt-caller-pin=",
     "finalization-receipt-authority=unverified",
+    "finalization-parent-directory-race-protection=unverified",
+    "finalization-publication-crash-durability=unverified",
     "selected-finalization-lineage=",
 )
 INTAKE_CALLER_BOUNDARY_MARKERS = (
@@ -309,6 +315,25 @@ def _required_parser_argument(
         and node.args[0].value == option
         and isinstance(_keyword_value(node, "required"), ast.Constant)
         and _keyword_value(node, "required").value is True
+        for node in ast.walk(function)
+    )
+
+
+def _has_parser_command(
+    function: ast.FunctionDef,
+    receiver: str,
+    command: str,
+) -> bool:
+    return any(
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == receiver
+        and isinstance(node.value, ast.Call)
+        and _call_name(node.value) == "add_parser"
+        and node.value.args
+        and isinstance(node.value.args[0], ast.Constant)
+        and node.value.args[0].value == command
         for node in ast.walk(function)
     )
 
@@ -1108,6 +1133,10 @@ def causality_errors(
         acceptance_tree,
         "load_finalization_acceptance",
     )
+    snapshot_creator = _function(
+        acceptance_tree,
+        "create_snapshot_receipt",
+    )
     finalization_creator = _function(
         acceptance_tree,
         "create_finalization_receipt",
@@ -1125,8 +1154,17 @@ def causality_errors(
         intake_tree,
         "_snapshot_acceptance_identity_errors",
     )
+    finalization_identity = _function(
+        intake_tree,
+        "_finalization_acceptance_identity_errors",
+    )
     snapshot_branch = (
         _command_branch(main_function, "snapshot")
+        if main_function is not None
+        else None
+    )
+    verify_receipt_branch = (
+        _command_branch(main_function, "verify-receipt")
         if main_function is not None
         else None
     )
@@ -1137,12 +1175,15 @@ def causality_errors(
             finalization_validation,
             snapshot_loader,
             finalization_loader,
+            snapshot_creator,
             finalization_creator,
             snapshot_recheck,
             finalization_recheck,
             ancestry,
             snapshot_identity,
+            finalization_identity,
             snapshot_branch,
+            verify_receipt_branch,
             finalize_branch if main_function is not None else None,
         )
     ):
@@ -1155,12 +1196,33 @@ def causality_errors(
             and _contains_string(snapshot_validation, "evaluated_at")
             and _contains_string(snapshot_validation, "valid_from")
             and _contains_string(snapshot_validation, "valid_until")
+            and _contains_string(snapshot_validation, "receipt_path")
             and _contains_name(finalization_validation, "FINALIZATION_RECEIPT_KIND")
             and _contains_string(finalization_validation, "phase0_snapshot")
             and _contains_string(finalization_validation, "result_final_manifest")
             and _contains_string(finalization_validation, "source_generation")
+            and _contains_string(finalization_validation, "receipt_path")
+            and _contains_string(finalization_validation, "evaluated_at")
+            and "target_intake_phase0_snapshot_receipt_v2"
+            in (acceptance_source or "")
+            and "target_intake_finalization_receipt_v2"
+            in (acceptance_source or "")
+            and (acceptance_source or "").count(
+                'document.get("schema_version") != 2'
+            )
+            == 2
+            and (acceptance_source or "").count('"schema_version": 2') == 2
+            and (acceptance_source or "").count(
+                'os.path.abspath(receipt_path) != receipt.get("receipt_path")'
+            )
+            == 2
+            and _contains_string(snapshot_creator, "receipt_path")
+            and _contains_string(finalization_creator, "receipt_path")
+            and _contains_string(finalization_creator, "evaluated_at")
         ):
-            errors.append("acceptance receipts must use closed typed selectors")
+            errors.append(
+                "acceptance receipts must use closed typed self-bound selectors"
+            )
         acceptance_functions = (
             snapshot_loader,
             finalization_loader,
@@ -1184,6 +1246,18 @@ def causality_errors(
             and _contains_string(snapshot_identity, "evaluated_at")
             and _contains_string(snapshot_identity, "valid_from")
             and _contains_string(snapshot_identity, "valid_until")
+            and _contains_name(finalization_identity, "_parse_utc")
+            and _contains_name(finalization_identity, "intake_errors")
+            and _contains_string(finalization_identity, "evaluated_at")
+            and _contains_string(finalization_identity, "phase0_snapshot")
+            and sum(
+                1
+                for node in ast.walk(main_function)
+                if isinstance(node, ast.Call)
+                and _call_name(node)
+                == "_finalization_acceptance_identity_errors"
+            )
+            == 2
             and all(
                 any(
                     isinstance(node, ast.Call)
@@ -1228,7 +1302,7 @@ def causality_errors(
                 if isinstance(node, ast.Call)
                 and _call_name(node) == "_snapshot_acceptance_identity_errors"
             )
-            == 2
+            == 4
             and all(
                 _contains_marker(main_function, marker)
                 for marker in (
@@ -1252,6 +1326,66 @@ def causality_errors(
             "--expected-finalization-receipt-payload-sha256",
             "--expected-finalization-receipt-file-sha256",
         }
+        verify_receipt_required = {
+            "--kind",
+            "--manifest",
+            "--receipt",
+            "--expected-manifest-payload-sha256",
+            "--expected-manifest-file-sha256",
+            "--expected-receipt-payload-sha256",
+            "--expected-receipt-file-sha256",
+        }
+        verify_receipt_calls = {
+            _call_name(node)
+            for node in ast.walk(verify_receipt_branch)
+            if isinstance(node, ast.Call)
+        }
+        if not (
+            _has_parser_command(
+                parser_function,
+                "verify_receipt",
+                "verify-receipt",
+            )
+            and all(
+                _required_parser_argument(
+                    parser_function,
+                    "verify_receipt",
+                    option,
+                )
+                for option in verify_receipt_required
+            )
+            and {
+                "load_snapshot_acceptance",
+                "recheck_snapshot_acceptance",
+                "load_finalization_acceptance",
+                "recheck_finalization_acceptance",
+                "_snapshot_acceptance_identity_errors",
+                "_finalization_acceptance_identity_errors",
+            }.issubset(verify_receipt_calls)
+            and not {
+                "prepare_write_once_file",
+                "write_fsynced_temporary_bytes",
+                "publish_write_once_file",
+            }.intersection(verify_receipt_calls)
+            and all(
+                _contains_marker(verify_receipt_branch, marker)
+                for marker in (
+                    "recovery=read-only-local-revalidation",
+                    "receipt-locator=self-bound-v2",
+                    "receipt-authority=unverified",
+                    "trusted-time=unverified",
+                    "rollback-protection=unverified",
+                    "locator-continuity=unverified",
+                    "parent-directory-race-protection=unverified",
+                    "publication-crash-durability=unverified",
+                    "post-verification-custody=unverified",
+                    "production_acceptance=false",
+                )
+            )
+        ):
+            errors.append(
+                "acceptance receipt recovery must be pinned read-only local revalidation"
+            )
         if not (
             all(
                 _required_parser_argument(parser_function, "snapshot", option)
@@ -1272,6 +1406,16 @@ def causality_errors(
             and all(
                 _contains_marker(main_function, marker)
                 for marker in ACCEPTANCE_BOUNDARY_MARKERS
+            )
+            and all(
+                _contains_marker(branch, marker)
+                for branch in (snapshot_branch, finalize_branch)
+                for marker in (
+                    "manifest_payload_sha256=",
+                    "manifest_file_sha256=",
+                    "receipt_payload_sha256=",
+                    "receipt_file_sha256=",
+                )
             )
             and sum(
                 1
@@ -1508,13 +1652,21 @@ def main() -> int:
         "authoring-receipt-authority=unverified "
         "authoring-post-publication-custody=unverified "
         "snapshot-acceptance=write-once-receipt "
+        "snapshot-receipt-locator=self-bound-v2 "
         "snapshot-receipt-authority=unverified "
         "snapshot-trusted-time=unverified "
+        "snapshot-parent-directory-race-protection=unverified "
+        "snapshot-publication-crash-durability=unverified "
         "snapshot-post-publication-custody=unverified "
         "finalization-acceptance=write-once-receipt "
+        "finalization-receipt-locator=self-bound-v2 "
         "finalization-receipt-caller-pin=payload-and-file "
         "finalization-receipt-authority=unverified "
+        "finalization-parent-directory-race-protection=unverified "
+        "finalization-publication-crash-durability=unverified "
         "finalization-post-publication-custody=unverified "
+        "acceptance-receipt-recovery=read-only-local-revalidation "
+        "acceptance-receipt-rollback-protection=unverified "
         "standalone-intake-manifest-consumers=seven "
         "standalone-intake-manifest-schema=closed-v2-inventory-exact "
         "standalone-intake-manifest-caller-pin=payload-and-file "

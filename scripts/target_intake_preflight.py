@@ -1354,6 +1354,30 @@ def _snapshot_acceptance_identity_errors(acceptance: Any) -> list[str]:
     return []
 
 
+def _finalization_acceptance_identity_errors(
+    acceptance: Any,
+    requirements: Any,
+) -> list[str]:
+    """Replay complete intake at the finalization receipt's recorded instant."""
+
+    try:
+        evaluated_at = _parse_utc(acceptance.receipt.get("evaluated_at"))
+        checkpoint_path = Path(
+            acceptance.receipt["phase0_snapshot"]["checkpoint"]["path"]
+        )
+    except (AttributeError, KeyError, TypeError):
+        return ["finalization receipt evaluation is invalid"]
+    if evaluated_at is None or intake_errors(
+        acceptance.finalized_manifest,
+        requirements,
+        require_complete=True,
+        phase0_checkpoint_manifest=checkpoint_path,
+        evaluated_at=evaluated_at,
+    ):
+        return ["finalization receipt evaluation is invalid"]
+    return []
+
+
 def phase_checkpoint_errors(
     manifest_path: Path,
     *,
@@ -1379,6 +1403,31 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("verify-requirements")
+    verify_receipt = commands.add_parser("verify-receipt")
+    verify_receipt.add_argument(
+        "--kind",
+        required=True,
+        choices=("snapshot", "finalization"),
+    )
+    verify_receipt.add_argument("--manifest", required=True, type=Path)
+    verify_receipt.add_argument("--receipt", required=True, type=Path)
+    verify_receipt.add_argument(
+        "--expected-manifest-payload-sha256",
+        required=True,
+    )
+    verify_receipt.add_argument(
+        "--expected-manifest-file-sha256",
+        required=True,
+    )
+    verify_receipt.add_argument(
+        "--expected-receipt-payload-sha256",
+        required=True,
+    )
+    verify_receipt.add_argument(
+        "--expected-receipt-file-sha256",
+        required=True,
+    )
+    verify_receipt.add_argument("--phase0-checkpoint-manifest", type=Path)
     initialize = commands.add_parser("init")
     initialize.add_argument("--output", required=True, type=Path)
     initialize.add_argument("--receipt-output", required=True, type=Path)
@@ -1475,6 +1524,116 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "verify-requirements":
         print("target-intake-requirements-ok phases=0-6 production_acceptance=false")
         return 0
+    if arguments.command == "verify-receipt":
+        path_errors = (
+            _manifest_path_errors(arguments.manifest, must_exist=True)
+            + _manifest_path_errors(arguments.receipt, must_exist=True)
+        )
+        if arguments.kind == "finalization":
+            if arguments.phase0_checkpoint_manifest is None:
+                path_errors.append(
+                    "finalization receipt verification requires a Phase 0 checkpoint"
+                )
+            else:
+                path_errors += _manifest_path_errors(
+                    arguments.phase0_checkpoint_manifest,
+                    must_exist=True,
+                )
+        elif arguments.phase0_checkpoint_manifest is not None:
+            path_errors.append(
+                "Phase 0 checkpoint argument is only valid for finalization receipts"
+            )
+        pin_values = (
+            arguments.expected_manifest_payload_sha256,
+            arguments.expected_manifest_file_sha256,
+            arguments.expected_receipt_payload_sha256,
+            arguments.expected_receipt_file_sha256,
+        )
+        if any(_SHA256.fullmatch(value) is None for value in pin_values):
+            path_errors.append("receipt recovery requires four valid caller pins")
+        if path_errors:
+            print("; ".join(path_errors), file=sys.stderr)
+            return 1
+        try:
+            if arguments.kind == "snapshot":
+                acceptance = load_snapshot_acceptance(
+                    arguments.manifest,
+                    arguments.receipt,
+                    expected_receipt_payload_sha256=(
+                        arguments.expected_receipt_payload_sha256
+                    ),
+                    expected_receipt_file_sha256=(
+                        arguments.expected_receipt_file_sha256
+                    ),
+                )
+                if (
+                    not hmac.compare_digest(
+                        requirements_sha256(acceptance.checkpoint),
+                        arguments.expected_manifest_payload_sha256,
+                    )
+                    or not hmac.compare_digest(
+                        hashlib.sha256(acceptance.checkpoint_raw).hexdigest(),
+                        arguments.expected_manifest_file_sha256,
+                    )
+                    or _snapshot_acceptance_identity_errors(acceptance)
+                ):
+                    raise AcceptanceReceiptError()
+                recheck_snapshot_acceptance(acceptance)
+                receipt_document = acceptance.receipt
+                receipt_raw = acceptance.receipt_raw
+                manifest_document = acceptance.checkpoint
+                manifest_raw = acceptance.checkpoint_raw
+            else:
+                acceptance = load_finalization_acceptance(
+                    arguments.manifest,
+                    arguments.receipt,
+                    arguments.phase0_checkpoint_manifest,
+                    expected_receipt_payload_sha256=(
+                        arguments.expected_receipt_payload_sha256
+                    ),
+                    expected_receipt_file_sha256=(
+                        arguments.expected_receipt_file_sha256
+                    ),
+                    expected_manifest_payload_sha256=(
+                        arguments.expected_manifest_payload_sha256
+                    ),
+                    expected_manifest_file_sha256=(
+                        arguments.expected_manifest_file_sha256
+                    ),
+                )
+                if (
+                    _snapshot_acceptance_identity_errors(
+                        acceptance.phase0_snapshot
+                    )
+                    or _finalization_acceptance_identity_errors(
+                        acceptance,
+                        requirements,
+                    )
+                ):
+                    raise AcceptanceReceiptError()
+                recheck_finalization_acceptance(acceptance)
+                receipt_document = acceptance.receipt
+                receipt_raw = acceptance.receipt_raw
+                manifest_document = acceptance.finalized_manifest
+                manifest_raw = acceptance.finalized_raw
+        except AcceptanceReceiptError:
+            print("target-intake-receipt-verification-invalid", file=sys.stderr)
+            return 1
+        print(
+            "target-intake-receipt-verified "
+            f"kind={arguments.kind} production_acceptance=false "
+            f"manifest_payload_sha256={requirements_sha256(manifest_document)} "
+            f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
+            f"receipt_payload_sha256={requirements_sha256(receipt_document)} "
+            f"receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
+            "receipt-locator=self-bound-v2 recovery=read-only-local-revalidation "
+            "receipt-authority=unverified trusted-time=unverified "
+            "rollback-protection=unverified locator-continuity=unverified "
+            "parent-directory-race-protection=unverified "
+            "publication-crash-durability=unverified "
+            "post-verification-custody=unverified"
+        )
+        return 0
     if arguments.command == "init":
         path_errors = (
             _manifest_path_errors(arguments.output, must_exist=False)
@@ -1528,7 +1687,7 @@ def main(argv: list[str] | None = None) -> int:
             if receipt_published:
                 print(
                     "target-intake-init-failed commit-state=unknown "
-                    "verify-receipt-required",
+                    "verify-generation-lineage-required",
                     file=sys.stderr,
                 )
                 return 2
@@ -1736,7 +1895,7 @@ def main(argv: list[str] | None = None) -> int:
             if receipt_published:
                 print(
                     "target-intake-register-failed commit-state=unknown "
-                    "verify-receipt-required",
+                    "verify-generation-lineage-required",
                     file=sys.stderr,
                 )
                 return 2
@@ -1848,6 +2007,7 @@ def main(argv: list[str] | None = None) -> int:
                 source_manifest_path=arguments.input,
                 source_receipt_path=arguments.input_receipt,
                 checkpoint_path=output,
+                receipt_path=receipt_output,
                 checkpoint=checkpoint,
                 checkpoint_raw=readback,
                 evaluated_at=identity.evaluated_at,
@@ -1876,7 +2036,11 @@ def main(argv: list[str] | None = None) -> int:
             if receipt_published:
                 print(
                     "target-intake-snapshot-commit-state=unknown "
-                    "verify-receipt-required",
+                    "verify-receipt-required "
+                    f"manifest_payload_sha256={requirements_sha256(checkpoint)} "
+                    f"manifest_file_sha256={hashlib.sha256(readback).hexdigest()} "
+                    f"receipt_payload_sha256={requirements_sha256(receipt)} "
+                    f"receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()}",
                     file=sys.stderr,
                 )
                 return 2
@@ -1902,8 +2066,11 @@ def main(argv: list[str] | None = None) -> int:
             f"snapshot_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "snapshot-acceptance=write-once-receipt "
+            "snapshot-receipt-locator=self-bound-v2 "
             "publication=local-no-replace-readback "
             "snapshot-receipt-authority=unverified "
+            "snapshot-parent-directory-race-protection=unverified "
+            "snapshot-publication-crash-durability=unverified "
             "snapshot-post-publication-custody=unverified"
         )
         return 0
@@ -2018,8 +2185,10 @@ def main(argv: list[str] | None = None) -> int:
                 phase0_checkpoint_path=arguments.phase0_checkpoint_manifest,
                 phase0_receipt_path=arguments.phase0_checkpoint_receipt,
                 finalized_path=output,
+                receipt_path=receipt_output,
                 finalized_manifest=finalized,
                 finalized_raw=readback,
+                evaluated_at=_utc_timestamp(evaluated_at),
             )
             receipt_raw = acceptance_receipt_bytes(receipt)
             temporary = write_fsynced_temporary_bytes(receipt_output, receipt_raw)
@@ -2046,7 +2215,11 @@ def main(argv: list[str] | None = None) -> int:
             if receipt_published:
                 print(
                     "target-intake-finalization-commit-state=unknown "
-                    "verify-receipt-required",
+                    "verify-receipt-required "
+                    f"manifest_payload_sha256={requirements_sha256(finalized)} "
+                    f"manifest_file_sha256={hashlib.sha256(readback).hexdigest()} "
+                    f"receipt_payload_sha256={requirements_sha256(receipt)} "
+                    f"receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()}",
                     file=sys.stderr,
                 )
                 return 2
@@ -2071,9 +2244,12 @@ def main(argv: list[str] | None = None) -> int:
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "phase0-snapshot-acceptance=caller-pinned-local-receipt-validated "
             "finalization-acceptance=write-once-receipt "
+            "finalization-receipt-locator=self-bound-v2 "
             "publication=local-no-replace-readback "
             "custody=unverified rollback-protection=unverified "
-            "finalization-receipt-authority=unverified"
+            "finalization-receipt-authority=unverified "
+            "finalization-parent-directory-race-protection=unverified "
+            "finalization-publication-crash-durability=unverified"
         )
         return 0
 
@@ -2182,8 +2358,17 @@ def main(argv: list[str] | None = None) -> int:
         snapshot_identity_errors = _snapshot_acceptance_identity_errors(
             finalization_acceptance.phase0_snapshot
         )
-        if snapshot_identity_errors:
-            print("; ".join(snapshot_identity_errors), file=sys.stderr)
+        finalization_identity_errors = _finalization_acceptance_identity_errors(
+            finalization_acceptance,
+            requirements,
+        )
+        if snapshot_identity_errors or finalization_identity_errors:
+            print(
+                "; ".join(
+                    snapshot_identity_errors + finalization_identity_errors
+                ),
+                file=sys.stderr,
+            )
             return 1
         lineage = None
     else:

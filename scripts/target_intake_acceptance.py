@@ -33,12 +33,13 @@ from scripts.target_intake_manifest import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SNAPSHOT_RECEIPT_KIND = "target_intake_phase0_snapshot_receipt_v1"
-FINALIZATION_RECEIPT_KIND = "target_intake_finalization_receipt_v1"
+SNAPSHOT_RECEIPT_KIND = "target_intake_phase0_snapshot_receipt_v2"
+FINALIZATION_RECEIPT_KIND = "target_intake_finalization_receipt_v2"
 SNAPSHOT_RECEIPT_KEYS = {
     "schema_version",
     "kind",
     "production_acceptance",
+    "receipt_path",
     "checkpoint_phase",
     "evaluated_at",
     "valid_from",
@@ -50,6 +51,8 @@ FINALIZATION_RECEIPT_KEYS = {
     "schema_version",
     "kind",
     "production_acceptance",
+    "receipt_path",
+    "evaluated_at",
     "source_generation",
     "phase0_snapshot",
     "result_final_manifest",
@@ -136,6 +139,15 @@ def _external_locator(value: Any) -> bool:
         return False
 
 
+def _external_output_locator(value: Any) -> bool:
+    if not isinstance(value, str) or not value or not Path(value).is_absolute():
+        return False
+    try:
+        return not Path(value).resolve(strict=False).is_relative_to(ROOT.resolve())
+    except OSError:
+        return False
+
+
 def _manifest_selector(path: Path, manifest: Any, raw: bytes) -> dict[str, Any]:
     if (
         not path.is_absolute()
@@ -202,9 +214,10 @@ def snapshot_receipt_errors(document: Any) -> list[str]:
     valid_from = _utc(document.get("valid_from"))
     valid_until = _utc(document.get("valid_until"))
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or document.get("kind") != SNAPSHOT_RECEIPT_KIND
         or document.get("production_acceptance") is not False
+        or not _external_output_locator(document.get("receipt_path"))
         or document.get("checkpoint_phase") != 0
         or evaluated_at is None
         or valid_from is None
@@ -224,9 +237,11 @@ def finalization_receipt_errors(document: Any) -> list[str]:
         return ["finalization receipt top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or document.get("kind") != FINALIZATION_RECEIPT_KIND
         or document.get("production_acceptance") is not False
+        or not _external_output_locator(document.get("receipt_path"))
+        or _utc(document.get("evaluated_at")) is None
     ):
         errors.append("finalization receipt identity is invalid")
     if not _selection_valid(document.get("source_generation")):
@@ -269,6 +284,7 @@ def create_snapshot_receipt(
     source_manifest_path: Path,
     source_receipt_path: Path,
     checkpoint_path: Path,
+    receipt_path: Path,
     checkpoint: dict[str, Any],
     checkpoint_raw: bytes,
     evaluated_at: str,
@@ -281,9 +297,10 @@ def create_snapshot_receipt(
     ):
         raise AcceptanceReceiptError()
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": SNAPSHOT_RECEIPT_KIND,
         "production_acceptance": False,
+        "receipt_path": os.path.abspath(receipt_path),
         "checkpoint_phase": 0,
         "evaluated_at": evaluated_at,
         "valid_from": valid_from,
@@ -313,8 +330,10 @@ def create_finalization_receipt(
     phase0_checkpoint_path: Path,
     phase0_receipt_path: Path,
     finalized_path: Path,
+    receipt_path: Path,
     finalized_manifest: dict[str, Any],
     finalized_raw: bytes,
+    evaluated_at: str,
 ) -> dict[str, Any]:
     source_selection = _generation_selection(
         source_lineage,
@@ -333,9 +352,11 @@ def create_finalization_receipt(
     ):
         raise AcceptanceReceiptError()
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": FINALIZATION_RECEIPT_KIND,
         "production_acceptance": False,
+        "receipt_path": os.path.abspath(receipt_path),
+        "evaluated_at": evaluated_at,
         "source_generation": source_selection,
         "phase0_snapshot": {
             "checkpoint": _manifest_selector(
@@ -393,6 +414,7 @@ def load_snapshot_acceptance(
         )
         if (
             snapshot_receipt_errors(receipt)
+            or os.path.abspath(receipt_path) != receipt.get("receipt_path")
             or not _matching_digest(
                 canonical_payload_sha256(receipt),
                 expected_receipt_payload_sha256,
@@ -498,6 +520,7 @@ def load_finalization_acceptance(
         )
         if (
             finalization_receipt_errors(receipt)
+            or os.path.abspath(receipt_path) != receipt.get("receipt_path")
             or not _matching_digest(
                 canonical_payload_sha256(receipt),
                 expected_receipt_payload_sha256,

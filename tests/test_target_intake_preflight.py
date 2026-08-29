@@ -2707,14 +2707,15 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.addCleanup(recheck_patch.stop)
 
             snapshot_receipt_document = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "test-snapshot-receipt",
                 "production_acceptance": False,
             }
             finalization_receipt_document = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "test-finalization-receipt",
                 "production_acceptance": False,
+                "evaluated_at": "2026-08-29T01:30:00.000000Z",
             }
 
             def load_snapshot(checkpoint: Path, receipt: Path, **_kwargs):
@@ -2727,9 +2728,10 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     receipt_raw=receipt_raw,
                 )
 
-            def load_finalized(finalized: Path, _receipt: Path, _checkpoint: Path, **kwargs):
+            def load_finalized(finalized: Path, receipt: Path, _checkpoint: Path, **kwargs):
                 raw = finalized.read_bytes()
                 document = json.loads(raw)
+                receipt_raw = receipt.read_bytes()
                 if (
                     kwargs["expected_manifest_payload_sha256"]
                     != requirements_sha256(document)
@@ -2740,6 +2742,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 return SimpleNamespace(
                     finalized_manifest=document,
                     finalized_raw=raw,
+                    receipt=json.loads(receipt_raw),
+                    receipt_raw=receipt_raw,
                     phase0_snapshot=SimpleNamespace(),
                 )
 
@@ -2761,6 +2765,11 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 mock.patch.object(
                     target_intake,
                     "_snapshot_acceptance_identity_errors",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    target_intake,
+                    "_finalization_acceptance_identity_errors",
                     return_value=[],
                 ),
                 mock.patch.object(
@@ -2924,7 +2933,46 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertTrue(unknown_checkpoint.exists())
             self.assertTrue(unknown_checkpoint_receipt.exists())
             self.assertIn("commit-state=unknown", error.getvalue())
+            self.assertIn("manifest_payload_sha256=", error.getvalue())
+            self.assertIn("receipt_file_sha256=", error.getvalue())
             target_intake.recheck_snapshot_acceptance.side_effect = None
+            unknown_checkpoint_raw = unknown_checkpoint.read_bytes()
+            unknown_checkpoint_receipt_raw = unknown_checkpoint_receipt.read_bytes()
+            recovery_output = io.StringIO()
+            with redirect_stdout(recovery_output):
+                self.assertEqual(
+                    main(
+                        [
+                            "verify-receipt",
+                            "--kind",
+                            "snapshot",
+                            "--manifest",
+                            str(unknown_checkpoint),
+                            "--receipt",
+                            str(unknown_checkpoint_receipt),
+                            "--expected-manifest-payload-sha256",
+                            requirements_sha256(json.loads(unknown_checkpoint_raw)),
+                            "--expected-manifest-file-sha256",
+                            hashlib.sha256(unknown_checkpoint_raw).hexdigest(),
+                            "--expected-receipt-payload-sha256",
+                            requirements_sha256(
+                                json.loads(unknown_checkpoint_receipt_raw)
+                            ),
+                            "--expected-receipt-file-sha256",
+                            hashlib.sha256(
+                                unknown_checkpoint_receipt_raw
+                            ).hexdigest(),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn("recovery=read-only-local-revalidation", recovery_output.getvalue())
+            self.assertIn("rollback-protection=unverified", recovery_output.getvalue())
+            self.assertEqual(unknown_checkpoint.read_bytes(), unknown_checkpoint_raw)
+            self.assertEqual(
+                unknown_checkpoint_receipt.read_bytes(),
+                unknown_checkpoint_receipt_raw,
+            )
             self.assertEqual(
                 main(
                     [
@@ -3082,7 +3130,47 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertTrue(unknown_final.exists())
             self.assertTrue(unknown_final_receipt.exists())
             self.assertIn("commit-state=unknown", error.getvalue())
+            self.assertIn("manifest_payload_sha256=", error.getvalue())
+            self.assertIn("receipt_file_sha256=", error.getvalue())
             target_intake.recheck_finalization_acceptance.side_effect = None
+            unknown_final_raw = unknown_final.read_bytes()
+            unknown_final_receipt_raw = unknown_final_receipt.read_bytes()
+            recovery_output = io.StringIO()
+            with redirect_stdout(recovery_output):
+                self.assertEqual(
+                    main(
+                        [
+                            "verify-receipt",
+                            "--kind",
+                            "finalization",
+                            "--manifest",
+                            str(unknown_final),
+                            "--receipt",
+                            str(unknown_final_receipt),
+                            "--expected-manifest-payload-sha256",
+                            requirements_sha256(json.loads(unknown_final_raw)),
+                            "--expected-manifest-file-sha256",
+                            hashlib.sha256(unknown_final_raw).hexdigest(),
+                            "--expected-receipt-payload-sha256",
+                            requirements_sha256(json.loads(unknown_final_receipt_raw)),
+                            "--expected-receipt-file-sha256",
+                            hashlib.sha256(unknown_final_receipt_raw).hexdigest(),
+                            "--phase0-checkpoint-manifest",
+                            str(checkpoint_path),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn("kind=finalization", recovery_output.getvalue())
+            self.assertIn(
+                "parent-directory-race-protection=unverified",
+                recovery_output.getvalue(),
+            )
+            self.assertEqual(unknown_final.read_bytes(), unknown_final_raw)
+            self.assertEqual(
+                unknown_final_receipt.read_bytes(),
+                unknown_final_receipt_raw,
+            )
             self.assertEqual(
                 main(
                     [
@@ -3892,6 +3980,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "target_intake_preflight.py preflight",
             "target_intake_preflight.py snapshot",
             "target_intake_preflight.py finalize",
+            "target_intake_preflight.py verify-receipt",
             "repository-external",
             "production_acceptance=false",
             "never copy live credentials",
@@ -3924,8 +4013,15 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "ledger `finished_at`",
             "--expected-manifest-payload-sha256",
             "--expected-manifest-file-sha256",
-            "Pin authority, custody after publication, and",
-            "global rollback protection therefore remain `unverified`",
+            "local schema-v2 receipts",
+            "case-preserving lexical absolute `receipt_path`",
+            "Schema-v1 acceptance receipts are incompatible",
+            "recovery=read-only-local-revalidation",
+            "same bytes at the same path",
+            "rollback of the receipt/result/four-pin set as one unit",
+            "publication crash durability",
+            "Pin authority, locator continuity, parent-directory race",
+            "rollback protection therefore remain `unverified`",
             "change exactly one `missing` item",
             "fork protection, latest-head selection, pin",
             "successful command does not discover or certify a global latest",

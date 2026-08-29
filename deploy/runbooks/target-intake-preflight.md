@@ -964,8 +964,8 @@ python scripts/target_intake_preflight.py preflight `
 The unqualified strict check is the production-signoff check. First finalize
 the fully populated authoring manifest to a new repository-external leaf. The
 command repeats the complete strict validation against the frozen Phase 0
-checkpoint, writes deterministic JSON to an fsynced adjacent temporary file,
-publishes with no-replace semantics, performs a stable readback, and prints
+checkpoint, writes deterministic JSON to an adjacent temporary whose file
+contents are fsynced, publishes with no-replace semantics, performs a stable readback, and prints
 both the canonical payload SHA-256 and the exact finalized-file SHA-256:
 
 ```powershell
@@ -1010,24 +1010,72 @@ not edited. Silently replacing a deployed contract, decision, approval,
 inventory, reviewer reference, timestamp, path or digest is not allowed.
 
 Snapshot and finalization acceptance are represented by separate closed,
-canonical, write-once local receipts. The snapshot receipt records the Phase 0
+canonical, write-once local schema-v2 receipts. Each receipt carries its own
+case-preserving lexical absolute `receipt_path`; loading the same bytes from a
+different locator fails. Schema-v1 acceptance receipts are incompatible and
+must not be promoted or silently rewritten. The snapshot receipt records the Phase 0
 evaluation instant and validity intersection and binds the exact source
-generation receipt plus result checkpoint locator and bytes. Finalization
+generation receipt plus result checkpoint locator and bytes. Finalization records
+its own evaluation instant so recovery can replay the original decision, then
 requires caller pins for that snapshot receipt, verifies its source generation
 is an exact ancestor of the terminal generation, and publishes its own receipt
 only after the final leaf and all source rechecks succeed. A checkpoint/final
 leaf left without its receipt is `orphaned-unaccepted`; a failure after receipt
-publication is `commit-state=unknown` and requires explicit receipt verification.
+publication is `commit-state=unknown`; the failure line prints the exact result
+manifest and receipt payload/file SHA-256 values needed for explicit verification.
 Never delete either artifact automatically in those states.
 
+Recover a snapshot unknown state with a read-only replay. Supply the four pins
+from the failed command's diagnostic; do not derive them from another mutable
+file beside the receipt:
+
+```powershell
+python scripts/target_intake_preflight.py verify-receipt `
+  --kind snapshot `
+  --manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
+  --receipt D:\email-platform-evidence\intake\staging-phase0-checkpoint.receipt.json `
+  --expected-manifest-payload-sha256 1111111111111111111111111111111111111111111111111111111111111111 `
+  --expected-manifest-file-sha256 2222222222222222222222222222222222222222222222222222222222222222 `
+  --expected-receipt-payload-sha256 3333333333333333333333333333333333333333333333333333333333333333 `
+  --expected-receipt-file-sha256 4444444444444444444444444444444444444444444444444444444444444444
+```
+
+Recover a finalization unknown state by additionally selecting the exact Phase
+0 checkpoint bound by the finalization receipt:
+
+```powershell
+python scripts/target_intake_preflight.py verify-receipt `
+  --kind finalization `
+  --manifest D:\email-platform-evidence\intake\staging-target-intake-final.json `
+  --receipt D:\email-platform-evidence\intake\staging-target-intake-final.receipt.json `
+  --expected-manifest-payload-sha256 5555555555555555555555555555555555555555555555555555555555555555 `
+  --expected-manifest-file-sha256 6666666666666666666666666666666666666666666666666666666666666666 `
+  --expected-receipt-payload-sha256 7777777777777777777777777777777777777777777777777777777777777777 `
+  --expected-receipt-file-sha256 8888888888888888888888888888888888888888888888888888888888888888 `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json
+```
+
+`verify-receipt` does not create, replace, delete, repair, or promote any file.
+It reports `recovery=read-only-local-revalidation`, recursively reloads and
+rechecks the selected local chain, replays Phase 0
+at the snapshot time and complete final intake at the finalization time, and
+always reports `production_acceptance=false`. A successful recovery is local
+evidence for disposition; it is not a provider-backed commit decision.
+
 These receipts still prove only that this process selected, published, and read
-back one local chain without replacing an existing name. The final-manifest and
+back one local chain without replacing an existing name. Self-binding rejects a
+copied receipt at another locator, but cannot distinguish deleting and recreating
+the same bytes at the same path. The final-manifest and
 finalization-receipt caller pins detect a later
 byte rewrite, semantic replacement, or rollback when the caller retains the
 current values independently. They do not authenticate who supplied the pins,
-prevent deletion and recreation, prove provider-native immutability, or identify
-the globally latest manifest. Pin authority, custody after publication, and
-global rollback protection therefore remain `unverified`; a real guarantee
+prevent rollback of the receipt/result/four-pin set as one unit, prevent
+same-path deletion and recreation, prove provider-native immutability, or identify
+the globally latest manifest. Parent-directory replacement races remain open;
+the staged file data fsync does not prove crash durability of the later hard-link
+directory entry. Pin authority, locator continuity, parent-directory race
+protection, publication crash durability, custody after publication, and global
+rollback protection therefore remain `unverified`; a real guarantee
 requires an external signed change-control record or provider-native CAS/WORM
 head. Generation receipts are unsigned local JSON: they do not prove reviewer
 authority, global latest-head selection, cross-host fork prevention, trusted
