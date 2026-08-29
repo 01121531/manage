@@ -1,9 +1,10 @@
-"""Bind one successful v2 forward or rolling release ledger to target evidence."""
+"""Bind one successful v3 forward or rolling release ledger to target evidence."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import stat
@@ -47,6 +48,8 @@ IDENTITY_KEYS = {
     "successful",
     "target_release",
     "target_intake",
+    "started_at",
+    "finished_at",
 }
 TARGET_RELEASE_KEYS = {"tag", "commit", "container_manifest_sha256"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -54,6 +57,9 @@ _TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _ENVIRONMENT = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
 _REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
+_UTC_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
+)
 _PLACEHOLDERS = {"development", "example", "local", "placeholder", "tbd", "test"}
 _MAX_EVIDENCE_BYTES = 64 * 1024
 
@@ -63,7 +69,7 @@ class ReleaseExecutionBindingError(ValueError):
 
 
 def release_execution_identity(raw: bytes) -> dict[str, Any]:
-    """Validate one v2 ledger and return its normalized non-secret identity."""
+    """Validate one v3 ledger and return its normalized non-secret identity."""
 
     if not raw or len(raw) > _MAX_EVIDENCE_BYTES:
         raise ReleaseExecutionBindingError("release execution evidence size is invalid")
@@ -97,6 +103,8 @@ def release_execution_identity(raw: bytes) -> dict[str, Any]:
             "container_manifest_sha256": release["container_manifest_sha256"],
         },
         "target_intake": dict(evidence["target_intake"]),
+        "started_at": evidence["started_at"],
+        "finished_at": evidence["finished_at"],
     }
 
 
@@ -106,6 +114,16 @@ def _exact_mapping(value: Any, keys: set[str]) -> bool:
 
 def _digest(value: Any) -> bool:
     return isinstance(value, str) and _SHA256.fullmatch(value) is not None
+
+
+def _timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
 
 
 def _environment(value: Any) -> bool:
@@ -214,6 +232,7 @@ def release_execution_alignment_errors(
     release_tag: str,
     release_commit: str,
     container_manifest_sha256: str,
+    consumer_started_at: str | None = None,
 ) -> list[str]:
     validation_errors = selector_errors(
         selector,
@@ -243,6 +262,7 @@ def release_execution_alignment_errors(
         release_tag=release_tag,
         release_commit=release_commit,
         container_manifest_sha256=container_manifest_sha256,
+        consumer_started_at=consumer_started_at,
     )
 
 
@@ -254,6 +274,7 @@ def release_execution_identity_alignment_errors(
     release_tag: str,
     release_commit: str,
     container_manifest_sha256: str,
+    consumer_started_at: str | None = None,
 ) -> list[str]:
     errors = selector_errors(
         selector,
@@ -292,4 +313,15 @@ def release_execution_identity_alignment_errors(
         errors.append("release execution target release does not match its index")
     if identity["target_intake"] != selector["target_intake"]:
         errors.append("release execution target intake does not match its selector")
+    if consumer_started_at is not None:
+        finished_at = _timestamp(identity.get("finished_at"))
+        consumer_started = _timestamp(consumer_started_at)
+        if (
+            finished_at is None
+            or consumer_started is None
+            or consumer_started < finished_at
+        ):
+            errors.append(
+                "release execution must finish before its consuming evidence starts"
+            )
     return errors

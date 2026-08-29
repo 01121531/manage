@@ -65,7 +65,9 @@ TARGET_INTAKE = {
 
 
 def _recorder(
-    *, third_party_images: dict[str, str | None] | None = None
+    *,
+    third_party_images: dict[str, str | None] | None = None,
+    started_at: str | None = None,
 ) -> DeploymentReleaseEvidenceRecorder:
     recorder = DeploymentReleaseEvidenceRecorder(
         target_release=TARGET_RELEASE,
@@ -73,6 +75,7 @@ def _recorder(
         images=IMAGES,
         target_intake=TARGET_INTAKE,
         third_party_images=third_party_images,
+        started_at=started_at,
     )
     recorder.validate_initial()
     return recorder

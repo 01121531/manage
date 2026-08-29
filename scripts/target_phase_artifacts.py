@@ -687,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:
                 container_manifest_sha256=bindings.get(
                     "container_manifest_sha256"
                 ),
+                consumer_started_at=document.get("window", {}).get("started_at"),
             )
     if arguments.expected_type == "phase5_windows_evidence":
         if arguments.windows_pilot_inputs is None:

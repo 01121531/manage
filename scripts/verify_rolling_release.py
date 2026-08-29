@@ -68,6 +68,7 @@ def verification_errors(root: Path = ROOT) -> list[str]:
             "read_stable_bytes_with_metadata(",
             "_read_route_snapshot(plan.route_dir / ROUTE_NAME)",
             'RollingReleaseError("active rolling route changed before switch")',
+            "started_at=checkpoint.evaluated_at",
         ),
         "scripts/rolling_release_evidence.py": (
             'EVIDENCE_KIND = "web_api_rolling_execution"',
@@ -192,10 +193,11 @@ def verification_errors(root: Path = ROOT) -> list[str]:
     if execute is None or not execute.body:
         errors.append("rolling executor is missing its public execution body")
     else:
-        first = execute.body[0]
+        capture = execute.body[0] if execute.body else None
+        first = execute.body[1] if len(execute.body) > 1 else None
         intake_calls = [
             node
-            for node in ast.walk(first)
+            for node in (ast.walk(first) if isinstance(first, ast.AST) else ())
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "load_phase_checkpoint"
@@ -208,9 +210,15 @@ def verification_errors(root: Path = ROOT) -> list[str]:
         arguments = {argument.arg for argument in execute.args.kwonlyargs}
         if not (
             isinstance(first, ast.Try)
+            and isinstance(capture, ast.Assign)
+            and len(capture.targets) == 1
+            and isinstance(capture.targets[0], ast.Name)
+            and capture.targets[0].id == "release_started_at"
             and len(intake_calls) == 1
             and isinstance(keywords.get("through_phase"), ast.Constant)
             and keywords["through_phase"].value == 0
+            and isinstance(keywords.get("evaluated_at"), ast.Name)
+            and keywords["evaluated_at"].id == "release_started_at"
             and {"target_intake_manifest", "target_environment"}.issubset(arguments)
             and intake_calls[0].lineno
             < min(

@@ -164,7 +164,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "approval_status": "approved",
                     "review_reference": "phase0-independent-review-42",
-                    "reviewed_at": "2026-08-26T13:00:00Z",
+                    "reviewed_at": "2026-08-25T13:00:00Z",
                     "valid_until": "2099-08-26T13:00:00Z",
                 }
             )
@@ -190,7 +190,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "inventory_status": "reviewed",
                     "review_reference": "target-platform-review-record-42",
-                    "reviewed_at": "2026-08-26T12:00:00Z",
+                    "reviewed_at": "2026-08-25T12:00:00Z",
                     "valid_until": "2099-08-26T12:00:00Z",
                     "environment": manifest["environment"],
                 }
@@ -668,10 +668,18 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 rollback=DEPLOY_ROLLBACK,
                 images=DEPLOY_IMAGES,
                 target_intake=target_intake,
+                started_at="2026-08-26T08:00:00Z",
             )
             recorder.validate_initial()
-            complete_deploy_success(recorder)
-            return seal_deploy_recorder(recorder)
+            with mock.patch(
+                "scripts.deploy_release_evidence.utc_now",
+                return_value="2026-08-26T08:30:00Z",
+            ), mock.patch(
+                "tests.test_deploy_release_evidence.utc_now",
+                return_value="2026-08-26T08:30:00Z",
+            ):
+                complete_deploy_success(recorder)
+                return seal_deploy_recorder(recorder)
         elif identifier == "phase6_operations_evidence":
             if manifest is None:
                 raise ValueError("Phase 6 operations evidence requires the current manifest")
@@ -766,7 +774,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
         document["synthetic"] = False
         if "provider_reference" in document:
             document["provider_reference"] = f"{identifier}-provider-record-42"
-            document["reviewed_at"] = "2026-08-26T12:00:00Z"
+            document["reviewed_at"] = "2026-08-25T12:00:00Z"
             document["source_provenance"] = {
                 "provider_scope": {
                     "environment": "staging",
@@ -775,13 +783,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "source_document_reference": f"{identifier}-source-document-42",
                 "source_version_reference": f"{identifier}-source-version-42",
                 "source_sha256": "a" * 64,
-                "captured_at": "2026-08-26T10:00:00Z",
+                "captured_at": "2026-08-25T10:00:00Z",
                 "valid_until": "2099-08-26T10:00:00Z",
             }
         else:
             document["decision_reference"] = f"{identifier}-decision-record-42"
             document["decision_status"] = "approved"
-            document["reviewed_at"] = "2026-08-26T12:00:00Z"
+            document["reviewed_at"] = "2026-08-25T12:00:00Z"
             document["valid_until"] = "2099-08-26T12:00:00Z"
         document["review_reference"] = "security-review-ticket-42"
         return document
@@ -1299,6 +1307,63 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 ),
                 [],
             )
+            checkpoint_identity = load_phase_checkpoint(
+                checkpoint_path.resolve(),
+                environment="staging",
+                through_phase=0,
+                evaluated_at=datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc),
+            )
+            self.assertEqual(
+                checkpoint_identity.valid_from,
+                "2026-08-25T13:00:00.000000Z",
+            )
+            self.assertEqual(
+                checkpoint_identity.valid_until,
+                "2099-08-26T10:00:00.000000Z",
+            )
+            self.assertTrue(
+                checkpoint_identity.contains_release_start(
+                    checkpoint_identity.valid_from
+                )
+            )
+            self.assertFalse(
+                checkpoint_identity.contains_release_start(
+                    checkpoint_identity.valid_until
+                )
+            )
+            release_path = Path(release_item["artifact_path"])
+            release_identity = target_intake.release_execution_identity(
+                release_path.read_bytes()
+            )
+            historical_drift = copy.deepcopy(release_identity)
+            historical_drift["started_at"] = "2026-08-25T12:59:59Z"
+            with mock.patch.object(
+                target_intake,
+                "release_execution_identity",
+                return_value=historical_drift,
+            ):
+                self.assertIn(
+                    "release execution did not start inside the frozen Phase 0 validity window",
+                    intake_errors(
+                        manifest,
+                        self.requirements,
+                        repository_root=repository,
+                        require_complete=True,
+                        phase0_checkpoint_manifest=checkpoint_path.resolve(),
+                    ),
+                )
+            release_item["reviewed_at"] = "2026-08-26T08:29:59Z"
+            self.assertIn(
+                "release_execution_evidence review must not predate ledger completion",
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=True,
+                    phase0_checkpoint_manifest=checkpoint_path.resolve(),
+                ),
+            )
+            release_item["reviewed_at"] = "2026-08-26T12:00:00Z"
             for identifier in (
                 "phase1_platform_evidence",
                 "phase2_mail_evidence",
@@ -2687,6 +2752,11 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--through-phase 5",
             "--through-phase 6",
             "all seventeen items",
+            "same value both to validate the frozen Phase 0 checkpoint",
+            "[max(reviewed_at), min(valid_until))",
+            "Phase 0 validity is an entry authorization",
+            "schema-v3 release ledger",
+            "ledger `finished_at`",
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, text)

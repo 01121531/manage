@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import os
@@ -54,6 +55,9 @@ TARGET_INTAKE = PhaseCheckpointIdentity(
     manifest_payload_sha256="9" * 64,
     requirements_sha256="8" * 64,
     checkpoint_phase=0,
+    evaluated_at="2026-08-26T12:00:00.000000Z",
+    valid_from="2026-08-26T10:00:00.000000Z",
+    valid_until="2099-08-26T12:00:00.000000Z",
 )
 
 
@@ -209,14 +213,19 @@ class RollingReleaseTests(unittest.TestCase):
             mock.patch("scripts.rolling_release._verify_supply_chain"),
             mock.patch("scripts.rolling_release._pull_images"),
             mock.patch("scripts.rolling_release.scan_third_party_images"),
-            mock.patch(
-                "scripts.rolling_release.load_phase_checkpoint",
-                return_value=TARGET_INTAKE,
-            ),
         )
         for patcher in patches:
             patcher.start()
             self.addCleanup(patcher.stop)
+        intake_patch = mock.patch("scripts.rolling_release.load_phase_checkpoint")
+        self.intake_validator = intake_patch.start()
+        self.addCleanup(intake_patch.stop)
+        self.intake_validator.side_effect = lambda *args, evaluated_at, **kwargs: replace(
+            TARGET_INTAKE,
+            evaluated_at=evaluated_at.astimezone(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
+        )
 
     def execute(self, runner: FakeRunner) -> None:
         execute_rolling_release(
@@ -285,6 +294,13 @@ class RollingReleaseTests(unittest.TestCase):
         external = next(i for i, command in enumerate(commands) if f"https://{DOMAIN}/releasez" in command)
         self.assertEqual([migrate, start, reload_edge, external], sorted((migrate, start, reload_edge, external)))
         evidence = self.evidence()
+        checkpoint_time = self.intake_validator.call_args.kwargs["evaluated_at"]
+        self.assertEqual(
+            evidence["started_at"],
+            checkpoint_time.astimezone(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
+        )
         self.assertEqual(evidence["terminal_state"], TERMINAL_COMPLETE)
         self.assertTrue(evidence["workers"]["unchanged"])
         self.assertEqual(evidence["routes"]["after_sha256"], evidence["routes"]["target_sha256"])

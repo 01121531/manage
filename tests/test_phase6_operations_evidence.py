@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.phase6_operations_evidence import (
     EVIDENCE_INDEX,
@@ -474,9 +475,13 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
             pilot_path = root / "pilot-evidence.json"
             manifest_path = root / "intake.json"
             release_path = root / "forward-release.json"
-            recorder = _recorder()
-            _complete_success(recorder)
-            recorder.write(release_path)
+            recorder = _recorder(started_at="2026-08-26T08:00:00Z")
+            with mock.patch(
+                "scripts.deploy_release_evidence.utc_now",
+                return_value="2026-08-26T08:30:00Z",
+            ):
+                _complete_success(recorder)
+                recorder.write(release_path)
             ledger_digest = hashlib.sha256(release_path.read_bytes()).hexdigest()
             reviewed["release_execution"]["evidence_sha256"] = ledger_digest
             reviewed = self._reseal(reviewed)

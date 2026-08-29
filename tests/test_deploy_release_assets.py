@@ -43,6 +43,16 @@ class DeployReleaseAssetTests(unittest.TestCase):
             any("Phase 0 target intake" in error for error in self.errors(deploy=changed))
         )
 
+    def test_phase0_evaluation_and_ledger_start_cannot_diverge(self) -> None:
+        for old, new in (
+            ("evaluated_at=release_started_at,", "evaluated_at=None,"),
+            ("started_at=checkpoint.evaluated_at,", "started_at=None,"),
+        ):
+            with self.subTest(old=old):
+                changed = self.deploy.replace(old, new, 1)
+                self.assertNotEqual(changed, self.deploy)
+                self.assertTrue(self.errors(deploy=changed))
+
     def test_production_build_and_local_fallback_are_rejected(self) -> None:
         build = self.compose.replace(
             "  api:\n    image:",

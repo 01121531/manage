@@ -5,9 +5,11 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
+    release_execution_identity,
     selector_errors,
 )
 from scripts.deploy_release_evidence import TERMINAL_PREFLIGHT_FAILED
@@ -110,6 +112,49 @@ def _write_rolling_evidence(path: Path) -> None:
 
 
 class ReleaseExecutionBindingTests(unittest.TestCase):
+    def test_identity_preserves_execution_window_and_consumers_follow_completion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "forward.json"
+            recorder = _recorder(started_at="2026-08-26T08:00:00Z")
+            with mock.patch(
+                "scripts.deploy_release_evidence.utc_now",
+                return_value="2026-08-26T08:30:00Z",
+            ):
+                _complete_success(recorder)
+                recorder.write(path)
+            identity = release_execution_identity(path.read_bytes())
+            self.assertEqual(identity["started_at"], "2026-08-26T08:00:00Z")
+            self.assertEqual(identity["finished_at"], "2026-08-26T08:30:00Z")
+            selector = _selector(path)
+            expected = {
+                "environment": "staging",
+                "release_tag": TARGET_RELEASE["tag"],
+                "release_commit": TARGET_RELEASE["commit"],
+                "container_manifest_sha256": TARGET_RELEASE[
+                    "container_manifest_sha256"
+                ],
+            }
+            self.assertEqual(
+                release_execution_alignment_errors(
+                    selector,
+                    path,
+                    **expected,
+                    consumer_started_at="2026-08-26T08:30:00Z",
+                ),
+                [],
+            )
+            self.assertIn(
+                "release execution must finish before its consuming evidence starts",
+                release_execution_alignment_errors(
+                    selector,
+                    path,
+                    **expected,
+                    consumer_started_at="2026-08-26T08:29:59Z",
+                ),
+            )
+
     def test_synthetic_and_reviewed_selector_schemas_are_closed(self) -> None:
         synthetic = {
             "ledger_type": None,
@@ -225,7 +270,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                 terminal_errors,
             )
 
-    def test_rolling_selector_uses_the_rolling_v2_validator_and_target(self) -> None:
+    def test_rolling_selector_uses_the_rolling_v3_validator_and_target(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "rolling.json"
             _write_rolling_evidence(path)

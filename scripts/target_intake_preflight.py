@@ -167,6 +167,9 @@ class PhaseCheckpointIdentity:
     manifest_payload_sha256: str
     requirements_sha256: str
     checkpoint_phase: int
+    evaluated_at: str
+    valid_from: str
+    valid_until: str
 
     def as_evidence(self) -> dict[str, str | int]:
         return {
@@ -175,6 +178,17 @@ class PhaseCheckpointIdentity:
             "requirements_sha256": self.requirements_sha256,
             "checkpoint_phase": self.checkpoint_phase,
         }
+
+    def contains_release_start(self, value: Any) -> bool:
+        started_at = _parse_utc(value)
+        valid_from = _parse_utc(self.valid_from)
+        valid_until = _parse_utc(self.valid_until)
+        return (
+            started_at is not None
+            and valid_from is not None
+            and valid_until is not None
+            and valid_from <= started_at < valid_until
+        )
 
 
 class PhaseCheckpointError(ValueError):
@@ -351,14 +365,26 @@ def create_intake_manifest(environment: str, requirements: Any) -> dict[str, Any
     }
 
 
-def _canonical_utc(value: Any) -> bool:
+def _parse_utc(value: Any) -> datetime | None:
     if not isinstance(value, str) or not _UTC_TIMESTAMP.fullmatch(value):
-        return False
+        return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return False
-    return parsed.tzinfo == timezone.utc
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
+
+
+def _canonical_utc(value: Any) -> bool:
+    return _parse_utc(value) is not None
+
+
+def _utc_timestamp(value: datetime) -> str:
+    if value.tzinfo is None:
+        raise ValueError("UTC timestamp must be timezone-aware")
+    return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace(
+        "+00:00", "Z"
+    )
 
 
 def _reviewer_reference(value: Any) -> bool:
@@ -549,8 +575,21 @@ def _artifact_errors(
             )
     if not _reviewer_reference(item.get("reviewed_by")):
         errors.append(f"{identifier} reviewer reference is invalid")
-    if not _canonical_utc(item.get("reviewed_at")):
+    reviewed_at = _parse_utc(item.get("reviewed_at"))
+    if reviewed_at is None:
         errors.append(f"{identifier} reviewed_at must be canonical UTC")
+    elif identifier == "release_execution_evidence" and isinstance(
+        validated_document, dict
+    ):
+        finished_at = _parse_utc(validated_document.get("finished_at"))
+        if finished_at is None or reviewed_at < finished_at:
+            errors.append(
+                "release_execution_evidence review must not predate ledger completion"
+            )
+        if reviewed_at > evaluated_at:
+            errors.append(
+                "release_execution_evidence review must not follow the evaluation time"
+            )
     if item.get("redaction_confirmed") is not True:
         errors.append(f"{identifier} redaction must be explicitly confirmed")
     return errors, validated_document
@@ -565,6 +604,7 @@ def intake_errors(
     required_ids: frozenset[str] | None = None,
     phase0_checkpoint_manifest: Path | None = None,
     evaluated_at: datetime | None = None,
+    _phase0_windows: dict[str, tuple[str, str]] | None = None,
 ) -> list[str]:
     evaluation_time = evaluated_at or _utc_now()
     if not isinstance(document, dict) or set(document) != _MANIFEST_KEYS:
@@ -609,6 +649,7 @@ def intake_errors(
     phase6_pilot_evidence: Any | None = None
     phase6_operations_evidence: Any | None = None
     release_execution: Any | None = None
+    phase0_ids = frozenset(phase_requirement_ids(requirements, 0))
     for item in items:
         if not isinstance(item, dict) or set(item) != _ITEM_KEYS:
             errors.append("intake manifest item schema is invalid")
@@ -753,6 +794,21 @@ def intake_errors(
                 and validated_document.get("synthetic") is False
             ):
                 phase6_operations_evidence = validated_document
+            if (
+                _phase0_windows is not None
+                and identifier in phase0_ids
+                and isinstance(validated_document, dict)
+            ):
+                source = validated_document.get("source_provenance")
+                valid_until = (
+                    source.get("valid_until")
+                    if identifier in {"mail_contract", "sub2_contract"}
+                    and isinstance(source, dict)
+                    else validated_document.get("valid_until")
+                )
+                reviewed_at = validated_document.get("reviewed_at")
+                if _canonical_utc(reviewed_at) and _canonical_utc(valid_until):
+                    _phase0_windows[identifier] = (reviewed_at, valid_until)
         else:
             errors.append(f"{identifier} status is invalid")
     if phase0_approval is not None:
@@ -843,6 +899,9 @@ def intake_errors(
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
                     ),
+                    consumer_started_at=artifact.get("window", {}).get(
+                        "started_at"
+                    ),
                 )
             )
     if {
@@ -868,6 +927,9 @@ def intake_errors(
                     release_commit=bindings.get("release_commit"),
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
+                    ),
+                    consumer_started_at=sub2_evidence.get("window", {}).get(
+                        "started_at"
                     ),
                 )
             )
@@ -896,6 +958,9 @@ def intake_errors(
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
                     ),
+                    consumer_started_at=vault_egress_evidence.get("window", {}).get(
+                        "started_at"
+                    ),
                 )
             )
     if phase6_pilot_inputs is not None:
@@ -921,6 +986,9 @@ def intake_errors(
                     release_commit=bindings.get("release_commit"),
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
+                    ),
+                    consumer_started_at=phase6_pilot_evidence.get("window", {}).get(
+                        "started_at"
                     ),
                 )
             )
@@ -952,6 +1020,9 @@ def intake_errors(
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
                     ),
+                    consumer_started_at=phase6_operations_evidence.get(
+                        "window", {}
+                    ).get("started_at"),
                 )
             )
     lineage_required = require_complete and (
@@ -998,6 +1069,15 @@ def intake_errors(
                 ):
                     errors.append(
                         "release execution intake does not match the Phase 0 checkpoint snapshot"
+                    )
+                if (
+                    release_execution is not None
+                    and not checkpoint_identity.contains_release_start(
+                        release_execution.get("started_at")
+                    )
+                ):
+                    errors.append(
+                        "release execution did not start inside the frozen Phase 0 validity window"
                     )
     return errors
 
@@ -1055,6 +1135,7 @@ def _load_validated_phase_checkpoint(
         raise PhaseCheckpointError(["target environment is invalid or a placeholder"])
     if through_phase not in _TARGET_PHASES:
         raise PhaseCheckpointError(["intake checkpoint phase is invalid"])
+    evaluation_time = evaluated_at or _utc_now()
     errors = _manifest_path_errors(manifest_path, must_exist=True)
     if errors:
         raise PhaseCheckpointError(errors)
@@ -1069,6 +1150,7 @@ def _load_validated_phase_checkpoint(
         errors.append(
             "intake manifest environment does not match the target environment"
         )
+    phase0_windows: dict[str, tuple[str, str]] = {}
     errors.extend(
         intake_errors(
             manifest,
@@ -1077,16 +1159,31 @@ def _load_validated_phase_checkpoint(
             required_ids=frozenset(
                 phase_requirement_ids(requirements, through_phase)
             ),
-            evaluated_at=evaluated_at,
+            evaluated_at=evaluation_time,
+            _phase0_windows=phase0_windows,
         )
     )
+    expected_phase0_ids = frozenset(phase_requirement_ids(requirements, 0))
+    if through_phase >= 0 and set(phase0_windows) != expected_phase0_ids:
+        errors.append("Phase 0 validity window could not be reconstructed")
     if errors:
         raise PhaseCheckpointError(errors)
+    valid_from_value = max(
+        _parse_utc(window[0]) for window in phase0_windows.values()
+    )
+    valid_until_value = min(
+        _parse_utc(window[1]) for window in phase0_windows.values()
+    )
+    if valid_from_value is None or valid_until_value is None:
+        raise PhaseCheckpointError(["Phase 0 validity window could not be reconstructed"])
     identity = PhaseCheckpointIdentity(
         environment=environment,
         manifest_payload_sha256=requirements_sha256(manifest),
         requirements_sha256=manifest["requirements_sha256"],
         checkpoint_phase=through_phase,
+        evaluated_at=_utc_timestamp(evaluation_time),
+        valid_from=_utc_timestamp(valid_from_value),
+        valid_until=_utc_timestamp(valid_until_value),
     )
     return identity, manifest
 

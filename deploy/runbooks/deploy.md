@@ -250,7 +250,10 @@ identity and shape throughout its bounded read.
 The executor requires the exact target environment and the strict Phase 0
 checkpoint before it prepares evidence, acquires the release lock, constructs a
 runner, or invokes Git, Trivy, Docker, Cosign, Compose, migrations, services, or
-Edge changes. The executor then enforces this order:
+Edge changes. The entrypoint captures one host-UTC instant, passes it as the
+Phase 0 checkpoint evaluation time, and records that exact value as ledger
+`started_at`; this proves byte-bound ordering but does not make the host clock
+trusted time or authenticate external approval. The executor then enforces this order:
 
 1. Before acquiring the shared release-control lock, validate the evidence
    output as an absolute, repository-external new file whose parent already
@@ -331,9 +334,14 @@ recovery set, five application expected/observed digests, five reviewed
 third-party digest references, ordered phase UTC values, checks, final Edge
 state, and a canonical payload SHA-256. Publication uses a same-directory
 temporary file plus no-replace hard-link commit; retry with a new unique leaf.
-The intake-bound evidence contract is schema v2. A schema-v1 record has no
-`target_intake` identity and must be rejected rather than rewritten or promoted;
-run a new release attempt with a new write-once evidence leaf.
+The intake-bound evidence contract is schema v3. Older records that lack the
+current TLS and intake contract must be rejected rather than rewritten or
+promoted; run a new release attempt with a new write-once evidence leaf. The
+ledger remains immutable history and has no expiry of its own. Final strict
+intake reconstructs the frozen Phase 0 review-validity intersection and requires
+`started_at` inside it; it does not invent continuous authorization, renewal or
+mid-run expiry rollback. Ledger selection review and every consuming execution
+window must follow ledger `finished_at`.
 If publication fails after Edge was opened, the executor closes Edge again and
 never reports success. An unconfirmed closure has priority over the original
 execution or publication error.

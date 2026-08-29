@@ -590,8 +590,10 @@ class RollingReleaseEvidenceRecorder:
         source_route_sha256: str,
         target_route_sha256: str,
         target_intake: Mapping[str, str | int],
+        started_at: str | None = None,
     ) -> None:
-        started_at = utc_now()
+        recorded_started_at = utc_now() if started_at is None else started_at
+        _timestamp(recorded_started_at)
         self.payload: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "evidence_kind": EVIDENCE_KIND,
@@ -599,8 +601,8 @@ class RollingReleaseEvidenceRecorder:
             "plan_fingerprint": plan_fingerprint,
             "terminal_state": TERMINAL_PRE_SWITCH_FAILED,
             "error_code": _TERMINAL_ERROR[TERMINAL_PRE_SWITCH_FAILED],
-            "started_at": started_at,
-            "finished_at": started_at,
+            "started_at": recorded_started_at,
+            "finished_at": recorded_started_at,
             "source": dict(source),
             "target": dict(target),
             "target_intake": dict(target_intake),
@@ -617,7 +619,7 @@ class RollingReleaseEvidenceRecorder:
                 "source_sha256": source_route_sha256,
                 "target_sha256": target_route_sha256,
             },
-            "phases": [{"phase": "STARTED", "at": started_at}],
+            "phases": [{"phase": "STARTED", "at": recorded_started_at}],
             "nginx_operations": [],
             "tls_observations": [],
             "public_releasez": [],

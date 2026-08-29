@@ -85,8 +85,12 @@ and Phase 6 pilot inputs are usable only in the half-open interval
 preflight captures one UTC evaluation instant and passes it through the Phase 0
 checkpoint, provider-contract runtime conformance and every evidence validator;
 it never refreshes the clock between artifacts or dependency replays. For the
-remaining artifact policies without a sealed review time, the manifest timestamp must still be canonical UTC ending
-in `Z`. Recompute SHA-256 after every approved artifact change. Do not add
+release execution ledger, the manifest review time is the selection review of
+that exact whole-file SHA-256: it must be at or after ledger `finished_at` and
+not after the evaluation instant. For the remaining artifact policies without a
+sealed review time, the manifest timestamp must still be canonical UTC ending
+in `Z`. An opaque reviewer reference and host-clock comparison are not an
+authenticated signature or trusted time. Recompute SHA-256 after every approved artifact change. Do not add
 inline artifact content or extra manifest fields; the schema is closed.
 
 ## Provider contract envelopes
@@ -272,7 +276,21 @@ historical account of one completed execution. Do not add an arbitrary
 whole-file digest and Phase 0 checkpoint identity, by revalidation of the
 current Phase 0 contracts/decisions/inventory/approval at the same evaluation
 instant, and by the consuming Phase 1–6 evidence index's own exclusive review
-deadline.
+deadline. The release entrypoint captures one host-UTC instant and uses that
+same value both to validate the frozen Phase 0 checkpoint and as ledger
+`started_at`. Final strict intake reconstructs the frozen six-item validity
+intersection as `[max(reviewed_at), min(valid_until))` and requires the recorded
+start inside it, so a ledger cannot claim a start before its latest Phase 0
+review or at the earliest expiry boundary. This is replayable ordering over
+sealed bytes, not proof that the host clock or external approvals were authentic.
+
+Phase 0 validity is an entry authorization, not an invented execution lease.
+The repository has no approved renewal, mid-run cancellation or automatic
+rollback policy, so it does not claim that a release completing after a Phase 0
+expiry was continuously authorized. Instead, the ledger must finish before its
+exact digest may be selected and reviewed, and every Phase 1–6 consuming
+execution window must start at or after ledger `finished_at`. Equality at that
+handoff is accepted. Historical ledgers do not expire merely because time passes.
 
 ## Phase 1, 2, 3 and 5 typed target artifacts
 
@@ -314,10 +332,11 @@ and exact prerequisite item hashes. Seal the aggregate `review_reference`,
 `reviewed_at` and exclusive `valid_until`; review every execution index only
 after its window finishes. Strict intake requires its one evaluation instant to
 remain inside `[reviewed_at, valid_until)`. Every execution evidence index also selects
-the same successful schema-v2 release ledger by typed WORM reference, whole-file
+the same successful schema-v3 release ledger by typed WORM reference, whole-file
 SHA-256 and Phase 0 checkpoint identity. Its release tag, 40-hex commit and
 immutable container-manifest SHA-256 must match an independent parse of that
-ledger. `windows_pilot_inputs` is a pre-execution inventory and therefore does
+ledger, and ledger `finished_at` must be no later than the index window's
+`started_at`. `windows_pilot_inputs` is a pre-execution inventory and therefore does
 not carry a release selector, but it carries the same sealed review and
 exclusive validity fields. The complete Phase 5 execution window must start no
 earlier than the Windows input review and finish strictly before those inputs
@@ -330,7 +349,7 @@ python scripts/target_phase_artifacts.py check `
   --input D:\email-platform-evidence\intake\phase2-mail-evidence-index.json `
   --expected-type phase2_mail_evidence `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
-  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
 When checking Phase 5 directly, also supply the exact reviewed Windows input
@@ -342,7 +361,7 @@ python scripts/target_phase_artifacts.py check `
   --input D:\email-platform-evidence\intake\phase5-windows-evidence-index.json `
   --expected-type phase5_windows_evidence `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
-  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json `
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json `
   --windows-pilot-inputs D:\email-platform-evidence\intake\windows-pilot-inputs.json
 ```
 
@@ -378,7 +397,7 @@ platform inventory SHA-256 values from the same intake manifest. Seal one
 aggregate `review_reference` and `reviewed_at` after the execution window and
 an exclusive `valid_until` after that review. Strict intake rejects the index
 before review, at expiration or afterward.
-Select the exact successful schema-v2 release execution ledger by whole-file
+Select the exact successful schema-v3 release execution ledger by whole-file
 SHA-256 and its Phase 0 checkpoint identity; the selector and release triple
 must match an independent parse of that same ledger. Do not include
 supplier URLs, request/response bodies, provider error text, credentials,
@@ -390,7 +409,7 @@ Verify the sealed index and its same-manifest bindings:
 python scripts/sub2_execution_evidence.py check `
   --input D:\email-platform-evidence\intake\sub2-execution-evidence-index.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
-  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
 Exit code 1 means the closed index, canonical payload digest, scenario coverage,
@@ -425,7 +444,7 @@ manifest, and the exact Sub2 contract and target platform inventory hashes from
 the same intake manifest. Seal aggregate `review_reference`, post-window
 `reviewed_at` and exclusive `valid_until`; strict intake requires its single
 evaluation instant inside that half-open interval and the same review metadata
-in the manifest item. Select the same successful schema-v2 release ledger
+in the manifest item. Select the same successful schema-v3 release ledger
 by typed WORM reference, whole-file digest and Phase 0 checkpoint identity; the
 release triple must match the independently parsed ledger. Do not record Vault addresses or responses, supplier
 URLs or bodies, credentials, tokens, PAN/CVV, verification codes, or identities.
@@ -434,7 +453,7 @@ URLs or bodies, credentials, tokens, PAN/CVV, verification codes, or identities.
 python scripts/vault_egress_evidence.py check `
   --input D:\email-platform-evidence\intake\vault-egress-evidence-index.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
-  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
 Exit code 1 means the sealed content or scenario coverage is invalid; exit code
@@ -506,7 +525,7 @@ the exact Sub2 execution evidence, Phase 6 pilot inputs and target platform
 inventory hashes from the same intake manifest. The operator and
 security-auditor subjects must match that reviewed pilot roster.
 
-Select exactly one successful schema-v2 release execution ledger: either a
+Select exactly one successful schema-v3 release execution ledger: either a
 forward ledger with terminal `succeeded` or a Web/API rolling ledger with
 terminal `complete_source_retained`. Record only `forward`/`rolling`, its typed
 WORM object reference, whole-file SHA-256, and the ledger's four-field Phase 0
@@ -527,7 +546,7 @@ python scripts/phase6_pilot_evidence.py check `
   --input D:\email-platform-evidence\intake\phase6-pilot-evidence-index.json `
   --pilot-inputs D:\email-platform-evidence\intake\phase6-pilot-inputs.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
-  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
 Exit code 1 means the sealed index, exact scenario contract, time window,
@@ -586,7 +605,7 @@ python scripts/phase6_operations_evidence.py check `
   --pilot-inputs D:\email-platform-evidence\intake\phase6-pilot-inputs.json `
   --pilot-evidence D:\email-platform-evidence\intake\phase6-pilot-evidence-index.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
-  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
 Exit code 1 means the sealed index, scenario and artifact inventories, window,

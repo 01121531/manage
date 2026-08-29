@@ -218,10 +218,15 @@ def _upstream_scan_errors(source: str) -> list[str]:
 
 
 def _executor_errors(source: str) -> list[str]:
+    shared_start_errors = (
+        []
+        if "started_at=checkpoint.evaluated_at" in source
+        else ["deployment evidence must share the Phase 0 evaluation instant"]
+    )
     try:
         module = ast.parse(source)
     except SyntaxError as error:
-        return [f"deploy_release.py is invalid Python: {error}"]
+        return [*shared_start_errors, f"deploy_release.py is invalid Python: {error}"]
     function = next(
         (
             node
@@ -242,7 +247,7 @@ def _executor_errors(source: str) -> list[str]:
         None,
     )
 
-    errors: list[str] = []
+    errors: list[str] = list(shared_start_errors)
     rollback_imports = {
         alias.name
         for node in module.body
@@ -348,12 +353,25 @@ def _executor_errors(source: str) -> list[str]:
             "release_control_lock",
         )
     }
+    capture_lines = [
+        node.lineno
+        for node in ast.walk(serialized)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "release_started_at"
+            for target in node.targets
+        )
+    ] if serialized is not None else []
     if not (
         intake_imported
         and len(intake_calls) == 1
         and isinstance(intake_keywords.get("through_phase"), ast.Constant)
         and intake_keywords["through_phase"].value == 0
         and isinstance(intake_keywords.get("environment"), ast.Subscript)
+        and isinstance(intake_keywords.get("evaluated_at"), ast.Name)
+        and intake_keywords["evaluated_at"].id == "release_started_at"
+        and len(capture_lines) == 1
+        and capture_lines[0] < serialized_lines["load_phase_checkpoint"]
         and all(value is not None for value in serialized_lines.values())
         and list(serialized_lines.values()) == sorted(serialized_lines.values())
     ):

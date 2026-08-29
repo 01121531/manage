@@ -571,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
         release_tag=bindings.get("release_tag"),
         release_commit=bindings.get("release_commit"),
         container_manifest_sha256=bindings.get("container_manifest_sha256"),
+        consumer_started_at=document.get("window", {}).get("started_at"),
     )
     if binding_errors:
         print("; ".join(binding_errors), file=sys.stderr)

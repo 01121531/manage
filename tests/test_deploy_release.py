@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import io
@@ -43,6 +44,9 @@ TARGET_INTAKE = PhaseCheckpointIdentity(
     manifest_payload_sha256="9" * 64,
     requirements_sha256="8" * 64,
     checkpoint_phase=0,
+    evaluated_at="2026-08-26T12:00:00.000000Z",
+    valid_from="2026-08-26T10:00:00.000000Z",
+    valid_until="2099-08-26T12:00:00.000000Z",
 )
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
 RECOVERY_SET = "release-v1.2.2-20260821T115000Z"
@@ -321,9 +325,15 @@ class DeployReleaseTests(unittest.TestCase):
         self.vault_sink_validator = self.vault_sink_patch.start()
         self.addCleanup(self.vault_sink_patch.stop)
         self.intake_patch = mock.patch(
-            "scripts.deploy_release.load_phase_checkpoint", return_value=TARGET_INTAKE
+            "scripts.deploy_release.load_phase_checkpoint"
         )
         self.intake_validator = self.intake_patch.start()
+        self.intake_validator.side_effect = lambda *args, evaluated_at, **kwargs: replace(
+            TARGET_INTAKE,
+            evaluated_at=evaluated_at.astimezone(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
+        )
         self.addCleanup(self.intake_patch.stop)
         self.manifest_path = self.root / "container-release-manifest.json"
         self.manifest_path.write_text(json.dumps(_manifest()), encoding="utf-8")
@@ -531,6 +541,13 @@ class DeployReleaseTests(unittest.TestCase):
             )
         )
         evidence = verify_evidence(evidence_output)
+        checkpoint_time = self.intake_validator.call_args.kwargs["evaluated_at"]
+        self.assertEqual(
+            evidence["started_at"],
+            checkpoint_time.astimezone(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
+        )
         self.assertEqual(evidence["terminal_state"], "succeeded")
         self.assertFalse(evidence["production_acceptance"])
         self.assertFalse(evidence["rolling_release"])

@@ -142,6 +142,9 @@ Release manifest:
 - Standalone artifact check/strict-intake bounded-reader and unique-key parse parity result:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:
 - Final strict current-to-checkpoint six-item equality and release-ledger-to-checkpoint identity result:
+- Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:
+- Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:
+- Phase 0 entry-authorization versus continuous-execution authorization decision, host-clock trust status and external approval authentication status:
 - Mail/Sub2 provider scope, external source version/SHA-256, capture/review/valid-until UTC and same-manifest review result:
 - Phase 1–5/Sub2/Vault execution-index sealed review/valid-until and same-manifest review result:
 - Windows pilot-input sealed review/valid-until and same-manifest review result:
@@ -149,7 +152,7 @@ Release manifest:
 - Phase 1–5 execution-index exact release-ledger selectors and target-release alignment result:
 - Phase 4 Sub2 evidence exact release-ledger whole-file selector and target-release alignment result:
 - Phase 4 Sub2 sealed review reference/time, execution window and same-manifest review-metadata result:
-- Phase 6 selected schema-v2 ledger independent parse and successful-terminal result:
+- Phase 6 selected schema-v3 ledger independent parse and successful-terminal result:
 - Phase 6 pilot evidence same-manifest Sub2-evidence, pilot-input and target-inventory SHA-256 bindings:
 - Phase 6 pilot operator/security-auditor subject, trace-set, sealed review reference and post-window review time:
 - Phase 6 pilot execution containment and pre-deadline reviewed result:

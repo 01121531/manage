@@ -38,6 +38,34 @@ class RollingReleaseAssetTests(unittest.TestCase):
                 any("Phase 0 target intake" in error for error in verification_errors(root))
             )
 
+    def test_phase0_evaluation_and_ledger_start_cannot_diverge(self) -> None:
+        for old, new in (
+            ("evaluated_at=release_started_at,", "evaluated_at=None,"),
+            ("started_at=checkpoint.evaluated_at,", "started_at=None,"),
+        ):
+            with self.subTest(old=old), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for relative in (
+                    "docker-compose.rolling.yml",
+                    "infra/nginx/email-platform.conf.template",
+                    "infra/nginx/slots/blue.conf",
+                    "infra/nginx/slots/green.conf",
+                    "scripts/rolling_release.py",
+                    "scripts/rolling_release_evidence.py",
+                    "scripts/deploy_release.py",
+                    "scripts/rollback_release.py",
+                    "platform/migrations/versions/0024_schema_compatibility.py",
+                ):
+                    destination = root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / relative, destination)
+                executor = root / "scripts/rolling_release.py"
+                source = executor.read_text(encoding="utf-8")
+                changed = source.replace(old, new, 1)
+                self.assertNotEqual(changed, source)
+                executor.write_text(changed, encoding="utf-8")
+                self.assertTrue(verification_errors(root))
+
     def test_direct_single_slot_edge_proxy_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

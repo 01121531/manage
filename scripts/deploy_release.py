@@ -83,11 +83,13 @@ def _serialized_release_control(function):
         bound = function_signature.bind(*args, **kwargs)
         evidence_output = bound.arguments["evidence_output"]
         plan = bound.arguments["plan"]
+        release_started_at = datetime.now(timezone.utc)
         try:
             checkpoint = load_phase_checkpoint(
                 bound.arguments["target_intake_manifest"],
                 environment=bound.arguments["target_environment"],
                 through_phase=0,
+                evaluated_at=release_started_at,
             )
         except ValueError:
             raise DeploymentError("target intake Phase 0 preflight failed")
@@ -274,6 +276,7 @@ def _new_evidence(
         },
         images=_evidence_images(plan),
         target_intake=checkpoint.as_evidence(),
+        started_at=checkpoint.evaluated_at,
     )
     evidence.validate_initial()
     return evidence

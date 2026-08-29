@@ -678,8 +678,10 @@ class DeploymentReleaseEvidenceRecorder:
         rollback: Mapping[str, str],
         images: Mapping[str, str],
         third_party_images: Mapping[str, str | None] | None = None,
+        started_at: str | None = None,
     ) -> None:
-        started_at = utc_now()
+        recorded_started_at = utc_now() if started_at is None else started_at
+        _timestamp(recorded_started_at)
         recorded_third_party_images = (
             {service: None for service in _THIRD_PARTY_FIELDS}
             if third_party_images is None
@@ -699,8 +701,8 @@ class DeploymentReleaseEvidenceRecorder:
             ),
             "terminal_state": TERMINAL_PREFLIGHT_FAILED,
             "error_code": _TERMINAL_ERROR[TERMINAL_PREFLIGHT_FAILED],
-            "started_at": started_at,
-            "finished_at": started_at,
+            "started_at": recorded_started_at,
+            "finished_at": recorded_started_at,
             "target_release": dict(target_release),
             "target_intake": dict(target_intake),
             "rollback": dict(rollback),
@@ -725,7 +727,7 @@ class DeploymentReleaseEvidenceRecorder:
                 "stop_confirmations": 0,
                 "final_state": "not_mutated",
             },
-            "phases": [{"phase": "STARTED", "at": started_at}],
+            "phases": [{"phase": "STARTED", "at": recorded_started_at}],
         }
 
     def validate_initial(self) -> None:

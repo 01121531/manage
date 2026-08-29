@@ -90,6 +90,9 @@ The write-once Phase 0 target intake snapshot created by
 `target_intake_preflight.py snapshot` and the exact target environment are
 validated before evidence preparation, the shared release lock, runner
 construction, Git, Docker, migration, service, route, or Edge access. The
+entrypoint captures one host-UTC instant and uses it both for that Phase 0
+validation and ledger `started_at`; this is replayable ordering, not trusted
+time or authenticated approval. The
 checkpoint is limited to 64 KiB; duplicate JSON keys or an opened-file identity,
 link-count, size, or modification-state change are rejected before those steps. The
 evidence parent directory must already exist outside the repository and
@@ -98,9 +101,13 @@ repository paths, symlink/reparse paths and pre-existing targets before any
 release mutation. It publishes one canonical, SHA-256-sealed JSON file without
 replace semantics. Verify it independently:
 
-The intake-bound evidence contract is schema v2. Schema-v1 ledgers do not carry
-`target_intake` and must be rejected, not edited in place or upgraded; execute a
-new attempt into a new write-once evidence leaf.
+The intake-bound evidence contract is schema v3. Older ledgers that lack the
+current TLS and intake contract must be rejected, not edited in place or
+upgraded; execute a new attempt into a new write-once evidence leaf. The ledger
+has no expiry of its own. Final strict intake reconstructs the frozen Phase 0
+validity intersection and requires `started_at` inside it, while selection
+review and every consuming execution window must follow `finished_at`. This does
+not claim continuous authorization or an automatic mid-run expiry rollback.
 
 ```powershell
 python -m scripts.rolling_release_evidence `

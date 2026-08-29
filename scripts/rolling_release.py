@@ -44,7 +44,7 @@ from scripts.rollback_release import (
     _verify_supply_chain,
 )
 from scripts.scan_third_party_images import ThirdPartyScanError, scan_third_party_images
-from scripts.target_intake_preflight import load_phase_checkpoint
+from scripts.target_intake_preflight import PhaseCheckpointIdentity, load_phase_checkpoint
 from scripts.tls_runtime_identity import (
     TLS_HTTP_PROBE_PROGRAM,
     TlsRuntimeIdentityError,
@@ -545,7 +545,7 @@ def _evidence_release(release, slot: str) -> dict[str, str]:
 def _new_evidence(
     plan: RollingPlan,
     domain: str,
-    target_intake: Mapping[str, str | int],
+    checkpoint: PhaseCheckpointIdentity,
 ) -> RollingReleaseEvidenceRecorder:
     route_before = _read_route_snapshot(plan.route_dir / ROUTE_NAME).content
     return RollingReleaseEvidenceRecorder(
@@ -558,7 +558,8 @@ def _new_evidence(
         route_before_sha256=sha256_bytes(route_before),
         source_route_sha256=sha256_bytes(_canonical_route(plan.active_slot)),
         target_route_sha256=sha256_bytes(_canonical_route(plan.target_slot)),
-        target_intake=target_intake,
+        target_intake=checkpoint.as_evidence(),
+        started_at=checkpoint.evaluated_at,
     )
 
 
@@ -844,17 +845,19 @@ def execute_rolling_release(
     target_environment: str,
     runner: Runner | None = None,
 ) -> None:
+    release_started_at = datetime.now(timezone.utc)
     try:
         checkpoint = load_phase_checkpoint(
             target_intake_manifest,
             environment=target_environment,
             through_phase=0,
+            evaluated_at=release_started_at,
         )
     except ValueError:
         raise RollingReleaseError("target intake Phase 0 preflight failed")
     try:
         prepare_evidence_output(evidence_output)
-        evidence = _new_evidence(plan, domain, checkpoint.as_evidence())
+        evidence = _new_evidence(plan, domain, checkpoint)
     except (OSError, RollingReleaseError, RollingReleaseEvidenceError) as error:
         raise RollingReleaseError("rolling release evidence preflight failed") from error
     try:
