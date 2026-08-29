@@ -1,10 +1,12 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "record_type": "phase2_mail_evidence_index",
   "index_reference": "synthetic-phase2-mail-index",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -48,6 +50,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "9052852a8e972090d59125ae93ad5f1de99b3162dfe98bfa2de7196c5f71e91f"
+    "payload_sha256": "32e2bfd3c571ef83b90b66ebee351161c84ef10dc5dbd6a625460af9b1fd216f"
   }
 }

@@ -1,10 +1,12 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "record_type": "phase3_card_evidence_index",
   "index_reference": "synthetic-phase3-card-index",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -47,6 +49,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "de61137b69757419f57a0a4eef58d75a275faf8ca6efb60034b4aa32d44ad6e8"
+    "payload_sha256": "8fe7ead28f0a50ea7d000ec173317627b957155af575a9713de2c10a913e1fb9"
   }
 }

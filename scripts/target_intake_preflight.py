@@ -61,6 +61,7 @@ from scripts.target_platform_inventory import inventory_errors
 from scripts.target_phase_artifacts import (
     artifact_errors as target_phase_artifact_errors,
     intake_binding_errors as target_phase_binding_errors,
+    phase5_windows_alignment_errors,
 )
 from scripts.vault_egress_evidence import (
     index_errors as vault_egress_evidence_errors,
@@ -371,7 +372,10 @@ def _reviewer_reference(value: Any) -> bool:
 
 
 def _artifact_errors(
-    item: dict[str, Any], *, repository_root: Path
+    item: dict[str, Any],
+    *,
+    repository_root: Path,
+    evaluated_at: datetime,
 ) -> tuple[list[str], Any | None]:
     identifier = item["id"]
     errors: list[str] = []
@@ -429,7 +433,11 @@ def _artifact_errors(
     }.get(identifier)
     if expected_contract_type is not None and artifact_bytes is not None:
         contract = artifact_document
-        if contract_errors(contract, expected_type=expected_contract_type):
+        if contract_errors(
+            contract,
+            expected_type=expected_contract_type,
+            evaluated_at=evaluated_at,
+        ):
             errors.append(f"{identifier} provider contract envelope is invalid")
         elif contract.get("synthetic") is not False:
             errors.append(
@@ -476,13 +484,14 @@ def _artifact_errors(
         if target_phase_artifact_errors(
             validated_document,
             expected_type=identifier,
+            evaluated_at=evaluated_at,
         ):
             errors.append(f"{identifier} envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(f"{identifier} must be reviewed non-synthetic material")
     if identifier == "sub2_execution_evidence" and artifact_bytes is not None:
         validated_document = artifact_document
-        if sub2_evidence_errors(validated_document):
+        if sub2_evidence_errors(validated_document, evaluated_at=evaluated_at):
             errors.append("sub2_execution_evidence envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -490,7 +499,10 @@ def _artifact_errors(
             )
     if identifier == "vault_egress_evidence" and artifact_bytes is not None:
         validated_document = artifact_document
-        if vault_egress_evidence_errors(validated_document):
+        if vault_egress_evidence_errors(
+            validated_document,
+            evaluated_at=evaluated_at,
+        ):
             errors.append("vault_egress_evidence envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -548,7 +560,9 @@ def intake_errors(
     require_complete: bool,
     required_ids: frozenset[str] | None = None,
     phase0_checkpoint_manifest: Path | None = None,
+    evaluated_at: datetime | None = None,
 ) -> list[str]:
+    evaluation_time = evaluated_at or _utc_now()
     if not isinstance(document, dict) or set(document) != _MANIFEST_KEYS:
         return ["intake manifest top-level schema is invalid"]
     errors: list[str] = []
@@ -616,6 +630,7 @@ def intake_errors(
             artifact_errors, validated_document = _artifact_errors(
                 item,
                 repository_root=repository_root,
+                evaluated_at=evaluation_time,
             )
             errors.extend(artifact_errors)
             if (
@@ -624,6 +639,7 @@ def intake_errors(
                 and not contract_errors(
                     validated_document,
                     expected_type=identifier.removesuffix("_contract"),
+                    evaluated_at=evaluation_time,
                 )
                 and validated_document.get("synthetic") is False
             ):
@@ -655,6 +671,7 @@ def intake_errors(
                 and not target_phase_artifact_errors(
                     validated_document,
                     expected_type=identifier,
+                    evaluated_at=evaluation_time,
                 )
                 and validated_document.get("synthetic") is False
             ):
@@ -662,14 +679,20 @@ def intake_errors(
             if (
                 identifier == "sub2_execution_evidence"
                 and isinstance(validated_document, dict)
-                and not sub2_evidence_errors(validated_document)
+                and not sub2_evidence_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 sub2_evidence = validated_document
             if (
                 identifier == "vault_egress_evidence"
                 and isinstance(validated_document, dict)
-                and not vault_egress_evidence_errors(validated_document)
+                and not vault_egress_evidence_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 vault_egress_evidence = validated_document
@@ -757,6 +780,16 @@ def intake_errors(
                     ),
                 )
             )
+    if {
+        "windows_pilot_inputs",
+        "phase5_windows_evidence",
+    }.issubset(target_phase_artifacts):
+        errors.extend(
+            phase5_windows_alignment_errors(
+                target_phase_artifacts["phase5_windows_evidence"],
+                target_phase_artifacts["windows_pilot_inputs"],
+            )
+        )
     if sub2_evidence is not None:
         errors.extend(sub2_evidence_binding_errors(sub2_evidence, document))
         if release_execution is not None:
@@ -777,7 +810,10 @@ def intake_errors(
         required_ids is None or "sub2_execution_evidence" in required_ids
     )
     if phase4_runtime_required and "sub2_contract" in provider_contracts:
-        if runtime_conformance_errors(provider_contracts["sub2_contract"]):
+        if runtime_conformance_errors(
+            provider_contracts["sub2_contract"],
+            evaluated_at=evaluation_time,
+        ):
             errors.append(
                 "sub2_contract runtime is not conformant with the reviewed provider contract"
             )
@@ -864,6 +900,7 @@ def intake_errors(
                         phase0_checkpoint_manifest,
                         environment=document.get("environment"),
                         through_phase=0,
+                        evaluated_at=evaluation_time,
                     )
                 )
             except PhaseCheckpointError as error:
@@ -939,6 +976,7 @@ def _load_validated_phase_checkpoint(
     *,
     environment: str,
     through_phase: int,
+    evaluated_at: datetime | None = None,
 ) -> tuple[PhaseCheckpointIdentity, dict[str, Any]]:
     """Read once, validate and identify one repository-external checkpoint."""
 
@@ -972,6 +1010,7 @@ def _load_validated_phase_checkpoint(
             required_ids=frozenset(
                 phase_requirement_ids(requirements, through_phase)
             ),
+            evaluated_at=evaluated_at,
         )
     )
     if errors:
@@ -990,6 +1029,7 @@ def load_phase_checkpoint(
     *,
     environment: str,
     through_phase: int,
+    evaluated_at: datetime | None = None,
 ) -> PhaseCheckpointIdentity:
     """Validate and identify one repository-external intake checkpoint."""
 
@@ -997,6 +1037,7 @@ def load_phase_checkpoint(
         manifest_path,
         environment=environment,
         through_phase=through_phase,
+        evaluated_at=evaluated_at,
     )
     return identity
 
@@ -1006,6 +1047,7 @@ def phase_checkpoint_errors(
     *,
     environment: str,
     through_phase: int,
+    evaluated_at: datetime | None = None,
 ) -> list[str]:
     """Return fixed validation errors for one strict intake checkpoint."""
 
@@ -1014,6 +1056,7 @@ def phase_checkpoint_errors(
             manifest_path,
             environment=environment,
             through_phase=through_phase,
+            evaluated_at=evaluated_at,
         )
     except PhaseCheckpointError as error:
         return list(error.errors)
@@ -1042,8 +1085,13 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluated_at = _utc_now()
     try:
         matrix = _load_json(MATRIX)
         requirements = _load_json(REQUIREMENTS)
@@ -1064,6 +1112,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest,
             requirements,
             require_complete=False,
+            evaluated_at=evaluated_at,
         )
         if errors:
             print("; ".join(errors), file=sys.stderr)
@@ -1087,6 +1136,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.input,
                 environment=arguments.environment,
                 through_phase=0,
+                evaluated_at=evaluated_at,
             )
         except PhaseCheckpointError as error:
             errors = list(error.errors)
@@ -1131,6 +1181,7 @@ def main(argv: list[str] | None = None) -> int:
         require_complete=not arguments.allow_incomplete,
         required_ids=required_ids,
         phase0_checkpoint_manifest=arguments.phase0_checkpoint_manifest,
+        evaluated_at=evaluated_at,
     )
     if errors:
         print("; ".join(errors), file=sys.stderr)

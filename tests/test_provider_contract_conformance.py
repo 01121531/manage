@@ -271,6 +271,12 @@ class ProviderContractConformanceTests(unittest.TestCase):
         expired = copy.deepcopy(reviewed)
         expired["source_provenance"]["valid_until"] = "2026-08-27T09:00:00Z"
         mutations.append(expired)
+        future_review = copy.deepcopy(reviewed)
+        future_review["reviewed_at"] = "2026-08-29T09:00:00Z"
+        future_review["source_provenance"]["valid_until"] = (
+            "2026-08-30T09:00:00Z"
+        )
+        mutations.append(future_review)
 
         evaluated_at = datetime(2026, 8, 28, tzinfo=timezone.utc)
         for document in mutations:

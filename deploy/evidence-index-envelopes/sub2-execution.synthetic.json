@@ -1,11 +1,12 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "record_type": "sub2_execution_evidence_index",
   "index_reference": "synthetic-sub2-execution-evidence-index",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
   "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -56,6 +57,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "f7c3fc1b3136ecd2237e36d356e457042e09811dc0ecebc3d5de595efacd58cb"
+    "payload_sha256": "49619624f16a5ba0c3138cbbf2310331c61a6e50bb29ff5f84df037fa4468279"
   }
 }

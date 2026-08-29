@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.external_json import MAX_INTAKE_JSON_BYTES, load_unique_json
+from scripts.external_json import (
+    MAX_INTAKE_JSON_BYTES,
+    load_unique_json,
+    load_unique_json_with_bytes,
+)
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
     selector_errors as release_execution_selector_errors,
@@ -104,6 +108,8 @@ _EVIDENCE_PAYLOAD_KEYS = {
     "synthetic",
     "index_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "environment",
     "bindings",
@@ -142,6 +148,8 @@ _WINDOWS_PAYLOAD_KEYS = {
     "synthetic",
     "inventory_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "environment",
     "bindings",
@@ -249,7 +257,12 @@ def _prohibited_errors(payload: dict[str, Any], label: str) -> list[str]:
     return []
 
 
-def _evidence_errors(document: Any, identifier: str) -> list[str]:
+def _evidence_errors(
+    document: Any,
+    identifier: str,
+    *,
+    evaluated_at: datetime,
+) -> list[str]:
     label = identifier.replace("_", " ")
     errors = _integrity_errors(document, _EVIDENCE_PAYLOAD_KEYS, label)
     if errors:
@@ -257,7 +270,7 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
     payload = {key: value for key, value in document.items() if key != "integrity"}
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 2
+        or payload.get("schema_version") != 3
         or payload.get("record_type") != _RECORD_TYPES[identifier]
         or payload.get("production_acceptance") is not False
     ):
@@ -287,6 +300,8 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
             not reference.startswith("synthetic-")
             or payload.get("index_status") != "pending"
             or payload.get("review_reference") is not None
+            or payload.get("reviewed_at") is not None
+            or payload.get("valid_until") is not None
             or payload.get("environment") != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -337,6 +352,18 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
     finished_at = _parse_utc(window.get("finished_at")) if isinstance(window, dict) else None
     if started_at is None or finished_at is None or finished_at <= started_at:
         errors.append(f"reviewed {label} window is invalid")
+    reviewed_at = _parse_utc(payload.get("reviewed_at"))
+    valid_until = _parse_utc(payload.get("valid_until"))
+    if (
+        reviewed_at is None
+        or valid_until is None
+        or finished_at is None
+        or reviewed_at < finished_at
+        or valid_until <= reviewed_at
+    ):
+        errors.append(f"reviewed {label} review validity is invalid")
+    elif not reviewed_at <= evaluated_at < valid_until:
+        errors.append(f"reviewed {label} is not currently valid")
 
     unique: dict[str, list[str]] = {
         "execution_reference": [],
@@ -388,7 +415,7 @@ def _evidence_errors(document: Any, identifier: str) -> list[str]:
     return errors
 
 
-def _windows_input_errors(document: Any) -> list[str]:
+def _windows_input_errors(document: Any, *, evaluated_at: datetime) -> list[str]:
     label = "windows pilot inputs"
     errors = _integrity_errors(document, _WINDOWS_PAYLOAD_KEYS, label)
     if errors:
@@ -396,7 +423,7 @@ def _windows_input_errors(document: Any) -> list[str]:
     payload = {key: value for key, value in document.items() if key != "integrity"}
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 1
+        or payload.get("schema_version") != 2
         or payload.get("record_type") != "windows_pilot_input_inventory"
         or payload.get("production_acceptance") is not False
     ):
@@ -422,6 +449,8 @@ def _windows_input_errors(document: Any) -> list[str]:
             not reference.startswith("synthetic-")
             or payload.get("inventory_status") != "pending"
             or payload.get("review_reference") is not None
+            or payload.get("reviewed_at") is not None
+            or payload.get("valid_until") is not None
             or payload.get("environment") != "production"
             or bindings != {"target_platform_inventory_sha256": None}
             or not isinstance(target, dict)
@@ -470,14 +499,30 @@ def _windows_input_errors(document: Any) -> list[str]:
             or business.get("continuous_paste_required") is not True
         ):
             errors.append(f"reviewed {label} business-page contract is invalid")
+    reviewed_at = _parse_utc(payload.get("reviewed_at"))
+    valid_until = _parse_utc(payload.get("valid_until"))
+    if reviewed_at is None or valid_until is None or valid_until <= reviewed_at:
+        errors.append(f"reviewed {label} review validity is invalid")
+    elif not reviewed_at <= evaluated_at < valid_until:
+        errors.append(f"reviewed {label} is not currently valid")
     return errors
 
 
-def artifact_errors(document: Any, *, expected_type: str) -> list[str]:
+def artifact_errors(
+    document: Any,
+    *,
+    expected_type: str,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    evaluation_time = evaluated_at or datetime.now(timezone.utc)
     if expected_type == "windows_pilot_inputs":
-        return _windows_input_errors(document)
+        return _windows_input_errors(document, evaluated_at=evaluation_time)
     if expected_type in SCENARIO_CONTRACTS:
-        return _evidence_errors(document, expected_type)
+        return _evidence_errors(
+            document,
+            expected_type,
+            evaluated_at=evaluation_time,
+        )
     return ["target phase artifact type is invalid"]
 
 
@@ -527,7 +572,44 @@ def intake_binding_errors(document: Any, manifest: Any, *, expected_type: str) -
             errors.append(f"{label} {target} binding target is not provided")
         elif document["bindings"].get(f"{target}_sha256") != matches[0]["sha256"]:
             errors.append(f"{label} {target} binding does not match this intake manifest")
+    own_items = [
+        item
+        for item in manifest["items"]
+        if isinstance(item, dict) and item.get("id") == expected_type
+    ]
+    if (
+        len(own_items) != 1
+        or own_items[0].get("status") != "provided"
+        or own_items[0].get("reviewed_by") != document.get("review_reference")
+        or own_items[0].get("reviewed_at") != document.get("reviewed_at")
+    ):
+        errors.append(f"{label} review metadata does not match this intake manifest")
     return errors
+
+
+def phase5_windows_alignment_errors(
+    evidence: Any,
+    windows_inputs: Any,
+) -> list[str]:
+    if not isinstance(evidence, dict) or not isinstance(windows_inputs, dict):
+        return ["Phase 5 Windows evidence or pilot inputs are invalid"]
+    window = evidence.get("window")
+    started_at = _parse_utc(window.get("started_at")) if isinstance(window, dict) else None
+    finished_at = _parse_utc(window.get("finished_at")) if isinstance(window, dict) else None
+    inputs_reviewed_at = _parse_utc(windows_inputs.get("reviewed_at"))
+    inputs_valid_until = _parse_utc(windows_inputs.get("valid_until"))
+    if (
+        started_at is None
+        or finished_at is None
+        or inputs_reviewed_at is None
+        or inputs_valid_until is None
+        or started_at < inputs_reviewed_at
+        or finished_at >= inputs_valid_until
+    ):
+        return [
+            "Phase 5 Windows evidence window is outside the pilot-input validity interval"
+        ]
+    return []
 
 
 def repository_errors() -> list[str]:
@@ -553,6 +635,7 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--expected-type", required=True, choices=tuple(ARTIFACT_PATHS))
     check.add_argument("--intake-manifest", required=True, type=Path)
     check.add_argument("--release-execution-evidence", type=Path)
+    check.add_argument("--windows-pilot-inputs", type=Path)
     return parser
 
 
@@ -574,7 +657,12 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("target-phase-artifact-invalid", file=sys.stderr)
         return 1
-    errors = artifact_errors(document, expected_type=arguments.expected_type)
+    evaluated_at = datetime.now(timezone.utc)
+    errors = artifact_errors(
+        document,
+        expected_type=arguments.expected_type,
+        evaluated_at=evaluated_at,
+    )
     if not errors and document.get("synthetic") is not False:
         errors.append("target phase artifact must be reviewed non-synthetic material")
     if errors:
@@ -600,6 +688,38 @@ def main(argv: list[str] | None = None) -> int:
                     "container_manifest_sha256"
                 ),
             )
+    if arguments.expected_type == "phase5_windows_evidence":
+        if arguments.windows_pilot_inputs is None:
+            binding_errors.append("Phase 5 evidence requires Windows pilot inputs")
+        else:
+            try:
+                windows_inputs, windows_raw = load_unique_json_with_bytes(
+                    arguments.windows_pilot_inputs
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                binding_errors.append("Phase 5 Windows pilot inputs are invalid")
+            else:
+                windows_errors = artifact_errors(
+                    windows_inputs,
+                    expected_type="windows_pilot_inputs",
+                    evaluated_at=evaluated_at,
+                )
+                if windows_inputs.get("synthetic") is not False:
+                    windows_errors.append(
+                        "Phase 5 Windows pilot inputs must be reviewed non-synthetic material"
+                    )
+                if windows_errors:
+                    binding_errors.append("Phase 5 Windows pilot inputs are invalid")
+                elif hashlib.sha256(windows_raw).hexdigest() != document.get(
+                    "bindings", {}
+                ).get("windows_pilot_inputs_sha256"):
+                    binding_errors.append(
+                        "Phase 5 Windows pilot inputs do not match the evidence binding"
+                    )
+                else:
+                    binding_errors.extend(
+                        phase5_windows_alignment_errors(document, windows_inputs)
+                    )
     if binding_errors:
         print("; ".join(binding_errors), file=sys.stderr)
         return 2

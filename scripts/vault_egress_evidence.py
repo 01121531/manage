@@ -57,6 +57,8 @@ _PAYLOAD_KEYS = {
     "synthetic",
     "index_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "environment",
     "bindings",
@@ -152,11 +154,11 @@ def _exact_mapping(value: Any, keys: set[str]) -> bool:
     return isinstance(value, dict) and set(value) == keys
 
 
-def _payload_errors(payload: dict[str, Any]) -> list[str]:
+def _payload_errors(payload: dict[str, Any], *, evaluated_at: datetime) -> list[str]:
     errors: list[str] = []
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 2
+        or payload.get("schema_version") != 3
         or payload.get("record_type") != "vault_egress_evidence_index"
     ):
         errors.append("Vault/egress evidence index identity is invalid")
@@ -182,6 +184,8 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     synthetic = payload.get("synthetic")
     reference = payload.get("index_reference")
     review_reference = payload.get("review_reference")
+    reviewed_at = payload.get("reviewed_at")
+    valid_until = payload.get("valid_until")
     environment = payload.get("environment")
     if not isinstance(synthetic, bool) or not _safe_reference(reference):
         errors.append("Vault/egress evidence index reference is invalid")
@@ -192,6 +196,8 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
             not reference.startswith("synthetic-")
             or payload.get("index_status") != "pending"
             or review_reference is not None
+            or reviewed_at is not None
+            or valid_until is not None
             or environment != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -249,6 +255,18 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     finished_at = _parse_utc(window.get("finished_at")) if isinstance(window, dict) else None
     if started_at is None or finished_at is None or finished_at <= started_at:
         errors.append("reviewed Vault/egress evidence window is invalid")
+    reviewed = _parse_utc(reviewed_at)
+    expires = _parse_utc(valid_until)
+    if (
+        reviewed is None
+        or expires is None
+        or finished_at is None
+        or reviewed < finished_at
+        or expires <= reviewed
+    ):
+        errors.append("reviewed Vault/egress evidence review validity is invalid")
+    elif not reviewed <= evaluated_at < expires:
+        errors.append("reviewed Vault/egress evidence is not currently valid")
 
     unique_fields: dict[str, list[str]] = {
         "execution_reference": [],
@@ -300,7 +318,11 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
-def index_errors(document: Any) -> list[str]:
+def index_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
     if not isinstance(document, dict) or set(document) != _SEALED_KEYS:
         return ["Vault/egress evidence index top-level schema is invalid"]
     integrity = document.get("integrity")
@@ -312,7 +334,10 @@ def index_errors(document: Any) -> list[str]:
         or integrity["payload_sha256"] != _canonical_digest(payload)
     ):
         return ["Vault/egress evidence index integrity is invalid"]
-    return _payload_errors(payload)
+    return _payload_errors(
+        payload,
+        evaluated_at=evaluated_at or datetime.now(timezone.utc),
+    )
 
 
 def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
@@ -359,6 +384,20 @@ def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
             errors.append(
                 f"Vault/egress evidence {identifier} binding does not match this intake manifest"
             )
+    own_items = [
+        item
+        for item in manifest["items"]
+        if isinstance(item, dict) and item.get("id") == "vault_egress_evidence"
+    ]
+    if (
+        len(own_items) != 1
+        or own_items[0].get("status") != "provided"
+        or own_items[0].get("reviewed_by") != document.get("review_reference")
+        or own_items[0].get("reviewed_at") != document.get("reviewed_at")
+    ):
+        errors.append(
+            "Vault/egress evidence review metadata does not match this intake manifest"
+        )
     return errors
 
 
@@ -406,13 +445,17 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluated_at = datetime.now(timezone.utc)
     if arguments.command == "verify-repository":
         try:
             document = _load(EVIDENCE_INDEX)
         except (OSError, UnicodeError, json.JSONDecodeError):
             print("vault-egress-evidence-index-invalid", file=sys.stderr)
             return 1
-        errors = index_errors(document) + repository_control_errors()
+        errors = index_errors(
+            document,
+            evaluated_at=evaluated_at,
+        ) + repository_control_errors()
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
@@ -427,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("vault-egress-evidence-index-invalid", file=sys.stderr)
         return 1
-    errors = index_errors(document)
+    errors = index_errors(document, evaluated_at=evaluated_at)
     if not errors and document.get("synthetic") is not False:
         errors.append("Vault/egress evidence index must be reviewed non-synthetic material")
     if errors:

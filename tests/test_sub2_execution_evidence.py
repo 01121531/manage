@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -36,6 +37,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                 "index_status": "reviewed",
                 "review_reference": "sub2-independent-review-record-42",
                 "reviewed_at": "2026-08-26T10:15:00Z",
+                "valid_until": "2099-08-26T10:15:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -113,7 +115,9 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
-        self.assertEqual(self.template["schema_version"], 2)
+        self.assertEqual(self.template["schema_version"], 3)
+        self.assertIsNone(self.template["reviewed_at"])
+        self.assertIsNone(self.template["valid_until"])
         self.assertTrue(all(value is None for value in self.template["scenarios"].values()))
         self.assertRegex(self.template["integrity"]["payload_sha256"], r"^[0-9a-f]{64}$")
         quality_gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
@@ -191,6 +195,26 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
         self.assertIn(
             "reviewed Sub2 evidence review timestamp is invalid",
             index_errors(self._reseal(review_before_finish)),
+        )
+        evaluated_at = datetime(2026, 8, 26, 10, 30, tzinfo=timezone.utc)
+        expires = copy.deepcopy(reviewed)
+        expires["valid_until"] = "2026-08-26T11:00:00Z"
+        expires = self._reseal(expires)
+        self.assertEqual(index_errors(expires, evaluated_at=evaluated_at), [])
+        self.assertEqual(
+            index_errors(
+                expires,
+                evaluated_at=datetime(2026, 8, 26, 11, 0, tzinfo=timezone.utc)
+                - timedelta(microseconds=1),
+            ),
+            [],
+        )
+        self.assertIn(
+            "reviewed Sub2 evidence is not currently valid",
+            index_errors(
+                expires,
+                evaluated_at=datetime(2026, 8, 26, 11, 0, tzinfo=timezone.utc),
+            ),
         )
 
     def test_release_binding_and_integrity_tamper_fail_closed(self) -> None:

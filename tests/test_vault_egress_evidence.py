@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -35,6 +36,8 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                 "synthetic": False,
                 "index_status": "reviewed",
                 "review_reference": "vault-egress-independent-review-42",
+                "reviewed_at": "2026-08-26T10:15:00Z",
+                "valid_until": "2099-08-26T10:15:00Z",
                 "environment": "staging",
                 "bindings": {
                     "release_tag": "v1.2.3",
@@ -97,6 +100,12 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                     "status": "provided",
                     "sha256": bindings["target_platform_inventory_sha256"],
                 },
+                {
+                    "id": "vault_egress_evidence",
+                    "status": "provided",
+                    "reviewed_by": "vault-egress-independent-review-42",
+                    "reviewed_at": "2026-08-26T10:15:00Z",
+                },
             ],
         }
 
@@ -106,6 +115,9 @@ class VaultEgressEvidenceTests(unittest.TestCase):
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])
+        self.assertEqual(self.template["schema_version"], 3)
+        self.assertIsNone(self.template["reviewed_at"])
+        self.assertIsNone(self.template["valid_until"])
         self.assertTrue(all(value is None for value in self.template["scenarios"].values()))
         gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
         self.assertIn("python scripts/vault_egress_evidence.py verify-repository", gate)
@@ -176,6 +188,23 @@ class VaultEgressEvidenceTests(unittest.TestCase):
             with self.subTest():
                 self.assertTrue(index_errors(self._reseal(document)))
         self.assertIn("Vault/egress evidence index integrity is invalid", index_errors(tampered))
+        expires = copy.deepcopy(reviewed)
+        expires["valid_until"] = "2026-08-26T11:00:00Z"
+        expires = self._reseal(expires)
+        self.assertEqual(
+            index_errors(
+                expires,
+                evaluated_at=datetime(2026, 8, 26, 10, 30, tzinfo=timezone.utc),
+            ),
+            [],
+        )
+        self.assertIn(
+            "reviewed Vault/egress evidence is not currently valid",
+            index_errors(
+                expires,
+                evaluated_at=datetime(2026, 8, 26, 11, 0, tzinfo=timezone.utc),
+            ),
+        )
 
     def test_binding_requires_same_environment_contract_and_inventory(self) -> None:
         reviewed = self._reviewed()
@@ -184,6 +213,11 @@ class VaultEgressEvidenceTests(unittest.TestCase):
         manifest["items"][0]["sha256"] = "f" * 64
         self.assertIn(
             "Vault/egress evidence sub2_contract binding does not match this intake manifest",
+            intake_binding_errors(reviewed, manifest),
+        )
+        manifest["items"][2]["reviewed_at"] = "2026-08-26T10:16:00Z"
+        self.assertIn(
+            "Vault/egress evidence review metadata does not match this intake manifest",
             intake_binding_errors(reviewed, manifest),
         )
 

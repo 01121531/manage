@@ -1,10 +1,12 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "record_type": "phase5_windows_evidence_index",
   "index_reference": "synthetic-phase5-windows-index",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -48,6 +50,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "ee79b15944e9ede689382640a893e484d0886dd6b5dc9331a6a284d4b4ab69ff"
+    "payload_sha256": "8efd81375216fbde02c32022c1ee15e7a56a46bd5aa1cdaaa153639870956f4d"
   }
 }

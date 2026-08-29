@@ -73,15 +73,20 @@ above, change the matching item to this shape:
 ```
 
 Use an opaque ticket or approval reference for `reviewed_by`. For the sealed
-Mail/Sub2 provider contracts and the Sub2, Phase 6 pilot and Phase 6 operations
-execution indexes, this value must
-exactly equal the index's sealed `review_reference`, and `reviewed_at` must
-exactly equal its sealed UTC review timestamp. That timestamp cannot precede
-an execution index's `finished_at`. For provider contracts it must fall between
-the source capture time and the exclusive `valid_until`. For other artifact policies the
-timestamp must still be canonical UTC ending in `Z`. Recompute SHA-256 after
-every approved artifact change. Do not add inline artifact content or extra
-manifest fields; the schema is closed.
+Mail/Sub2 provider contracts, every Phase 1–5 execution index, the Windows pilot
+input inventory, the Sub2 and Vault/egress indexes, and the Phase 6 pilot and
+operations indexes, this value must exactly equal the artifact's sealed
+`review_reference`; `reviewed_at` must exactly equal its sealed UTC review
+timestamp. Execution-index review cannot precede `finished_at`. Provider
+contract review must fall between source capture and the exclusive
+`valid_until`. Phase 1–5, Sub2, Vault/egress and Windows input artifacts are
+also usable only in the half-open interval `[reviewed_at, valid_until)`. One
+preflight captures one UTC evaluation instant and passes it through the Phase 0
+checkpoint, provider-contract runtime conformance and every evidence validator;
+it never refreshes the clock between artifacts. For artifact policies without
+a sealed review time, the manifest timestamp must still be canonical UTC ending
+in `Z`. Recompute SHA-256 after every approved artifact change. Do not add
+inline artifact content or extra manifest fields; the schema is closed.
 
 ## Provider contract envelopes
 
@@ -244,8 +249,10 @@ TLS handshakes on the target host and retain external evidence.
 ## Phase 1, 2, 3 and 5 typed target artifacts
 
 The five committed files below are sealed `synthetic=true`, `pending`
-contracts. They define the exact fields a future external reviewer must fill;
-they are not target evidence and cannot satisfy a strict checkpoint:
+contracts. Phase 1/2/3/5 execution indexes use schema v3; the Windows pilot
+input inventory uses schema v2. They define the exact fields a future external
+reviewer must fill; they are not target evidence and cannot satisfy a strict
+checkpoint:
 
 - `phase1-platform.synthetic.json` covers target Keycloak/Vault login,
   authorization, audit and administrator separation, plus PostgreSQL, Redis,
@@ -275,12 +282,18 @@ independent-reviewer, correlation and immutable evidence-object references,
 canonical UTC time, its fixed observation, external-object SHA-256,
 `result=passed`, and `redaction_confirmed=true`. Set `synthetic=false`, the
 status to `reviewed`, and bind the artifact to the same manifest environment
-and exact prerequisite item hashes. Every execution evidence index also selects
+and exact prerequisite item hashes. Seal the aggregate `review_reference`,
+`reviewed_at` and exclusive `valid_until`; review every execution index only
+after its window finishes. Strict intake requires its one evaluation instant to
+remain inside `[reviewed_at, valid_until)`. Every execution evidence index also selects
 the same successful schema-v2 release ledger by typed WORM reference, whole-file
 SHA-256 and Phase 0 checkpoint identity. Its release tag, 40-hex commit and
 immutable container-manifest SHA-256 must match an independent parse of that
 ledger. `windows_pilot_inputs` is a pre-execution inventory and therefore does
-not carry a release selector.
+not carry a release selector, but it carries the same sealed review and
+exclusive validity fields. The complete Phase 5 execution window must start no
+earlier than the Windows input review and finish strictly before those inputs
+expire.
 
 Check any reviewed artifact with its exact type, for example:
 
@@ -290,6 +303,19 @@ python scripts/target_phase_artifacts.py check `
   --expected-type phase2_mail_evidence `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json
+```
+
+When checking Phase 5 directly, also supply the exact reviewed Windows input
+file so the CLI verifies both its whole-file SHA-256 binding and temporal
+containment:
+
+```powershell
+python scripts/target_phase_artifacts.py check `
+  --input D:\email-platform-evidence\intake\phase5-windows-evidence-index.json `
+  --expected-type phase5_windows_evidence `
+  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --release-execution-evidence D:\email-platform-evidence\release\selected-v2-execution.json `
+  --windows-pilot-inputs D:\email-platform-evidence\intake\windows-pilot-inputs.json
 ```
 
 Allowed types are `phase1_platform_evidence`, `phase2_mail_evidence`,
@@ -321,7 +347,9 @@ the fixed observation; external artifact SHA-256; `result=passed`; and
 `redaction_confirmed=true`. Bind the index to the deployed release tag, 40-hex
 commit, container-manifest SHA-256, and the exact Sub2 contract and target
 platform inventory SHA-256 values from the same intake manifest. Seal one
-aggregate `review_reference` and `reviewed_at` after the execution window.
+aggregate `review_reference` and `reviewed_at` after the execution window and
+an exclusive `valid_until` after that review. Strict intake rejects the index
+before review, at expiration or afterward.
 Select the exact successful schema-v2 release execution ledger by whole-file
 SHA-256 and its Phase 0 checkpoint identity; the selector and release triple
 must match an independent parse of that same ledger. Do not include
@@ -366,7 +394,10 @@ reviewer, trace and immutable evidence-object references, canonical UTC time,
 the fixed observation, artifact SHA-256, `result=passed`, and explicit
 redaction. Bind the sealed index to the release tag, 40-hex commit, container
 manifest, and the exact Sub2 contract and target platform inventory hashes from
-the same intake manifest. Select the same successful schema-v2 release ledger
+the same intake manifest. Seal aggregate `review_reference`, post-window
+`reviewed_at` and exclusive `valid_until`; strict intake requires its single
+evaluation instant inside that half-open interval and the same review metadata
+in the manifest item. Select the same successful schema-v2 release ledger
 by typed WORM reference, whole-file digest and Phase 0 checkpoint identity; the
 release triple must match the independently parsed ledger. Do not record Vault addresses or responses, supplier
 URLs or bodies, credentials, tokens, PAN/CVV, verification codes, or identities.
@@ -618,7 +649,10 @@ python scripts/target_intake_preflight.py preflight `
 Before Phase 5 promotion, additionally require the reviewed Windows pilot
 input inventory and Windows/business-page evidence index. The Phase 0
 checkpoint remains mandatory because the selected release ledger is already
-part of the cumulative Phase 4 evidence:
+part of the cumulative Phase 4 evidence. The preflight also proves
+`windows.reviewed_at <= phase5.started_at < phase5.finished_at`,
+`phase5.finished_at < windows.valid_until`, and that its single evaluation
+instant is strictly before both artifacts' exclusive `valid_until` values:
 
 ```powershell
 python scripts/target_intake_preflight.py preflight `

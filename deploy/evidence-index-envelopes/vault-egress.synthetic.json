@@ -1,10 +1,12 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "record_type": "vault_egress_evidence_index",
   "index_reference": "synthetic-vault-egress-evidence-index",
   "synthetic": true,
   "index_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -62,6 +64,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "16801a9a41b8789585ced7f90fe228f393724d12c7024ed1d4f6ce0c711a34ef"
+    "payload_sha256": "628d4a84a57949837d9a1e6e1ee257f51f053908348534fd85d93598e955a92a"
   }
 }

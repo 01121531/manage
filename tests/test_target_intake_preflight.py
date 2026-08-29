@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -250,6 +251,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "inventory_status": "reviewed",
                     "review_reference": "windows-pilot-review-record-42",
+                    "reviewed_at": "2026-08-26T10:30:00Z",
+                    "valid_until": "2099-08-26T10:30:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "target_platform_inventory_sha256": target_inventory_sha256,
@@ -307,6 +310,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "index_status": "reviewed",
                     "review_reference": f"{identifier.replace('_', '-')}-review-42",
+                    "reviewed_at": "2026-08-26T12:15:00Z",
+                    "valid_until": "2099-08-26T12:15:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -378,6 +383,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "index_status": "reviewed",
                     "review_reference": "sub2-independent-review-record-42",
                     "reviewed_at": "2026-08-26T10:15:00Z",
+                    "valid_until": "2099-08-26T10:15:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -449,6 +455,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "index_status": "reviewed",
                     "review_reference": "vault-egress-independent-review-42",
+                    "reviewed_at": "2026-08-26T10:15:00Z",
+                    "valid_until": "2099-08-26T10:15:00Z",
                     "environment": manifest["environment"],
                     "bindings": {
                         "release_tag": "v1.2.3",
@@ -821,6 +829,17 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 self.assertFalse(template["production_acceptance"])
 
             reviewed = self._artifact_document(identifier, manifest)
+            own_item = next(
+                item for item in manifest["items"] if item["id"] == identifier
+            )
+            own_item.update(
+                {
+                    "status": "provided",
+                    "sha256": own_item.get("sha256") or "a" * 64,
+                    "reviewed_by": reviewed["review_reference"],
+                    "reviewed_at": reviewed["reviewed_at"],
+                }
+            )
             with self.subTest(identifier=identifier, state="reviewed"):
                 self.assertEqual(
                     target_phase_artifact_errors(reviewed, expected_type=identifier),
@@ -953,6 +972,22 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 require_complete=False,
             ),
         )
+
+    def test_intake_captures_one_evaluation_time_when_not_supplied(self) -> None:
+        manifest = create_intake_manifest("staging", self.requirements)
+        evaluation_time = datetime(2026, 8, 28, tzinfo=timezone.utc)
+        with mock.patch.object(
+            target_intake, "_utc_now", return_value=evaluation_time
+        ) as clock:
+            self.assertEqual(
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    require_complete=False,
+                ),
+                [],
+            )
+        clock.assert_called_once_with()
 
     def test_phase_checkpoints_break_the_predeployment_evidence_cycle(self) -> None:
         checkpoints = {

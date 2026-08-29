@@ -137,6 +137,9 @@ Release manifest:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:
 - Final strict current-to-checkpoint six-item equality and release-ledger-to-checkpoint identity result:
 - Mail/Sub2 provider scope, external source version/SHA-256, capture/review/valid-until UTC and same-manifest review result:
+- Phase 1–5/Sub2/Vault execution-index sealed review/valid-until and same-manifest review result:
+- Windows pilot-input sealed review/valid-until and same-manifest review result:
+- Phase 5 execution-window containment in Windows-input validity and single-clock preflight result:
 - Phase 1–5 execution-index exact release-ledger selectors and target-release alignment result:
 - Phase 4 Sub2 evidence exact release-ledger whole-file selector and target-release alignment result:
 - Phase 4 Sub2 sealed review reference/time, execution window and same-manifest review-metadata result:

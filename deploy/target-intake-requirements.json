@@ -126,7 +126,7 @@
       "phases": [
         1
       ],
-      "purpose": "Repository-external evidence index for target identity, Vault, data-service, internal TLS, secret-manager, backup and CI release controls.",
+      "purpose": "Repository-external evidence index for target identity, Vault, data-service, internal TLS, secret-manager, backup and CI release controls, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
@@ -146,7 +146,7 @@
       "phases": [
         2
       ],
-      "purpose": "Repository-external evidence index for real mail-provider concurrency, outage, rate-limit and stale-code behavior plus worker credential and egress isolation.",
+      "purpose": "Repository-external evidence index for real mail-provider concurrency, outage, rate-limit and stale-code behavior plus worker credential and egress isolation, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
@@ -166,7 +166,7 @@
       "phases": [
         3
       ],
-      "purpose": "Repository-external evidence index for target concurrent allocation, migration, Keycloak step-up and approved PCI boundary enforcement.",
+      "purpose": "Repository-external evidence index for target concurrent allocation, migration, Keycloak step-up and approved PCI boundary enforcement, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
@@ -186,7 +186,7 @@
       "phases": [
         4
       ],
-      "purpose": "Repository-external evidence index for real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five normalized status outcomes, same-provider-key replay and unknown-reconciliation runs.",
+      "purpose": "Repository-external evidence index for real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five normalized status outcomes, same-provider-key replay and unknown-reconciliation runs, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
@@ -201,7 +201,7 @@
       "phases": [
         4
       ],
-      "purpose": "Repository-external evidence index for target Vault cross-path denial and Sub2 domain egress-policy enforcement.",
+      "purpose": "Repository-external evidence index for target Vault cross-path denial and Sub2 domain egress-policy enforcement, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
@@ -216,7 +216,7 @@
       "phases": [
         5
       ],
-      "purpose": "Approved Windows pilot environment and symbolic real business-page field sequence; never include field values, credentials or personal data.",
+      "purpose": "Approved Windows pilot environment and symbolic real business-page field sequence, sealed with aggregate review and an exclusive validity deadline that contains the complete Phase 5 execution window; never include field values, credentials or personal data.",
       "artifact_policy": "reviewed_inventory",
       "matrix_refs": [
         {
@@ -231,7 +231,7 @@
       "phases": [
         5
       ],
-      "purpose": "Repository-external evidence index for Windows EXE session boundaries, recovery, update rollback and approved business-page paste behavior.",
+      "purpose": "Repository-external evidence index for Windows EXE session boundaries, recovery, update rollback and approved business-page paste behavior, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {

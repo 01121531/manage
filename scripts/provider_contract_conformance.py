@@ -201,7 +201,7 @@ def _common_errors(
     document: dict[str, Any],
     expected_type: str | None,
     *,
-    evaluated_at: datetime | None,
+    evaluated_at: datetime,
 ) -> list[str]:
     errors: list[str] = []
     contract_type = document.get("contract_type")
@@ -272,7 +272,9 @@ def _common_errors(
             errors.append("real provider contract source provenance is invalid")
         elif reviewed is not None and not captured <= reviewed < valid_until:
             errors.append("real provider contract source timeline is invalid")
-        elif valid_until <= (evaluated_at or datetime.now(timezone.utc)):
+        elif reviewed is not None and reviewed > evaluated_at:
+            errors.append("real provider contract review timestamp is in the future")
+        elif valid_until <= evaluated_at:
             errors.append("real provider contract source provenance is expired")
 
     transport = document.get("transport")
@@ -522,7 +524,11 @@ def contract_errors(
 ) -> list[str]:
     if not isinstance(document, dict) or set(document) != _TOP_LEVEL_KEYS:
         return ["provider contract top-level schema is invalid"]
-    errors = _common_errors(document, expected_type, evaluated_at=evaluated_at)
+    errors = _common_errors(
+        document,
+        expected_type,
+        evaluated_at=evaluated_at or datetime.now(timezone.utc),
+    )
     if document.get("contract_type") == "mail":
         capabilities = document.get("capabilities")
         errors.extend(_mail_errors(capabilities))
@@ -586,8 +592,12 @@ def contract_errors(
     return errors
 
 
-def runtime_conformance_errors(document: Any) -> list[str]:
-    schema_errors = contract_errors(document)
+def runtime_conformance_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    schema_errors = contract_errors(document, evaluated_at=evaluated_at)
     if schema_errors:
         return ["provider contract must be valid before runtime conformance"]
     transport = document["transport"]

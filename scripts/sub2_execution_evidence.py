@@ -51,6 +51,7 @@ _PAYLOAD_KEYS = {
     "index_status",
     "review_reference",
     "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "environment",
     "bindings",
@@ -148,11 +149,11 @@ def _exact_mapping(value: Any, keys: set[str]) -> bool:
     return isinstance(value, dict) and set(value) == keys
 
 
-def _payload_errors(payload: dict[str, Any]) -> list[str]:
+def _payload_errors(payload: dict[str, Any], *, evaluated_at: datetime) -> list[str]:
     errors: list[str] = []
     if (
         type(payload.get("schema_version")) is not int
-        or payload.get("schema_version") != 2
+        or payload.get("schema_version") != 3
         or payload.get("record_type") != "sub2_execution_evidence_index"
     ):
         errors.append("Sub2 evidence index identity is invalid")
@@ -179,6 +180,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     reference = payload.get("index_reference")
     review_reference = payload.get("review_reference")
     reviewed_at = payload.get("reviewed_at")
+    valid_until = payload.get("valid_until")
     environment = payload.get("environment")
     if not isinstance(synthetic, bool) or not _safe_reference(reference):
         errors.append("Sub2 evidence index reference is invalid")
@@ -190,6 +192,7 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
             or payload.get("index_status") != "pending"
             or review_reference is not None
             or reviewed_at is not None
+            or valid_until is not None
             or environment != "production"
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
@@ -249,8 +252,17 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     if started_at is None or finished_at is None or finished_at <= started_at:
         errors.append("reviewed Sub2 evidence window is invalid")
     reviewed = _parse_utc(reviewed_at)
-    if reviewed is None or finished_at is None or reviewed < finished_at:
+    expires = _parse_utc(valid_until)
+    if (
+        reviewed is None
+        or expires is None
+        or finished_at is None
+        or reviewed < finished_at
+        or expires <= reviewed
+    ):
         errors.append("reviewed Sub2 evidence review timestamp is invalid")
+    elif not reviewed <= evaluated_at < expires:
+        errors.append("reviewed Sub2 evidence is not currently valid")
 
     execution_references: list[str] = []
     trace_references: list[str] = []
@@ -307,7 +319,11 @@ def _payload_errors(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
-def index_errors(document: Any) -> list[str]:
+def index_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
     if not isinstance(document, dict) or set(document) != _SEALED_KEYS:
         return ["Sub2 evidence index top-level schema is invalid"]
     integrity = document.get("integrity")
@@ -319,7 +335,10 @@ def index_errors(document: Any) -> list[str]:
         or integrity["payload_sha256"] != _canonical_digest(payload)
     ):
         return ["Sub2 evidence index integrity is invalid"]
-    return _payload_errors(payload)
+    return _payload_errors(
+        payload,
+        evaluated_at=evaluated_at or datetime.now(timezone.utc),
+    )
 
 
 def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
@@ -402,13 +421,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluated_at = datetime.now(timezone.utc)
     if arguments.command == "verify-repository":
         try:
             document = _load(EVIDENCE_INDEX)
         except (OSError, UnicodeError, json.JSONDecodeError):
             print("sub2-execution-evidence-index-invalid", file=sys.stderr)
             return 1
-        errors = index_errors(document)
+        errors = index_errors(document, evaluated_at=evaluated_at)
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
@@ -423,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("sub2-execution-evidence-index-invalid", file=sys.stderr)
         return 1
-    errors = index_errors(document)
+    errors = index_errors(document, evaluated_at=evaluated_at)
     if not errors and document.get("synthetic") is not False:
         errors.append("Sub2 evidence index must be reviewed non-synthetic material")
     if errors:

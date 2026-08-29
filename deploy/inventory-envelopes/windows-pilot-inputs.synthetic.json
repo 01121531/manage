@@ -1,10 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "windows_pilot_input_inventory",
   "inventory_reference": "synthetic-windows-pilot-inputs",
   "synthetic": true,
   "inventory_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "environment": "production",
   "bindings": {
@@ -32,6 +34,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "8da07fae5620d2ff91e17661ade8fec16672ff1c2a7e0a98bf5f8297f35479b9"
+    "payload_sha256": "80a9139b3e5fbb8953799d86bd6d4108216611bc75de038790e8e9b3b612121c"
   }
 }
