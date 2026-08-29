@@ -39,23 +39,23 @@ not production acceptance. Every generated manifest and successful command remai
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
 - Authoring proceeds through immutable generations while Phase 0–6 evidence is
-  collected. `init` publishes generation 000 and its closed schema-v6 genesis receipt;
+  collected. `init` publishes generation 000 and its closed schema-v7 genesis receipt;
   every later generation is a separate no-replace leaf accepted only when
   `register` has also published its write-once receipt. Never overwrite a prior
   generation or use the editable candidate, an unreceipted leaf, or a receipt
   selected for a different locator as an accepted manifest. Production
   sign-off uses a separately finalized leaf and caller-pinned canonical-payload
   and whole-file SHA-256 values.
-- Every schema-v6 generation receipt self-binds its case-preserving lexical
+- Every schema-v7 generation receipt self-binds its case-preserving lexical
   absolute `receipt_path`; copying identical receipt bytes to another locator
-  does not transfer acceptance. Schema-v1/v2/v3/v4/v5 generation receipts and mixed legacy/v6
+  does not transfer acceptance. Schema-v1/v2/v3/v4/v5/v6 generation receipts and mixed legacy/v7
   chains are incompatible and must be rebuilt under new external names rather
   than promoted or silently rewritten. Because schema-v2 snapshot and
   finalization receipts bind the old generation-receipt digests, rebuild those
   receipts and their result leaves after rebuilding the generation chain; do
-  not transplant an old acceptance receipt onto a schema-v6 lineage.
+  not transplant an old acceptance receipt onto a schema-v7 lineage.
 - Each generation receipt embeds the exact requirements registry, phase
-  acceptance matrix, canonical host-UTC evaluation instant, and closed v3
+  acceptance matrix, canonical host-UTC evaluation instant, and closed v4
   validator contract used for that
   generation. `verify-generation-lineage` replays every receipt/manifest pair
   from terminal to genesis with its own embedded context and recorded instant,
@@ -65,22 +65,27 @@ not production acceptance. Every generated manifest and successful command remai
   `platform/` modules, package initializers, and shared backup permission helper
   omitted by the former 30-file contract. It also requires an exact current
   replay-runtime fingerprint: Python implementation/version/cache tag/ABI,
-  interpreter executable bytes, the standard-library `platform.py` bytes used
-  by the repository proxy, OS selection fields, and the version,
-  `METADATA`, `RECORD`, and top-level import-entrypoint bytes for the eleven
-  directly used Python distributions.
+  interpreter executable bytes, a canonical non-cache standard-library payload
+  tree, Python core/DLL/dynamic-extension payload tree, OS selection fields,
+  and the version, `METADATA`, `RECORD`, top-level import entrypoint, every
+  recorded payload file and import-tree completeness result for the eleven
+  directly selected Python distributions. Declared SHA-256 values in `RECORD`
+  are checked when present, and an importable non-cache file omitted from that
+  distribution's `RECORD` fails closed.
   A later policy edit therefore does not reinterpret a legitimate historical
   chain, while an artifact invalid at an ancestor's recorded instant fails
   closed. The embedded context and timestamp are receipt-bound local
   observations, not authenticated policy authority or trusted time. The source
   contract is not a Git blob, commit, package, or portable release identity;
-  line-ending and checkout-byte changes fail closed. Distribution metadata and
-  one import entrypoint do not hash every installed dependency file or loaded
-  shared library. Operational authoring and recovery must use the clean
+  line-ending and checkout-byte changes fail closed. This fixed eleven-package
+  inventory does not cover every transitive distribution, bytecode cache, or a
+  native extension's downstream OS-loaded libraries. Operational authoring and recovery must use the clean
   snapshot launcher below. Its v1 execution profile binds both caller-retained
-  snapshot-manifest digests, exact `-I -B -S -P` flags, a sanitized
+  snapshot-manifest digests, exact `-I -B -S -P` flags, the parent-captured
+  interpreter SHA-256, a sanitized
   environment, snapshot working directory, and pre/post member plus loaded
-  local-module origin/digest rechecks. Direct in-process `init`, `register`,
+  local-module origin/digest rechecks, and child runtime plus interpreter
+  pre/post identity-byte rechecks. Direct in-process `init`, `register`,
   `snapshot`, `finalize`, `preflight`, and recovery commands are blocked;
   direct `verify-requirements` remains a repository-only maintenance check.
   This proves only that current module loader origins point into the selected
@@ -88,8 +93,8 @@ not production acceptance. Every generated manifest and successful command remai
   does not prove the loaded bytecode itself, exclude an in-window ABA swap,
   prove the snapshot source or
   caller pins are authoritative, filesystem-wide atomic capture, absence of
-  administrator/ABA replacement, every interpreter, dependency, native library
-  or OS byte, the original historical authoring runtime, or that validation
+  administrator/ABA replacement, every transitive dependency, bytecode cache,
+  downstream native library or OS byte, the original historical authoring runtime, or that validation
   actually ran in the past.
 - Before each of the seven standalone manifest-consumer `check` commands, review
   the current authoring manifest and retain both digest values printed by a
@@ -130,9 +135,9 @@ whole-file SHA-256 pins. Review and retain both pins outside the snapshot.
 
 ```powershell
 python -I -B -S -P scripts/target_intake_snapshot_launcher.py prepare `
-  --snapshot-output D:\email-platform-evidence\validator-snapshots\target-intake-v6-001
+  --snapshot-output D:\email-platform-evidence\validator-snapshots\target-intake-v7-001
 
-$TargetIntakeSnapshot = "D:\email-platform-evidence\validator-snapshots\target-intake-v6-001"
+$TargetIntakeSnapshot = "D:\email-platform-evidence\validator-snapshots\target-intake-v7-001"
 $TargetIntakeSnapshotPayloadSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 $TargetIntakeSnapshotFileSha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 $TargetIntakeLauncherArgs = @(
@@ -1182,14 +1187,15 @@ head. Generation receipts are unsigned local JSON. Self-binding rejects receipt
 copies at another locator, but does not distinguish deleting and recreating the
 same bytes at the same path. Rolling an older manifest, generation receipt and
 all four older pins back as one unit still passes local replay; sequence is not
-a global head. Schema-v6 recovery reruns the current verifier for every
+a global head. Schema-v7 recovery reruns the current verifier for every
 generation using that receipt's embedded requirements/matrix, recorded host UTC,
 exact ordered source-snapshot inventory, matching replay-runtime fingerprint and
 clean-snapshot execution profile. This is deterministic local replay under
 receipt-bound inputs inside the current isolated launch window. It does not
 authenticate the validation context, snapshot, launcher or pins, make host time
 trusted, identify an authoritative Git commit or portable validator release,
-hash all interpreter/dependency/native-library/OS runtime bytes, prove the
+prove loaded bytecode identity, cover transitive distributions, bytecode caches
+or downstream native-library/OS runtime bytes, prove the
 original authoring runtime identity, or prove that validation actually ran at
 authoring time. The held-open double capture is not a filesystem-wide atomic
 snapshot and cannot exclude administrator or ABA replacement. The authoring
@@ -1198,10 +1204,11 @@ crash durability of the later hard-link directory entry, and a parent directory
 can still be replaced between path preparation and publication. Generation
 receipts therefore do not prove reviewer/pin/receipt authority, global
 latest-head selection, cross-host fork prevention or CAS/WORM, trusted time,
-validation-context authority, validator source/pin/launcher authority,
+validation-context authority, validator source/pin/launcher/interpreter authority,
 filesystem-atomic snapshot identity, administrator/ABA replacement exclusion,
-original authoring runtime identity, complete interpreter/dependency/native
-runtime identity, original execution,
+loaded-bytecode identity, in-window ABA exclusion, transitive-distribution and
+bytecode-cache payload identity, downstream native/OS-loader runtime authority,
+original authoring runtime identity, original execution,
 locator continuity, parent-directory race protection, publication crash
 durability, global rollback protection, or custody after the final recheck.
 Snapshot and finalization receipts

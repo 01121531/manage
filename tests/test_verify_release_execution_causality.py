@@ -551,11 +551,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
 
         for old, new in (
             (
-                'RECEIPT_KIND = "target_intake_generation_receipt_v6"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v7"',
                 'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
             ),
             (
-                'document.get("schema_version") != 6',
+                'document.get("schema_version") != 7',
                 'document.get("schema_version") != 1',
             ),
             (
@@ -628,6 +628,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             (
                 "_distribution_fingerprint(name, import_name)",
                 "{'name': name, 'import_name': import_name}",
+            ),
+            (
+                '"payload_tree_sha256": payload_sha256,',
+                '"payload_tree_sha256": "0" * 64,',
+            ),
+            (
+                "if unlisted_import_files:",
+                "if False:",
             ),
         ):
             with self.subTest(old=old):
@@ -888,7 +896,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "schema-v6 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            "schema-v7 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
             requirements,
         )
         self.assertIn(
@@ -896,7 +904,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "closed-v3 validator contract containing declarative authoring/replay entrypoints, an exact ordered 65-file local source inventory with raw whole-file SHA-256 values",
+            "closed-v4 validator contract containing declarative authoring/replay entrypoints, an exact ordered 65-file local source inventory with raw whole-file SHA-256 values",
             requirements,
         )
         self.assertIn(
@@ -943,15 +951,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Schema-v6 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/v5/mixed-chain rejection evidence:",
+            "Schema-v7 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/v5/v6/mixed-chain rejection evidence:",
             signoff,
         )
         self.assertIn(
-            "Generation validator-contract canonical SHA-256 plus closed-v3 authoring/replay entrypoints, exact ordered 65-file on-disk source inventory, Python/OS/distribution metadata-entrypoint replay-runtime fingerprint, and clean-snapshot execution-profile match:",
+            "Generation validator-contract canonical SHA-256 plus closed-v4 authoring/replay entrypoints, exact ordered 65-file on-disk source inventory, Python/OS/non-cache-stdlib/core-native/eleven-distribution recorded-payload replay-runtime fingerprint, caller-pinned interpreter digest, and clean-snapshot execution-profile match:",
             signoff,
         )
         self.assertIn(
-            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source/pin/launcher authority, loaded-bytecode identity, filesystem-atomic snapshot identity, administrator/ABA replacement exclusion, complete interpreter/dependency/native-library/OS runtime-code identity, original authoring runtime identity, original validator execution, Git/portable release identity, receipt/reviewer authority, and post-verification custody remain `unverified`:",
+            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source/pin/launcher/interpreter authority, loaded-bytecode identity, in-window ABA exclusion, filesystem-atomic snapshot identity, transitive-distribution and bytecode-cache payload identity, downstream native-library/OS-loader runtime-code identity, original authoring runtime identity, original validator execution, Git/portable release identity, receipt/reviewer authority, and post-verification custody remain `unverified`:",
             signoff,
         )
         self.assertIn(

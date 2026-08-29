@@ -59,16 +59,17 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-acceptance=write-once-receipt",
-    "generation-receipt-locator=self-bound-v6",
+    "generation-receipt-locator=self-bound-v7",
     "generation-history-semantic-replay=every-generation",
     "generation-receipt-evaluation-time=recorded-host-utc",
-    "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile",
+    "generation-validator-contract=closed-v4-local-source-payload-runtime-and-execution-profile",
     "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
-    "generation-validator-replay-runtime=python-os-distribution-metadata-entrypoint-fingerprint-matched",
+    "generation-validator-replay-runtime=python-os-stdlib-native-distribution-payload-fingerprint-matched",
     "generation_validator_contract_sha256=",
     "generation-validator-execution-mode=",
     "generation-validator-snapshot-manifest-payload-sha256=",
     "generation-validator-snapshot-manifest-file-sha256=",
+    "generation-validator-launcher-interpreter-sha256=",
     "authoring-validation-context-external-handoff=not-consumed",
     "authoring-validation-context-signature=unverified",
     "authoring-validation-context-signer-role-scope=unverified",
@@ -1124,6 +1125,9 @@ def causality_errors(
     distribution_fingerprint = _function(
         validator_contract_tree, "_distribution_fingerprint"
     )
+    payload_fingerprint = _function(
+        validator_contract_tree, "_payload_fingerprint"
+    )
     runtime_environment_shape = _function(
         validator_contract_tree, "_runtime_environment_shape_errors"
     )
@@ -1157,6 +1161,7 @@ def causality_errors(
         or current_validator_contract is None
         or current_runtime_environment is None
         or distribution_fingerprint is None
+        or payload_fingerprint is None
         or runtime_environment_shape is None
         or validator_contract_validation is None
         or validator_contract_shape is None
@@ -1171,10 +1176,10 @@ def causality_errors(
             and _contains_string(receipt_validation, "receipt_path")
             and _contains_string(genesis_creator, "receipt_path")
             and _contains_string(registration_creator, "receipt_path")
-            and "target_intake_generation_receipt_v6" in (generation_source or "")
-            and 'document.get("schema_version") != 6'
+            and "target_intake_generation_receipt_v7" in (generation_source or "")
+            and 'document.get("schema_version") != 7'
             in (generation_source or "")
-            and (generation_source or "").count('"schema_version": 6') == 2
+            and (generation_source or "").count('"schema_version": 7') == 2
             and _contains_string(receipt_validation, "validation_context")
             and _contains_string(receipt_validation, "evaluated_at")
             and _contains_string(receipt_validation, "requirements")
@@ -1195,7 +1200,7 @@ def causality_errors(
             and _contains_name(genesis_creator, "receipt_errors")
         ):
             errors.append(
-                "generation receipts must use closed schema-v6 self-bound validation contexts"
+                "generation receipts must use closed schema-v7 self-bound validation contexts"
             )
         semantic_calls = {
             _call_name(node)
@@ -1275,10 +1280,21 @@ def causality_errors(
             )
             and _contains_name(distribution_fingerprint, "read_stable_bytes_with_metadata")
             and _contains_string(runtime_environment_shape, "executable_sha256")
-            and _contains_string(runtime_environment_shape, "stdlib_platform_sha256")
+            and _contains_string(runtime_environment_shape, "stdlib_payload_tree_sha256")
+            and _contains_string(runtime_environment_shape, "native_payload_tree_sha256")
             and _contains_string(runtime_environment_shape, "metadata_sha256")
             and _contains_string(runtime_environment_shape, "record_sha256")
             and _contains_string(runtime_environment_shape, "entrypoint_sha256")
+            and _contains_string(runtime_environment_shape, "payload_tree_sha256")
+            and _contains_string(
+                runtime_environment_shape, "record_unlisted_import_file_count"
+            )
+            and _contains_name(distribution_fingerprint, "_payload_fingerprint")
+            and _contains_name(distribution_fingerprint, "_tree_files")
+            and '"payload_tree_sha256": payload_sha256,'
+            in (validator_contract_source or "")
+            and "if unlisted_import_files:"
+            in (validator_contract_source or "")
             and any(
                 isinstance(node, ast.Compare)
                 and isinstance(node.left, ast.Attribute)
@@ -1288,7 +1304,7 @@ def causality_errors(
                 and len(node.comparators) == 1
                 and isinstance(node.comparators[0], ast.Constant)
                 and node.comparators[0].value == 1
-                for node in ast.walk(current_validator_contract)
+                for node in ast.walk(payload_fingerprint)
             )
             and _contains_name(validator_contract_validation, "expected")
             and "return [] if document == expected else ["
@@ -1620,16 +1636,17 @@ def causality_errors(
                 _contains_marker(verify_generation_branch, marker)
                 for marker in (
                     "production_acceptance=false",
-                    "generation-receipt-locator=self-bound-v6",
+                    "generation-receipt-locator=self-bound-v7",
                     "generation-history-semantic-replay=every-generation",
                     "generation-receipt-evaluation-time=recorded-host-utc",
-                    "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile",
+                    "generation-validator-contract=closed-v4-local-source-payload-runtime-and-execution-profile",
                     "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
-                    "generation-validator-replay-runtime=python-os-distribution-metadata-entrypoint-fingerprint-matched",
+                    "generation-validator-replay-runtime=python-os-stdlib-native-distribution-payload-fingerprint-matched",
                     "generation_validator_contract_sha256=",
                     "generation-validator-execution-mode=",
                     "generation-validator-snapshot-manifest-payload-sha256=",
                     "generation-validator-snapshot-manifest-file-sha256=",
+                    "generation-validator-launcher-interpreter-sha256=",
                     "authoring-validation-context-external-handoff=not-consumed",
                     "authoring-validation-context-signature=unverified",
                     "authoring-validation-context-signer-role-scope=unverified",
@@ -2253,13 +2270,13 @@ def main() -> int:
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
         "authoring-publication=local-no-replace-readback "
-        "generation-receipt-locator=self-bound-v6 "
+        "generation-receipt-locator=self-bound-v7 "
         "generation-history-semantic-replay=every-generation "
         "generation-receipt-evaluation-time=recorded-host-utc "
-        "generation-validator-contract=closed-v3-local-source-runtime-and-execution-profile "
+        "generation-validator-contract=closed-v4-local-source-payload-runtime-and-execution-profile "
         "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
         "generation-validator-replay-runtime="
-        "python-os-distribution-metadata-entrypoint-fingerprint-matched "
+        "python-os-stdlib-native-distribution-payload-fingerprint-matched "
         "authoring-validation-context-external-handoff=not-consumed "
         "authoring-validation-context-signature=unverified "
         "authoring-validation-context-signer-role-scope=unverified "

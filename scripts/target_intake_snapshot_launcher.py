@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FILENAME = "target-intake-validator-source-snapshot.json"
 SNAPSHOT_KIND = "target_intake_validator_source_snapshot_v1"
 _MAX_MANIFEST_BYTES = 1024 * 1024
+_MAX_INTERPRETER_BYTES = 64 * 1024 * 1024
 _SHA256_LENGTH = 64
 _CHILD_TIMEOUT_SECONDS = 600
 _PREFLIGHT_COMMANDS = {
@@ -191,6 +192,83 @@ def _read_stable_manifest(
     return document, raw, identity
 
 
+def _read_stable_binary(
+    path: Path,
+    *,
+    max_bytes: int,
+    expected_identity: tuple[int, int, int, int, int] | None = None,
+) -> tuple[bytes, tuple[int, int, int, int, int]]:
+    if (
+        not path.is_absolute()
+        or _has_link_or_reparse_ancestor(path)
+        or max_bytes < 1
+    ):
+        raise _invalid()
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+    if os.name != "nt":
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise _invalid() from error
+    try:
+        opened = os.fstat(descriptor)
+        named = path.lstat()
+        identity = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_nlink,
+            opened.st_size,
+            opened.st_mtime_ns,
+        )
+        named_identity = (
+            named.st_dev,
+            named.st_ino,
+            named.st_nlink,
+            named.st_size,
+            named.st_mtime_ns,
+        )
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or identity != named_identity
+            or identity[2] != 1
+            or identity[3] <= 0
+            or identity[3] > max_bytes
+            or (expected_identity is not None and identity != expected_identity)
+        ):
+            raise _invalid()
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            raw = stream.read(max_bytes + 1)
+        final_opened = os.fstat(descriptor)
+        final_named = path.lstat()
+        final_identity = (
+            final_opened.st_dev,
+            final_opened.st_ino,
+            final_opened.st_nlink,
+            final_opened.st_size,
+            final_opened.st_mtime_ns,
+        )
+        final_named_identity = (
+            final_named.st_dev,
+            final_named.st_ino,
+            final_named.st_nlink,
+            final_named.st_size,
+            final_named.st_mtime_ns,
+        )
+        if (
+            len(raw) != identity[3]
+            or final_identity != identity
+            or final_named_identity != identity
+        ):
+            raise _invalid()
+        return raw, identity
+    except OSError as error:
+        raise _invalid() from error
+    finally:
+        os.close(descriptor)
+
+
 def _minimal_environment() -> dict[str, str]:
     allowed = ("SYSTEMROOT", "WINDIR") if os.name == "nt" else ()
     return {name: os.environ[name] for name in allowed if name in os.environ}
@@ -230,17 +308,26 @@ def _audit_loaded_local_modules(snapshot_root: Path, document: dict[str, Any]) -
 
 
 def _child_main(argv: Sequence[str]) -> int:
-    if len(argv) < 5 or argv[3] != "--":
+    if len(argv) < 6 or argv[4] != "--":
         print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
         return 1
     snapshot_root = Path(argv[0])
     payload_sha256 = argv[1]
     file_sha256 = argv[2]
-    preflight_argv = list(argv[4:])
+    interpreter_sha256 = argv[3]
+    preflight_argv = list(argv[5:])
     if not preflight_argv or preflight_argv[0] not in _PREFLIGHT_COMMANDS:
         print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
         return 1
     try:
+        executable_raw, executable_identity = _read_stable_binary(
+            Path(sys.executable).absolute(),
+            max_bytes=_MAX_INTERPRETER_BYTES,
+        )
+        if not hmac.compare_digest(
+            hashlib.sha256(executable_raw).hexdigest(), interpreter_sha256
+        ):
+            raise _invalid()
         from scripts.target_intake_source_snapshot import (
             load_source_snapshot,
             recheck_source_snapshot,
@@ -252,10 +339,12 @@ def _child_main(argv: Sequence[str]) -> int:
             expected_file_sha256=file_sha256,
         )
         document = snapshot.manifest
-        from scripts import target_intake_preflight
         from scripts.target_intake_validator_contract import (
+            _current_runtime_environment,
             snapshot_execution_profile,
         )
+        runtime_environment = _current_runtime_environment()
+        from scripts import target_intake_preflight
 
         if (
             target_intake_preflight.main.__module__
@@ -267,10 +356,23 @@ def _child_main(argv: Sequence[str]) -> int:
         ):
             raise _invalid()
         _audit_loaded_local_modules(snapshot_root, document)
-        with snapshot_execution_profile(payload_sha256, file_sha256):
+        with snapshot_execution_profile(
+            payload_sha256,
+            file_sha256,
+            interpreter_sha256,
+        ):
             result = target_intake_preflight.main(preflight_argv)
+        if _current_runtime_environment() != runtime_environment:
+            raise _invalid()
         _audit_loaded_local_modules(snapshot_root, document)
         recheck_source_snapshot(snapshot)
+        final_executable_raw, _ = _read_stable_binary(
+            Path(sys.executable).absolute(),
+            max_bytes=_MAX_INTERPRETER_BYTES,
+            expected_identity=executable_identity,
+        )
+        if not hmac.compare_digest(executable_raw, final_executable_raw):
+            raise _invalid()
     except (OSError, TypeError, ValueError):
         print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
         return 1
@@ -281,6 +383,8 @@ def _child_main(argv: Sequence[str]) -> int:
             "execution-mode=clean-isolated-external-snapshot-subprocess-v1 "
             "current-loaded-local-source=snapshot-origin-sha256-rechecked "
             "snapshot-pre-post-recheck=matched "
+            "runtime-pre-post-recheck=matched "
+            "launcher-interpreter-pre-post-recheck=matched "
             "source-authority=unverified snapshot-atomicity=unverified "
             "interpreter-native-runtime-identity=unverified"
         )
@@ -335,6 +439,11 @@ def _run(
         executable = Path(sys.executable).resolve(strict=True)
         if not executable.is_absolute():
             raise _invalid()
+        executable_raw, executable_identity = _read_stable_binary(
+            executable,
+            max_bytes=_MAX_INTERPRETER_BYTES,
+        )
+        interpreter_sha256 = hashlib.sha256(executable_raw).hexdigest()
         command = [
             str(executable),
             "-I",
@@ -346,6 +455,7 @@ def _run(
             str(snapshot_root),
             payload_sha256,
             file_sha256,
+            interpreter_sha256,
             "--",
             *preflight_argv,
         ]
@@ -367,7 +477,16 @@ def _run(
             expected_file_sha256=file_sha256,
             expected_identity=identity,
         )
-        if not hmac.compare_digest(raw, final_raw) or completed.returncode != 0:
+        final_executable_raw, _ = _read_stable_binary(
+            executable,
+            max_bytes=_MAX_INTERPRETER_BYTES,
+            expected_identity=executable_identity,
+        )
+        if (
+            not hmac.compare_digest(raw, final_raw)
+            or not hmac.compare_digest(executable_raw, final_executable_raw)
+            or completed.returncode != 0
+        ):
             raise _invalid()
     except (
         OSError,
@@ -381,6 +500,7 @@ def _run(
         "production_acceptance=false child-exit=0 "
         f"snapshot_manifest_payload_sha256={payload_sha256} "
         f"snapshot_manifest_file_sha256={file_sha256} "
+        f"launcher_interpreter_sha256={interpreter_sha256} "
         "recovery-snapshot-mutation=not-performed "
         "source-authority=unverified snapshot-atomicity=unverified"
     )

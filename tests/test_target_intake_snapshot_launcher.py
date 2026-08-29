@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -31,7 +32,7 @@ def _launcher_command(*arguments: str) -> list[str]:
 
 
 class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
-    def test_clean_child_initializes_v6_receipt_bound_to_snapshot_profile(self) -> None:
+    def test_clean_child_initializes_v7_receipt_bound_to_snapshot_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             attacker = base / "attacker"
@@ -79,10 +80,10 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
             self.assertIn("target-intake-validator-snapshot-launch-ok", completed.stdout)
             self.assertFalse(poison_marker.exists())
             receipt = json.loads(receipt_output.read_text(encoding="utf-8"))
-            self.assertEqual(receipt["schema_version"], 6)
-            self.assertEqual(receipt["kind"], "target_intake_generation_receipt_v6")
+            self.assertEqual(receipt["schema_version"], 7)
+            self.assertEqual(receipt["kind"], "target_intake_generation_receipt_v7")
             contract = receipt["validation_context"]["validator_contract"]
-            self.assertEqual(contract["schema_version"], 3)
+            self.assertEqual(contract["schema_version"], 4)
             self.assertEqual(len(contract["source_files"]), 65)
             profile = contract["execution_profile"]
             self.assertEqual(
@@ -103,6 +104,10 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
             self.assertTrue(profile["dont_write_bytecode"])
             self.assertTrue(profile["local_module_origins_rechecked"])
             self.assertTrue(profile["snapshot_pre_and_post_recheck_required"])
+            self.assertRegex(
+                profile["launcher_interpreter_sha256"], r"^[0-9a-f]{64}$"
+            )
+            self.assertTrue(profile["runtime_pre_and_post_recheck_required"])
 
     def test_isolated_prepare_cli_publishes_external_snapshot_pins(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -182,6 +187,11 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
                     "_read_stable_manifest",
                     side_effect=[({}, b"manifest", identity), ({}, b"manifest", identity)],
                 ),
+                mock.patch.object(
+                    launcher,
+                    "_read_stable_binary",
+                    side_effect=[(b"python", identity), (b"python", identity)],
+                ),
                 mock.patch.object(launcher.subprocess, "run", return_value=completed) as run,
             ):
                 result = launcher._run(snapshot, "a" * 64, "b" * 64, ["verify-requirements"])
@@ -189,6 +199,7 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertEqual(Path(command[0]), Path(sys.executable).resolve(strict=True))
             self.assertEqual(command[1:6], ["-I", "-B", "-S", "-P", "-c"])
+            self.assertEqual(command[10], hashlib.sha256(b"python").hexdigest())
             self.assertEqual(run.call_args.kwargs["cwd"], snapshot)
             self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
             self.assertIs(run.call_args.kwargs["shell"], False)
@@ -197,6 +208,33 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
             self.assertNotIn("PYTHONPATH", environment)
             self.assertNotIn("PYTHONHOME", environment)
             self.assertNotIn("PATH", environment)
+
+    def test_parent_rejects_same_path_interpreter_byte_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot = Path(temporary).resolve() / "snapshot"
+            snapshot.mkdir()
+            identity = (1, 2, 1, 3, 4)
+            completed = subprocess.CompletedProcess([], 0)
+            with (
+                mock.patch.object(
+                    launcher,
+                    "_read_stable_manifest",
+                    side_effect=[({}, b"manifest", identity), ({}, b"manifest", identity)],
+                ),
+                mock.patch.object(
+                    launcher,
+                    "_read_stable_binary",
+                    side_effect=[(b"python-a", identity), (b"python-b", identity)],
+                ),
+                mock.patch.object(launcher.subprocess, "run", return_value=completed),
+            ):
+                result = launcher._run(
+                    snapshot,
+                    "a" * 64,
+                    "b" * 64,
+                    ["verify-requirements"],
+                )
+            self.assertEqual(result, 1)
 
     def test_parent_rejects_snapshot_inside_repository_before_read_or_launch(self) -> None:
         with (

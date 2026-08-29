@@ -69,7 +69,7 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
         mutations.append(runtime_digest)
         stdlib_digest = copy.deepcopy(valid)
         stdlib_digest["runtime_environment"]["python"][
-            "stdlib_platform_sha256"
+            "stdlib_payload_tree_sha256"
         ] = "A" * 64
         mutations.append(stdlib_digest)
         execution_mode = copy.deepcopy(valid)
@@ -135,19 +135,123 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
             with self.assertRaises(contract.ValidatorContractError):
                 contract.current_validator_contract()
 
-    def test_runtime_binds_the_stdlib_platform_source_used_by_the_proxy(self) -> None:
+    def test_runtime_binds_stdlib_and_native_payload_trees(self) -> None:
         current = contract.current_validator_contract()
         stdlib_path = Path(contract.sysconfig.get_path("stdlib")) / "platform.py"
-        self.assertEqual(
-            current["runtime_environment"]["python"][
-                "stdlib_platform_sha256"
-            ],
-            hashlib.sha256(stdlib_path.read_bytes()).hexdigest(),
-        )
+        python = current["runtime_environment"]["python"]
+        self.assertGreater(python["stdlib_payload_file_count"], 1)
+        self.assertGreater(python["stdlib_payload_size_bytes"], 1)
+        self.assertRegex(python["stdlib_payload_tree_sha256"], r"^[0-9a-f]{64}$")
+        self.assertGreater(python["native_payload_file_count"], 1)
+        self.assertGreater(python["native_payload_size_bytes"], 1)
+        self.assertRegex(python["native_payload_tree_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             Path(contract.runtime_platform.python_implementation.__code__.co_filename),
             stdlib_path,
         )
+
+    def test_distribution_secondary_payload_drift_changes_tree_root(self) -> None:
+        class Entry:
+            def __init__(self, value: str) -> None:
+                self.value = value
+                self.hash = None
+
+            def __str__(self) -> str:
+                return self.value
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "fakepkg"
+            dist_info = root / "fakepkg-1.0.dist-info"
+            package.mkdir()
+            dist_info.mkdir()
+            (package / "__init__.py").write_text("from . import helper\n")
+            helper = package / "helper.py"
+            helper.write_text('VALUE = "a"\n')
+            (dist_info / "METADATA").write_text("Name: fakepkg\nVersion: 1.0\n")
+            (dist_info / "RECORD").write_text("record\n")
+            entries = [
+                Entry("fakepkg/__init__.py"),
+                Entry("fakepkg/helper.py"),
+                Entry("fakepkg-1.0.dist-info/METADATA"),
+                Entry("fakepkg-1.0.dist-info/RECORD"),
+            ]
+            distribution = SimpleNamespace(
+                files=entries,
+                version="1.0",
+                locate_file=lambda entry: root / str(entry),
+            )
+            specification = SimpleNamespace(
+                origin=str(package / "__init__.py"),
+                submodule_search_locations=[str(package)],
+            )
+            with (
+                mock.patch.object(
+                    contract.importlib.metadata,
+                    "distribution",
+                    return_value=distribution,
+                ),
+                mock.patch.object(
+                    contract.importlib.util,
+                    "find_spec",
+                    return_value=specification,
+                ),
+            ):
+                first = contract._distribution_fingerprint("fakepkg", "fakepkg")
+                helper.write_text('VALUE = "b"\n')
+                second = contract._distribution_fingerprint("fakepkg", "fakepkg")
+
+            self.assertNotEqual(
+                first["payload_tree_sha256"], second["payload_tree_sha256"]
+            )
+
+    def test_distribution_rejects_record_omitted_importable_file(self) -> None:
+        class Entry:
+            def __init__(self, value: str) -> None:
+                self.value = value
+                self.hash = None
+
+            def __str__(self) -> str:
+                return self.value
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "fakepkg"
+            dist_info = root / "fakepkg-1.0.dist-info"
+            package.mkdir()
+            dist_info.mkdir()
+            (package / "__init__.py").write_text("from . import hidden\n")
+            (package / "hidden.py").write_text('VALUE = "unrecorded"\n')
+            (dist_info / "METADATA").write_text("Name: fakepkg\nVersion: 1.0\n")
+            (dist_info / "RECORD").write_text("record\n")
+            entries = [
+                Entry("fakepkg/__init__.py"),
+                Entry("fakepkg-1.0.dist-info/METADATA"),
+                Entry("fakepkg-1.0.dist-info/RECORD"),
+            ]
+            distribution = SimpleNamespace(
+                files=entries,
+                version="1.0",
+                locate_file=lambda entry: root / str(entry),
+            )
+            specification = SimpleNamespace(
+                origin=str(package / "__init__.py"),
+                submodule_search_locations=[str(package)],
+            )
+            with (
+                mock.patch.object(
+                    contract.importlib.metadata,
+                    "distribution",
+                    return_value=distribution,
+                ),
+                mock.patch.object(
+                    contract.importlib.util,
+                    "find_spec",
+                    return_value=specification,
+                ),
+                self.assertRaises(contract.ValidatorContractError),
+            ):
+                contract._distribution_fingerprint("fakepkg", "fakepkg")
 
     def test_loaded_module_can_differ_from_later_on_disk_contract_capture(self) -> None:
         runtime_environment = contract._current_runtime_environment()

@@ -26,6 +26,7 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
     try:
         texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
         launcher_tree = ast.parse(texts["launcher"])
+        contract_tree = ast.parse(texts["contract"])
     except (OSError, UnicodeError, SyntaxError):
         return ["target intake snapshot launcher assets cannot be loaded"]
 
@@ -55,12 +56,18 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
         "_audit_loaded_local_modules(snapshot_root, document)",
         "document = snapshot.manifest",
         "recheck_source_snapshot(snapshot)",
-        "with snapshot_execution_profile(payload_sha256, file_sha256):",
+        "runtime_environment = _current_runtime_environment()",
+        "if _current_runtime_environment() != runtime_environment:",
+        "interpreter_sha256 = hashlib.sha256(executable_raw).hexdigest()",
+        "expected_identity=executable_identity",
+        "with snapshot_execution_profile(\n            payload_sha256,\n            file_sha256,\n            interpreter_sha256,\n        ):",
         "recovery-snapshot-mutation=not-performed",
     )
     for marker in launcher_markers:
         if marker not in texts["launcher"]:
             errors.append(f"launcher contract marker is missing: {marker}")
+    if texts["launcher"].count("expected_identity=executable_identity") != 2:
+        errors.append("launcher interpreter identity must be rechecked in parent and child")
 
     child = next(
         (
@@ -97,10 +104,15 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
             errors.append(f"source snapshot contract marker is missing: {marker}")
 
     contract_markers = (
-        'VALIDATOR_CONTRACT_KIND = "target_intake_generation_validator_contract_v3"',
+        'VALIDATOR_CONTRACT_KIND = "target_intake_generation_validator_contract_v4"',
         '"platform/api/__init__.py"',
         '"platform/api/v1/__init__.py"',
-        '"stdlib_platform_sha256"',
+        'RUNTIME_ENVIRONMENT_KIND = "target_intake_generation_replay_runtime_v2"',
+        '"stdlib_payload_tree_sha256"',
+        '"native_payload_tree_sha256"',
+        '"payload_tree_sha256"',
+        '"record_unlisted_import_file_count"',
+        '_active_snapshot_execution_profile["launcher_interpreter_sha256"]',
         '"execution_profile"',
         'SNAPSHOT_EXECUTION_MODE = "clean_isolated_external_snapshot_subprocess_v1"',
         "flags.isolated != 1",
@@ -112,13 +124,38 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
     for marker in contract_markers:
         if marker not in texts["contract"]:
             errors.append(f"validator contract marker is missing: {marker}")
+    distribution_keys = next(
+        (
+            {
+                item.value
+                for item in node.value.elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            }
+            for node in contract_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "DISTRIBUTION_KEYS"
+                for target in node.targets
+            )
+            and isinstance(node.value, (ast.Set, ast.Tuple, ast.List))
+        ),
+        set(),
+    )
+    if not {
+        "payload_file_count",
+        "payload_size_bytes",
+        "payload_tree_sha256",
+        "record_hash_verified_file_count",
+        "record_unlisted_import_file_count",
+    }.issubset(distribution_keys):
+        errors.append("validator dependency payload schema is incomplete")
 
     if texts["contract"].count('    "platform/') != 31:
         errors.append("validator platform source inventory must contain 31 files")
     if texts["contract"].count('    "scripts/') < 34:
         errors.append("validator script source inventory is incomplete")
-    if 'RECEIPT_KIND = "target_intake_generation_receipt_v6"' not in texts["generation"]:
-        errors.append("generation receipt must remain schema v6")
+    if 'RECEIPT_KIND = "target_intake_generation_receipt_v7"' not in texts["generation"]:
+        errors.append("generation receipt must remain schema v7")
     if (
         'if not argv or argv[0] != "verify-requirements":' not in texts["preflight"]
         or "target-intake-validator-snapshot-launcher-required" not in texts["preflight"]
@@ -139,7 +176,7 @@ def main() -> int:
         "production_acceptance=false source-files=65 snapshot-members=91 "
         "clean-child-flags=-I,-B,-S,-P direct-operational-entrypoint=blocked "
         "source-authority=unverified snapshot-atomicity=unverified "
-        "interpreter-native-runtime-identity=unverified"
+        "loaded-bytecode-native-authority=unverified"
     )
     return 0
 

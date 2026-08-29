@@ -44,6 +44,25 @@ class VerifyTargetIntakeSnapshotLauncherTests(unittest.TestCase):
             "scripts/target_intake_snapshot_launcher.py", '            "-I",\n', ""
         ))
 
+    def test_rejects_removed_interpreter_or_runtime_recheck(self) -> None:
+        self.assertTrue(self._mutate(
+            "scripts/target_intake_snapshot_launcher.py",
+            "if _current_runtime_environment() != runtime_environment:",
+            "if False:",
+        ))
+        self.assertTrue(self._mutate(
+            "scripts/target_intake_snapshot_launcher.py",
+            "expected_identity=executable_identity",
+            "expected_identity=None",
+        ))
+
+    def test_rejects_removed_dependency_payload_binding(self) -> None:
+        self.assertTrue(self._mutate(
+            "scripts/target_intake_validator_contract.py",
+            '    "payload_tree_sha256",\n',
+            "",
+        ))
+
     def test_rejects_child_recursion(self) -> None:
         self.assertTrue(self._mutate(
             "scripts/target_intake_snapshot_launcher.py",
