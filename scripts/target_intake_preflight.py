@@ -596,6 +596,26 @@ def _artifact_errors(
     return errors, validated_document
 
 
+def _release_execution_consumer_selector_errors(
+    documents: list[Any],
+) -> list[str]:
+    """Require one exact selector claim within this intake, not global uniqueness."""
+
+    selectors = [
+        document.get("release_execution")
+        for document in documents
+        if isinstance(document, dict)
+        and isinstance(document.get("release_execution"), dict)
+    ]
+    if len(selectors) > 1:
+        baseline = selectors[0]
+        if any(selector != baseline for selector in selectors[1:]):
+            return [
+                "release execution selector does not match the other consumers in this intake manifest"
+            ]
+    return []
+
+
 def intake_errors(
     document: Any,
     requirements: Any,
@@ -1046,6 +1066,26 @@ def intake_errors(
                     ).get("started_at"),
                 )
             )
+    release_execution_consumers = [
+        artifact
+        for identifier, artifact in target_phase_artifacts.items()
+        if identifier != "windows_pilot_inputs"
+    ]
+    release_execution_consumers.extend(
+        consumer
+        for consumer in (
+            sub2_evidence,
+            vault_egress_evidence,
+            phase6_pilot_evidence,
+            phase6_operations_evidence,
+        )
+        if consumer is not None
+    )
+    errors.extend(
+        _release_execution_consumer_selector_errors(
+            release_execution_consumers,
+        )
+    )
     lineage_required = require_complete and (
         required_ids is None or "release_execution_evidence" in required_ids
     )
@@ -1389,7 +1429,10 @@ def main(argv: list[str] | None = None) -> int:
         "release-storage-provider-native=unverified "
         "release-storage-retention=unverified "
         "release-storage-delete-denial=unverified "
-        "release-storage-readback=unverified"
+        "release-storage-readback=unverified "
+        "release-storage-namespace-authority=unverified "
+        "release-storage-version-identity=unverified "
+        "release-storage-cross-manifest-rebinding=unverified"
     )
     return 0
 

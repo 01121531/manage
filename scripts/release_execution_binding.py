@@ -216,7 +216,7 @@ def selector_errors(
     if not _opaque_execution_reference(
         selector.get("evidence_object_reference")
     ):
-        errors.append("release execution object reference is invalid")
+        errors.append("release execution opaque storage locator is invalid")
     if not _digest(selector.get("evidence_sha256")):
         errors.append("release execution whole-file digest is invalid")
     intake_environment = target_intake.get("environment")

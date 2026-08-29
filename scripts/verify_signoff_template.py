@@ -66,6 +66,8 @@ def main() -> int:
         "Release-execution immutable-history/no-invented-expiry acknowledgement and current Phase 0/evidence-index reuse result:",
         "Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:",
         "Release-execution opaque storage locator plus provider-native enforcement, retention, delete-denial and post-denial readback `unverified` acknowledgement:",
+        "Final-strict all-consumer exact release selector equality, including the opaque locator, result:",
+        "Release-execution namespace authority, immutable version identity and cross-manifest rebinding protection `unverified` acknowledgement:",
         "Forward deployment terminal state, fixed error code, ordered phase UTC values and final Edge state:",
         "Forward deployment Cosign, SPDX attestation and provenance verification:",
         "Forward deployment preflight-before-edge-stop and edge-closed failure evidence:",

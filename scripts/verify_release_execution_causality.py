@@ -34,6 +34,9 @@ RELEASE_BOUNDARY_MARKERS = (
     "release-storage-retention=unverified",
     "release-storage-delete-denial=unverified",
     "release-storage-readback=unverified",
+    "release-storage-namespace-authority=unverified",
+    "release-storage-version-identity=unverified",
+    "release-storage-cross-manifest-rebinding=unverified",
 )
 
 
@@ -126,6 +129,13 @@ def _requires_kwonly(function: ast.FunctionDef, names: set[str]) -> bool:
 def _contains_string(node: ast.AST | None, value: str) -> bool:
     return node is not None and any(
         isinstance(item, ast.Constant) and item.value == value
+        for item in ast.walk(node)
+    )
+
+
+def _contains_name(node: ast.AST | None, value: str) -> bool:
+    return node is not None and any(
+        isinstance(item, ast.Name) and item.id == value
         for item in ast.walk(node)
     )
 
@@ -253,8 +263,16 @@ def causality_errors(
             errors.append("path-based release alignment must require and forward ordering")
 
     artifact_errors = _function(intake_tree, "_artifact_errors")
+    selector_alignment = _function(
+        intake_tree,
+        "_release_execution_consumer_selector_errors",
+    )
     intake_errors = _function(intake_tree, "intake_errors")
-    if artifact_errors is None or intake_errors is None:
+    if (
+        artifact_errors is None
+        or selector_alignment is None
+        or intake_errors is None
+    ):
         errors.append("strict intake causality contract is missing")
         return errors
     if not _has_release_boundary_output(intake_tree):
@@ -273,6 +291,58 @@ def causality_errors(
         "evaluated_at",
     ):
         errors.append("ledger selection review must follow finish and precede evaluation")
+
+    if not _has_compare(selector_alignment, "selector", ast.NotEq, "baseline"):
+        errors.append("strict intake must reject conflicting release selector claims")
+    selector_alignment_calls = [
+        node
+        for node in ast.walk(intake_errors)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "_release_execution_consumer_selector_errors"
+    ]
+    if not (
+        len(selector_alignment_calls) == 1
+        and len(selector_alignment_calls[0].args) == 1
+        and isinstance(selector_alignment_calls[0].args[0], ast.Name)
+        and selector_alignment_calls[0].args[0].id == "release_execution_consumers"
+    ):
+        errors.append("strict intake must compare all release consumer selectors once")
+    collector_assignments = [
+        node
+        for node in ast.walk(intake_errors)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "release_execution_consumers"
+            for target in node.targets
+        )
+    ]
+    collector_extensions = [
+        node
+        for node in ast.walk(intake_errors)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "extend"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "release_execution_consumers"
+    ]
+    required_selector_consumers = {
+        "sub2_evidence",
+        "vault_egress_evidence",
+        "phase6_pilot_evidence",
+        "phase6_operations_evidence",
+    }
+    if not (
+        len(collector_assignments) == 1
+        and _contains_name(collector_assignments[0], "target_phase_artifacts")
+        and _contains_string(collector_assignments[0], "windows_pilot_inputs")
+        and len(collector_extensions) == 1
+        and all(
+            _contains_name(collector_extensions[0], consumer)
+            for consumer in required_selector_consumers
+        )
+    ):
+        errors.append("strict intake release selector consumer inventory is incomplete")
 
     consumer_calls = [
         node
@@ -359,6 +429,8 @@ def main() -> int:
         "trusted-time=unverified replay-protection=unverified "
         "release-storage-reference=opaque provider-native=unverified "
         "retention=unverified delete-denial=unverified readback=unverified "
+        "namespace-authority=unverified version-identity=unverified "
+        "cross-manifest-rebinding=unverified "
         "production_acceptance=false"
     )
     return 0

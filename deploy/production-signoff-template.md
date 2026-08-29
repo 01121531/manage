@@ -147,6 +147,8 @@ Release manifest:
 - Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:
 - Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:
 - Release-execution opaque storage locator plus provider-native enforcement, retention, delete-denial and post-denial readback `unverified` acknowledgement:
+- Final-strict all-consumer exact release selector equality, including the opaque locator, result:
+- Release-execution namespace authority, immutable version identity and cross-manifest rebinding protection `unverified` acknowledgement:
 - Phase 0 entry-authorization versus continuous-execution authorization decision, host-clock trust status and external approval authentication status:
 - Mail/Sub2 provider scope, external source version/SHA-256, capture/review/valid-until UTC and same-manifest review result:
 - Phase 1–5/Sub2/Vault execution-index sealed review/valid-until and same-manifest review result:

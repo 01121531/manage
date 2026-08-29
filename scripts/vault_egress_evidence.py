@@ -510,7 +510,10 @@ def main(argv: list[str] | None = None) -> int:
         "release-storage-provider-native=unverified "
         "release-storage-retention=unverified "
         "release-storage-delete-denial=unverified "
-        "release-storage-readback=unverified"
+        "release-storage-readback=unverified "
+        "release-storage-namespace-authority=unverified "
+        "release-storage-version-identity=unverified "
+        "release-storage-cross-manifest-rebinding=unverified"
     )
     return 0
 

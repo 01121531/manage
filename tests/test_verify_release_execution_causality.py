@@ -139,6 +139,35 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertNotEqual(mutated, self.intake)
         self.assertTrue(self.errors(intake=mutated))
 
+    def test_final_intake_consumer_selector_comparison_cannot_be_removed(self) -> None:
+        for old, new in (
+            ("selector != baseline", "selector == baseline"),
+            (
+                "_release_execution_consumer_selector_errors(\n            release_execution_consumers,",
+                "_ignored_release_execution_consumer_selector_errors(\n            release_execution_consumers,",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.intake.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+        for consumer in (
+            "sub2_evidence",
+            "vault_egress_evidence",
+            "phase6_pilot_evidence",
+            "phase6_operations_evidence",
+        ):
+            old = f"            {consumer},\n"
+            with self.subTest(consumer=consumer):
+                collector_offset = self.intake.index(
+                    "    release_execution_consumers.extend("
+                )
+                prefix = self.intake[:collector_offset]
+                collector = self.intake[collector_offset:]
+                mutated = prefix + collector.replace(old, "", 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+
     def test_each_standalone_consumer_must_pass_its_window_start(self) -> None:
         for name, source in self.consumers.items():
             mutated, count = re.subn(
@@ -181,6 +210,9 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "release-storage-retention=unverified",
             "release-storage-delete-denial=unverified",
             "release-storage-readback=unverified",
+            "release-storage-namespace-authority=unverified",
+            "release-storage-version-identity=unverified",
+            "release-storage-cross-manifest-rebinding=unverified",
         ):
             mutated = self.intake.replace(marker, marker.replace("unverified", "verified"), 1)
             with self.subTest(source="intake", marker=marker):
@@ -215,6 +247,10 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "only a compatibility namespace for an opaque storage locator",
             "provider-native enforcement, retention, delete denial, and readback all remain `unverified`",
             "local no-replace write, or ledger digest cannot upgrade them",
+            "every reviewed phase 1-5, sub2, vault/egress, phase 6 pilot, and phase 6 operations consumer",
+            "it proves only equality of the claims presented in that intake",
+            "namespace authority, version identity, and cross-manifest rebinding protection therefore remain `unverified`",
+            "delete-then-recreate with identical bytes also remains indistinguishable from continuous retention",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, runbook)
@@ -237,6 +273,10 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "local no-replace publication and SHA-256 do not prove provider-native enforcement, retention, delete denial or post-denial readback",
             requirements,
         )
+        self.assertIn(
+            "this same-manifest equality is not a provider namespace authority or immutable version identity and cannot detect later cross-manifest or cross-environment rebinding",
+            requirements,
+        )
         signoff = Path("deploy/production-signoff-template.md").read_text(
             encoding="utf-8"
         )
@@ -246,6 +286,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         )
         self.assertIn(
             "Release-execution opaque storage locator plus provider-native enforcement, retention, delete-denial and post-denial readback `unverified` acknowledgement:",
+            signoff,
+        )
+        self.assertIn(
+            "Final-strict all-consumer exact release selector equality, including the opaque locator, result:",
+            signoff,
+        )
+        self.assertIn(
+            "Release-execution namespace authority, immutable version identity and cross-manifest rebinding protection `unverified` acknowledgement:",
             signoff,
         )
 

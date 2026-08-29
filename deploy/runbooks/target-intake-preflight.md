@@ -113,6 +113,20 @@ observations must not be reused for this release locator. Until a dedicated
 release-storage trust policy and independently pinned provider receipts exist,
 provider-native enforcement, retention, delete denial, and readback all remain
 `unverified`.
+Final strict intake additionally requires every reviewed Phase 1-5, Sub2,
+Vault/egress, Phase 6 pilot, and Phase 6 operations consumer in that one
+manifest to carry the exact same release-execution selector, including the
+opaque locator, ledger type, whole-file digest, and target-intake identity.
+This rejects a same-manifest alias or rebind such as one consumer changing only
+the locator while retaining the reviewed digest. It proves only equality of
+the claims presented in that intake. No provider/account namespace authority,
+immutable object version/generation identity, or caller-pinned historical
+registry/head is available to detect the same locator being rebound to another
+digest or environment in a later manifest. Delete-then-recreate with identical
+bytes also remains indistinguishable from continuous retention. Namespace
+authority, version identity, and cross-manifest rebinding protection therefore
+remain `unverified`; a local registry, path string, or same-manifest equality
+must not upgrade those claims.
 Recompute SHA-256 after every approved artifact change. Do not add inline
 artifact content, self-authored signature fields, or extra manifest fields; the
 schema is closed.

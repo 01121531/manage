@@ -1308,6 +1308,42 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 ),
                 [],
             )
+            phase1_item = next(
+                item
+                for item in manifest["items"]
+                if item["id"] == "phase1_platform_evidence"
+            )
+            phase1_path = Path(phase1_item["artifact_path"])
+            original_phase1_bytes = phase1_path.read_bytes()
+            rebound_phase1 = json.loads(original_phase1_bytes)
+            rebound_phase1["release_execution"]["evidence_object_reference"] = (
+                "worm-release-execution:record-99b"
+            )
+            rebound_phase1 = seal_target_phase_artifact(
+                {
+                    key: value
+                    for key, value in rebound_phase1.items()
+                    if key != "integrity"
+                }
+            )
+            phase1_path.write_text(json.dumps(rebound_phase1), encoding="utf-8")
+            phase1_item["sha256"] = hashlib.sha256(
+                phase1_path.read_bytes()
+            ).hexdigest()
+            self.assertIn(
+                "release execution selector does not match the other consumers in this intake manifest",
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=True,
+                    phase0_checkpoint_manifest=checkpoint_path.resolve(),
+                ),
+            )
+            phase1_path.write_bytes(original_phase1_bytes)
+            phase1_item["sha256"] = hashlib.sha256(
+                original_phase1_bytes
+            ).hexdigest()
             checkpoint_identity = load_phase_checkpoint(
                 checkpoint_path.resolve(),
                 environment="staging",
