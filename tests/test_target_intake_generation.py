@@ -33,8 +33,13 @@ class TargetIntakeGenerationTests(unittest.TestCase):
         manifest_path = root / "generation-000.json"
         manifest_raw = receipt_bytes(manifest)
         manifest_path.write_bytes(manifest_raw)
-        receipt = create_genesis_receipt(manifest_path, manifest, manifest_raw)
         receipt_path = root / "generation-000.receipt.json"
+        receipt = create_genesis_receipt(
+            manifest_path,
+            receipt_path,
+            manifest,
+            manifest_raw,
+        )
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)
         receipt_pins = self._pins(receipt, receipt_raw)
@@ -65,10 +70,12 @@ class TargetIntakeGenerationTests(unittest.TestCase):
         manifest_raw = receipt_bytes(manifest)
         manifest_path.write_bytes(manifest_raw)
         candidate_raw = receipt_bytes(manifest)
+        receipt_path = root / "generation-001.receipt.json"
         receipt = create_registration_receipt(
             manifest_path=manifest_path,
             manifest=manifest,
             manifest_raw=manifest_raw,
+            receipt_path=receipt_path,
             predecessor=predecessor,
             predecessor_manifest_path=root / "generation-000.json",
             predecessor_receipt_path=root / "generation-000.receipt.json",
@@ -76,7 +83,6 @@ class TargetIntakeGenerationTests(unittest.TestCase):
             artifact_sha256=item["sha256"],
             candidate_raw=candidate_raw,
         )
-        receipt_path = root / "generation-001.receipt.json"
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)
         return manifest, manifest_path, receipt, receipt_path, receipt_raw
@@ -99,6 +105,12 @@ class TargetIntakeGenerationTests(unittest.TestCase):
 
             self.assertEqual(lineage.manifest, manifest)
             self.assertEqual(lineage.receipt["sequence"], 1)
+            self.assertEqual(lineage.receipt["schema_version"], 2)
+            self.assertEqual(
+                lineage.receipt["kind"],
+                "target_intake_generation_receipt_v2",
+            )
+            self.assertEqual(lineage.receipt["receipt_path"], str(receipt_path))
             self.assertEqual(len(lineage.snapshots), 4)
 
     def test_rejects_wrong_pin_detached_leaf_and_locator_alias(self) -> None:
@@ -127,11 +139,38 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                     expected_receipt_file_sha256=pins[1],
                 )
 
+            receipt_alias = root / "generation-001-receipt-alias.json"
+            receipt_alias.write_bytes(receipt_raw)
+            with self.assertRaises(GenerationLineageError):
+                load_generation_lineage(
+                    manifest_path,
+                    receipt_alias,
+                    expected_receipt_payload_sha256=pins[0],
+                    expected_receipt_file_sha256=pins[1],
+                )
+
+            predecessor_receipt_alias = root / "generation-000-receipt-alias.json"
+            predecessor_receipt_alias.write_bytes(predecessor.receipt_raw)
+            with self.assertRaises(GenerationLineageError):
+                create_registration_receipt(
+                    manifest_path=manifest_path,
+                    manifest=manifest,
+                    manifest_raw=receipt_bytes(manifest),
+                    receipt_path=root / "laundered.receipt.json",
+                    predecessor=predecessor,
+                    predecessor_manifest_path=root / "generation-000.json",
+                    predecessor_receipt_path=predecessor_receipt_alias,
+                    registered_item_id=receipt["registered_item"]["id"],
+                    artifact_sha256=receipt["registered_item"]["artifact_sha256"],
+                    candidate_raw=receipt_bytes(manifest),
+                )
+
     def test_rejects_broken_predecessor_selector_and_registered_item_lie(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             _, _, predecessor = self._genesis(root)
             _, manifest_path, receipt, _, _ = self._child(root, predecessor)
+            valid_receipt = copy.deepcopy(receipt)
             receipt["predecessor"]["manifest"]["file_sha256"] = "b" * 64
             receipt["registered_item"]["id"] = receipt["manifest"]["path"]
             bad_path = root / "bad.receipt.json"
@@ -146,6 +185,50 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                     expected_receipt_payload_sha256=pins[0],
                     expected_receipt_file_sha256=pins[1],
                 )
+
+            for field, value in (
+                ("schema_version", 1),
+                ("receipt_path", "relative-receipt.json"),
+            ):
+                invalid_path = root / f"invalid-{field}.receipt.json"
+                invalid = copy.deepcopy(valid_receipt)
+                invalid["receipt_path"] = str(invalid_path)
+                invalid[field] = value
+                invalid_raw = receipt_bytes(invalid)
+                invalid_path.write_bytes(invalid_raw)
+                invalid_pins = self._pins(invalid, invalid_raw)
+                with self.assertRaises(GenerationLineageError):
+                    load_generation_lineage(
+                        manifest_path,
+                        invalid_path,
+                        expected_receipt_payload_sha256=invalid_pins[0],
+                        expected_receipt_file_sha256=invalid_pins[1],
+                    )
+
+    def test_same_path_recreation_and_whole_generation_rollback_are_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path, receipt_path, old_lineage = self._genesis(root)
+            old_manifest_raw = manifest_path.read_bytes()
+            old_receipt_raw = receipt_path.read_bytes()
+            old_manifest_pins = self._pins(old_lineage.manifest, old_manifest_raw)
+            old_receipt_pins = self._pins(old_lineage.receipt, old_receipt_raw)
+            self._child(root, old_lineage)
+
+            manifest_path.unlink()
+            receipt_path.unlink()
+            manifest_path.write_bytes(old_manifest_raw)
+            receipt_path.write_bytes(old_receipt_raw)
+            recovered = load_generation_lineage(
+                manifest_path,
+                receipt_path,
+                expected_receipt_payload_sha256=old_receipt_pins[0],
+                expected_receipt_file_sha256=old_receipt_pins[1],
+                expected_manifest_payload_sha256=old_manifest_pins[0],
+                expected_manifest_file_sha256=old_manifest_pins[1],
+            )
+
+            self.assertEqual(recovered.receipt["sequence"], 0)
 
 
 if __name__ == "__main__":

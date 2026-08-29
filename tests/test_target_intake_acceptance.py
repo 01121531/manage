@@ -43,8 +43,13 @@ class TargetIntakeAcceptanceTests(unittest.TestCase):
         manifest_path = root / f"{stem}.json"
         manifest_raw = receipt_bytes(manifest)
         manifest_path.write_bytes(manifest_raw)
-        receipt = create_genesis_receipt(manifest_path, manifest, manifest_raw)
         receipt_path = root / f"{stem}.receipt.json"
+        receipt = create_genesis_receipt(
+            manifest_path,
+            receipt_path,
+            manifest,
+            manifest_raw,
+        )
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)
         pins = self._pins(receipt, receipt_raw)

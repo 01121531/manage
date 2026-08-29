@@ -30,11 +30,12 @@ from scripts.target_intake_manifest import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECEIPT_KIND = "target_intake_generation_receipt_v1"
+RECEIPT_KIND = "target_intake_generation_receipt_v2"
 RECEIPT_KEYS = {
     "schema_version",
     "kind",
     "production_acceptance",
+    "receipt_path",
     "sequence",
     "manifest",
     "predecessor",
@@ -95,6 +96,15 @@ def _external_locator(value: Any) -> bool:
         return False
 
 
+def _external_output_locator(value: Any) -> bool:
+    if not isinstance(value, str) or not value or not Path(value).is_absolute():
+        return False
+    try:
+        return not Path(value).resolve(strict=False).is_relative_to(ROOT.resolve())
+    except OSError:
+        return False
+
+
 def _manifest_selector(path: Path, manifest: Any, raw: bytes) -> dict[str, Any]:
     if (
         not path.is_absolute()
@@ -116,6 +126,7 @@ def _receipt_selector(path: Path, receipt: Any, raw: bytes) -> dict[str, str]:
     if (
         not path.is_absolute()
         or receipt_errors(receipt)
+        or os.path.abspath(path) != receipt.get("receipt_path")
         or not isinstance(raw, bytes)
     ):
         raise GenerationLineageError()
@@ -182,9 +193,10 @@ def receipt_errors(document: Any) -> list[str]:
         return ["generation receipt top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or document.get("kind") != RECEIPT_KIND
         or document.get("production_acceptance") is not False
+        or not _external_output_locator(document.get("receipt_path"))
     ):
         errors.append("generation receipt identity is invalid")
     sequence = document.get("sequence")
@@ -247,20 +259,25 @@ def receipt_errors(document: Any) -> list[str]:
 
 def create_genesis_receipt(
     manifest_path: Path,
+    receipt_path: Path,
     manifest: dict[str, Any],
     manifest_raw: bytes,
 ) -> dict[str, Any]:
     if any(item.get("status") != "missing" for item in manifest.get("items", [])):
         raise GenerationLineageError()
-    return {
-        "schema_version": 1,
+    receipt = {
+        "schema_version": 2,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
+        "receipt_path": os.path.abspath(receipt_path),
         "sequence": 0,
         "manifest": _manifest_selector(manifest_path, manifest, manifest_raw),
         "predecessor": None,
         "registered_item": None,
     }
+    if receipt_errors(receipt):
+        raise GenerationLineageError()
+    return receipt
 
 
 def create_registration_receipt(
@@ -268,6 +285,7 @@ def create_registration_receipt(
     manifest_path: Path,
     manifest: dict[str, Any],
     manifest_raw: bytes,
+    receipt_path: Path,
     predecessor: GenerationLineage,
     predecessor_manifest_path: Path,
     predecessor_receipt_path: Path,
@@ -282,9 +300,10 @@ def create_registration_receipt(
     ):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
+        "receipt_path": os.path.abspath(receipt_path),
         "sequence": predecessor.receipt["sequence"] + 1,
         "manifest": _manifest_selector(manifest_path, manifest, manifest_raw),
         "predecessor": {
@@ -424,6 +443,8 @@ def load_generation_lineage(
             )
             if (
                 receipt_errors(receipt)
+                or os.path.abspath(current_receipt_path)
+                != receipt.get("receipt_path")
                 or not hmac.compare_digest(
                     canonical_payload_sha256(receipt),
                     receipt_payload_pin,

@@ -141,9 +141,12 @@ Release manifest:
 - Acceptance-receipt unknown-state read-only verification record (or explicit none), including the four independently retained result/receipt pins, `production_acceptance=false`, and no file repair/deletion acknowledgement:
 - Intake manifest/checkpoint 64 KiB limit, duplicate-key rejection and stable bounded-read result:
 - Selected terminal authoring generation locator, generation-receipt locator, manifest payload/file SHA-256 pins and receipt payload/file SHA-256 pins:
+- Schema-v2 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/mixed-chain rejection evidence:
 - Full genesis-to-terminal generation-receipt chain result, including exact predecessor manifest/receipt selectors, sequence, registered item/artifact digest, exactly-one missing-to-provided transition replay, final stable single-link recheck and receipt-as-acceptance-point acknowledgement:
+- Generation-receipt unknown-state read-only verification record (or explicit none), including the four independently retained manifest/receipt pins, `production_acceptance=false`, and no file repair/deletion/promotion acknowledgement:
 - Orphaned-unaccepted generation and commit-state-unknown inventory/disposition record (or explicit none), with no automatic deletion acknowledgement:
-- Authoring fsynced local no-replace/readback result; receipt authenticity/authority, reviewer authority, fork protection, latest-head selection, pin authority, cross-host linearization, trusted time and post-publication custody `unverified` acknowledgement:
+- Whole generation/receipt/four-pin rollback, same-path same-bytes delete/recreate and authoring locator-continuity `unverified` acknowledgement:
+- Authoring staging-file fsync plus local no-replace/readback result; receipt authenticity/authority, reviewer authority, fork protection, latest-head selection, pin authority, cross-host linearization, trusted time, parent-directory-race protection, hard-link publication crash durability and post-publication custody `unverified` acknowledgement:
 - Seventeen registered artifacts bounded stable-read, whole-file SHA-256 and sixteen ordinary JSON unique-key parse result:
 - Standalone artifact check/strict-intake bounded-reader and unique-key parse parity result:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:

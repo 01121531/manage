@@ -39,13 +39,18 @@ not production acceptance. Every generated manifest and successful command remai
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
 - Authoring proceeds through immutable generations while Phase 0–6 evidence is
-  collected. `init` publishes generation 000 and its closed genesis receipt;
+  collected. `init` publishes generation 000 and its closed schema-v2 genesis receipt;
   every later generation is a separate no-replace leaf accepted only when
   `register` has also published its write-once receipt. Never overwrite a prior
   generation or use the editable candidate, an unreceipted leaf, or a receipt
   selected for a different locator as an accepted manifest. Production
   sign-off uses a separately finalized leaf and caller-pinned canonical-payload
   and whole-file SHA-256 values.
+- Every schema-v2 generation receipt self-binds its case-preserving lexical
+  absolute `receipt_path`; copying identical receipt bytes to another locator
+  does not transfer acceptance. Schema-v1 generation receipts and mixed v1/v2
+  chains are incompatible and must be rebuilt under new external names rather
+  than promoted or silently rewritten.
 - Before each of the seven standalone manifest-consumer `check` commands, review
   the current authoring manifest and retain both digest values printed by a
   successful progress
@@ -142,14 +147,36 @@ point. Retain the printed manifest and receipt payload/file digests for the next
 independently approved step. A generation published without a receipt is
 `orphaned-unaccepted` and must never be consumed. A receipt published but not
 successfully read back is `commit-state=unknown`; preserve both files and use an
-independent exact-pin lineage verification before any recovery decision. Never
-delete either automatically. A concurrent writer to the same output cannot
+independent exact-pin lineage verification before any recovery decision. The
+failure line prints the exact manifest/receipt payload and whole-file SHA-256
+values required by the command below. Never delete either automatically. A concurrent writer to the same output cannot
 overwrite the winner. Writers can still choose different output names from the
 same base and create forks, so fork protection, latest-head selection, pin
 authority, cross-host linearization and post-publication custody remain
 `unverified`. Change control must select and retain the intended current
 generation; a successful command does not discover or certify a global latest
 head.
+
+Recover an `init` or `register` unknown state with the exact four pins printed
+by that failed command and retained outside the mutable generation directory:
+
+```powershell
+python scripts/target_intake_preflight.py verify-generation-lineage `
+  --manifest D:\email-platform-evidence\intake\staging-target-intake-001.json `
+  --receipt D:\email-platform-evidence\intake\staging-target-intake-001.receipt.json `
+  --expected-manifest-payload-sha256 1111111111111111111111111111111111111111111111111111111111111111 `
+  --expected-manifest-file-sha256 2222222222222222222222222222222222222222222222222222222222222222 `
+  --expected-receipt-payload-sha256 3333333333333333333333333333333333333333333333333333333333333333 `
+  --expected-receipt-file-sha256 4444444444444444444444444444444444444444444444444444444444444444
+```
+
+`verify-generation-lineage` is read-only: it does not create, replace, delete,
+repair, accept, or promote any file. It recursively replays the selected chain
+to genesis and performs a final identity/bytes/single-link recheck, but always
+reports `production_acceptance=false`. Pins printed by the same failed process
+are recovery inputs, not independent pin authority; retain them in external
+change control before relying on the result. An orphan manifest without a
+published receipt cannot be promoted by this command.
 
 The provided `release_execution_evidence` item has one additional closed
 field. Copy the exact four-field selector from every consuming evidence index;
@@ -1077,9 +1104,18 @@ directory entry. Pin authority, locator continuity, parent-directory race
 protection, publication crash durability, custody after publication, and global
 rollback protection therefore remain `unverified`; a real guarantee
 requires an external signed change-control record or provider-native CAS/WORM
-head. Generation receipts are unsigned local JSON: they do not prove reviewer
-authority, global latest-head selection, cross-host fork prevention, trusted
-time, or custody after the final recheck. Snapshot and finalization receipts
+head. Generation receipts are unsigned local JSON. Self-binding rejects receipt
+copies at another locator, but does not distinguish deleting and recreating the
+same bytes at the same path. Rolling an older manifest, generation receipt and
+all four older pins back as one unit still passes local replay; sequence is not
+a global head. The authoring writer fsyncs the staging file but does not prove
+crash durability of the later hard-link directory entry, and a parent directory
+can still be replaced between path preparation and publication. Generation
+receipts therefore do not prove reviewer/pin/receipt authority, global
+latest-head selection, cross-host fork prevention or CAS/WORM, trusted time,
+locator continuity, parent-directory race protection, publication crash
+durability, global rollback protection, or custody after the final recheck.
+Snapshot and finalization receipts
 have the same unsigned local authority boundary; the recorded host evaluation
 instant is not trusted time. The
 private-secret signing domains and their still-unconfigured trust

@@ -1403,6 +1403,25 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("verify-requirements")
+    verify_generation_lineage = commands.add_parser("verify-generation-lineage")
+    verify_generation_lineage.add_argument("--manifest", required=True, type=Path)
+    verify_generation_lineage.add_argument("--receipt", required=True, type=Path)
+    verify_generation_lineage.add_argument(
+        "--expected-manifest-payload-sha256",
+        required=True,
+    )
+    verify_generation_lineage.add_argument(
+        "--expected-manifest-file-sha256",
+        required=True,
+    )
+    verify_generation_lineage.add_argument(
+        "--expected-receipt-payload-sha256",
+        required=True,
+    )
+    verify_generation_lineage.add_argument(
+        "--expected-receipt-file-sha256",
+        required=True,
+    )
     verify_receipt = commands.add_parser("verify-receipt")
     verify_receipt.add_argument(
         "--kind",
@@ -1523,6 +1542,63 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if arguments.command == "verify-requirements":
         print("target-intake-requirements-ok phases=0-6 production_acceptance=false")
+        return 0
+    if arguments.command == "verify-generation-lineage":
+        path_errors = (
+            _manifest_path_errors(arguments.manifest, must_exist=True)
+            + _manifest_path_errors(arguments.receipt, must_exist=True)
+        )
+        pin_values = (
+            arguments.expected_manifest_payload_sha256,
+            arguments.expected_manifest_file_sha256,
+            arguments.expected_receipt_payload_sha256,
+            arguments.expected_receipt_file_sha256,
+        )
+        if any(_SHA256.fullmatch(value) is None for value in pin_values):
+            path_errors.append("generation recovery requires four valid caller pins")
+        if path_errors:
+            print("; ".join(path_errors), file=sys.stderr)
+            return 1
+        try:
+            lineage = load_generation_lineage(
+                arguments.manifest,
+                arguments.receipt,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_receipt_file_sha256
+                ),
+                expected_manifest_payload_sha256=(
+                    arguments.expected_manifest_payload_sha256
+                ),
+                expected_manifest_file_sha256=(
+                    arguments.expected_manifest_file_sha256
+                ),
+            )
+            recheck_generation_lineage(lineage)
+        except GenerationLineageError:
+            print("target-intake-generation-lineage-invalid", file=sys.stderr)
+            return 1
+        print(
+            "target-intake-generation-lineage-verified "
+            "production_acceptance=false "
+            f"manifest_payload_sha256={requirements_sha256(lineage.manifest)} "
+            f"manifest_file_sha256={hashlib.sha256(lineage.manifest_raw).hexdigest()} "
+            f"receipt_payload_sha256={requirements_sha256(lineage.receipt)} "
+            f"receipt_file_sha256={hashlib.sha256(lineage.receipt_raw).hexdigest()} "
+            "generation-receipt-locator=self-bound-v2 "
+            "recovery=read-only-local-revalidation "
+            "authoring-receipt-authority=unverified "
+            "authoring-pin-authority=unverified "
+            "authoring-latest-head=unverified "
+            "authoring-generation-fork-protection=unverified "
+            "authoring-rollback-protection=unverified "
+            "authoring-locator-continuity=unverified "
+            "authoring-parent-directory-race-protection=unverified "
+            "authoring-publication-crash-durability=unverified "
+            "authoring-post-verification-custody=unverified"
+        )
         return 0
     if arguments.command == "verify-receipt":
         path_errors = (
@@ -1664,12 +1740,17 @@ def main(argv: list[str] | None = None) -> int:
             publish_write_once_file(temporary, output)
             generation_published = True
             temporary = None
-            manifest_readback = _read_stable_bytes(
+            manifest_readback, manifest_metadata = _read_stable_bytes_with_metadata(
                 output, max_bytes=_MAX_MANIFEST_BYTES
             )
             if not hmac.compare_digest(manifest_readback, manifest_raw):
                 raise OSError("genesis manifest publication readback mismatch")
-            receipt = create_genesis_receipt(output, manifest, manifest_readback)
+            receipt = create_genesis_receipt(
+                output,
+                arguments.receipt_output,
+                manifest,
+                manifest_readback,
+            )
             receipt_raw = receipt_bytes(receipt)
             receipt_output = prepare_write_once_file(arguments.receipt_output)
             receipt_temporary = write_fsynced_temporary_bytes(
@@ -1678,16 +1759,34 @@ def main(argv: list[str] | None = None) -> int:
             publish_write_once_file(receipt_temporary, receipt_output)
             receipt_published = True
             receipt_temporary = None
-            receipt_readback = _read_stable_bytes(
+            receipt_readback, receipt_metadata = _read_stable_bytes_with_metadata(
                 receipt_output, max_bytes=_MAX_MANIFEST_BYTES
             )
             if not hmac.compare_digest(receipt_readback, receipt_raw):
                 raise OSError("genesis receipt publication readback mismatch")
+            _recheck_stable_bytes(
+                output,
+                manifest_readback,
+                manifest_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            _recheck_stable_bytes(
+                receipt_output,
+                receipt_readback,
+                receipt_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
         except (OSError, ValueError, GenerationLineageError, _StableFileError):
             if receipt_published:
                 print(
                     "target-intake-init-failed commit-state=unknown "
-                    "verify-generation-lineage-required",
+                    "verify-generation-lineage-required "
+                    f"manifest_payload_sha256={requirements_sha256(manifest)} "
+                    f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
+                    f"receipt_payload_sha256={requirements_sha256(receipt)} "
+                    f"receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()}",
                     file=sys.stderr,
                 )
                 return 2
@@ -1713,8 +1812,15 @@ def main(argv: list[str] | None = None) -> int:
             f"generation_receipt_payload_sha256={requirements_sha256(receipt)} "
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "generation-acceptance=write-once-receipt "
+            "generation-receipt-locator=self-bound-v2 "
+            "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "
-            "authoring-receipt-authority=unverified"
+            "authoring-receipt-authority=unverified "
+            "authoring-rollback-protection=unverified "
+            "authoring-locator-continuity=unverified "
+            "authoring-parent-directory-race-protection=unverified "
+            "authoring-publication-crash-durability=unverified "
+            "authoring-post-publication-custody=unverified"
         )
         return 0
     if arguments.command == "register":
@@ -1856,6 +1962,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_path=output,
                 manifest=candidate,
                 manifest_raw=readback,
+                receipt_path=arguments.receipt_output,
                 predecessor=lineage,
                 predecessor_manifest_path=arguments.input,
                 predecessor_receipt_path=arguments.input_receipt,
@@ -1895,7 +2002,11 @@ def main(argv: list[str] | None = None) -> int:
             if receipt_published:
                 print(
                     "target-intake-register-failed commit-state=unknown "
-                    "verify-generation-lineage-required",
+                    "verify-generation-lineage-required "
+                    f"manifest_payload_sha256={requirements_sha256(candidate)} "
+                    f"manifest_file_sha256={hashlib.sha256(output_bytes).hexdigest()} "
+                    f"receipt_payload_sha256={requirements_sha256(receipt)} "
+                    f"receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()}",
                     file=sys.stderr,
                 )
                 return 2
@@ -1923,10 +2034,15 @@ def main(argv: list[str] | None = None) -> int:
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "generation-acceptance=write-once-receipt "
+            "generation-receipt-locator=self-bound-v2 "
             "authoring-publication=local-no-replace-readback "
             "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "
             "authoring-receipt-authority=unverified "
+            "authoring-rollback-protection=unverified "
+            "authoring-locator-continuity=unverified "
+            "authoring-parent-directory-race-protection=unverified "
+            "authoring-publication-crash-durability=unverified "
             "authoring-post-publication-custody=unverified"
         )
         return 0

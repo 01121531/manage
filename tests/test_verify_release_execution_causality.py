@@ -441,6 +441,18 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 'register = commands.add_parser("ignored-register")',
             ),
             (
+                'verify_generation_lineage = commands.add_parser("verify-generation-lineage")',
+                'verify_generation_lineage = commands.add_parser("ignored-verify-generation-lineage")',
+            ),
+            (
+                'verify_generation_lineage.add_argument(\n        "--expected-receipt-payload-sha256",\n        required=True,',
+                'verify_generation_lineage.add_argument(\n        "--expected-receipt-payload-sha256",\n        required=False,',
+            ),
+            (
+                "            recheck_generation_lineage(lineage)\n        except GenerationLineageError:",
+                "            ignored_recheck_generation_lineage(lineage)\n        except GenerationLineageError:",
+            ),
+            (
                 '"--expected-input-manifest-payload-sha256",\n        required=True,',
                 '"--expected-input-manifest-payload-sha256",\n        required=False,',
             ),
@@ -459,6 +471,22 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             (
                 "receipt = create_registration_receipt(",
                 "receipt = ignored_create_registration_receipt(",
+            ),
+            (
+                "receipt_path=arguments.receipt_output,",
+                "receipt_path=arguments.output,",
+            ),
+            (
+                "verify-generation-lineage-required",
+                "verify-generation-lineage-disabled",
+            ),
+            (
+                "authoring-rollback-protection=unverified",
+                "authoring-rollback-protection=verified",
+            ),
+            (
+                "authoring-publication-crash-durability=unverified",
+                "authoring-publication-crash-durability=verified",
             ),
             (
                 "generation=orphaned-unaccepted",
@@ -499,6 +527,26 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 self.assertTrue(self.errors(intake=mutated))
 
         for old, new in (
+            (
+                'RECEIPT_KIND = "target_intake_generation_receipt_v2"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
+            ),
+            (
+                'document.get("schema_version") != 2',
+                'document.get("schema_version") != 1',
+            ),
+            (
+                '"receipt_path": os.path.abspath(receipt_path),',
+                '"ignored_receipt_path": os.path.abspath(receipt_path),',
+            ),
+            (
+                'or os.path.abspath(path) != receipt.get("receipt_path")',
+                'or os.path.abspath(path) == receipt.get("receipt_path")',
+            ),
+            (
+                'or os.path.abspath(current_receipt_path)\n                != receipt.get("receipt_path")',
+                'or os.path.abspath(current_receipt_path)\n                == receipt.get("receipt_path")',
+            ),
             ("if len(changed) != 1:", "if len(changed) == 1:"),
             ("if before != after", "if before == after"),
             ("base[key] != candidate[key]", "base[key] == candidate[key]"),
@@ -721,6 +769,18 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "read-only verify-receipt command",
             requirements,
         )
+        self.assertIn(
+            "schema-v2 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            requirements,
+        )
+        self.assertIn(
+            "read-only verify-generation-lineage command",
+            requirements,
+        )
+        self.assertIn(
+            "rollback of an older manifest/receipt/four-pin tuple as one unit",
+            requirements,
+        )
         signoff = Path("deploy/production-signoff-template.md").read_text(
             encoding="utf-8"
         )
@@ -750,6 +810,18 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         )
         self.assertIn(
             "Schema-v2 snapshot receipt self-bound locator, exact source-generation/result-checkpoint binding, recorded host evaluation window, local no-replace/readback, orphan/unknown disposition, and receipt-authority/trusted-time/parent-directory-race/publication-crash-durability/post-publication-custody `unverified` acknowledgement:",
+            signoff,
+        )
+        self.assertIn(
+            "Schema-v2 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/mixed-chain rejection evidence:",
+            signoff,
+        )
+        self.assertIn(
+            "Generation-receipt unknown-state read-only verification record (or explicit none), including the four independently retained manifest/receipt pins, `production_acceptance=false`, and no file repair/deletion/promotion acknowledgement:",
+            signoff,
+        )
+        self.assertIn(
+            "Whole generation/receipt/four-pin rollback, same-path same-bytes delete/recreate and authoring locator-continuity `unverified` acknowledgement:",
             signoff,
         )
         self.assertIn(

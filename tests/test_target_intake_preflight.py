@@ -101,8 +101,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
         manifest: dict[str, object],
     ) -> tuple[Path, str, str]:
         manifest_raw = manifest_path.read_bytes()
-        receipt = create_genesis_receipt(manifest_path, manifest, manifest_raw)
         receipt_path = root / f"{manifest_path.stem}.receipt.json"
+        receipt = create_genesis_receipt(
+            manifest_path,
+            receipt_path,
+            manifest,
+            manifest_raw,
+        )
         raw = receipt_bytes(receipt)
         receipt_path.write_bytes(raw)
         return (
@@ -3350,16 +3355,18 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             unknown = root / "unknown-000.json"
             committed_receipt = root / "unknown-000.receipt.json"
-            real_reader = target_intake._read_stable_bytes
+            real_reader = target_intake._read_stable_bytes_with_metadata
 
             def mismatched_receipt(path: Path, **kwargs):
-                raw = real_reader(path, **kwargs)
-                return b"{}\n" if Path(path) == committed_receipt else raw
+                raw, metadata = real_reader(path, **kwargs)
+                if Path(path) == committed_receipt:
+                    return b"{}\n", metadata
+                return raw, metadata
 
             error = io.StringIO()
             with mock.patch.object(
                 target_intake,
-                "_read_stable_bytes",
+                "_read_stable_bytes_with_metadata",
                 side_effect=mismatched_receipt,
             ), redirect_stderr(error):
                 self.assertEqual(
@@ -3379,6 +3386,80 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertTrue(unknown.exists())
             self.assertTrue(committed_receipt.exists())
             self.assertIn("commit-state=unknown", error.getvalue())
+            self.assertIn("manifest_file_sha256=", error.getvalue())
+            self.assertIn("receipt_payload_sha256=", error.getvalue())
+
+            self.assertIn("manifest_payload_sha256=", error.getvalue())
+            self.assertIn("receipt_file_sha256=", error.getvalue())
+
+            manifest_raw = unknown.read_bytes()
+            receipt_raw = committed_receipt.read_bytes()
+            manifest = json.loads(manifest_raw)
+            receipt = json.loads(receipt_raw)
+            before = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in root.iterdir()
+                if path.is_file()
+            }
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(
+                    main(
+                        [
+                            "verify-generation-lineage",
+                            "--manifest",
+                            str(unknown),
+                            "--receipt",
+                            str(committed_receipt),
+                            "--expected-manifest-payload-sha256",
+                            requirements_sha256(manifest),
+                            "--expected-manifest-file-sha256",
+                            hashlib.sha256(manifest_raw).hexdigest(),
+                            "--expected-receipt-payload-sha256",
+                            requirements_sha256(receipt),
+                            "--expected-receipt-file-sha256",
+                            hashlib.sha256(receipt_raw).hexdigest(),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn(
+                "recovery=read-only-local-revalidation",
+                output.getvalue(),
+            )
+            self.assertIn("generation-receipt-locator=self-bound-v2", output.getvalue())
+            self.assertIn("authoring-rollback-protection=unverified", output.getvalue())
+            self.assertEqual(
+                before,
+                {
+                    path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in root.iterdir()
+                    if path.is_file()
+                },
+            )
+
+            receipt_alias = root / "unknown-000-receipt-alias.json"
+            receipt_alias.write_bytes(receipt_raw)
+            self.assertEqual(
+                main(
+                    [
+                        "verify-generation-lineage",
+                        "--manifest",
+                        str(unknown),
+                        "--receipt",
+                        str(receipt_alias),
+                        "--expected-manifest-payload-sha256",
+                        requirements_sha256(manifest),
+                        "--expected-manifest-file-sha256",
+                        hashlib.sha256(manifest_raw).hexdigest(),
+                        "--expected-receipt-payload-sha256",
+                        requirements_sha256(receipt),
+                        "--expected-receipt-file-sha256",
+                        hashlib.sha256(receipt_raw).hexdigest(),
+                    ]
+                ),
+                1,
+            )
 
     def test_register_publishes_one_pinned_monotonic_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -3567,6 +3648,54 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertTrue(unknown.exists())
             self.assertTrue(committed_receipt.exists())
             self.assertIn("commit-state=unknown", error.getvalue())
+            self.assertIn("manifest_payload_sha256=", error.getvalue())
+            self.assertIn("manifest_file_sha256=", error.getvalue())
+            self.assertIn("receipt_payload_sha256=", error.getvalue())
+            self.assertIn("receipt_file_sha256=", error.getvalue())
+
+            unknown_raw = unknown.read_bytes()
+            committed_receipt_raw = committed_receipt.read_bytes()
+            unknown_document = json.loads(unknown_raw)
+            committed_receipt_document = json.loads(committed_receipt_raw)
+            before = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in root.iterdir()
+                if path.is_file()
+            }
+            recovery_output = io.StringIO()
+            with redirect_stdout(recovery_output):
+                self.assertEqual(
+                    main(
+                        [
+                            "verify-generation-lineage",
+                            "--manifest",
+                            str(unknown),
+                            "--receipt",
+                            str(committed_receipt),
+                            "--expected-manifest-payload-sha256",
+                            requirements_sha256(unknown_document),
+                            "--expected-manifest-file-sha256",
+                            hashlib.sha256(unknown_raw).hexdigest(),
+                            "--expected-receipt-payload-sha256",
+                            requirements_sha256(committed_receipt_document),
+                            "--expected-receipt-file-sha256",
+                            hashlib.sha256(committed_receipt_raw).hexdigest(),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn(
+                "target-intake-generation-lineage-verified",
+                recovery_output.getvalue(),
+            )
+            self.assertEqual(
+                before,
+                {
+                    path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in root.iterdir()
+                    if path.is_file()
+                },
+            )
 
     def test_register_rejects_stale_pins_and_nonmonotonic_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -3980,6 +4109,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "target_intake_preflight.py preflight",
             "target_intake_preflight.py snapshot",
             "target_intake_preflight.py finalize",
+            "target_intake_preflight.py verify-generation-lineage",
             "target_intake_preflight.py verify-receipt",
             "repository-external",
             "production_acceptance=false",
@@ -4015,7 +4145,10 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "local schema-v2 receipts",
             "case-preserving lexical absolute `receipt_path`",
+            "Schema-v1 generation receipts and mixed v1/v2",
             "Schema-v1 acceptance receipts are incompatible",
+            "Rolling an older manifest, generation receipt and",
+            "hard-link directory entry",
             "recovery=read-only-local-revalidation",
             "same bytes at the same path",
             "rollback of the receipt/result/four-pin set as one unit",

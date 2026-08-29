@@ -58,12 +58,17 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-acceptance=write-once-receipt",
+    "generation-receipt-locator=self-bound-v2",
     "selected-lineage=caller-pinned-local-receipt-chain-validated",
     "authoring-publication=local-no-replace-readback",
     "authoring-generation-fork-protection=unverified",
     "authoring-latest-head=unverified",
     "authoring-pin-authority=unverified",
     "authoring-receipt-authority=unverified",
+    "authoring-rollback-protection=unverified",
+    "authoring-locator-continuity=unverified",
+    "authoring-parent-directory-race-protection=unverified",
+    "authoring-publication-crash-durability=unverified",
     "authoring-post-publication-custody=unverified",
 )
 ACCEPTANCE_BOUNDARY_MARKERS = (
@@ -867,21 +872,66 @@ def causality_errors(
     parser_function = _function(intake_tree, "_parser")
     registration = _function(generation_tree, "manifest_registration_item_id")
     receipt_validation = _function(generation_tree, "receipt_errors")
+    receipt_selector = _function(generation_tree, "_receipt_selector")
+    genesis_creator = _function(generation_tree, "create_genesis_receipt")
+    registration_creator = _function(
+        generation_tree,
+        "create_registration_receipt",
+    )
     lineage_loader = _function(generation_tree, "load_generation_lineage")
     lineage_recheck = _function(generation_tree, "recheck_generation_lineage")
+    init_branch = (
+        _command_branch(main_function, "init") if main_function is not None else None
+    )
     register_branch = (
         _command_branch(main_function, "register") if main_function is not None else None
+    )
+    verify_generation_branch = (
+        _command_branch(main_function, "verify-generation-lineage")
+        if main_function is not None
+        else None
     )
     if (
         parser_function is None
         or registration is None
         or receipt_validation is None
+        or receipt_selector is None
+        or genesis_creator is None
+        or registration_creator is None
         or lineage_loader is None
         or lineage_recheck is None
+        or init_branch is None
         or register_branch is None
+        or verify_generation_branch is None
     ):
         errors.append("immutable authoring generation registration contract is missing")
     else:
+        if not (
+            _contains_name(receipt_validation, "RECEIPT_KIND")
+            and _contains_string(receipt_validation, "receipt_path")
+            and _contains_string(genesis_creator, "receipt_path")
+            and _contains_string(registration_creator, "receipt_path")
+            and "target_intake_generation_receipt_v2" in (generation_source or "")
+            and 'document.get("schema_version") != 2'
+            in (generation_source or "")
+            and (generation_source or "").count('"schema_version": 2') == 2
+            and (generation_source or "").count(
+                '"receipt_path": os.path.abspath(receipt_path)'
+            )
+            == 2
+            and (generation_source or "").count(
+                'receipt.get("receipt_path")'
+            )
+            >= 2
+            and 'os.path.abspath(path) != receipt.get("receipt_path")'
+            in (generation_source or "")
+            and 'os.path.abspath(current_receipt_path)\n                != receipt.get("receipt_path")'
+            in (generation_source or "")
+            and _contains_name(genesis_creator, "receipt_errors")
+        ):
+            errors.append(
+                "generation receipts must use closed schema-v2 self-bound locators"
+            )
         required_options = {
             "--input",
             "--input-receipt",
@@ -1064,6 +1114,143 @@ def causality_errors(
             )
         ):
             errors.append("authoring receipt must pin lineage and separate orphan/unknown states")
+        init_calls = [
+            _call_name(node)
+            for node in ast.walk(init_branch)
+            if isinstance(node, ast.Call)
+        ]
+        init_single_link_rechecks = [
+            node
+            for node in ast.walk(init_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "_recheck_stable_bytes"
+            and isinstance(_keyword_value(node, "require_single_link"), ast.Constant)
+            and _keyword_value(node, "require_single_link").value is True
+        ]
+        registration_receipt_calls = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "create_registration_receipt"
+        ]
+        genesis_receipt_calls = [
+            node
+            for node in ast.walk(init_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "create_genesis_receipt"
+        ]
+        if not (
+            init_calls.count("publish_write_once_file") == 2
+            and init_calls.count("_read_stable_bytes_with_metadata") >= 2
+            and len(init_single_link_rechecks) == 2
+            and len(genesis_receipt_calls) == 1
+            and len(genesis_receipt_calls[0].args) >= 2
+            and isinstance(genesis_receipt_calls[0].args[1], ast.Attribute)
+            and genesis_receipt_calls[0].args[1].attr == "receipt_output"
+            and len(registration_receipt_calls) == 1
+            and isinstance(
+                _keyword_value(registration_receipt_calls[0], "receipt_path"),
+                ast.Attribute,
+            )
+            and _keyword_value(
+                registration_receipt_calls[0],
+                "receipt_path",
+            ).attr
+            == "receipt_output"
+            and all(
+                _contains_marker(branch, marker)
+                for branch in (init_branch, register_branch)
+                for marker in (
+                    "manifest_payload_sha256=",
+                    "manifest_file_sha256=",
+                    "receipt_payload_sha256=",
+                    "receipt_file_sha256=",
+                )
+            )
+            and all(
+                _contains_marker(branch, "verify-generation-lineage-required")
+                for branch in (init_branch, register_branch)
+            )
+        ):
+            errors.append(
+                "generation acceptance must bind receipt outputs, recheck genesis and expose recovery pins"
+            )
+        verify_generation_required = {
+            "--manifest",
+            "--receipt",
+            "--expected-manifest-payload-sha256",
+            "--expected-manifest-file-sha256",
+            "--expected-receipt-payload-sha256",
+            "--expected-receipt-file-sha256",
+        }
+        verify_generation_calls = {
+            _call_name(node)
+            for node in ast.walk(verify_generation_branch)
+            if isinstance(node, ast.Call)
+        }
+        verify_generation_loads = [
+            node
+            for node in ast.walk(verify_generation_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "load_generation_lineage"
+        ]
+        if not (
+            _has_parser_command(
+                parser_function,
+                "verify_generation_lineage",
+                "verify-generation-lineage",
+            )
+            and all(
+                _required_parser_argument(
+                    parser_function,
+                    "verify_generation_lineage",
+                    option,
+                )
+                for option in verify_generation_required
+            )
+            and len(verify_generation_loads) == 1
+            and all(
+                isinstance(
+                    _keyword_value(verify_generation_loads[0], keyword),
+                    ast.Attribute,
+                )
+                for keyword in (
+                    "expected_receipt_payload_sha256",
+                    "expected_receipt_file_sha256",
+                    "expected_manifest_payload_sha256",
+                    "expected_manifest_file_sha256",
+                )
+            )
+            and "recheck_generation_lineage" in verify_generation_calls
+            and not {
+                "prepare_write_once_file",
+                "write_fsynced_temporary_bytes",
+                "publish_write_once_file",
+                "discard_claimed_temporary_file",
+                "unlink",
+                "replace",
+            }.intersection(verify_generation_calls)
+            and all(
+                _contains_marker(verify_generation_branch, marker)
+                for marker in (
+                    "production_acceptance=false",
+                    "generation-receipt-locator=self-bound-v2",
+                    "recovery=read-only-local-revalidation",
+                    "authoring-receipt-authority=unverified",
+                    "authoring-pin-authority=unverified",
+                    "authoring-latest-head=unverified",
+                    "authoring-generation-fork-protection=unverified",
+                    "authoring-rollback-protection=unverified",
+                    "authoring-locator-continuity=unverified",
+                    "authoring-parent-directory-race-protection=unverified",
+                    "authoring-publication-crash-durability=unverified",
+                    "authoring-post-verification-custody=unverified",
+                )
+            )
+        ):
+            errors.append(
+                "generation recovery must be four-pin read-only local lineage revalidation"
+            )
         if not (
             _contains_string(receipt_validation, "predecessor")
             and _contains_string(receipt_validation, "registered_item")
@@ -1112,7 +1299,7 @@ def causality_errors(
             and _call_name(node) == "load_generation_lineage"
         ]
         if not (
-            len(lineage_consumers) == 4
+            len(lineage_consumers) == 5
             and _contains_marker(
                 main_function,
                 "caller-pinned terminal generation receipt is required",
@@ -1647,9 +1834,15 @@ def main() -> int:
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
         "authoring-publication=local-no-replace-readback "
+        "generation-receipt-locator=self-bound-v2 "
         "authoring-generation-fork-protection=unverified "
         "authoring-latest-head=unverified authoring-pin-authority=unverified "
         "authoring-receipt-authority=unverified "
+        "authoring-receipt-recovery=read-only-local-revalidation "
+        "authoring-rollback-protection=unverified "
+        "authoring-locator-continuity=unverified "
+        "authoring-parent-directory-race-protection=unverified "
+        "authoring-publication-crash-durability=unverified "
         "authoring-post-publication-custody=unverified "
         "snapshot-acceptance=write-once-receipt "
         "snapshot-receipt-locator=self-bound-v2 "
