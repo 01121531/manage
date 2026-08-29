@@ -67,7 +67,7 @@ class AuditEvidenceMigrationTests(unittest.TestCase):
             os.environ["ALEMBIC_DATABASE_URL"] = url
             try:
                 config = Config(str(ROOT / "alembic.ini"))
-                command.upgrade(config, "head")
+                command.upgrade(config, "0014_audit_evidence_fields")
                 columns = {column["name"]: column for column in inspect(engine).get_columns("audit_events")}
                 for name in (
                     "actor_id",

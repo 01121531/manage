@@ -1,5 +1,6 @@
 """Shared API error response helpers."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import Request
@@ -22,6 +23,77 @@ class BusinessHTTPException(StarletteHTTPException):
         super().__init__(status_code=status_code, detail=message)
         self.code = code
         self.recovery_hint = recovery_hint
+
+
+_HTTP_ERROR_CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    410: "gone",
+    413: "payload_too_large",
+    422: "validation_error",
+    429: "rate_limited",
+    500: "internal_error",
+    503: "service_unavailable",
+}
+
+_HTTP_ERROR_MESSAGES = {
+    400: "Request could not be processed",
+    401: "Authentication required or no longer valid",
+    403: "Insufficient role",
+    404: "Requested resource was not found",
+    405: "HTTP method is not allowed",
+    409: "Request conflicts with current state",
+    410: "Requested resource is no longer available",
+    413: "Request payload is too large",
+    422: "Request validation failed",
+    429: "Too many requests",
+    500: "Internal server error",
+    503: "Service is temporarily unavailable",
+}
+
+_HTTP_ERROR_RECOVERY_HINTS = {
+    400: "检查请求内容后重新提交",
+    401: "重新登录后再试",
+    403: "联系管理员确认账号角色和资源权限",
+    404: "刷新列表并确认资源仍然存在",
+    405: "确认请求方法和接口地址后重试",
+    409: "刷新当前状态后按页面提示继续",
+    410: "刷新列表并选择仍然有效的资源",
+    413: "缩小请求或文件大小后重试",
+    422: "检查请求字段后重新提交",
+    429: "稍后重试；持续失败时携带 trace_id 联系管理员",
+    500: "携带 trace_id 联系管理员",
+    503: "稍后重试；持续失败时携带 trace_id 联系管理员",
+}
+
+_ALLOWED_HTTP_METHODS = frozenset(
+    {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+)
+
+
+def _safe_http_exception_headers(
+    status_code: int, headers: Mapping[str, str] | None
+) -> dict[str, str] | None:
+    """Retain only reviewed protocol headers with validated values."""
+
+    if not headers:
+        return None
+    normalized = {name.lower(): value for name, value in headers.items()}
+    if status_code == 401 and normalized.get("www-authenticate") == "Bearer":
+        return {"WWW-Authenticate": "Bearer"}
+    if status_code == 405 and "allow" in normalized:
+        methods = [item.strip() for item in normalized["allow"].split(",")]
+        if (
+            methods
+            and all(method in _ALLOWED_HTTP_METHODS for method in methods)
+            and len(methods) == len(set(methods))
+        ):
+            return {"Allow": ", ".join(methods)}
+    return None
 
 
 def error_response(
@@ -52,36 +124,23 @@ def error_response(
 async def http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> JSONResponse:
-    detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
-    codes = {
-        401: "unauthorized",
-        403: "forbidden",
-        404: "not_found",
-        409: "conflict",
-        503: "service_unavailable",
-    }
-    recovery_hints = {
-        401: "重新登录后再试",
-        403: "联系管理员确认账号角色和资源权限",
-        404: "刷新列表并确认资源仍然存在",
-        409: "刷新当前状态后按页面提示继续",
-        503: "稍后重试；持续失败时携带 trace_id 联系管理员",
-    }
-    code = exc.code if isinstance(exc, BusinessHTTPException) else codes.get(
-        exc.status_code, "http_error"
-    )
-    recovery_hint = (
-        exc.recovery_hint
-        if isinstance(exc, BusinessHTTPException)
-        else recovery_hints.get(exc.status_code, "携带 trace_id 联系管理员")
-    )
+    if isinstance(exc, BusinessHTTPException):
+        code = exc.code
+        message = str(exc.detail)
+        recovery_hint = exc.recovery_hint
+    else:
+        code = _HTTP_ERROR_CODES.get(exc.status_code, "http_error")
+        message = _HTTP_ERROR_MESSAGES.get(exc.status_code, "Request failed")
+        recovery_hint = _HTTP_ERROR_RECOVERY_HINTS.get(
+            exc.status_code, "携带 trace_id 联系管理员"
+        )
     return error_response(
         request,
         status_code=exc.status_code,
         code=code,
-        message=detail,
+        message=message,
         recovery_hint=recovery_hint,
-        headers=exc.headers,
+        headers=_safe_http_exception_headers(exc.status_code, exc.headers),
     )
 
 

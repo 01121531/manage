@@ -16,7 +16,12 @@ import os
 from threading import Event
 
 from platform.app import create_app
-from platform.uploads import HttpSub2Adapter, UnconfiguredSub2Adapter, run_upload_worker
+from platform.uploads import (
+    HttpSub2Adapter,
+    RedisSub2ConcurrencyLimiter,
+    UnconfiguredSub2Adapter,
+    run_upload_worker,
+)
 from platform.worker_metrics import WorkerMetrics, start_worker_metrics_server
 
 
@@ -37,7 +42,7 @@ def _log_upload_status_counts(status_counts: dict[str, int]) -> None:
 
 
 def main() -> None:
-    application = create_app()
+    application = create_app(service_role="worker")
     stop_event = Event()
 
     def stop(*_: object) -> None:
@@ -46,21 +51,46 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     metrics = WorkerMetrics("sub2")
+    environment = application.state.settings.environment
+    default_metrics_host = (
+        "127.0.0.1"
+        if environment.strip().lower() in {"development", "test"}
+        else "0.0.0.0"
+    )
     start_worker_metrics_server(
         metrics,
-        host=os.environ.get("PLATFORM_WORKER_METRICS_HOST", "0.0.0.0"),
+        host=os.environ.get("PLATFORM_WORKER_METRICS_HOST", default_metrics_host),
         port=int(os.environ.get("PLATFORM_WORKER_METRICS_PORT", "9102")),
         stop_event=stop_event,
+        environment=environment,
+        tls_cert_file=os.environ.get("PLATFORM_WORKER_METRICS_TLS_CERT_FILE"),
+        tls_key_file=os.environ.get("PLATFORM_WORKER_METRICS_TLS_KEY_FILE"),
     )
     upload_url = application.state.settings.sub2_upload_url
     adapter = (
         HttpSub2Adapter(
             upload_url,
             application.state.secret_resolver,
+            allowed_origins=application.state.settings.resolved_sub2_allowed_origins(),
             timeout=application.state.settings.sub2_timeout_seconds,
         )
         if upload_url
         else UnconfiguredSub2Adapter()
+    )
+    managed_environment = environment.strip().lower() not in {"development", "test"}
+    redis_url = application.state.settings.resolved_redis_url(
+        require_file=managed_environment
+    )
+    concurrency_limiter = (
+        RedisSub2ConcurrencyLimiter(
+            redis_url,
+            lease_seconds=max(
+                application.state.settings.sub2_timeout_seconds * 2 + 30,
+                60,
+            ),
+        )
+        if redis_url
+        else None
     )
     run_upload_worker(
         application.state.session_factory,
@@ -73,6 +103,8 @@ def main() -> None:
         ),
         batch_reporter=_log_upload_status_counts,
         metrics=metrics,
+        concurrency_limiter=concurrency_limiter,
+        allow_policy_fallback=not managed_environment,
     )
 
 

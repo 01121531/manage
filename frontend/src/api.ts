@@ -1,33 +1,30 @@
 import createClient, { type Middleware } from 'openapi-fetch'
 import type { paths } from './generated/openapi'
 import type {
-  AdminUser,
   AdminDevice,
-  AuditEvent,
-  AuditFilters,
+  ApiErrorDetail,
   AuthConfig,
-  CardCreate,
-  CardSummary,
-  DashboardSummary,
   LoginResult,
-  MailboxSummary,
-  MailboxCreate,
   Principal,
   Role,
-  TaskSummary,
-  UploadPolicyStatus,
-  UploadPolicyDeployment,
-  UploadPolicyVersion,
-  UploadSummary,
 } from './types'
 
 const configuredBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 const API_ORIGIN = configuredBase.endsWith('/api/v1')
   ? configuredBase.slice(0, -'/api/v1'.length)
   : configuredBase
-const api = createClient<paths>({ baseUrl: API_ORIGIN })
+export const api = createClient<paths>({ baseUrl: API_ORIGIN })
 let bearer: string | null = null
 let expiryTimer: number | undefined
+let expiryCleanupTimer: number | undefined
+let bearerExpiresAt: number | null = null
+let sessionGeneration = 0
+let logoutRequest: {
+  generation: number
+  promise: Promise<{ status: 'logged_out' }>
+} | null = null
+const SESSION_EXIT_BARRIER_MESSAGE = '原因：安全退出或锁定正在进行；影响：新的平台请求已停止；下一步：请等待当前操作完成后再继续。'
+const STALE_SESSION_RESPONSE_MESSAGE = '原因：登录会话已变化；影响：旧会话的迟到响应已丢弃，不会用于当前页面；下一步：请在当前会话重新执行操作。'
 
 export class ApiError extends Error {
   constructor(
@@ -42,24 +39,60 @@ export class ApiError extends Error {
 }
 
 export function clearSession() {
+  sessionGeneration += 1
   bearer = null
+  bearerExpiresAt = null
   if (expiryTimer !== undefined) window.clearTimeout(expiryTimer)
+  if (expiryCleanupTimer !== undefined) window.clearTimeout(expiryCleanupTimer)
   expiryTimer = undefined
+  expiryCleanupTimer = undefined
 }
 
 export function setBearer(value: string, expiresIn?: number) {
+  sessionGeneration += 1
   bearer = value
+  bearerExpiresAt = expiresIn && expiresIn > 0
+    ? Date.now() + expiresIn * 1000
+    : null
   if (expiryTimer !== undefined) window.clearTimeout(expiryTimer)
+  if (expiryCleanupTimer !== undefined) window.clearTimeout(expiryCleanupTimer)
+  expiryTimer = undefined
+  expiryCleanupTimer = undefined
   if (expiresIn && expiresIn > 0) {
+    const ttlMs = expiresIn * 1000
+    const cleanupLeadMs = Math.min(30_000, Math.max(250, Math.floor(ttlMs * 0.2)))
+    const cleanupDelayMs = ttlMs - cleanupLeadMs
+    if (cleanupDelayMs >= 250) {
+      expiryCleanupTimer = window.setTimeout(() => {
+        expiryCleanupTimer = undefined
+        window.dispatchEvent(new Event('platform:auth-expiring'))
+      }, cleanupDelayMs)
+    }
     expiryTimer = window.setTimeout(() => {
       clearSession()
       window.dispatchEvent(new Event('platform:auth-expired'))
-    }, expiresIn * 1000)
+    }, ttlMs)
   }
+}
+
+export function getSessionRemainingSeconds(): number | null {
+  if (bearerExpiresAt === null) return null
+  return Math.max(0, Math.ceil((bearerExpiresAt - Date.now()) / 1000))
 }
 
 const authMiddleware: Middleware = {
   onRequest({ request }) {
+    if (
+      logoutRequest?.generation === sessionGeneration
+      && new URL(request.url).pathname !== '/api/v1/auth/logout'
+    ) {
+      throw new ApiError(
+        SESSION_EXIT_BARRIER_MESSAGE,
+        409,
+        undefined,
+        'session_exit_pending',
+      )
+    }
     if (!request.headers.has('Accept')) request.headers.set('Accept', 'application/json')
     if (bearer) request.headers.set('Authorization', `Bearer ${bearer}`)
     return request
@@ -67,23 +100,48 @@ const authMiddleware: Middleware = {
 }
 api.use(authMiddleware)
 
-type ClientResult<T> = {
+export type ClientResult<T> = {
   data?: T
   error?: unknown
   response: Response
 }
 
-function errorEnvelope(value: unknown): Record<string, unknown> {
+function errorEnvelope(value: unknown): Partial<ApiErrorDetail> {
   if (!value || typeof value !== 'object') return {}
   const record = value as Record<string, unknown>
   const nested = record.error
-  return nested && typeof nested === 'object'
+  const candidate = nested && typeof nested === 'object'
     ? nested as Record<string, unknown>
     : record
+  return {
+    code: typeof candidate.code === 'string' ? candidate.code : undefined,
+    message: typeof candidate.message === 'string' ? candidate.message : undefined,
+    recovery_hint: typeof candidate.recovery_hint === 'string' ? candidate.recovery_hint : undefined,
+    trace_id: typeof candidate.trace_id === 'string' ? candidate.trace_id : undefined,
+    details: candidate.details,
+  }
 }
 
-async function unwrap<T>(operation: Promise<ClientResult<T>>): Promise<T> {
+function assertCurrentSessionGeneration(operationGeneration: number): void {
+  if (operationGeneration !== sessionGeneration) {
+    throw new ApiError(
+      STALE_SESSION_RESPONSE_MESSAGE,
+      409,
+      undefined,
+      'stale_session_response',
+    )
+  }
+}
+
+export async function unwrap<T>(
+  operation: Promise<ClientResult<T>>,
+  allowStaleSuccess = false,
+): Promise<T> {
+  const operationGeneration = sessionGeneration
   const { data, error, response } = await operation
+  if (!allowStaleSuccess || !response.ok) {
+    assertCurrentSessionGeneration(operationGeneration)
+  }
   if (response.ok && data !== undefined) return data
   const envelope = errorEnvelope(error)
   const code = typeof envelope.code === 'string' ? envelope.code : undefined
@@ -95,7 +153,7 @@ async function unwrap<T>(operation: Promise<ClientResult<T>>): Promise<T> {
     service_unavailable: '平台依赖暂不可用，请稍后重试。',
     validation_error: '请求字段不符合要求，请检查后重试。',
   }
-  if (response.status === 401) {
+  if (response.status === 401 && operationGeneration === sessionGeneration) {
     clearSession()
     window.dispatchEvent(new Event('platform:auth-expired'))
   }
@@ -108,6 +166,15 @@ async function unwrap<T>(operation: Promise<ClientResult<T>>): Promise<T> {
     code,
     typeof envelope.recovery_hint === 'string' ? envelope.recovery_hint : undefined,
   )
+}
+
+export async function guardCurrentSessionResponse<T>(
+  operation: Promise<ClientResult<T>>,
+): Promise<ClientResult<T>> {
+  const operationGeneration = sessionGeneration
+  const result = await operation
+  assertCurrentSessionGeneration(operationGeneration)
+  return result
 }
 
 const roles = new Set<Role>([
@@ -152,146 +219,45 @@ export async function getMe(): Promise<Principal> {
   return { ...result, role: result.role as Role }
 }
 
-export const getDashboardSummary = (): Promise<DashboardSummary> =>
-  unwrap(api.GET('/api/v1/dashboard/summary'))
-export const listMailboxes = (): Promise<MailboxSummary[]> =>
-  unwrap(api.GET('/api/v1/mailboxes'))
-export const listTasks = (): Promise<TaskSummary[]> =>
-  unwrap(api.GET('/api/v1/tasks', { params: { query: { limit: 50 } } }))
-export const closeTask = (taskId: string): Promise<TaskSummary> =>
-  unwrap(api.POST('/api/v1/tasks/{task_id}/close', {
-    params: { path: { task_id: taskId } },
-  }))
-export const listUsers = (): Promise<AdminUser[]> =>
-  unwrap(api.GET('/api/v1/admin/users'))
-export const listDevices = (): Promise<AdminDevice[]> =>
-  unwrap(api.GET('/api/v1/admin/devices'))
-export const revokeDevice = (deviceId: string): Promise<AdminDevice> =>
-  unwrap(api.POST('/api/v1/admin/devices/{device_id}/revoke', {
-    params: { path: { device_id: deviceId } },
-  }))
-export const listCards = (): Promise<CardSummary[]> =>
-  unwrap(api.GET('/api/v1/admin/cards'))
-export const createCard = (payload: CardCreate): Promise<CardSummary> =>
-  unwrap(api.POST('/api/v1/admin/cards', { body: payload }))
-export const updateCardState = (cardId: string, isActive: boolean): Promise<CardSummary> =>
-  unwrap(api.PATCH('/api/v1/admin/cards/{card_id}', {
-    params: { path: { card_id: cardId } },
-    body: { is_active: isActive },
-  }))
-export const createMailbox = (payload: MailboxCreate): Promise<MailboxSummary> =>
-  unwrap(api.POST('/api/v1/admin/mailboxes', { body: payload }))
-export const updateMailboxState = (
-  mailboxId: string,
-  isActive: boolean,
-): Promise<MailboxSummary> => unwrap(api.PATCH('/api/v1/admin/mailboxes/{mailbox_id}', {
-  params: { path: { mailbox_id: mailboxId } },
-  body: { is_active: isActive },
-}))
-export const rotateMailboxSecret = (
-  mailboxId: string,
-  secretRef: string,
-): Promise<MailboxSummary> => unwrap(api.POST(
-  '/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations',
-  {
-    params: { path: { mailbox_id: mailboxId } },
-    body: { secret_ref: secretRef },
-  },
-))
-export const listUploads = (): Promise<UploadSummary[]> =>
-  unwrap(api.GET('/api/v1/admin/uploads'))
-export const getUploadPolicyStatus = (): Promise<UploadPolicyStatus> =>
-  unwrap(api.GET('/api/v1/admin/policies/upload'))
-export const listUploadPolicyVersions = (): Promise<UploadPolicyVersion[]> =>
-  unwrap(api.GET('/api/v1/admin/policies/upload/versions'))
-export const registerUploadPolicyVersion = (
-  payload: { version: string; change_note: string },
-): Promise<UploadPolicyVersion> => unwrap(api.POST('/api/v1/admin/policies/upload/versions', {
-  body: payload,
-}))
-export const approveUploadPolicyVersion = (policyId: string): Promise<UploadPolicyVersion> =>
-  unwrap(api.POST('/api/v1/admin/policies/upload/versions/{policy_id}/approve', {
-    params: { path: { policy_id: policyId } },
-  }))
-export const deployUploadPolicyVersion = (
-  policyId: string,
-  rolloutPercent: number,
-): Promise<UploadPolicyDeployment> => unwrap(api.POST(
-  '/api/v1/admin/policies/upload/versions/{policy_id}/deploy',
-  {
-    params: { path: { policy_id: policyId } },
-    body: { rollout_percent: rolloutPercent },
-  },
-))
-export const rollbackUploadPolicy = (): Promise<UploadPolicyDeployment> =>
-  unwrap(api.POST('/api/v1/admin/policies/upload/rollback'))
+export function logoutSession(): Promise<{ status: 'logged_out' }> {
+  const requestGeneration = sessionGeneration
+  if (logoutRequest?.generation === requestGeneration) return logoutRequest.promise
 
-const auditQuery = (filters?: AuditFilters) => ({
-  trace_id: filters?.traceId?.trim() || undefined,
-  actor_id: filters?.actorId?.trim() || undefined,
-  user_id: filters?.userId?.trim() || undefined,
-  entity_type: filters?.entityType?.trim() || undefined,
-  entity_id: filters?.entityId?.trim() || undefined,
-  event_type: filters?.eventType?.trim() || undefined,
-  result: filters?.result?.trim() || undefined,
-  created_from: filters?.createdFrom?.trim() || undefined,
-  created_to: filters?.createdTo?.trim() || undefined,
-})
+  const request = (async () => {
+    if (!bearer) throw new ApiError('登录已失效，请重新登录。', 401)
+    try {
+      const result = await unwrap(api.POST('/api/v1/auth/logout', {
+        cache: 'no-store',
+      }), true)
+      if (result.status !== 'logged_out') {
+        throw new ApiError('平台安全退出响应无效。', 502)
+      }
+      return { status: 'logged_out' as const }
+    } catch (error) {
+      if (!(error instanceof ApiError)) {
+        throw new ApiError('无法连接平台完成安全退出。', 0)
+      }
+      throw new ApiError(
+        error.code === 'service_unavailable'
+          ? '平台依赖暂不可用，安全退出未确认。'
+          : '平台尚未确认安全退出。',
+        error.status,
+        error.traceId,
+        error.code,
+        error.recoveryHint,
+      )
+    }
+  })()
 
-export const listAuditEvents = (filters?: AuditFilters): Promise<AuditEvent[]> =>
-  unwrap(api.GET('/api/v1/admin/audit', {
-  params: {
-    query: {
-      ...auditQuery(filters),
-      limit: 200,
-    },
-  },
-}))
-
-export async function downloadAuditEvents(filters?: AuditFilters): Promise<void> {
-  const { data, error, response } = await api.GET('/api/v1/admin/audit/export', {
-    params: { query: { ...auditQuery(filters), limit: 5000 } },
-    headers: { Accept: 'text/csv' },
-    cache: 'no-store',
-    parseAs: 'text',
+  const trackedRequest = request.finally(() => {
+    if (logoutRequest?.promise === trackedRequest) logoutRequest = null
   })
-  if (!response.ok) {
-    await unwrap(Promise.resolve({ data: undefined, error, response }))
-    return
-  }
-  if (typeof data !== 'string' || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/csv')) {
-    throw new ApiError('审计导出响应格式异常，请稍后重试。', response.status)
-  }
-
-  const blob = new Blob([data], { type: 'text/csv;charset=utf-8' })
-  const objectUrl = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = `audit-redacted-${new Date().toISOString().replaceAll(':', '-')}.csv`
-  link.hidden = true
-  document.body.appendChild(link)
-  try {
-    link.click()
-  } finally {
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
-  }
+  logoutRequest = { generation: requestGeneration, promise: trackedRequest }
+  return trackedRequest
 }
 
-export const cancelUploadJob = (jobId: string): Promise<UploadSummary> =>
-  unwrap(api.POST('/api/v1/upload-jobs/{job_id}/cancel', {
-    params: { path: { job_id: jobId } },
-  }))
-
-export const reconcileUploadJob = (
-  jobId: string,
-  payload: { status: 'succeeded' | 'failed' | 'unknown'; external_ref?: string; error_code?: string },
-): Promise<UploadSummary> => unwrap(api.POST('/api/v1/upload-jobs/{job_id}/reconcile', {
-  params: { path: { job_id: jobId } },
-  body: payload,
-}))
-
-export const disableUser = (userId: string): Promise<AdminUser> =>
-  unwrap(api.POST('/api/v1/admin/users/{user_id}/disable', {
-    params: { path: { user_id: userId } },
+export const revokeCurrentDevice = (deviceId: string): Promise<AdminDevice> =>
+  unwrap(api.POST('/api/v1/devices/{device_id}/revoke', {
+    params: { path: { device_id: deviceId } },
+    cache: 'no-store',
   }))

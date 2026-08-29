@@ -7,10 +7,13 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from platform.audit import record_audit
 from platform.auth import USER_ROLES, hash_password
+from platform.card_events import record_card_event
 from platform.config import Settings
 from platform.database import initialize_database
-from platform.models import Card, Device, User
+from platform.devices import register_device
+from platform.models import Card, User, new_id
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,7 @@ def create_oidc_user_with_device(
     oidc_subject: str,
     device_name: str,
     role: str = "operator",
+    max_active_devices_per_user: int = 5,
 ) -> BootstrapIdentity:
     """Pre-provision a Keycloak identity without storing a platform password."""
 
@@ -51,14 +55,15 @@ def create_oidc_user_with_device(
         )
         db.add(user)
         db.flush()
-        device = Device(
+        registration = register_device(
+            db,
             tenant_id=user.tenant_id,
             user_id=user.id,
             name=device_name.strip(),
+            max_active_devices=max_active_devices_per_user,
         )
-        db.add(device)
         db.commit()
-        return BootstrapIdentity(user_id=user.id, device_id=device.id)
+        return BootstrapIdentity(user_id=user.id, device_id=registration.device.id)
 
 
 def create_user_with_device(
@@ -69,6 +74,7 @@ def create_user_with_device(
     password: str,
     device_name: str,
     role: str = "operator",
+    max_active_devices_per_user: int = 5,
 ) -> BootstrapIdentity:
     """Create one identity explicitly; there are deliberately no defaults."""
 
@@ -91,14 +97,15 @@ def create_user_with_device(
         )
         db.add(user)
         db.flush()
-        device = Device(
+        registration = register_device(
+            db,
             tenant_id=tenant_id,
             user_id=user.id,
             name=device_name,
+            max_active_devices=max_active_devices_per_user,
         )
-        db.add(device)
         db.commit()
-        return BootstrapIdentity(user_id=user.id, device_id=device.id)
+        return BootstrapIdentity(user_id=user.id, device_id=registration.device.id)
 
 
 def provision_card(
@@ -134,6 +141,38 @@ def provision_card(
             secret_ref=secret_ref.strip(),
         )
         db.add(card)
+        db.flush()
+        trace_id = new_id()
+        actor_id = "platform-bootstrap"
+        record_audit(
+            db,
+            tenant_id=card.tenant_id,
+            user_id=None,
+            device_id=None,
+            actor_id=actor_id,
+            event_type="admin.card_created",
+            entity_type="card",
+            entity_id=card.id,
+            trace_id=trace_id,
+            details={
+                "provider_ref": card.provider_ref,
+                "brand": card.brand,
+                "last4": card.last4,
+            },
+        )
+        record_card_event(
+            db,
+            tenant_id=card.tenant_id,
+            card_id=card.id,
+            actor_id=actor_id,
+            action="card.created",
+            trace_id=trace_id,
+            after_masked={
+                "card_masked": f"**** **** **** {card.last4}",
+                "brand": card.brand,
+                "card_status": "available",
+            },
+        )
         db.commit()
         return ProvisionedCard(card_id=card.id, provider_ref=card.provider_ref)
 
@@ -157,7 +196,13 @@ def main() -> None:
     )
     args = parser.parse_args()
     settings = Settings()
-    _, session_factory = initialize_database(settings.database_url)
+    managed_environment = settings.environment.strip().lower() not in {
+        "development",
+        "test",
+    }
+    _, session_factory = initialize_database(
+        settings.resolved_database_url(require_file=managed_environment)
+    )
     if args.oidc_subject:
         identity = create_oidc_user_with_device(
             session_factory,
@@ -166,6 +211,7 @@ def main() -> None:
             oidc_subject=args.oidc_subject,
             device_name=args.device_name,
             role=args.role,
+            max_active_devices_per_user=settings.max_active_devices_per_user,
         )
     else:
         if settings.auth_mode.strip().lower() != "local":
@@ -178,6 +224,7 @@ def main() -> None:
             password=password,
             device_name=args.device_name,
             role=args.role,
+            max_active_devices_per_user=settings.max_active_devices_per_user,
         )
     print(f"user_id={identity.user_id}")
     print(f"device_id={identity.device_id}")

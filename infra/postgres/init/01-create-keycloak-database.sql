@@ -1,4 +1,4 @@
 -- The image entrypoint runs this only on an empty PostgreSQL data volume.
--- Keycloak uses the same bootstrap database role in this development compose
--- topology. Production must provision a separate least-privilege role.
+-- The following init script creates Keycloak's restricted login and transfers
+-- this database to it before PostgreSQL becomes healthy.
 CREATE DATABASE keycloak;

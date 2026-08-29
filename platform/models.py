@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -72,9 +73,48 @@ class Device(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
+
+
+class RevokedAccessToken(Base):
+    """An irreversible digest of one logged-out bearer token."""
+
+    __tablename__ = "revoked_access_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    reason: Mapped[str] = mapped_column(String(80), default="user_logout")
+
+
+class RevokedOidcSession(Base):
+    """An issuer-scoped digest of one logged-out OIDC session."""
+
+    __tablename__ = "revoked_oidc_sessions"
+
+    session_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    # Until the deployed identity provider's maximum session lifetime is
+    # verified, NULL deliberately keeps the deny-list entry fail-closed.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    reason: Mapped[str] = mapped_column(String(80), default="user_logout")
 
 
 class Task(Base):
@@ -120,8 +160,18 @@ class Mailbox(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     email_masked: Mapped[str] = mapped_column(String(320))
     connector_type: Mapped[str] = mapped_column(String(80), index=True)
+    task_type: Mapped[str] = mapped_column(
+        String(80), default="mail_code", server_default="mail_code", index=True
+    )
     secret_ref: Mapped[str] = mapped_column(String(512))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    health_status: Mapped[str] = mapped_column(
+        String(32), default="unknown", server_default="unknown", index=True
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
@@ -131,6 +181,9 @@ class MailSession(Base):
     __tablename__ = "mail_sessions"
     __table_args__ = (
         UniqueConstraint("task_id", name="uq_mail_sessions_task_id"),
+        UniqueConstraint(
+            "session_token_hash", name="uq_mail_sessions_session_token_hash"
+        ),
         Index(
             "uq_active_mail_session_mailbox",
             "mailbox_id",
@@ -155,10 +208,22 @@ class MailSession(Base):
         String(64), nullable=False, default=new_session_token_hash
     )
     status: Mapped[str] = mapped_column(String(32), default="waiting", index=True)
+    policy_version: Mapped[str] = mapped_column(
+        String(80), default="settings-default", server_default="settings-default"
+    )
+    code_ttl_seconds: Mapped[int] = mapped_column(
+        Integer, default=60, server_default="60"
+    )
+    poll_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5"
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     start_watermark: Mapped[str | None] = mapped_column(String(512), nullable=True)
     last_message_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     delivered_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    delivered_message_id_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -189,11 +254,23 @@ class Card(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     provider_ref: Mapped[str] = mapped_column(String(160))
+    pool_key: Mapped[str] = mapped_column(
+        String(80), default="legacy-unclassified", server_default="legacy-unclassified", index=True
+    )
+    region: Mapped[str] = mapped_column(
+        String(80), default="legacy-unclassified", server_default="legacy-unclassified", index=True
+    )
     brand: Mapped[str] = mapped_column(String(40))
     last4: Mapped[str] = mapped_column(String(4))
     expiry_month: Mapped[int | None] = mapped_column(nullable=True)
     expiry_year: Mapped[int | None] = mapped_column(nullable=True)
     secret_ref: Mapped[str] = mapped_column(String(512))
+    quarantine_reason_code: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
+    quarantined_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True
@@ -233,12 +310,105 @@ class CardAllocation(Base):
     released_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    release_reason_code: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
+    allocation_reason_code: Mapped[str] = mapped_column(
+        String(80), default="task_assigned", server_default="task_assigned"
+    )
+    policy_version: Mapped[str] = mapped_column(
+        String(80), default="settings-default", server_default="settings-default"
+    )
+    reveal_ttl_seconds: Mapped[int] = mapped_column(
+        Integer, default=60, server_default="60"
+    )
+    selection_rule_json: Mapped[str] = mapped_column(
+        Text,
+        default=(
+            '{"allocation_order":"oldest_available","brands":[],"minimum_validity_days":0,'
+            '"pool_key":"legacy-unclassified","region":"legacy-unclassified",'
+            '"task_type":"card_checkout"}'
+        ),
+        server_default=(
+            '{"allocation_order":"oldest_available","brands":[],"minimum_validity_days":0,'
+            '"pool_key":"legacy-unclassified","region":"legacy-unclassified",'
+            '"task_type":"card_checkout"}'
+        ),
+    )
     revealed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
     reveal_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+
+
+class CardAllocationReplacement(Base):
+    """Durable one-to-one link used for idempotent card replacement."""
+
+    __tablename__ = "card_allocation_replacements"
+    __table_args__ = (
+        UniqueConstraint(
+            "replacement_allocation_id",
+            name="uq_card_allocation_replacements_replacement_id",
+        ),
+    )
+
+    original_allocation_id: Mapped[str] = mapped_column(
+        ForeignKey("card_allocations.id"), primary_key=True
+    )
+    replacement_allocation_id: Mapped[str] = mapped_column(
+        ForeignKey("card_allocations.id"), index=True
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+
+
+class CardEvent(Base):
+    """Append-only, masked card lifecycle fact."""
+
+    __tablename__ = "card_events"
+    __table_args__ = (
+        Index(
+            "ix_card_events_tenant_created_at_id",
+            "tenant_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_card_events_tenant_card_created_at_id",
+            "tenant_id",
+            "card_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_card_events_tenant_allocation_created_at_id",
+            "tenant_id",
+            "allocation_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), index=True)
+    allocation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("card_allocations.id"), nullable=True, index=True
+    )
+    actor_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    reason_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    before_masked: Mapped[str] = mapped_column(Text, default="{}")
+    after_masked: Mapped[str] = mapped_column(Text, default="{}")
+    trace_id: Mapped[str] = mapped_column(String(36), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True
     )
@@ -272,6 +442,99 @@ class CardRevealChallenge(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True
+    )
+
+
+class OperationalPolicyVersion(Base):
+    """Immutable, tenant-scoped mail or card policy snapshot."""
+
+    __tablename__ = "operational_policy_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "domain",
+            "version",
+            name="uq_operational_policy_versions_tenant_domain_version",
+        ),
+        CheckConstraint(
+            "domain IN ('mail', 'card')",
+            name="ck_operational_policy_versions_domain",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'approved', 'active', 'retired')",
+            name="ck_operational_policy_versions_status",
+        ),
+        CheckConstraint(
+            "(domain = 'mail' AND session_ttl_seconds IS NOT NULL "
+            "AND code_ttl_seconds IS NOT NULL AND poll_interval_seconds IS NOT NULL "
+            "AND lease_ttl_seconds IS NULL AND reveal_ttl_seconds IS NULL "
+            "AND allocation_order IS NULL) OR "
+            "(domain = 'card' AND session_ttl_seconds IS NULL "
+            "AND code_ttl_seconds IS NULL AND poll_interval_seconds IS NULL "
+            "AND lease_ttl_seconds IS NOT NULL AND reveal_ttl_seconds IS NOT NULL "
+            "AND allocation_order = 'oldest_available')",
+            name="ck_operational_policy_versions_shape",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    domain: Mapped[str] = mapped_column(String(16), index=True)
+    version: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="draft", server_default="draft", index=True
+    )
+    change_note: Mapped[str] = mapped_column(String(500))
+    session_ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    code_ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    poll_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lease_ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reveal_ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    allocation_order: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    selection_rules_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    approved_by: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+
+
+class OperationalPolicyDeployment(Base):
+    """Current mail/card rollout pointer with one-step rollback history."""
+
+    __tablename__ = "operational_policy_deployments"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "domain", name="uq_operational_policy_deployments_tenant_domain"
+        ),
+        CheckConstraint(
+            "domain IN ('mail', 'card')",
+            name="ck_operational_policy_deployments_domain",
+        ),
+        CheckConstraint(
+            "rollout_percent BETWEEN 1 AND 100",
+            name="ck_operational_policy_deployments_rollout",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    domain: Mapped[str] = mapped_column(String(16), index=True)
+    active_policy_id: Mapped[str] = mapped_column(
+        ForeignKey("operational_policy_versions.id"), index=True
+    )
+    previous_policy_id: Mapped[str | None] = mapped_column(
+        ForeignKey("operational_policy_versions.id"), nullable=True, index=True
+    )
+    rollout_percent: Mapped[int] = mapped_column(Integer, default=100)
+    updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, index=True
     )
 
 
@@ -335,6 +598,110 @@ class UploadPolicyDeployment(Base):
     )
 
 
+class AdminRoleChangeRequest(Base):
+    """Tenant-scoped four-eye approval state for an administrator role change."""
+
+    __tablename__ = "admin_role_change_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "expected_old_role IN ('operator', 'ops_admin', "
+            "'security_auditor', 'platform_admin')",
+            name="ck_admin_role_change_requests_expected_old_role",
+        ),
+        CheckConstraint(
+            "new_role IN ('operator', 'ops_admin', "
+            "'security_auditor', 'platform_admin')",
+            name="ck_admin_role_change_requests_new_role",
+        ),
+        CheckConstraint(
+            "expected_old_role <> new_role",
+            name="ck_admin_role_change_requests_role_changes",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'applied', 'expired')",
+            name="ck_admin_role_change_requests_status",
+        ),
+        CheckConstraint(
+            "approved_by IS NULL OR approved_by <> requested_by",
+            name="ck_admin_role_change_requests_four_eye",
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND approved_by IS NULL AND "
+            "approval_trace_id IS NULL AND applied_at IS NULL) OR "
+            "(status = 'applied' AND approved_by IS NOT NULL AND "
+            "approval_trace_id IS NOT NULL AND applied_at IS NOT NULL) OR "
+            "(status = 'expired' AND approved_by IS NULL AND "
+            "approval_trace_id IS NULL AND applied_at IS NULL)",
+            name="ck_admin_role_change_requests_state_fields",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_admin_role_change_requests_expiry",
+        ),
+        CheckConstraint(
+            "applied_at IS NULL OR "
+            "(applied_at >= created_at AND applied_at <= expires_at)",
+            name="ck_admin_role_change_requests_applied_at",
+        ),
+        Index(
+            "uq_admin_role_change_requests_pending_target",
+            "tenant_id",
+            "target_user_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "ix_admin_role_change_requests_tenant_status_created",
+            "tenant_id",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_admin_role_change_requests_tenant_requested_by",
+            "tenant_id",
+            "requested_by",
+        ),
+        Index(
+            "ix_admin_role_change_requests_tenant_approved_by",
+            "tenant_id",
+            "approved_by",
+        ),
+        Index(
+            "ix_admin_role_change_requests_tenant_request_trace",
+            "tenant_id",
+            "request_trace_id",
+        ),
+        Index(
+            "ix_admin_role_change_requests_tenant_approval_trace",
+            "tenant_id",
+            "approval_trace_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    target_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    expected_old_role: Mapped[str] = mapped_column(String(32))
+    new_role: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending"
+    )
+    requested_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    approved_by: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    request_trace_id: Mapped[str] = mapped_column(String(36))
+    approval_trace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class UploadJob(Base):
     """Server-owned Sub2 upload job."""
 
@@ -360,6 +727,15 @@ class UploadJob(Base):
     business_name: Mapped[str] = mapped_column(String(160))
     trace_id: Mapped[str] = mapped_column(String(36), default=new_id, index=True)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    phase: Mapped[str] = mapped_column(
+        String(40), default="queued", server_default="queued", index=True
+    )
+    phase_sequence: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
+    phase_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
     policy_version: Mapped[str] = mapped_column(String(80))
     external_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -413,6 +789,21 @@ class OutboxEvent(Base):
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
+    __table_args__ = (
+        Index(
+            "ix_audit_events_tenant_created_at_id",
+            "tenant_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audit_events_upload_phase_sequence",
+            "tenant_id",
+            "entity_type",
+            "entity_id",
+            "aggregate_sequence",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -432,6 +823,7 @@ class AuditEvent(Base):
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     policy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    aggregate_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True

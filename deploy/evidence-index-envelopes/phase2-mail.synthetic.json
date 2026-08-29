@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "record_type": "phase2_mail_evidence_index",
+  "index_reference": "synthetic-phase2-mail-index",
+  "synthetic": true,
+  "index_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "mail_contract_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "window": {
+    "started_at": null,
+    "finished_at": null
+  },
+  "scenarios": {
+    "mail_concurrency": null,
+    "mail_outage": null,
+    "mail_rate_limit": null,
+    "mail_stale_code": null,
+    "worker_credential_isolation": null,
+    "worker_egress_enforcement": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_request_or_response_bodies": false,
+    "contains_provider_urls": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "8f1c48629de904e6ad032daf506111283c3d75659ba97aff1e8db5deeeb27547"
+  }
+}

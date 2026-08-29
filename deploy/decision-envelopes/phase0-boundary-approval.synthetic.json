@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "record_type": "phase0_boundary_approval",
+  "approval_reference": "synthetic-phase0-boundary-approval",
+  "synthetic": true,
+  "approval_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "data_classification": {
+    "live_credentials": {
+      "classification": "secret",
+      "allowed_locations": [
+        "external_secret_manager"
+      ],
+      "logs": "prohibited",
+      "audit": "prohibited"
+    },
+    "oidc_tokens": {
+      "classification": "secret",
+      "allowed_locations": [
+        "process_memory",
+        "encrypted_os_session_store"
+      ],
+      "logs": "prohibited",
+      "audit": "prohibited"
+    },
+    "pan": {
+      "classification": "restricted_cardholder_data",
+      "allowed_locations": [
+        "external_card_vault",
+        "ephemeral_process_memory"
+      ],
+      "logs": "prohibited",
+      "audit": "prohibited"
+    },
+    "cvv": {
+      "classification": "prohibited_sensitive_authentication_data",
+      "allowed_locations": [
+        "transient_process_memory"
+      ],
+      "logs": "prohibited",
+      "audit": "prohibited"
+    },
+    "verification_codes": {
+      "classification": "ephemeral_secret",
+      "allowed_locations": [
+        "ephemeral_process_memory",
+        "ttl_database_field"
+      ],
+      "logs": "prohibited",
+      "audit": "prohibited"
+    },
+    "masked_operational_metadata": {
+      "classification": "internal",
+      "allowed_locations": [
+        "platform_database",
+        "redacted_audit"
+      ],
+      "logs": "redacted_only",
+      "audit": "allowed"
+    }
+  },
+  "data_classification_sha256": "3ae6f9c6165d95612772ee1ffcff721026dfca853a49320d831bc43162c4b63d",
+  "bindings": {
+    "mail_contract": null,
+    "sub2_contract": null,
+    "card_pci_boundary": null,
+    "oidc_deployment_identity": null,
+    "target_intake_requirements_sha256": null
+  },
+  "reviewers": {
+    "security_reference": null,
+    "privacy_reference": null,
+    "platform_owner_reference": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_token_values": false,
+    "contains_verification_code_values": false
+  }
+}

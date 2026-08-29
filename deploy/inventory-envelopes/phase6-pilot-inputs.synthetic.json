@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "record_type": "phase6_pilot_inputs",
+  "inventory_reference": "synthetic-phase6-pilot-inputs",
+  "synthetic": true,
+  "inventory_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "pilot_roles": {
+    "operator": {
+      "participant_reference": null,
+      "roster_entry_reference": null,
+      "responsibility": "execute_end_to_end_pilot"
+    },
+    "ops_admin": {
+      "participant_reference": null,
+      "roster_entry_reference": null,
+      "responsibility": "reconcile_ambiguous_uploads_without_blind_retry"
+    },
+    "security_auditor": {
+      "participant_reference": null,
+      "roster_entry_reference": null,
+      "responsibility": "independently_review_alerts_and_audit_traces"
+    },
+    "platform_admin": {
+      "participant_reference": null,
+      "roster_entry_reference": null,
+      "responsibility": "govern_deployment_rollback_and_device_controls"
+    }
+  },
+  "ownership": {
+    "pilot_coordinator_reference": null,
+    "target_operator_owner_reference": null,
+    "alert_receiver_owner_reference": null,
+    "maintenance_owner_reference": null
+  },
+  "maintenance_window": {
+    "change_reference": null,
+    "approval_reference": null,
+    "starts_at": null,
+    "rollback_decision_deadline": null,
+    "finishes_at": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_names": false,
+    "contains_email_addresses": false,
+    "contains_phone_numbers": false,
+    "contains_token_values": false,
+    "contains_pan_or_cvv_values": false,
+    "contains_verification_code_values": false
+  },
+  "integrity": {
+    "payload_sha256": "a2bb4ae93b862713ff5e5e54f972e9cacf1ed04bfd9a0e7ac49e70bb46a54731"
+  }
+}

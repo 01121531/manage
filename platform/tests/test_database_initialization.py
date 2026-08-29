@@ -1,4 +1,6 @@
 import asyncio
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -8,6 +10,15 @@ from sqlalchemy import inspect
 from platform.app import create_app
 from platform.config import Settings
 from platform.database import Base, initialize_database
+from platform.secrets import SecretResolverUnavailable
+
+
+class FalseySecretResolver:
+    def __bool__(self) -> bool:
+        return False
+
+    def resolve(self, _secret_ref: str) -> dict[str, object]:
+        return {"value": "unused"}
 
 
 def production_settings() -> Settings:
@@ -24,6 +35,9 @@ def production_settings() -> Settings:
             "https://identity.example.test/realms/platform/"
             "protocol/openid-connect/certs"
         ),
+        internal_ca_file="/run/secrets/internal-tls/ca.crt",
+        allowed_origins="https://platform.example.test",
+        mail_poll_mode="worker",
         rate_limit_enabled=True,
         redis_url="redis://redis.example.test:6379/0",
     )
@@ -34,11 +48,19 @@ class DatabaseInitializationTests(unittest.TestCase):
         with (
             patch.object(Base.metadata, "create_all") as create_all,
             patch("platform.database._install_audit_append_only_constraints") as install,
+            patch(
+                "platform.database._install_card_event_append_only_constraints"
+            ) as install_card_events,
         ):
-            app = create_app(production_settings())
+            app = create_app(
+                production_settings(),
+                access_token_verifier=object(),
+                secret_resolver=FalseySecretResolver(),
+            )
         try:
             create_all.assert_not_called()
             install.assert_not_called()
+            install_card_events.assert_not_called()
             self.assertEqual(inspect(app.state.engine).get_table_names(), [])
         finally:
             app.state.engine.dispose()
@@ -47,6 +69,9 @@ class DatabaseInitializationTests(unittest.TestCase):
         with (
             patch.object(Base.metadata, "create_all") as create_all,
             patch("platform.database._install_audit_append_only_constraints") as install,
+            patch(
+                "platform.database._install_card_event_append_only_constraints"
+            ) as install_card_events,
         ):
             engine, _ = initialize_database(
                 "sqlite+pysqlite:///:memory:", create_schema=True
@@ -54,11 +79,16 @@ class DatabaseInitializationTests(unittest.TestCase):
         try:
             create_all.assert_called_once_with(engine)
             install.assert_called_once_with(engine)
+            install_card_events.assert_called_once_with(engine)
         finally:
             engine.dispose()
 
     def test_production_readiness_fails_when_migrations_are_missing(self) -> None:
-        app = create_app(production_settings())
+        app = create_app(
+            production_settings(),
+            access_token_verifier=object(),
+            secret_resolver=FalseySecretResolver(),
+        )
 
         async def request_ready() -> httpx.Response:
             transport = httpx.ASGITransport(app=app)
@@ -73,6 +103,56 @@ class DatabaseInitializationTests(unittest.TestCase):
             self.assertEqual(response.json()["checks"]["database"], "ok")
             self.assertEqual(response.json()["checks"]["migrations"], "pending")
             self.assertEqual(inspect(app.state.engine).get_table_names(), [])
+        finally:
+            app.state.engine.dispose()
+
+    def test_missing_production_vault_fails_before_database_initialization(self) -> None:
+        with patch("platform.app.initialize_database") as initialize:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "^PLATFORM_VAULT_ADDR is required outside development/test$",
+            ):
+                create_app(
+                    production_settings(),
+                    access_token_verifier=object(),
+                )
+        initialize.assert_not_called()
+
+    def test_unavailable_production_vault_token_fails_before_database_initialization(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            token_root = Path(directory).resolve()
+            settings = production_settings().model_copy(
+                update={
+                    "vault_addr": "https://vault.example",
+                    "vault_token_file": str(token_root / "missing-token"),
+                }
+            )
+            with (
+                patch(
+                    "platform.secrets._PRODUCTION_VAULT_TOKEN_ROOTS",
+                    (f"{token_root.as_posix()}/",),
+                ),
+                patch("platform.app.initialize_database") as initialize,
+                self.assertRaisesRegex(
+                    SecretResolverUnavailable,
+                    "^Vault token file is unavailable$",
+                ),
+            ):
+                create_app(settings, access_token_verifier=object())
+
+        initialize.assert_not_called()
+
+    def test_explicit_falsey_secret_resolver_replaces_default_vault(self) -> None:
+        resolver = FalseySecretResolver()
+        app = create_app(
+            production_settings(),
+            access_token_verifier=object(),
+            secret_resolver=resolver,
+        )
+        try:
+            self.assertIs(app.state.secret_resolver, resolver)
         finally:
             app.state.engine.dispose()
 

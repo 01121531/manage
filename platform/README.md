@@ -31,21 +31,45 @@ The default endpoints are:
 - `GET /api/v1/version` — service and API version.
 - `GET /api/v1/auth/config` — public OIDC client configuration (never secrets).
 - `POST /api/v1/auth/login` — local-development platform login; disabled in OIDC mode.
+- `POST /api/v1/auth/logout` — idempotently revoke the exact bearer and, when
+  present, its issuer-scoped OIDC `sid`, then reclaim device-owned resources once.
 - `GET /api/v1/me` — current platform user and bound device.
-- `GET /api/v1/dashboard/summary` — safe aggregate counts for the current
-  operator scope; no mailbox, card, business-name or secret details.
+- `POST /api/v1/devices/{device_id}/revoke` — let the authenticated owner revoke
+  one of their own devices without gaining tenant-administrator device access.
+- `POST /api/v1/admin/users/{user_id}/devices` — privileged, tenant-scoped
+  pre-provisioning of a named device; this is not a login or token endpoint.
+- `GET /api/v1/dashboard/summary` — safe workbench aggregates for the current
+  scope. Tenant roles receive UTC-day task/upload metrics, allocator-accurate
+  available-card capacity, active unavailable-mailbox count, and at most five
+  recent tasks projected to ID/type/status/trace/time only. Operator scope is
+  bound to the current user and device; tenant card capacity is not disclosed.
+  No mailbox address, card metadata, business name, client reference, policy,
+  provider error, or secret detail is returned.
 - `GET /api/v1/mailboxes` — masked mailbox connector status for the current
   tenant; no `secret_ref`, password, or raw mailbox configuration.
 - `POST/GET /api/v1/tasks` — idempotently create and list the current user's tasks.
 - `GET /api/v1/tasks/{id}` — fetch an owned task; foreign tasks return 404.
+- `GET /api/v1/tasks/{id}/timeline` — return the current-device task workbench's
+  canonical `workbench_step`, masked child-resource status, and entity-bound safe
+  event projection. Failed, unknown, and cancellation-pending uploads remain in
+  the `uploading` step while their distinct recovery status is preserved; no
+  card secret, verification code, policy, provider configuration, or business
+  reference is exposed.
 - `POST /api/v1/tasks/{id}/close` — close an owned active task and release task-bound resources.
 - `POST /api/v1/tasks/{id}/mail-sessions` — bind an available masked mailbox
   to an owned task.
-- `GET /api/v1/mail-sessions/{id}/code` — poll a one-time verification code.
+- `GET /api/v1/mail-sessions/{id}/code` — consume a one-time verification code.
+  A successful response returns the code together with timezone-aware
+  `received_at` and a code-independent, domain-separated SHA-256
+  `message_id_hash`; waiting, replayed, expired, revoked, and lost-CAS responses
+  return `code: null` and omit `received_at` plus `message_id_hash`.
 - `GET /api/v1/mail-sessions/{id}/events` — stream verification-code status events.
-- `POST /api/v1/mail-sessions/{id}/revoke` — revoke an active mail session.
+- `POST /api/v1/mail-sessions/{id}/revoke` — revoke an active mail session. Code,
+  event, and revoke requests require the opaque capability in
+  `X-Mail-Session-Token`; the capability must never be placed in a URL.
 - `POST /api/v1/tasks/{id}/card-allocations` — lease one server-managed card.
-- `GET /api/v1/card-allocations/{id}` — return only masked card details.
+- `GET /api/v1/card-allocations/{id}?task_id={task_id}` — return only masked
+  card details after binding the allocation to the caller's task context.
 - `POST /api/v1/card-allocations/{id}/reveal-challenges` — bind a short-lived
   step-up request to the current actor, device, and active lease.
 - `POST /api/v1/card-allocations/{id}/reveal-grants` — exchange a fresh OIDC
@@ -54,6 +78,8 @@ The default endpoints are:
   and reveal PAN/expiry once; CVV is not part of the default API contract.
 - `POST /api/v1/card-allocations/{id}/release` — release a lease.
 - `POST /api/v1/tasks/{id}/uploads` — enqueue an idempotent Sub2 upload job.
+- The Sub2 HTTP adapter projects Card Vault data onto an explicit PAN/expiry
+  egress contract; CVV and unknown secret fields are never forwarded by default.
 - `GET /api/v1/upload-jobs/{id}` — poll the upload state.
 - `POST /api/v1/upload-jobs/{id}/cancel` — cancel a queued upload job.
 - `POST /api/v1/upload-jobs/{id}/reconcile` — privileged reconciliation for unknown/failed jobs.
@@ -65,8 +91,9 @@ The default endpoints are:
 - `GET /api/v1/admin/audit/export` — bounded, redacted CSV export that omits
   free-form details and is returned with `no-store`.
 - `/api/docs` — OpenAPI UI. Run `cd frontend && npm run generate:api` after
-  contract changes; the quality gate rejects a stale generated TypeScript
-  contract before building the Web console.
+  contract changes; the quality gate rejects either a stale tracked
+  `frontend/openapi.json` or stale generated TypeScript contract before building
+  the Web console.
 
 Configuration is environment-only and uses the `PLATFORM_` prefix, for
 example `PLATFORM_ENVIRONMENT=staging` or `PLATFORM_DEBUG=true`. Do not put
@@ -74,17 +101,46 @@ tokens or passwords in source files or `.env` committed to the repository.
 SQLite data defaults to `platform/platform.db` and can be changed with
 `PLATFORM_DATABASE_URL`.
 
+`PLATFORM_MAX_ACTIVE_DEVICES_PER_USER=5` limits new administrator-provisioned
+devices by counting only non-revoked devices for the target tenant and user.
+A value of `0` is an admission freeze: it rejects every new device registration
+but does not revoke, delete, rename, or invalidate any existing device. An
+already-active device with the same normalized name is an idempotent replay and
+returns that device without consuming another slot. A revoked device name is
+reserved and cannot be silently revived; attempting to provision it again
+returns a conflict. Provisioning is serialized against the target user so
+concurrent different names cannot exceed the configured limit.
+
+This admission policy does not change either login contract. Local login still
+requires a pre-existing `device_id`, and OIDC requests still derive `device_id`
+from the verified access-token claim and revalidate it in the platform database;
+neither path creates or revives a device. The bundled Keycloak realm currently
+maps `device_id` from one static, single-valued user attribute. That mapper does
+not prove distinct per-installation claims for simultaneous devices belonging
+to one user, so the repository must not claim a complete multi-device OIDC
+session lifecycle until a reviewed enrollment and per-session claim design is
+implemented and tested in Keycloak.
+
 `PLATFORM_AUTH_MODE=local` is development/test only. When its HMAC secret is
 omitted, a random process-local secret is generated, so tokens stop working
 after a restart. Production startup fails unless `PLATFORM_AUTH_MODE=oidc` and
 issuer, audience, public client ID and JWKS URL are configured. OIDC accepts
-only RS256 and validates issuer, audience, expiry, subject, `tenant_id`, and
-`device_id`; user, role and device are then revalidated from the platform DB.
+only RS256 and validates issuer, audience, expiry, subject, `tenant_id`,
+`device_id`, and a required `azp` that exactly names the reviewed Web or Desktop
+client; user, role and device are then revalidated from the platform DB. Tokens
+from another realm client are rejected before device activity or business writes
+even if that client obtained the API audience.
+Logout always persists the exact bearer SHA-256. For OIDC tokens with a valid
+optional `sid`, it also persists a domain-separated SHA-256 over issuer and sid,
+so sibling access tokens from the same identity-provider session are rejected.
+The raw sid is never stored, returned, or audited. Missing sid retains the older
+exact-token behavior. Session entries currently use a nullable expiry and are
+kept indefinitely until the deployed Keycloak session lifetime is proven.
 
 There is no default account or password. Create a local development identity:
 
 ```powershell
-python -m platform.bootstrap --tenant-id tenant-1 --email user@example.com --device-name workstation-1
+python -m platform.bootstrap --tenant-id tenant-1 --email user@example.invalid --device-name workstation-1
 ```
 
 The command prompts for the platform-account password without echoing it and
@@ -93,7 +149,7 @@ in Keycloak with reviewed `tenant_id` and `device_id` attributes, then provision
 the matching subject without a local platform password:
 
 ```powershell
-python -m platform.bootstrap --tenant-id tenant-1 --email user@example.com --device-name workstation-1 --oidc-subject KEYCLOAK_SUBJECT --role operator
+python -m platform.bootstrap --tenant-id tenant-1 --email user@example.invalid --device-name workstation-1 --oidc-subject KEYCLOAK_SUBJECT --role operator
 ```
 
 Task creation accepts only this body; `device_id` is always derived from the
@@ -137,6 +193,22 @@ PostgreSQL and is backed by a partial unique index, so one mailbox cannot serve
 two active sessions. Worker-delivered codes have an independent
 `PLATFORM_MAIL_CODE_TTL_SECONDS` (60 seconds by default); expiry, revocation,
 task close, and device/user disable paths erase the plaintext columns.
+Mailbox capacity (`available`/`busy`/`disabled`) is deliberately separate from
+connector runtime health (`unknown`/`healthy`/`unavailable`). Both the mail
+worker and direct API polling path persist only the last safe health enum,
+timestamp and a fixed error code; upstream exception text is never stored or
+returned. A successful call clears the error, enabling the admin console and
+`PlatformMailConnectorUnavailable` alert to show failure and recovery without
+exposing credentials or provider responses.
+Every `current_watermark` and `find_code_after` invocation also crosses a fixed
+exception boundary. Any regular Connector exception is converted without its
+original exception chain to the existing safe unavailable path, so one broken
+mailbox cannot terminate the remaining worker batch or expose provider text in
+an API error. Process-control exceptions such as `KeyboardInterrupt` and
+`SystemExit` are deliberately not swallowed.
+Every terminal task transition also invalidates the opaque mailbox-session
+capability, including a session whose code was already consumed, so a completed
+or closed task cannot keep using an otherwise valid session token.
 The API-mode polling path remains available for local tests and injected
 connectors.
 
@@ -144,12 +216,33 @@ Cards likewise store a provider reference, brand, last four digits, and an
 opaque secret-manager reference—never PAN or CVV in the platform database.
 Active leases are unique per card and task, tied to tenant/user/device,
 time-limited, and audited. The ordinary allocation response returns only a
-mask. A reveal first creates an actor-bound challenge; an isolated browser
+mask. Administrative inventory derives `available`, `allocated`, `disabled`,
+and `quarantined` from the quarantine marker, compatibility activity flag, and
+active lease; `allocated` is never duplicated onto the card row. Ops and
+platform administrators may quarantine with a bounded reason code, but only a
+platform administrator may release quarantine. Release leaves the card
+disabled, so a second explicit enable is required. Allocation, reveal, upload,
+and worker dispatch all reject a quarantined card. Migration 0022 is additive,
+but the quarantine action must not be enabled until every older API/worker node
+has exited; see the migration rollout runbook. The separate append-only
+`card_events` history records each masked before/after state, reason, actor,
+allocation, trace, and timestamp. The administrative card timeline exposes
+only those reviewed fields and retrieves older lease/event history with
+separate `(created_at, id)` keyset cursors. Targeted recycle acts on the
+selected lease without affecting a later allocation.
+
+A reveal first creates an actor-bound challenge; an isolated browser
 PKCE flow must then produce a token whose signed `auth_time` is newer than the
 challenge and whose `acr` equals `PLATFORM_CARD_STEP_UP_ACR`. The server stores
 only a SHA-256 hash of the short-lived reveal grant and consumes it atomically.
-The reveal response is `no-store`, returns PAN/expiry once, and deliberately
-omits CVV. No PAN, grant, or CVV is written to audit events. The default
+Challenge creation, grant exchange, and the final reveal lock and revalidate the
+task and allocation in a fixed order before any card secret is resolved. A
+closed, completed, expired, released, disabled, or ownership-mismatched context
+therefore fails with one non-enumerating error and never reaches Card Vault.
+The reveal response is `no-store` and enforces the requested field allowlist:
+an expiry-only reveal never resolves or returns PAN, while a PAN-only reveal
+omits expiry. CVV is deliberately absent from the contract. No PAN, grant, or
+CVV is written to audit events. The default
 resolver is fail-closed and returns `503 service_unavailable` until a
 production secret-manager adapter is injected. Configure a real Keycloak LoA
 flow for the required ACR before production; a browser prompt by itself is not
@@ -169,6 +262,47 @@ ambiguous external call is never submitted blindly a second time. Proxy
 reference, group, concurrency, Sub2 credential reference, and card secret
 reference are assembled inside the worker from `Sub2Policy`; none appear in
 desktop requests, outbox rows, or API responses.
+
+A confirmed successful upload is the task completion boundary. In the same
+database transaction, the worker records `upload.succeeded`, transitions the
+task to `completed`, releases its card allocation, revokes its mailbox session,
+and writes the corresponding resource audit events. Privileged reconciliation
+from `unknown` to `succeeded` uses the same completion path; reconciliation to
+`failed` deliberately leaves the task recoverable. Replaying or concurrently
+observing the terminal state does not duplicate release events.
+
+Upload cancellation is an owner-bound conditional state transition rather than
+an unconditional overwrite. Only the request that atomically changes `queued`
+to `cancelled` or `running` to `cancel_pending` writes the cancellation audit
+event. A late cancellation can never replace `succeeded`; terminal jobs return
+the stable `upload_not_cancellable` conflict, while cancellation replay remains
+idempotent.
+
+The Sub2 worker dispatches a claimed outbox batch concurrently, but every
+outbound call first acquires a Redis lease budget keyed by a hash of the tenant
+and immutable policy version. The snapshot `concurrency` value is therefore the
+maximum across all worker replicas for that policy scope, while different
+tenants or policy versions stay isolated. Exact owner tokens, server-time
+expiry, periodic renewal, and owner-only release recover capacity after a
+worker crash without exposing tenant or policy names in Redis keys. Redis
+failure before the external boundary fails closed and safely defers the outbox
+event; release failure cannot hide a known Sub2 result. Development without
+Redis retains the process-local limiter.
+
+Capacity waiting happens before the upload job claim and outside every database
+session. After a slot is acquired, the worker atomically claims the still-queued
+job and revalidates authorization, task state, verification, and card bindings;
+cancellation or resource revocation committed during the wait therefore wins
+without consuming a database connection or crossing the Sub2 boundary.
+
+Both dedicated workers run the same bounded lifecycle sweep before each polling
+batch, so cleanup does not depend on a user opening an API page. The sweep uses
+conditional terminal transitions plus `FOR UPDATE SKIP LOCKED`: expired tasks
+release card leases, erase active mailbox codes/sessions, cancel queued uploads,
+and move abandoned running uploads to `unknown`; an expired card lease cancels
+and compensates its task. Independent mailbox and verification-code TTLs are
+also enforced and audited. Repeating or concurrently running the sweep is
+idempotent and does not duplicate terminal audit events.
 
 The upload worker can call a server-side HTTP upload interface by setting
 `PLATFORM_SUB2_UPLOAD_URL`. Without it, the worker remains fail-closed and jobs
@@ -191,11 +325,19 @@ Server-side secrets support two reference schemes. `env://NAME` reads a JSON
 object or plain value from the process environment only in development/test;
 production rejects all `env://` references. `vault://mount/path` uses Vault KV v2 and requires
 `PLATFORM_VAULT_ADDR`; optional `PLATFORM_VAULT_NAMESPACE` is sent as
-`X-Vault-Namespace`. Production must set `PLATFORM_VAULT_TOKEN_FILE` to an
+`X-Vault-Namespace`. The default resolver fails production/staging startup when
+the address is missing or blank, before database initialization or any API/worker
+listener starts. An explicitly injected `SecretResolver` remains supported for
+an approved KMS or cloud Secret Manager implementation. Production must set
+`PLATFORM_VAULT_TOKEN_FILE` to an
 absolute path below `/run/secrets` or `/var/run/secrets`. The resolver reopens
 that regular file for every Vault request, so an atomic token rotation is used
 by the next resolve without restarting the process. Oversized, empty,
 non-regular, symlinked, or group/world-writable token files fail closed. The
+default production/staging resolver validates the current token file locally
+before database initialization; this preflight neither caches the token nor
+contacts Vault. A token that is revoked, expired, or denied by policy therefore
+remains a target-environment broker/canary and runtime-acceptance concern. The
 legacy `PLATFORM_VAULT_TOKEN` environment value is accepted only in development
 and test. For example, a production deployment can set
 `PLATFORM_SUB2_CREDENTIAL_REF=vault://secret/sub2/credential`,
@@ -210,9 +352,9 @@ API token can read only `secret/data/cards/*`
 for card reveal, the mail token only `secret/data/mailboxes/*`, and the Sub2
 token only the reviewed Sub2 credential/proxy paths plus `secret/data/cards/*`,
 which it must resolve when assembling the server-side upload payload. It has no
-mailbox permission. A missing token fails startup when a Vault address is
-configured; a missing resolver otherwise makes each Vault-backed operation
-fail closed.
+mailbox permission. A missing or unsafe token file fails managed-environment
+startup before database initialization; a missing resolver otherwise makes
+each Vault-backed operation fail closed.
 
 Reviewed least-privilege policies and an AppRole configuration helper live in
 `infra/vault/`. The `*_ROLE_ID` and `*_SECRET_ID` variables are for Vault Agent
@@ -226,14 +368,29 @@ UID 10001 and atomically replaces it on rotation.
 
 Every response includes an `X-Trace-Id` header. A valid UUID supplied in the
 request's `X-Trace-Id` header is propagated; otherwise one is generated. API
-errors use the envelope `{ "error": { "code", "message", "trace_id" } }`.
+errors use the envelope
+`{ "error": { "code", "message", "recovery_hint", "trace_id" } }`. Ordinary
+framework HTTP exceptions are reduced to a fixed status-based contract and
+never reflect their detail or arbitrary headers. Only explicitly reviewed
+`BusinessHTTPException` messages are returned; the exception boundary retains
+only exact `WWW-Authenticate: Bearer` for 401 and validated standard methods in
+`Allow` for 405. `python scripts/verify_http_error_boundary.py` locks this
+contract and rejects dynamic ordinary route details. OpenAPI describes this
+same closed error schema for router defaults and validation failures, so clients
+can decode `code`, `message`, `recovery_hint`, and `trace_id` without guessing.
 `/metrics` exposes only operational labels such as method, route template,
 status code, and upload status; it must not include emails, card details,
 business names, tokens, secret references, or proxy settings. The mail and
 upload workers also write one JSON log event per polling batch with aggregate
 status counts only. Prometheus scrape targets and alert rules live under
 `infra/prometheus/`; the mail and Sub2 workers expose worker-local metrics on
-their internal ports for stalled-batch and availability alerts.
+their internal ports. Each worker alert covers both `up == 0` target loss and
+an old batch timestamp, so a dead metrics endpoint and a live-but-stalled loop
+are both paged.
+Prometheus also scrapes Keycloak's internal management endpoint at
+`keycloak:9000/metrics`. `PlatformKeycloakDown` pages after two minutes so a
+later identity-service outage is visible even while already-started API and
+edge containers remain healthy.
 Audit events are append-only at both the application and database layer; update
 and delete attempts are rejected so the audit trail remains tamper-evident.
 Each event records structured actor/action/result, tenant/user/device/resource,
@@ -251,6 +408,13 @@ tokens, email addresses, tenants and IP values never enter Redis keys. Limit
 responses include `Retry-After`, `X-RateLimit-*` and the normal trace envelope.
 If Redis cannot make a decision, managed environments fail closed with 503 and
 `/readyz` becomes unhealthy; development/test may disable or inject the backend.
+
+Managed environments also require `PLATFORM_ALLOWED_ORIGINS` to contain an
+exact comma-separated HTTPS allowlist. Browser requests that carry `Origin`
+must match it and receive explicit CORS headers; unapproved origins fail with a
+traceable 403. Native EXE and server-to-server requests normally carry no
+`Origin` and remain supported. Wildcards, credential-bearing URLs, paths and
+non-loopback HTTP origins are rejected at startup.
 
 ## Verify
 
@@ -276,6 +440,14 @@ scan, generates Alembic upgrade SQL, and builds the React console.
 The repository includes a PostgreSQL/Redis/Keycloak/API/mail-worker/Sub2-worker/Web
 Compose topology. It is a deployment baseline, not a production secret store:
 
+For the scale/compliance expansion path, `deploy/kubernetes/` provides a
+fail-closed Kustomize base for the platform-owned API, Web, workers, and a
+release-bound migration Job. Do not apply that base directly: target overlays
+must supply reviewed image digests, external Secrets, ingress, and the
+cluster-managed PostgreSQL/Redis/Keycloak/Vault endpoints, then pass a
+server-side dry-run and target-cluster acceptance. Repository validation remains
+`production_acceptance=false`; see `deploy/kubernetes/README.md`.
+
 ```powershell
 Copy-Item .env.example .env
 # Replace every CHANGE_ME value through the deployment secret manager.
@@ -286,6 +458,27 @@ Copy-Item .env.example .env
 docker compose config
 docker compose up -d
 ```
+
+Keycloak uses the dedicated `KEYCLOAK_DB_USER` role; the long-running identity
+service never receives the PostgreSQL bootstrap/migration credentials. The
+PostgreSQL image runs `infra/postgres/init/02-create-platform-runtime-role.sh`
+automatically only for a new data volume. Before upgrading an existing volume
+from a release that let Keycloak use `POSTGRES_USER`, freeze identity writes,
+start PostgreSQL without Keycloak, and run the same idempotent role/ownership
+provisioning script inside the database container before starting the rest of
+the stack:
+
+```powershell
+docker compose stop edge keycloak
+docker compose up -d postgres
+docker compose exec -T postgres sh /docker-entrypoint-initdb.d/02-create-platform-runtime-role.sh
+docker compose up -d keycloak migrate api worker-mail worker-sub2 web edge
+```
+
+Stop if the provisioning command fails. Verify the Keycloak database backup,
+the dedicated role ownership and a real OIDC login before reopening traffic.
+The script reads passwords from the container environment through `psql
+\getenv`; passwords are not command-line arguments or backup-manifest fields.
 
 Compose runs the one-shot `migrate` service first; the API, mail worker and
 Sub2 worker wait for `alembic upgrade head` to finish successfully. The
@@ -305,7 +498,9 @@ imports `infra/keycloak/email-platform-realm.json`, which requires Authorization
 Code + PKCE (S256), disables direct password grants, forces TOTP enrollment as a
 required action, and adds API audience plus tenant/device claims. Review the
 exact redirect URIs, MFA policy, user attributes and bootstrap credentials
-before deployment. Production must use a dedicated least-privilege database role.
+before deployment. The repository verifier also rejects API-audience mappers
+assigned directly or through a client scope to any client other than the reviewed
+Web/Desktop pair. Production must use a dedicated least-privilege database role.
 The public desktop client enables Standard Flow with the native-app special
 redirect `http://127.0.0.1` (random loopback ports), keeps Device Authorization
 only as an explicit fallback, and enforces refresh-token rotation with zero
@@ -313,6 +508,13 @@ reuse. The EXE contains no OIDC client secret. `GET /api/v1/tasks?limit=1..100`
 returns the current user's newest tasks with `trace_id`; desktop and Web UIs
 show only task status/identifiers, never mailbox bodies, card secrets or Sub2
 configuration.
+After login or saved-session refresh, the desktop checks the newest
+device-scoped task before enabling task creation. A non-terminal task requires
+an explicit takeover or close action: takeover revalidates the strict timeline
+projection, rotates the existing opaque mail capability only after user intent,
+reuses the active card lease, and resumes the exact queued/running upload when
+present. `unknown` and `cancel_pending` uploads remain review-only and cannot be
+closed or resubmitted by the desktop.
 
 Alembic is the source of truth for schema changes. Review and back up the
 database before `upgrade`; never use `downgrade` as a data-recovery mechanism.
@@ -326,46 +528,96 @@ alembic -x db_url="postgresql+psycopg://USER:PASSWORD@HOST:5432/DB" upgrade head
 
 For production backup and restore, keep the platform and Keycloak databases in
 one integrity-checked bundle. The Keycloak realm JSON is bootstrap configuration,
-not a backup of live users or credentials. A release rollback must create schema
-v2 evidence bound to the release tag, commit, migration head, and SHA-256 of the
-immutable container release manifest. Use the helper from the repository root:
+not a backup of live users or credentials. A release rollback must create
+authenticated schema-v5 evidence bound to the release tag, commit, migration
+head, and SHA-256 of the immutable container release manifest. Its HKDF-derived
+HMAC authenticates the complete canonical manifest. Use the helper from the
+repository root:
 
 ```powershell
-python -m scripts.postgres_maintenance backup-bundle --output-dir backups/production-YYYYMMDDTHHMMSSZ --platform-db email_platform --keycloak-db keycloak
-python -m scripts.postgres_maintenance verify-bundle --input-dir backups/production-YYYYMMDDTHHMMSSZ
-python -m scripts.postgres_maintenance restore-bundle --input-dir backups/production-YYYYMMDDTHHMMSSZ --platform-target-db email_platform_restore --keycloak-target-db keycloak_restore
-python -m scripts.postgres_maintenance drill-bundle --output-dir backups/production-YYYYMMDDTHHMMSSZ --platform-db email_platform --keycloak-db keycloak --platform-scratch-db email_platform_restore_drill --keycloak-scratch-db keycloak_restore_drill
+python -m scripts.postgres_maintenance backup-bundle --output-dir C:\ProgramData\EmailPlatform\backups\production-YYYYMMDDTHHMMSSZ --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key --platform-db email_platform --keycloak-db keycloak
+python -m scripts.postgres_maintenance verify-bundle --input-dir C:\ProgramData\EmailPlatform\backups\production-YYYYMMDDTHHMMSSZ --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key
+python -m scripts.postgres_maintenance restore-bundle --input-dir C:\ProgramData\EmailPlatform\backups\production-YYYYMMDDTHHMMSSZ --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key --platform-target-db email_platform_restore --keycloak-target-db keycloak_restore
+python -m scripts.postgres_maintenance drill-bundle --output-dir C:\ProgramData\EmailPlatform\backups\drill-YYYYMMDDTHHMMSSZ --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key --platform-db email_platform --keycloak-db keycloak --platform-scratch-db email_platform_restore_drill --keycloak-scratch-db keycloak_restore_drill
 ```
+
+Backup output is write-once: provision the external parent root, then pass an
+absolute, repository-external leaf that does not already exist. Empty leaves,
+symlink/reparse paths, and reuse of a completed bundle are rejected before key
+access or `pg_dump`; retries use a new unique leaf. Single-database backup output
+also uses no-replace publication and cannot overwrite an existing artifact.
 
 The generic commands above remain available for disaster-recovery exercises.
 For a release rollback, use `backup-bundle` with all four release-binding flags
-shown in `deploy/runbooks/rollback.md`; the rollback executor refuses legacy v1
+shown in `deploy/runbooks/rollback.md`; the rollback executor refuses legacy
+plaintext schemas 1/2, generic encrypted schema v3, and unauthenticated release
+schema v4.
 bundles, partial bindings, or a manifest that does not match the selected OCI
 release exactly.
 
-The bundle manifest records the database name, artifact filename, byte size and
-SHA-256 for `platform.dump` and `keycloak.dump` in `manifest.json`. Restore
-verifies the complete bundle first. The drill
+Redis persistence belongs to that same release recovery set; a PostgreSQL-only
+bundle is not complete rollback evidence. The Redis helper fixes the production
+Compose file and `redis` service internally, so it accepts no Redis URL or
+password argument. Create an authenticated schema-1 release artifact only after
+the PostgreSQL schema-v5 manifest exists:
+
+```powershell
+python -m scripts.redis_maintenance backup-release --output-dir C:\ProgramData\EmailPlatform\backups\redis-v1.2.3-20260821T000000Z --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key --release-tag v1.2.3 --release-commit 0123456789abcdef0123456789abcdef01234567 --migration-head 0018_access_token_revocations --container-manifest-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --postgres-manifest C:\ProgramData\EmailPlatform\backups\postgres-v1.2.3-20260821T000000Z\manifest.json --recovery-set v1.2.3-20260821T000000Z
+python -m scripts.redis_maintenance verify-release --input-dir C:\ProgramData\EmailPlatform\backups\redis-v1.2.3-20260821T000000Z --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key --release-tag v1.2.3 --release-commit 0123456789abcdef0123456789abcdef01234567 --migration-head 0018_access_token_revocations --container-manifest-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --postgres-manifest-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --recovery-set v1.2.3-20260821T000000Z
+python -m scripts.redis_maintenance restore-release --input-dir C:\ProgramData\EmailPlatform\backups\redis-v1.2.3-20260821T000000Z --key-file C:\ProgramData\EmailPlatform\secrets\backup-aes.key --release-tag v1.2.3 --release-commit 0123456789abcdef0123456789abcdef01234567 --migration-head 0018_access_token_revocations --container-manifest-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --postgres-manifest C:\ProgramData\EmailPlatform\backups\postgres-v1.2.3-20260821T000000Z\manifest.json --recovery-set v1.2.3-20260821T000000Z --confirm-release-tag v1.2.3
+```
+
+Each Redis output leaf is write-once and must be an absolute,
+repository-external path that must not already exist. Archive
+`redis-data.tar.enc` with `redis-manifest.json`; schema 1 authenticates the
+complete manifest with `manifest_hmac_sha256` and binds the release tag, commit,
+migration head, container-manifest SHA-256, recovery set, and exact PostgreSQL
+manifest SHA-256. Authentication must finish before destructive restore work.
+Stop all writers and Redis, restore PostgreSQL and Redis from the same recovery
+set, prove Redis health and restored data before starting the backend, and start
+edge last. Signoff must retain restored `DBSIZE` and representative `PTTL`
+evidence and prove an expired key did not reappear. `PING` is connectivity only and is
+not restore evidence. Never place a Redis password, credential-bearing URL, or
+backup key value in argv.
+
+The bundle streams `pg_dump` directly through a versioned AES-256-GCM envelope;
+no plaintext dump is written to disk. `manifest.json` records only the source
+database, `platform.dump.enc`/`keycloak.dump.enc`, ciphertext byte size and
+SHA-256, algorithm, format version, and non-secret key ID. The 32-byte key is
+read only from an absolute, regular, non-symlink, restricted-permission file and
+never appears in argv, logs, or the manifest. Restore authenticates the full
+ciphertext and its logical/source-database identity before starting
+`pg_restore`, then decrypts it a second time as a stream. The drill
 also requires non-empty source databases and matching source/restored public
 table counts for both databases. It emits matching source/restored row counts
 for platform `users`, `devices`, `audit_events` and Keycloak `realm`,
-`user_entity`, `credential`; retain that output as signoff evidence and review
-whether zero counts are credible for the environment. Archive the entire
+`user_entity`, `credential`, `event_entity`, `admin_event_entity`; retain that
+output as signoff evidence and review whether zero counts are credible for the
+environment. Archive the entire
 directory as one unit.
 
 Vault integrated storage is backed up separately from PostgreSQL. Use a
 short-lived operator token file; the token is passed only to the Vault CLI
-child process and is never written to the command line or manifest:
+child process and is never written to the command line or manifest. Use a
+separate restricted 32-byte Vault manifest key. Verify the PostgreSQL schema v5
+bundle first; Vault schema v2 then authenticates its exact canonical manifest
+and binds the recovery set to that PostgreSQL manifest SHA-256:
 
 ```powershell
-python -m scripts.vault_maintenance backup --output-dir backups/vault-YYYYMMDDTHHMMSSZ --address https://vault.example.com --token-file C:\secure\vault-snapshot.token
-python -m scripts.vault_maintenance verify --input-dir backups/vault-YYYYMMDDTHHMMSSZ
-python -m scripts.vault_maintenance restore --input-dir backups/vault-YYYYMMDDTHHMMSSZ --address https://isolated-vault.example.com --token-file C:\secure\isolated-vault-restore.token --confirm-restore
+$recoverySet = "release-v1.2.3-20260821T000000Z"
+$postgresBundle = "C:\ProgramData\EmailPlatform\backups\v1.2.3-20260821T000000Z"
+$postgresManifest = "$postgresBundle/manifest.json"
+$vaultBundle = "C:\ProgramData\EmailPlatform\backups\vault-v1.2.3-20260821T000000Z"
+python -m scripts.postgres_maintenance verify-bundle --input-dir $postgresBundle --key-file C:\secure\postgres-backup.key
+python -m scripts.vault_maintenance backup --output-dir $vaultBundle --address https://vault.example.com --token-file C:\secure\vault-snapshot.token --manifest-key-file C:\secure\vault-manifest.key --recovery-set $recoverySet --postgres-manifest $postgresManifest
+python -m scripts.vault_maintenance verify --input-dir $vaultBundle --manifest-key-file C:\secure\vault-manifest.key --recovery-set $recoverySet --postgres-manifest $postgresManifest
+python -m scripts.vault_maintenance restore --input-dir $vaultBundle --address https://isolated-vault.example.com --token-file C:\secure\isolated-vault-restore.token --manifest-key-file C:\secure\vault-manifest.key --recovery-set $recoverySet --postgres-manifest $postgresManifest --confirm-restore
 ```
 
 `vault.snap` and `vault-manifest.json` must be archived together. Restore first
-checks size, SHA-256 and `vault operator raft snapshot inspect`, and refuses to
-run without explicit confirmation. Exercise restore only against an isolated
+checks the schema-v2 HMAC, recovery-set/PostgreSQL binding, size, SHA-256 and
+`vault operator raft snapshot inspect`, and refuses to run without explicit
+confirmation. Exercise restore only against an isolated
 cluster with matching seal/KMS material before approving production recovery.
 The complete procedure is in `deploy/runbooks/vault-restore.md`; the `vault-dev`
 Compose profile is ephemeral and is not a valid snapshot or restore target.
@@ -379,8 +631,9 @@ python -m scripts.release_manifest verify --manifest deploy/release-manifest.jso
 
 It is not a runtime image lock and must never be used as the rollback input.
 Runtime rollback uses the previous tag's strict `container-release-manifest.json`
-with `api`, `web`, and `edge` GHCR digests, plus a schema v2 dual-database bundle
-bound to that manifest. `scripts.rollback_release plan` verifies all bindings;
+with `api`, `web`, and `edge` GHCR digests, plus an authenticated schema-v5
+dual-database bundle bound to that manifest. `scripts.rollback_release plan`
+verifies the manifest MAC and all bindings;
 `execute` verifies Cosign/SBOM/provenance, pulls exact digests, restores both
 databases, verifies internal services, and exposes the edge only after all checks
 pass. Follow `deploy/runbooks/rollback.md`; do not restore only one database and
@@ -405,8 +658,12 @@ files at `PLATFORM_WORKER_HEARTBEAT_PATH`; the container health check fails
 when that file is missing or older than `PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS`.
 
 Compose includes a non-root `edge` service as the only public HTTP/HTTPS entry.
-It maps host ports 80/443 to unprivileged container ports 8080/8443; API, Web and
-Keycloak stay reachable only on the backend network. Point both
+It maps host ports 80/443 to unprivileged container ports 8080/8443. The
+`frontend` network contains only edge/Web plus the dual-homed API and Keycloak;
+PostgreSQL, Redis, Vault, workers and monitoring remain on the separate
+`backend` network. Exact-network verification rejects host networking, missing
+links and any extra shared network, so a compromised edge cannot directly
+reach the data plane. Point both
 `PLATFORM_DOMAIN` and `identity.PLATFORM_DOMAIN` DNS records at the host, then
 set `PLATFORM_TLS_CERT_FILE` and `PLATFORM_TLS_KEY_FILE` to absolute host paths
 for a certificate that covers both names (a matching wildcard or SAN
@@ -452,6 +709,13 @@ provenance, and verifies the expected workflow identity and issuer. The Windows
 GitHub Release job depends on all three matrix publications and includes their
 SBOMs, Trivy SARIF reports, and `container-release-manifest.json`; a container failure therefore
 prevents the desktop release from being published.
+
+Both ordinary CI and tag releases also start a real PostgreSQL 16 service and
+run Alembic `upgrade head` online. The gate fails if the repository exposes
+multiple migration heads or the resulting database `alembic_version` differs
+from the unique source head. Windows artifacts, container publication, and the
+final GitHub Release all depend on this gate, so PostgreSQL-specific DDL errors
+are detected before deployment rather than by the production `migrate` job.
 
 All newly added third-party Actions and self-built image base references are
 pinned to immutable commit or registry digests. Run

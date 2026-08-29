@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "plan_chapters": [
+    "12",
+    "14"
+  ],
+  "production_acceptance": false,
+  "manifest_policy": "repository_external_metadata_only",
+  "requirements": [
+    {
+      "id": "sub2_contract",
+      "phases": [
+        0,
+        4
+      ],
+      "purpose": "Redacted Sub2 request, response, authentication, idempotency and status-query contract; never include live credentials.",
+      "artifact_policy": "redacted_contract",
+      "matrix_refs": [
+        {
+          "phase": 0,
+          "category": "missing_inputs",
+          "value": "redacted Sub2 request, response and authentication samples"
+        },
+        {
+          "phase": 4,
+          "category": "missing_inputs",
+          "value": "real Sub2 interface, authentication, idempotency and status-query samples"
+        }
+      ]
+    },
+    {
+      "id": "mail_contract",
+      "phases": [
+        0,
+        2
+      ],
+      "purpose": "Redacted mail-provider request, response, authentication mode, rate limits and code-message rules; never include live credentials.",
+      "artifact_policy": "redacted_contract",
+      "matrix_refs": [
+        {
+          "phase": 0,
+          "category": "missing_inputs",
+          "value": "redacted mail-provider request, response, authentication and rate-limit samples"
+        },
+        {
+          "phase": 2,
+          "category": "missing_inputs",
+          "value": "real mail-provider interface and policy samples"
+        }
+      ]
+    },
+    {
+      "id": "card_pci_boundary",
+      "phases": [
+        0,
+        3
+      ],
+      "purpose": "Approved PAN and CVV field inventory, Card Vault boundary and PCI scope decision; never include cardholder data.",
+      "artifact_policy": "reviewed_decision",
+      "matrix_refs": [
+        {
+          "phase": 0,
+          "category": "missing_inputs",
+          "value": "card PAN/CVV field inventory and PCI scope decision"
+        },
+        {
+          "phase": 3,
+          "category": "missing_inputs",
+          "value": "card PAN/CVV and PCI compliance boundary decision"
+        }
+      ]
+    },
+    {
+      "id": "oidc_deployment_identity",
+      "phases": [
+        0,
+        3
+      ],
+      "purpose": "Approved Keycloak ACR-to-LoA mapping, Web and Desktop claim examples, production issuer identity and device-id ownership decision; tokens must be synthetic or irreversibly redacted.",
+      "artifact_policy": "reviewed_decision",
+      "matrix_refs": [
+        {
+          "phase": 0,
+          "category": "missing_inputs",
+          "value": "Keycloak ACR-to-LoA mapping and production deployment identity"
+        },
+        {
+          "phase": 3,
+          "category": "missing_inputs",
+          "value": "production Keycloak MFA ACR-to-LoA mapping"
+        }
+      ]
+    },
+    {
+      "id": "phase0_boundary_approval",
+      "phases": [
+        0
+      ],
+      "purpose": "Approved data classification, compliance boundary and immutable-decision record with reviewer references.",
+      "artifact_policy": "reviewed_decision",
+      "matrix_refs": [
+        {
+          "phase": 0,
+          "category": "target_evidence_required",
+          "value": "approved data classification and immutable-boundary record"
+        }
+      ]
+    },
+    {
+      "id": "target_platform_inventory",
+      "phases": [
+        0
+      ],
+      "purpose": "Target domain, internal DNS and certificate ownership, Keycloak and Vault control-plane owners, repository-external runtime-secret paths and evidence-root inventory; record paths and owners only, never secret values.",
+      "artifact_policy": "reviewed_inventory",
+      "matrix_refs": [
+        {
+          "phase": 0,
+          "category": "target_evidence_required",
+          "value": "deployment-domain and control-plane ownership record"
+        }
+      ]
+    },
+    {
+      "id": "phase1_platform_evidence",
+      "phases": [
+        1
+      ],
+      "purpose": "Repository-external evidence index for target identity, Vault, data-service, internal TLS, secret-manager, backup and CI release controls.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 1,
+          "category": "target_evidence_required",
+          "value": "target Keycloak and Vault login, authorization, audit and administrator-separation evidence"
+        },
+        {
+          "phase": 1,
+          "category": "target_evidence_required",
+          "value": "target PostgreSQL, Redis, TLS, secret-manager, backup and CI release evidence"
+        }
+      ]
+    },
+    {
+      "id": "phase2_mail_evidence",
+      "phases": [
+        2
+      ],
+      "purpose": "Repository-external evidence index for real mail-provider concurrency, outage, rate-limit and stale-code behavior plus worker credential and egress isolation.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 2,
+          "category": "target_evidence_required",
+          "value": "real mail-provider concurrency, outage, rate-limit and stale-code evidence"
+        },
+        {
+          "phase": 2,
+          "category": "target_evidence_required",
+          "value": "worker-only credential and egress-policy evidence"
+        }
+      ]
+    },
+    {
+      "id": "phase3_card_evidence",
+      "phases": [
+        3
+      ],
+      "purpose": "Repository-external evidence index for target concurrent allocation, migration, Keycloak step-up and approved PCI boundary enforcement.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 3,
+          "category": "target_evidence_required",
+          "value": "target PostgreSQL concurrent-allocation and migration evidence"
+        },
+        {
+          "phase": 3,
+          "category": "target_evidence_required",
+          "value": "target Keycloak step-up and PCI scope evidence"
+        }
+      ]
+    },
+    {
+      "id": "sub2_execution_evidence",
+      "phases": [
+        4
+      ],
+      "purpose": "Repository-external evidence index for real Sub2 success, failure, timeout, idempotency-query and unknown-reconciliation runs.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 4,
+          "category": "target_evidence_required",
+          "value": "real Sub2 success, failure, timeout, idempotency-query and unknown-reconciliation evidence"
+        }
+      ]
+    },
+    {
+      "id": "vault_egress_evidence",
+      "phases": [
+        4
+      ],
+      "purpose": "Repository-external evidence index for target Vault cross-path denial and Sub2 domain egress-policy enforcement.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 4,
+          "category": "target_evidence_required",
+          "value": "target Vault-path denial and domain egress-policy evidence"
+        }
+      ]
+    },
+    {
+      "id": "windows_pilot_inputs",
+      "phases": [
+        5
+      ],
+      "purpose": "Approved Windows pilot environment and symbolic real business-page field sequence; never include field values, credentials or personal data.",
+      "artifact_policy": "reviewed_inventory",
+      "matrix_refs": [
+        {
+          "phase": 5,
+          "category": "missing_inputs",
+          "value": "approved real business-page field sequence and Windows pilot environment"
+        }
+      ]
+    },
+    {
+      "id": "phase5_windows_evidence",
+      "phases": [
+        5
+      ],
+      "purpose": "Repository-external evidence index for Windows EXE session boundaries, recovery, update rollback and approved business-page paste behavior.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 5,
+          "category": "target_evidence_required",
+          "value": "Windows EXE login, lock, logout, offline recovery, update rollback and clipboard evidence"
+        },
+        {
+          "phase": 5,
+          "category": "target_evidence_required",
+          "value": "real business-page field-order and continuous-paste evidence"
+        }
+      ]
+    },
+    {
+      "id": "release_execution_evidence",
+      "phases": [
+        6
+      ],
+      "purpose": "Repository-external successful schema-v2 forward or rolling release execution ledger selected by the Phase 6 pilot and operations indexes.",
+      "artifact_policy": "release_execution_ledger",
+      "matrix_refs": [
+        {
+          "phase": 6,
+          "category": "target_evidence_required",
+          "value": "real pilot-user end-to-end evidence and independent review"
+        },
+        {
+          "phase": 6,
+          "category": "target_evidence_required",
+          "value": "real alert delivery, backup restore, rollback, training and audit-trace evidence"
+        }
+      ]
+    },
+    {
+      "id": "phase6_pilot_inputs",
+      "phases": [
+        6
+      ],
+      "purpose": "Approved pilot-role roster, operator ownership, alert-receiver ownership, maintenance window and target development/demo data-provenance and access-control evidence; use opaque references rather than personal data where possible.",
+      "artifact_policy": "reviewed_inventory",
+      "matrix_refs": [
+        {
+          "phase": 6,
+          "category": "missing_inputs",
+          "value": "pilot users, target operators, alert receivers and approved maintenance window"
+        },
+        {
+          "phase": 6,
+          "category": "missing_inputs",
+          "value": "target development and demo data-provenance and access-control evidence"
+        }
+      ]
+    },
+    {
+      "id": "phase6_pilot_evidence",
+      "phases": [
+        6
+      ],
+      "purpose": "Repository-external evidence index for real pilot-user end-to-end execution and independent review.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 6,
+          "category": "target_evidence_required",
+          "value": "real pilot-user end-to-end evidence and independent review"
+        }
+      ]
+    },
+    {
+      "id": "phase6_operations_evidence",
+      "phases": [
+        6
+      ],
+      "purpose": "Repository-external evidence index for alert delivery, backup restore, rollback, training, audit-trace and non-production data-boundary controls, including immutable evidence locations.",
+      "artifact_policy": "redacted_evidence_index",
+      "matrix_refs": [
+        {
+          "phase": 6,
+          "category": "target_evidence_required",
+          "value": "real alert delivery, backup restore, rollback, training and audit-trace evidence"
+        },
+        {
+          "phase": 6,
+          "category": "target_evidence_required",
+          "value": "non-production IAM and storage denial, data provenance, fixture digest, live connector and mailbox-secret absence, and independent review evidence"
+        }
+      ]
+    }
+  ]
+}

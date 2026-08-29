@@ -1,8 +1,10 @@
 import asyncio
 import csv
 import io
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import httpx
 from sqlalchemy import select
@@ -10,6 +12,7 @@ from sqlalchemy import select
 from platform.app import create_app
 from platform.bootstrap import create_oidc_user_with_device, create_user_with_device
 from platform.config import Settings
+from platform.lifecycle import LifecycleSweepResult
 from platform.models import (
     AuditEvent,
     Card,
@@ -17,6 +20,7 @@ from platform.models import (
     Device,
     Mailbox,
     MailSession,
+    OutboxEvent,
     Task,
     UploadJob,
     User,
@@ -55,6 +59,70 @@ class PlatformAppTests(unittest.TestCase):
                 return await client.request(method, path, **kwargs)
 
         return asyncio.run(run())
+
+    def test_workbench_step_uses_canonical_resource_progress(self) -> None:
+        from platform.api.v1.routes import _workbench_step
+
+        cases = [
+            ({}, "logged_in"),
+            ({"has_card_allocation": True}, "card_allocated"),
+            (
+                {"has_card_allocation": True, "mail_status": "waiting"},
+                "waiting_code",
+            ),
+            (
+                {"has_card_allocation": True, "mail_status": "code_ready"},
+                "waiting_code",
+            ),
+            (
+                {"has_card_allocation": True, "mail_status": "consumed"},
+                "code_received",
+            ),
+            (
+                {
+                    "has_card_allocation": True,
+                    "mail_status": "consumed",
+                    "upload_status": "running",
+                },
+                "uploading",
+            ),
+            (
+                {
+                    "has_card_allocation": True,
+                    "mail_status": "consumed",
+                    "upload_status": "unknown",
+                },
+                "uploading",
+            ),
+            (
+                {
+                    "task_status": "completed",
+                    "has_card_allocation": True,
+                    "mail_status": "consumed",
+                    "upload_status": "succeeded",
+                },
+                "completed",
+            ),
+        ]
+        for values, expected in cases:
+            with self.subTest(expected=expected, values=values):
+                self.assertEqual(_workbench_step(**values), expected)
+        for upload_status in (
+            "queued",
+            "running",
+            "failed",
+            "unknown",
+            "cancel_pending",
+        ):
+            with self.subTest(upload_status=upload_status):
+                self.assertEqual(
+                    _workbench_step(
+                        has_card_allocation=True,
+                        mail_status="consumed",
+                        upload_status=upload_status,
+                    ),
+                    "uploading",
+                )
 
     def login(
         self,
@@ -277,6 +345,10 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(own_summary.json()["queued_uploads"], 1)
         self.assertEqual(own_summary.json()["unknown_uploads"], 0)
         self.assertEqual(own_summary.json()["task_statuses"], {"closed": 1, "created": 1})
+        self.assertEqual(own_summary.json()["today_completed_uploads"], 0)
+        self.assertEqual(own_summary.json()["today_succeeded_uploads"], 0)
+        self.assertIsNone(own_summary.json()["available_cards"])
+        self.assertLessEqual(len(own_summary.json()["recent_tasks"]), 5)
 
         admin_token = self.login(
             email="dashboard-admin@example.test",
@@ -293,17 +365,328 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(tenant_summary.json()["waiting_mail_sessions"], 2)
         self.assertEqual(tenant_summary.json()["queued_uploads"], 1)
         self.assertEqual(tenant_summary.json()["unknown_uploads"], 1)
+        self.assertEqual(tenant_summary.json()["available_cards"], 0)
+        self.assertEqual(tenant_summary.json()["pending_exceptions"], 1)
+        for task in tenant_summary.json()["recent_tasks"]:
+            self.assertEqual(
+                set(task),
+                {"id", "type", "status", "trace_id", "created_at", "expires_at"},
+            )
         for forbidden in (
             "Private Store",
             "vault://",
-            "4242",
-            "1881",
             "dashboard-card-private",
         ):
             self.assertNotIn(forbidden, tenant_summary.text)
+        serialized_keys = json.dumps(tenant_summary.json(), sort_keys=True)
+        for forbidden_key in ('"last4"', '"card_masked"', '"provider_ref"', '"secret_ref"'):
+            self.assertNotIn(forbidden_key, serialized_keys)
+
+    def test_dashboard_chapter_nine_metrics_match_device_and_allocator(self) -> None:
+        admin = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="dashboard-metrics-admin@example.test",
+            password="dashboard-metrics-admin-password",
+            device_name="dashboard-metrics-admin-device",
+            role="ops_admin",
+        )
+        reference_now = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
+        today_start = reference_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        with self.app.state.session_factory() as db:
+            other_device = Device(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                name="dashboard-other-device",
+            )
+            db.add(other_device)
+            db.flush()
+            own_task = Task(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                task_type="card_checkout",
+                idempotency_key="dashboard-metrics-own-task",
+                client_reference="private-client-reference",
+                trace_id="dashboard-own-trace",
+                status="created",
+                expires_at=reference_now + timedelta(minutes=30),
+                created_at=today_start + timedelta(hours=10),
+            )
+            other_device_task = Task(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=other_device.id,
+                task_type="card_checkout",
+                idempotency_key="dashboard-metrics-other-device-task",
+                trace_id="dashboard-other-device-trace",
+                status="created",
+                expires_at=reference_now + timedelta(minutes=30),
+                created_at=today_start + timedelta(hours=9),
+            )
+            yesterday_task = Task(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                task_type="mail_code",
+                idempotency_key="dashboard-metrics-yesterday-task",
+                trace_id="dashboard-yesterday-trace",
+                status="closed",
+                expires_at=reference_now,
+                closed_at=reference_now,
+                created_at=today_start - timedelta(hours=1),
+            )
+            cards = [
+                Card(
+                    tenant_id="tenant-a",
+                    provider_ref="dashboard-blocked-card",
+                    brand="VISA",
+                    last4="4242",
+                    secret_ref="vault://cards/dashboard-blocked",
+                ),
+                Card(
+                    tenant_id="tenant-a",
+                    provider_ref="dashboard-other-device-card",
+                    brand="VISA",
+                    last4="1881",
+                    secret_ref="vault://cards/dashboard-other-device",
+                ),
+                Card(
+                    tenant_id="tenant-a",
+                    provider_ref="dashboard-available-card",
+                    brand="VISA",
+                    last4="9000",
+                    secret_ref="vault://cards/dashboard-available",
+                ),
+                Card(
+                    tenant_id="tenant-a",
+                    provider_ref="dashboard-disabled-card",
+                    brand="VISA",
+                    last4="0001",
+                    secret_ref="vault://cards/dashboard-disabled",
+                    is_active=False,
+                ),
+                Card(
+                    tenant_id="tenant-a",
+                    provider_ref="dashboard-quarantined-card",
+                    brand="VISA",
+                    last4="0002",
+                    secret_ref="vault://cards/dashboard-quarantined",
+                    quarantined_at=reference_now,
+                    quarantine_reason_code="suspected_compromise",
+                ),
+            ]
+            db.add_all([own_task, other_device_task, yesterday_task, *cards])
+            db.flush()
+            own_unavailable_mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="o***@example.test",
+                connector_type="imap",
+                secret_ref="vault://mailboxes/dashboard-own-unavailable",
+                health_status="unavailable",
+            )
+            other_unavailable_mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="d***@example.test",
+                connector_type="imap",
+                secret_ref="vault://mailboxes/dashboard-other-unavailable",
+                health_status="unavailable",
+            )
+            db.add_all([own_unavailable_mailbox, other_unavailable_mailbox])
+            db.flush()
+            db.add_all(
+                [
+                    MailSession(
+                        tenant_id="tenant-a",
+                        task_id=own_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        mailbox_id=own_unavailable_mailbox.id,
+                        status="waiting",
+                        expires_at=reference_now + timedelta(minutes=30),
+                    ),
+                    MailSession(
+                        tenant_id="tenant-a",
+                        task_id=other_device_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=other_device.id,
+                        mailbox_id=other_unavailable_mailbox.id,
+                        status="waiting",
+                        expires_at=reference_now + timedelta(minutes=30),
+                    ),
+                ]
+            )
+            own_allocation = CardAllocation(
+                tenant_id="tenant-a",
+                task_id=own_task.id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                card_id=cards[0].id,
+                status="active",
+                expires_at=today_start - timedelta(minutes=1),
+            )
+            other_allocation = CardAllocation(
+                tenant_id="tenant-a",
+                task_id=other_device_task.id,
+                user_id=self.identity.user_id,
+                device_id=other_device.id,
+                card_id=cards[1].id,
+                status="active",
+                expires_at=reference_now + timedelta(minutes=30),
+            )
+            db.add_all([own_allocation, other_allocation])
+            db.flush()
+            db.add_all(
+                [
+                    UploadJob(
+                        tenant_id="tenant-a",
+                        task_id=own_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        card_allocation_id=own_allocation.id,
+                        idempotency_key="dashboard-own-succeeded",
+                        business_name="Sensitive Business One",
+                        status="succeeded",
+                        policy_version="private-policy",
+                        created_at=today_start + timedelta(hours=10, minutes=1),
+                    ),
+                    UploadJob(
+                        tenant_id="tenant-a",
+                        task_id=own_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        card_allocation_id=own_allocation.id,
+                        idempotency_key="dashboard-own-failed",
+                        business_name="Sensitive Business Two",
+                        status="failed",
+                        policy_version="private-policy",
+                        created_at=today_start + timedelta(hours=10, minutes=2),
+                    ),
+                    UploadJob(
+                        tenant_id="tenant-a",
+                        task_id=own_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        card_allocation_id=own_allocation.id,
+                        idempotency_key="dashboard-own-unknown",
+                        business_name="Sensitive Business Three",
+                        status="unknown",
+                        policy_version="private-policy",
+                        created_at=today_start + timedelta(hours=10, minutes=3),
+                    ),
+                    UploadJob(
+                        tenant_id="tenant-a",
+                        task_id=other_device_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=other_device.id,
+                        card_allocation_id=other_allocation.id,
+                        idempotency_key="dashboard-other-device-succeeded",
+                        business_name="Other Device Business",
+                        status="succeeded",
+                        policy_version="private-policy",
+                        created_at=today_start + timedelta(hours=9, minutes=1),
+                    ),
+                    UploadJob(
+                        tenant_id="tenant-a",
+                        task_id=yesterday_task.id,
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        card_allocation_id=own_allocation.id,
+                        idempotency_key="dashboard-yesterday-succeeded",
+                        business_name="Yesterday Business",
+                        status="succeeded",
+                        policy_version="private-policy",
+                        created_at=today_start - timedelta(hours=1),
+                    ),
+                ]
+            )
+            db.commit()
+
+        operator_token = self.login()
+        with mock.patch(
+            "platform.api.v1.routes._utc_now", return_value=reference_now
+        ):
+            own_response = self.request(
+                "GET",
+                "/api/v1/dashboard/summary",
+                headers=self.bearer(operator_token),
+            )
+        self.assertEqual(own_response.status_code, 200, own_response.text)
+        own = own_response.json()
+        self.assertEqual(datetime.fromisoformat(own["today_started_at"]), today_start)
+        self.assertEqual(own["today_tasks"], 1)
+        self.assertEqual(own["today_succeeded_uploads"], 1)
+        self.assertEqual(own["today_completed_uploads"], 2)
+        self.assertEqual(own["unknown_uploads"], 1)
+        self.assertEqual(own["unavailable_mailboxes"], 1)
+        self.assertEqual(own["pending_exceptions"], 2)
+        self.assertIsNone(own["available_cards"])
+        self.assertEqual(
+            [task["trace_id"] for task in own["recent_tasks"]],
+            ["dashboard-own-trace", "dashboard-yesterday-trace"],
+        )
+        self.assertNotIn("dashboard-other-device-trace", own_response.text)
+
+        admin_token = self.login(
+            email="dashboard-metrics-admin@example.test",
+            password="dashboard-metrics-admin-password",
+            device_id=admin.device_id,
+        )
+        with mock.patch(
+            "platform.api.v1.routes._utc_now", return_value=reference_now
+        ):
+            tenant_response = self.request(
+                "GET",
+                "/api/v1/dashboard/summary",
+                headers=self.bearer(admin_token),
+            )
+        self.assertEqual(tenant_response.status_code, 200, tenant_response.text)
+        tenant = tenant_response.json()
+        self.assertEqual(tenant["today_tasks"], 2)
+        self.assertEqual(tenant["today_succeeded_uploads"], 2)
+        self.assertEqual(tenant["today_completed_uploads"], 3)
+        self.assertEqual(tenant["available_cards"], 1)
+        self.assertEqual(tenant["unavailable_mailboxes"], 2)
+        self.assertEqual(tenant["pending_exceptions"], 3)
+        self.assertIn("dashboard-other-device-trace", tenant_response.text)
+        response_without_opaque_ids = {
+            **tenant,
+            "recent_tasks": [
+                {key: value for key, value in task.items() if key != "id"}
+                for task in tenant["recent_tasks"]
+            ],
+        }
+        redaction_surface = json.dumps(
+            response_without_opaque_ids,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        for forbidden in (
+            "private-client-reference",
+            "Sensitive Business",
+            "Other Device Business",
+            "vault://",
+            "private-policy",
+            "4242",
+            "1881",
+            "9000",
+        ):
+            self.assertNotIn(forbidden, redaction_surface)
 
     def test_mailboxes_list_masks_configuration_and_reports_status(self) -> None:
-        token = self.login()
+        mailbox_admin = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="mailbox-admin@example.test",
+            password="mailbox-admin-password",
+            device_name="mailbox-admin-device",
+            role="ops_admin",
+        )
+        token = self.login(
+            email="mailbox-admin@example.test",
+            password="mailbox-admin-password",
+            device_id=mailbox_admin.device_id,
+        )
         now = utc_now()
         with self.app.state.session_factory() as db:
             task = Task(
@@ -394,6 +777,86 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "unauthorized")
         self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
 
+    def test_successful_local_login_records_device_last_seen(self) -> None:
+        with self.app.state.session_factory() as db:
+            self.assertIsNone(db.get(Device, self.identity.device_id).last_seen_at)
+
+        self.login()
+
+        with self.app.state.session_factory() as db:
+            self.assertIsNotNone(db.get(Device, self.identity.device_id).last_seen_at)
+
+    def test_failed_login_and_invalid_bearer_do_not_touch_device_last_seen(self) -> None:
+        failed_password = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            json={
+                "tenant_id": "tenant-a",
+                "email": "first@example.test",
+                "password": "wrong-account-password",
+                "device_id": self.identity.device_id,
+            },
+        )
+        self.assertEqual(failed_password.status_code, 401)
+        missing_device = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            json={
+                "tenant_id": "tenant-a",
+                "email": "first@example.test",
+                "password": self.account_password,
+                "device_id": "forged-device-id",
+            },
+        )
+        self.assertEqual(missing_device.status_code, 401)
+        invalid_bearer = self.request(
+            "GET",
+            "/api/v1/me",
+            headers=self.bearer("forged.invalid.bearer"),
+        )
+        self.assertEqual(invalid_bearer.status_code, 401)
+        with self.app.state.session_factory() as db:
+            self.assertIsNone(db.get(Device, self.identity.device_id).last_seen_at)
+
+    def test_bearer_activity_is_throttled_and_revoked_devices_are_not_touched(self) -> None:
+        token = self.login()
+        recent = utc_now() - timedelta(seconds=30)
+        with self.app.state.session_factory() as db:
+            device = db.get(Device, self.identity.device_id)
+            device.last_seen_at = recent
+            db.commit()
+
+        accepted = self.request("GET", "/api/v1/me", headers=self.bearer(token))
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.get(Device, self.identity.device_id).last_seen_at,
+                recent.replace(tzinfo=None),
+            )
+
+        stale = utc_now() - timedelta(seconds=61)
+        with self.app.state.session_factory() as db:
+            device = db.get(Device, self.identity.device_id)
+            device.last_seen_at = stale
+            db.commit()
+        refreshed = self.request("GET", "/api/v1/me", headers=self.bearer(token))
+        self.assertEqual(refreshed.status_code, 200, refreshed.text)
+        with self.app.state.session_factory() as db:
+            touched = db.get(Device, self.identity.device_id).last_seen_at
+            self.assertNotEqual(touched, stale)
+            device = db.get(Device, self.identity.device_id)
+            device.revoked_at = utc_now()
+            revoked_baseline = device.last_seen_at
+            db.commit()
+
+        rejected = self.request("GET", "/api/v1/me", headers=self.bearer(token))
+        self.assertEqual(rejected.status_code, 401)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.get(Device, self.identity.device_id).last_seen_at,
+                revoked_baseline,
+            )
+
     def test_login_and_me_use_platform_account(self) -> None:
         token = self.login()
         response = self.request(
@@ -440,10 +903,389 @@ class PlatformAppTests(unittest.TestCase):
         )
         self.assertEqual(listed.json(), [])
 
+    def test_tasks_are_isolated_between_devices_for_the_same_user(self) -> None:
+        device_a_token = self.login()
+        with self.app.state.session_factory() as db:
+            device_b = Device(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                name="same-owner-device-b",
+            )
+            db.add(device_b)
+            db.commit()
+            device_b_id = device_b.id
+        device_b_token = self.login(device_id=device_b_id)
+        device_a_headers = self.bearer(device_a_token)
+        device_b_headers = self.bearer(device_b_token)
+        payload = {
+            "type": "mail_code",
+            "idempotency_key": "device-a-private-task",
+            "client_reference": "device-a-private-reference",
+        }
+        created = self.request(
+            "POST", "/api/v1/tasks", headers=device_a_headers, json=payload
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["id"]
+        task_trace_id = created.json()["trace_id"]
+        same_device_replay = self.request(
+            "POST", "/api/v1/tasks", headers=device_a_headers, json=payload
+        )
+        self.assertEqual(same_device_replay.status_code, 200, same_device_replay.text)
+        self.assertEqual(same_device_replay.json()["id"], task_id)
+
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            task.expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+
+        device_b_list = self.request(
+            "GET", "/api/v1/tasks", headers=device_b_headers
+        )
+        device_b_detail = self.request(
+            "GET", f"/api/v1/tasks/{task_id}", headers=device_b_headers
+        )
+        device_b_timeline = self.request(
+            "GET", f"/api/v1/tasks/{task_id}/timeline", headers=device_b_headers
+        )
+        cross_device_replay = self.request(
+            "POST", "/api/v1/tasks", headers=device_b_headers, json=payload
+        )
+        self.assertEqual(device_b_list.status_code, 200, device_b_list.text)
+        self.assertEqual(device_b_list.json(), [])
+        for hidden in (device_b_detail, device_b_timeline):
+            self.assertEqual(hidden.status_code, 404, hidden.text)
+            self.assertEqual(hidden.json()["error"]["code"], "not_found")
+        self.assertEqual(cross_device_replay.status_code, 409, cross_device_replay.text)
+        self.assertEqual(
+            cross_device_replay.json()["error"]["code"], "conflict"
+        )
+        for private_value in (
+            task_id,
+            self.identity.device_id,
+            task_trace_id,
+        ):
+            self.assertNotIn(private_value, cross_device_replay.text)
+
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.status, "created")
+            self.assertEqual(
+                len(
+                    list(
+                        db.scalars(
+                            select(Task).where(
+                                Task.user_id == self.identity.user_id
+                            )
+                        )
+                    )
+                ),
+                1,
+            )
+            task_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == task_id,
+                        AuditEvent.event_type.in_(("task.created", "task.expired")),
+                    )
+                )
+            )
+            self.assertEqual(
+                [event.event_type for event in task_events], ["task.created"]
+            )
+
+        device_b_created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=device_b_headers,
+            json={"type": "mail_code", "idempotency_key": "device-b-private-task"},
+        )
+        self.assertEqual(device_b_created.status_code, 201, device_b_created.text)
+        device_b_task_id = device_b_created.json()["id"]
+        device_a_list = self.request(
+            "GET", "/api/v1/tasks", headers=device_a_headers
+        )
+        device_b_list = self.request(
+            "GET", "/api/v1/tasks", headers=device_b_headers
+        )
+        self.assertEqual(
+            [task["id"] for task in device_a_list.json()], [task_id]
+        )
+        self.assertEqual(
+            [task["id"] for task in device_b_list.json()],
+            [device_b_task_id],
+        )
+
+    def test_task_timeline_filters_mismatched_child_devices(self) -> None:
+        with self.app.state.session_factory() as db:
+            device_b = Device(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                name="timeline-device-b",
+            )
+            db.add(device_b)
+            db.commit()
+            device_b_id = device_b.id
+        device_b_token = self.login(device_id=device_b_id)
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(device_b_token),
+            json={"type": "card_checkout", "idempotency_key": "timeline-device-b"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["id"]
+        trace_id = created.json()["trace_id"]
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="x***@example.test",
+                connector_type="http",
+                secret_ref="vault://mailboxes/cross-device-timeline",
+            )
+            card = Card(
+                tenant_id="tenant-a",
+                provider_ref="cross-device-timeline-card",
+                brand="VISA",
+                last4="9999",
+                secret_ref="vault://cards/cross-device-timeline",
+            )
+            db.add_all([mailbox, card])
+            db.flush()
+            mail_session = MailSession(
+                tenant_id="tenant-a",
+                task_id=task_id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                mailbox_id=mailbox.id,
+                trace_id=trace_id,
+                status="waiting",
+                expires_at=now + timedelta(minutes=5),
+            )
+            allocation = CardAllocation(
+                tenant_id="tenant-a",
+                task_id=task_id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                card_id=card.id,
+                trace_id=trace_id,
+                status="active",
+                expires_at=now + timedelta(minutes=5),
+            )
+            db.add_all([mail_session, allocation])
+            db.flush()
+            upload = UploadJob(
+                tenant_id="tenant-a",
+                task_id=task_id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                card_allocation_id=allocation.id,
+                idempotency_key="cross-device-timeline-upload",
+                business_name="Cross Device Store",
+                trace_id=trace_id,
+                status="queued",
+                policy_version="cross-device-policy",
+            )
+            cross_device_event = AuditEvent(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                actor_id=self.identity.user_id,
+                event_type="cross_device.event",
+                action="cross_device_event",
+                result="success",
+                entity_type="task",
+                entity_id=task_id,
+                trace_id=trace_id,
+                details_json="{}",
+            )
+            db.add_all([upload, cross_device_event])
+            db.commit()
+
+        timeline = self.request(
+            "GET",
+            f"/api/v1/tasks/{task_id}/timeline",
+            headers=self.bearer(device_b_token),
+        )
+        self.assertEqual(timeline.status_code, 200, timeline.text)
+        response = timeline.json()
+        self.assertEqual(response["workbench_step"], "logged_in")
+        self.assertIsNone(response["mail_session"])
+        self.assertEqual(response["card_allocations"], [])
+        self.assertEqual(response["uploads"], [])
+        self.assertNotIn(
+            "cross_device.event",
+            [event["event_type"] for event in response["events"]],
+        )
+
+    def test_task_timeline_is_owner_scoped_ordered_and_redacted(self) -> None:
+        token = self.login()
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(token),
+            json={"type": "card_checkout", "idempotency_key": "timeline-task"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["id"]
+        trace_id = created.json()["trace_id"]
+        now = utc_now() + timedelta(seconds=1)
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="f***@example.test",
+                connector_type="http",
+                secret_ref="vault://secret/mailboxes/timeline-mailbox",
+            )
+            card = Card(
+                tenant_id="tenant-a",
+                provider_ref="timeline-card",
+                brand="VISA",
+                last4="4242",
+                expiry_month=12,
+                expiry_year=2030,
+                secret_ref="vault://secret/cards/timeline-card",
+            )
+            db.add_all([mailbox, card])
+            db.flush()
+            mail_session = MailSession(
+                tenant_id="tenant-a",
+                task_id=task_id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                mailbox_id=mailbox.id,
+                trace_id=trace_id,
+                session_token_hash="f" * 64,
+                status="consumed",
+                expires_at=now + timedelta(minutes=10),
+                consumed_at=now,
+                delivered_code="73918426",
+                created_at=now,
+            )
+            allocation = CardAllocation(
+                tenant_id="tenant-a",
+                task_id=task_id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                card_id=card.id,
+                trace_id=trace_id,
+                status="active",
+                expires_at=now + timedelta(minutes=10),
+                created_at=now,
+            )
+            db.add_all([mail_session, allocation])
+            db.flush()
+            upload = UploadJob(
+                tenant_id="tenant-a",
+                task_id=task_id,
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                card_allocation_id=allocation.id,
+                idempotency_key="timeline-upload",
+                business_name="Timeline Store",
+                trace_id=trace_id,
+                status="unknown",
+                policy_version="timeline-policy-v1",
+                error_code="external_unknown",
+                created_at=now + timedelta(seconds=1),
+                updated_at=now + timedelta(seconds=1),
+            )
+            db.add(upload)
+            db.flush()
+            event = AuditEvent(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                actor_id=self.identity.user_id,
+                event_type="upload.unknown",
+                action="upload_unknown",
+                result="unknown",
+                entity_type="upload_job",
+                entity_id=upload.id,
+                trace_id=trace_id,
+                policy_version="timeline-policy-v1",
+                details_json=json.dumps(
+                    {
+                        "code": "73918426",
+                        "pan": "4242424242424242",
+                        "secret_ref": "vault://secret/sub2/private",
+                    }
+                ),
+                created_at=now + timedelta(seconds=2),
+            )
+            unrelated_same_trace_event = AuditEvent(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                actor_id=self.identity.user_id,
+                event_type="unrelated.same_trace",
+                action="unrelated_same_trace",
+                result="success",
+                entity_type="task",
+                entity_id="unrelated-task-id",
+                trace_id=trace_id,
+                details_json="{}",
+                created_at=now + timedelta(seconds=3),
+            )
+            db.add_all([event, unrelated_same_trace_event])
+            db.commit()
+
+        timeline = self.request(
+            "GET",
+            f"/api/v1/tasks/{task_id}/timeline",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(timeline.status_code, 200, timeline.text)
+        payload = timeline.json()
+        self.assertEqual(payload["task"]["id"], task_id)
+        self.assertEqual(payload["workbench_step"], "uploading")
+        self.assertEqual(payload["mail_session"]["email_masked"], "f***@example.test")
+        self.assertEqual(payload["mail_session"]["status"], "consumed")
+        self.assertEqual(payload["card_allocations"][0]["card_masked"], "**** **** **** 4242")
+        self.assertEqual(payload["uploads"][0]["status"], "unknown")
+        event_times = [item["created_at"] for item in payload["events"]]
+        self.assertEqual(event_times, sorted(event_times))
+        self.assertEqual(payload["events"][-1]["event_type"], "upload.unknown")
+        self.assertNotIn(
+            "unrelated.same_trace",
+            [item["event_type"] for item in payload["events"]],
+        )
+        serialized = timeline.text
+        for forbidden in (
+            "73918426",
+            "4242424242424242",
+            "vault://secret",
+            "session_token_hash",
+            "delivered_code",
+            "details_json",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+        second_identity = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="timeline-other@example.test",
+            password="timeline-other-password",
+            device_name="timeline-other-device",
+        )
+        second_token = self.login(
+            email="timeline-other@example.test",
+            password="timeline-other-password",
+            device_id=second_identity.device_id,
+        )
+        hidden = self.request(
+            "GET",
+            f"/api/v1/tasks/{task_id}/timeline",
+            headers=self.bearer(second_token),
+        )
+        self.assertEqual(hidden.status_code, 404)
+
     def test_task_history_is_newest_first_and_bounded(self) -> None:
         token = self.login()
         headers = self.bearer(token)
         created_ids = []
+        created_at_base = utc_now()
         for index in range(3):
             response = self.request(
                 "POST",
@@ -456,6 +1298,16 @@ class PlatformAppTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 201, response.text)
             created_ids.append(response.json()["id"])
+            with self.app.state.session_factory() as db:
+                task = db.get(Task, response.json()["id"])
+                task.created_at = created_at_base + timedelta(seconds=index)
+                db.commit()
+            closed = self.request(
+                "POST",
+                f"/api/v1/tasks/{response.json()['id']}/close",
+                headers=headers,
+            )
+            self.assertEqual(closed.status_code, 200, closed.text)
 
         listed = self.request(
             "GET", "/api/v1/tasks?limit=2", headers=headers
@@ -505,6 +1357,34 @@ class PlatformAppTests(unittest.TestCase):
             json={"type": "mail_code", "idempotency_key": "self-revoke-task"},
         )
         self.assertEqual(task.status_code, 201, task.text)
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="d***@example.test",
+                connector_type="http",
+                secret_ref="vault://mailboxes/device-revoke",
+            )
+            db.add(mailbox)
+            db.flush()
+            session = MailSession(
+                tenant_id="tenant-a",
+                task_id=task.json()["id"],
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                mailbox_id=mailbox.id,
+                trace_id=task.json()["trace_id"],
+                status="code_ready",
+                start_watermark="connector-watermark-before-device-revoke",
+                last_message_hash="d" * 64,
+                delivered_code="482731",
+                delivered_message_id_hash="e" * 64,
+                delivered_at=utc_now(),
+                code_expires_at=utc_now() + timedelta(minutes=1),
+                expires_at=utc_now() + timedelta(minutes=5),
+            )
+            db.add(session)
+            db.commit()
+            session_id = session.id
         revoked = self.request(
             "POST",
             f"/api/v1/devices/{self.identity.device_id}/revoke",
@@ -518,6 +1398,14 @@ class PlatformAppTests(unittest.TestCase):
             persisted = db.get(Task, task.json()["id"])
             self.assertIsNotNone(persisted)
             self.assertEqual(persisted.status, "cancelled")
+            session = db.get(MailSession, session_id)
+            self.assertEqual(session.status, "expired")
+            self.assertIsNone(session.delivered_code)
+            self.assertIsNone(session.delivered_message_id_hash)
+            self.assertIsNone(session.delivered_at)
+            self.assertIsNone(session.code_expires_at)
+            self.assertIsNone(session.start_watermark)
+            self.assertIsNone(session.last_message_hash)
 
     def test_audit_never_contains_credentials(self) -> None:
         token = self.login()
@@ -656,6 +1544,139 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(empty.status_code, 200, empty.text)
         self.assertEqual(empty.json(), [])
 
+    def test_audit_metadata_redacts_sensitive_headers_at_write_and_read(self) -> None:
+        token = self.login()
+        unsafe_user_agents = (
+            "EvidenceClient/1.0 aUtHoRiZaTiOn: Basic AUTH_COLON_SECRET",
+            "EvidenceClient/1.0 AUTHORIZATION=Basic AUTH_EQUALS_SECRET",
+            "EvidenceClient/1.0 prefix bEaReR BEARER_SECRET",
+            "EvidenceClient/1.0 VaUlT://mail/prod",
+            "EvidenceClient/1.0 4111111111111111",
+        )
+        for index, user_agent in enumerate(unsafe_user_agents):
+            headers = {**self.bearer(token), "User-Agent": user_agent}
+            if index == 0:
+                headers["X-Real-IP"] = (
+                    "203.0.113.18 Authorization=Bearer AUDIT_IP_SECRET"
+                )
+            created = self.request(
+                "POST",
+                "/api/v1/tasks",
+                headers=headers,
+                json={
+                    "type": "mail_code",
+                    "idempotency_key": f"unsafe-audit-metadata-{index}",
+                },
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            with self.app.state.session_factory() as db:
+                event = db.scalar(
+                    select(AuditEvent).where(
+                        AuditEvent.trace_id == created.json()["trace_id"],
+                        AuditEvent.event_type == "task.created",
+                    )
+                )
+                task = db.get(Task, created.json()["id"])
+                self.assertIsNotNone(task)
+                task.status = "cancelled"
+                task.closed_at = utc_now()
+                db.commit()
+                self.assertIsNotNone(event)
+                with self.subTest(user_agent=user_agent):
+                    self.assertEqual(event.user_agent, "[REDACTED]")
+                if index == 0:
+                    with self.subTest(header="X-Real-IP"):
+                        self.assertIsNone(event.ip_address)
+
+        safe = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers={
+                **self.bearer(token),
+                "User-Agent": "Evidence Client/2.0",
+                "X-Real-IP": "203.0.113.19",
+            },
+            json={
+                "type": "mail_code",
+                "idempotency_key": "safe-audit-metadata",
+            },
+        )
+        self.assertEqual(safe.status_code, 201, safe.text)
+        legacy_trace_id = "00000000-0000-4000-8000-000000000097"
+        legacy_user_agent = (
+            "LegacyEvidence/1.0 Authorization=Bearer LEGACY_UA_SECRET "
+            "vault://mail/prod 4111111111111111"
+        )
+        legacy_ip_address = (
+            "203.0.113.20 Authorization=Bearer LEGACY_IP_SECRET"
+        )
+        with self.app.state.session_factory() as db:
+            safe_event = db.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.trace_id == safe.json()["trace_id"],
+                    AuditEvent.event_type == "task.created",
+                )
+            )
+            self.assertIsNotNone(safe_event)
+            self.assertEqual(safe_event.user_agent, "Evidence Client/2.0")
+            self.assertEqual(safe_event.ip_address, "203.0.113.19")
+            user = db.get(User, self.identity.user_id)
+            self.assertIsNotNone(user)
+            user.role = "security_auditor"
+            db.add(
+                AuditEvent(
+                    tenant_id="tenant-a",
+                    user_id=self.identity.user_id,
+                    device_id=self.identity.device_id,
+                    actor_id=self.identity.user_id,
+                    event_type="legacy.metadata.test",
+                    action="legacy.metadata.test",
+                    result="success",
+                    entity_type="task",
+                    entity_id="legacy-safe-evidence",
+                    trace_id=legacy_trace_id,
+                    ip_address=legacy_ip_address,
+                    user_agent=legacy_user_agent,
+                    details_json="{}",
+                )
+            )
+            db.commit()
+        auditor_token = self.login()
+
+        response = self.request(
+            "GET",
+            f"/api/v1/admin/audit?trace_id={legacy_trace_id}",
+            headers=self.bearer(auditor_token),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(response.json()[0]["user_agent"], "[REDACTED]")
+        self.assertIsNone(response.json()[0]["ip_address"])
+        self.assertEqual(response.json()[0]["entity_id"], "legacy-safe-evidence")
+
+        exported = self.request(
+            "GET",
+            f"/api/v1/admin/audit/export?trace_id={legacy_trace_id}",
+            headers=self.bearer(auditor_token),
+        )
+        self.assertEqual(exported.status_code, 200, exported.text)
+        rows = list(
+            csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig")))
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["user_agent"], "[REDACTED]")
+        self.assertEqual(rows[0]["ip_address"], "")
+        self.assertEqual(rows[0]["entity_id"], "legacy-safe-evidence")
+        serialized = json.dumps(response.json()) + exported.text
+        for forbidden in (
+            "LEGACY_UA_SECRET",
+            "LEGACY_IP_SECRET",
+            "vault://",
+            "Bearer",
+            "4111111111111111",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
     def test_audit_export_is_tenant_scoped_and_role_protected(self) -> None:
         operator_token = self.login()
         forbidden = self.request(
@@ -758,6 +1779,25 @@ class PlatformAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["error"]["code"], "validation_error")
+
+    def test_default_task_ttl_is_thirty_minutes(self) -> None:
+        self.assertEqual(Settings(_env_file=None).task_ttl_seconds, 1_800)
+
+    def test_created_task_uses_the_default_thirty_minute_ttl(self) -> None:
+        token = self.login()
+        before = utc_now()
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(token),
+            json={"type": "mail_code", "idempotency_key": "task-default-ttl"},
+        )
+        after = utc_now()
+
+        self.assertEqual(created.status_code, 201, created.text)
+        expires_at = datetime.fromisoformat(created.json()["expires_at"])
+        self.assertGreaterEqual(expires_at, before + timedelta(seconds=1_800))
+        self.assertLessEqual(expires_at, after + timedelta(seconds=1_800))
 
     def test_closed_and_expired_tasks_remain_viewable_but_terminal(self) -> None:
         token = self.login()
@@ -881,30 +1921,68 @@ class PlatformAppTests(unittest.TestCase):
                 policy_version="sub2-v1",
             )
             db.add_all([queued, running])
+            db.flush()
+            queued_outbox = OutboxEvent(
+                tenant_id="tenant-a",
+                event_type="upload.requested",
+                aggregate_type="upload_job",
+                aggregate_id=queued.id,
+                status="pending",
+            )
+            running_outbox = OutboxEvent(
+                tenant_id="tenant-a",
+                event_type="upload.requested",
+                aggregate_type="upload_job",
+                aggregate_id=running.id,
+                status="processing",
+                claimed_at=now,
+            )
+            db.add_all([queued_outbox, running_outbox])
             db.commit()
             allocation_id = allocation.id
             session_id = session.id
             queued_id = queued.id
             running_id = running.id
+            outbox_ids = (queued_outbox.id, running_outbox.id)
 
-        closed = self.request(
-            "POST", f"/api/v1/tasks/{task_id}/close", headers=headers
-        )
+        from platform import lifecycle
+
+        original_release = lifecycle.release_task_resources
+        skipped_first_phase = False
+
+        def simulate_locked_resources(*args, **kwargs):
+            nonlocal skipped_first_phase
+            if kwargs.get("skip_locked") and not skipped_first_phase:
+                skipped_first_phase = True
+                return LifecycleSweepResult()
+            return original_release(*args, **kwargs)
+
+        with mock.patch(
+            "platform.lifecycle.release_task_resources",
+            side_effect=simulate_locked_resources,
+        ):
+            closed = self.request(
+                "POST", f"/api/v1/tasks/{task_id}/close", headers=headers
+            )
         self.assertEqual(closed.status_code, 200, closed.text)
         self.assertEqual(closed.json()["status"], "closed")
+        self.assertTrue(skipped_first_phase)
 
         with self.app.state.session_factory() as db:
             allocation = db.get(CardAllocation, allocation_id)
             session = db.get(MailSession, session_id)
             queued = db.get(UploadJob, queued_id)
             running = db.get(UploadJob, running_id)
+            outboxes = [db.get(OutboxEvent, outbox_id) for outbox_id in outbox_ids]
             self.assertEqual(allocation.status, "released")
             self.assertIsNotNone(allocation.released_at)
             self.assertEqual(session.status, "revoked")
             self.assertIsNone(session.delivered_code)
             self.assertIsNone(session.delivered_at)
             self.assertEqual(queued.status, "cancelled")
-            self.assertEqual(running.status, "cancel_pending")
+            self.assertEqual(running.status, "unknown")
+            self.assertEqual(running.error_code, "external_unknown")
+            self.assertEqual([event.status for event in outboxes], ["processed", "processed"])
             events = list(
                 db.scalars(
                     select(AuditEvent).where(
@@ -920,7 +1998,7 @@ class PlatformAppTests(unittest.TestCase):
                     "card.released",
                     "mail_session.revoked",
                     "upload.cancel_requested",
-                    "upload.cancel_requested",
+                    "upload.unknown",
                 ],
             )
 
@@ -938,7 +2016,16 @@ class PlatformAppTests(unittest.TestCase):
                     )
                 )
             )
+            task_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == task_id,
+                        AuditEvent.event_type == "task.closed",
+                    )
+                )
+            )
         self.assertEqual(len(replay_events), 4)
+        self.assertEqual(len(task_events), 1)
 
     def test_login_validation_does_not_reflect_password_input(self) -> None:
         rejected_secret = "super-secret-value-" + "x" * 1024
@@ -958,6 +2045,149 @@ class PlatformAppTests(unittest.TestCase):
         for detail in response.json()["error"]["details"]:
             self.assertNotIn("input", detail)
 
+    def test_login_rejects_unknown_request_fields(self) -> None:
+        response = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            json={
+                "tenant_id": "tenant-a",
+                "email": "first@example.test",
+                "password": self.account_password,
+                "device_id": self.identity.device_id,
+                "unexpected": "must-not-be-accepted",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["error"]["code"], "validation_error")
+
+    def test_login_failures_are_audited_without_enumeration_or_secrets(self) -> None:
+        bad_password = "wrong-password-sentinel"
+        unknown_email = "unknown-account@example.test"
+        common_headers = {
+            "X-Forwarded-For": "203.0.113.27",
+            "User-Agent": "phase-one-login-audit-test",
+        }
+        wrong = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            headers={**common_headers, "X-Trace-Id": "10000000-0000-4000-8000-000000000001"},
+            json={
+                "tenant_id": "tenant-a",
+                "email": "first@example.test",
+                "password": bad_password,
+                "device_id": self.identity.device_id,
+            },
+        )
+        unknown = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            headers={**common_headers, "X-Trace-Id": "10000000-0000-4000-8000-000000000002"},
+            json={
+                "tenant_id": "tenant-a",
+                "email": unknown_email,
+                "password": bad_password,
+                "device_id": "forged-device-id",
+            },
+        )
+        invalid_device = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            headers={**common_headers, "X-Trace-Id": "10000000-0000-4000-8000-000000000003"},
+            json={
+                "tenant_id": "tenant-a",
+                "email": "first@example.test",
+                "password": self.account_password,
+                "device_id": "forged-device-id",
+            },
+        )
+        self.assertEqual(wrong.status_code, 401, wrong.text)
+        self.assertEqual(unknown.status_code, 401, unknown.text)
+        self.assertEqual(invalid_device.status_code, 401, invalid_device.text)
+        self.assertEqual(wrong.json()["error"]["code"], "unauthorized")
+        self.assertEqual(unknown.json()["error"]["code"], "unauthorized")
+        for field in ("code", "message", "recovery_hint"):
+            self.assertEqual(
+                invalid_device.json()["error"][field], wrong.json()["error"][field]
+            )
+            self.assertEqual(unknown.json()["error"][field], wrong.json()["error"][field])
+        for denied in (wrong, unknown, invalid_device):
+            self.assertNotIn("access_token", denied.text)
+
+        with self.app.state.session_factory() as db:
+            failures = list(
+                db.scalars(
+                    select(AuditEvent)
+                    .where(AuditEvent.event_type == "auth.login_failed")
+                    .order_by(AuditEvent.created_at, AuditEvent.id)
+                )
+            )
+            target_attempts = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "auth.login_failed",
+                        AuditEvent.user_id == self.identity.user_id,
+                        AuditEvent.actor_id == "anonymous",
+                    )
+                )
+            )
+            misattributed = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "auth.login_failed",
+                        AuditEvent.actor_id == self.identity.user_id,
+                    )
+                )
+            )
+            self.assertIsNone(db.get(Device, "forged-device-id"))
+            self.assertIsNone(db.get(Device, self.identity.device_id).last_seen_at)
+        self.assertEqual(len(failures), 3)
+        failures_by_trace = {failure.trace_id: failure for failure in failures}
+        known = failures_by_trace["10000000-0000-4000-8000-000000000001"]
+        anonymous = failures_by_trace["10000000-0000-4000-8000-000000000002"]
+        invalid_device_event = failures_by_trace[
+            "10000000-0000-4000-8000-000000000003"
+        ]
+        for failure in failures:
+            self.assertEqual(failure.actor_id, "anonymous")
+            self.assertEqual(failure.result, "failure")
+            self.assertIsNone(failure.device_id)
+        self.assertEqual(known.user_id, self.identity.user_id)
+        self.assertEqual(known.entity_id, self.identity.user_id)
+        self.assertEqual(known.trace_id, "10000000-0000-4000-8000-000000000001")
+        self.assertEqual(anonymous.trace_id, "10000000-0000-4000-8000-000000000002")
+        self.assertIsNone(anonymous.user_id)
+        self.assertIsNone(anonymous.entity_id)
+        self.assertEqual(invalid_device_event.user_id, self.identity.user_id)
+        self.assertEqual(invalid_device_event.entity_id, self.identity.user_id)
+        self.assertEqual(
+            invalid_device_event.trace_id,
+            "10000000-0000-4000-8000-000000000003",
+        )
+        self.assertEqual(len(target_attempts), 2)
+        self.assertEqual(misattributed, [])
+        self.assertEqual(len({failure.trace_id for failure in failures}), 3)
+        audit_text = "\n".join(event.details_json for event in failures)
+        for secret in (
+            bad_password,
+            self.account_password,
+            "first@example.test",
+            unknown_email,
+            "forged-device-id",
+        ):
+            self.assertNotIn(secret, audit_text)
+        self.assertIn('"reason": "authentication_failed"', audit_text)
+
+        success_token = self.login()
+        with self.app.state.session_factory() as db:
+            success = db.scalar(
+                select(AuditEvent).where(AuditEvent.event_type == "auth.login")
+            )
+        self.assertEqual(success.user_id, self.identity.user_id)
+        self.assertEqual(success.device_id, self.identity.device_id)
+        self.assertEqual(success.actor_id, self.identity.user_id)
+        self.assertNotIn(success_token, success.details_json)
+
     def test_openapi_describes_phase_one_contract(self) -> None:
         response = self.request("GET", "/api/openapi.json")
         self.assertEqual(response.status_code, 200)
@@ -969,6 +2199,7 @@ class PlatformAppTests(unittest.TestCase):
             "/api/v1/mailboxes",
             "/api/v1/tasks",
             "/api/v1/tasks/{task_id}",
+            "/api/v1/tasks/{task_id}/timeline",
         ):
             self.assertIn(path, schema["paths"])
         self.assertIn("HTTPBearer", schema["components"]["securitySchemes"])
@@ -977,6 +2208,90 @@ class PlatformAppTests(unittest.TestCase):
             set(task_schema["required"]), {"type", "idempotency_key"}
         )
         self.assertNotIn("device_id", task_schema["properties"])
+        timeline_schema = schema["components"]["schemas"]["TaskTimelineResponse"]
+        self.assertEqual(
+            set(timeline_schema["required"]),
+            {
+                "task",
+                "workbench_step",
+                "mail_session",
+                "card_allocations",
+                "uploads",
+                "events",
+            },
+        )
+        serialized_timeline_schema = json.dumps(timeline_schema)
+        for forbidden in ("code", "pan", "cvv", "secret_ref", "details"):
+            self.assertNotIn(f'"{forbidden}"', serialized_timeline_schema)
+
+    def test_openapi_describes_stable_error_envelope_for_key_api_groups(self) -> None:
+        schema = self.app.openapi()
+        error_schema = schema["components"]["schemas"]["ApiErrorResponse"]
+        error_ref = {"$ref": "#/components/schemas/ApiErrorResponse"}
+
+        self.assertEqual(error_schema["required"], ["error"])
+        error_detail_ref = error_schema["properties"]["error"]
+        self.assertEqual(
+            error_detail_ref,
+            {"$ref": "#/components/schemas/ApiErrorDetail"},
+        )
+        error_detail_schema = schema["components"]["schemas"]["ApiErrorDetail"]
+        self.assertEqual(
+            set(error_detail_schema["required"]),
+            {"code", "message", "recovery_hint", "trace_id"},
+        )
+        for forbidden in (
+            "access_token",
+            "password",
+            "pan",
+            "cvv",
+            "session_token",
+            "secret_ref",
+            "proxy_ref",
+            "credential_ref",
+        ):
+            self.assertNotIn(forbidden, error_detail_schema["properties"])
+
+        key_operations = (
+            ("/api/v1/me", "get"),
+            ("/api/v1/devices/{device_id}/revoke", "post"),
+            ("/api/v1/tasks", "post"),
+            ("/api/v1/tasks/{task_id}", "get"),
+            ("/api/v1/tasks/{task_id}/card-allocation", "post"),
+            ("/api/v1/card-allocations/{allocation_id}/reveal", "post"),
+            ("/api/v1/tasks/{task_id}/mail-session", "post"),
+            ("/api/v1/mail-sessions/{session_id}/code", "get"),
+            ("/api/v1/uploads", "post"),
+            ("/api/v1/uploads/{job_id}", "get"),
+            ("/api/v1/admin/audit", "get"),
+            ("/api/v1/admin/policies/upload/versions/{policy_id}/deploy", "post"),
+        )
+        for path, method in key_operations:
+            with self.subTest(path=path, method=method):
+                responses = schema["paths"][path][method]["responses"]
+                for status in ("default", "422"):
+                    content_schema = responses[status]["content"][
+                        "application/json"
+                    ]["schema"]
+                    self.assertEqual(content_schema, error_ref)
+
+        for path, method in (
+            ("/api/v1/mail-sessions/{session_id}/code", "get"),
+            ("/api/v1/mail-sessions/{session_id}/revoke", "post"),
+            ("/api/v1/mail-sessions/{session_id}/events", "get"),
+            ("/api/v1/mail-session/{session_id}/code", "get"),
+            ("/api/v1/mail-session/{session_id}/revoke", "post"),
+            ("/api/v1/mail-session/{session_id}/events", "get"),
+        ):
+            with self.subTest(path=path, method=method, parameter="mail token"):
+                parameters = schema["paths"][path][method]["parameters"]
+                mail_token = next(
+                    parameter
+                    for parameter in parameters
+                    if parameter["name"] == "X-Mail-Session-Token"
+                )
+                self.assertEqual(mail_token["in"], "header")
+                self.assertFalse(mail_token["required"])
 
     def test_production_requires_oidc_and_rejects_local_auth(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "AUTH_MODE=oidc"):
@@ -995,6 +2310,52 @@ class PlatformAppTests(unittest.TestCase):
                     database_url="sqlite+pysqlite:///:memory:",
                 )
             )
+
+        with self.assertRaisesRegex(RuntimeError, "INTERNAL_CA_FILE"):
+            create_app(
+                Settings(
+                    environment="production",
+                    auth_mode="oidc",
+                    database_url="sqlite+pysqlite:///:memory:",
+                    oidc_issuer_url="https://identity.example.test/realms/platform",
+                    oidc_audience="email-platform-api",
+                    oidc_client_id="email-platform-web",
+                    oidc_desktop_client_id="email-platform-desktop",
+                    oidc_jwks_url="https://identity.example.test/realms/platform/protocol/openid-connect/certs",
+                    rate_limit_enabled=True,
+                    redis_url="redis://redis.example.test:6379/0",
+                    allowed_origins="https://platform.example.test",
+                )
+            )
+
+    def test_production_requires_worker_owned_mail_polling(self) -> None:
+        for environment in ("production", "staging"):
+            with self.subTest(environment=environment):
+                app = None
+                try:
+                    with self.assertRaisesRegex(RuntimeError, "MAIL_POLL_MODE=worker"):
+                        app = create_app(
+                            Settings(
+                                environment=environment,
+                                auth_mode="oidc",
+                                database_url="sqlite+pysqlite:///:memory:",
+                                oidc_issuer_url="https://identity.example.test/realms/platform",
+                                oidc_audience="email-platform-api",
+                                oidc_client_id="email-platform-web",
+                                oidc_desktop_client_id="email-platform-desktop",
+                                oidc_jwks_url="https://identity.example.test/realms/platform/protocol/openid-connect/certs",
+                                internal_ca_file="/run/secrets/internal-tls/ca.crt",
+                                rate_limit_enabled=True,
+                                redis_url="redis://redis.example.test:6379/0",
+                                allowed_origins="https://platform.example.test",
+                                mail_poll_mode="api",
+                            ),
+                            access_token_verifier=object(),
+                            rate_limit_backend=object(),
+                        )
+                finally:
+                    if app is not None:
+                        app.state.engine.dispose()
 
     def test_oidc_mode_uses_external_subject_and_disables_local_login(self) -> None:
         class FakeOidcVerifier:

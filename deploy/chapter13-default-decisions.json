@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "plan_chapter": "13",
+  "production_acceptance": false,
+  "decisions": {
+    "sub2_adapter": {
+      "default": "standard_http_api",
+      "status": "generic_adapter_only",
+      "confirmation_required": "real Sub2 API or browser-backoffice contract"
+    },
+    "card_secret_boundary": {
+      "default": "pan_in_card_vault_never_store_cvv",
+      "status": "repository_gate_passed",
+      "confirmation_required": "provider field inventory and PCI scope decision"
+    },
+    "resource_lease": {
+      "max_active_tasks_per_user": 1,
+      "task_ttl_seconds": 1800,
+      "status": "repository_gate_passed",
+      "confirmation_required": "target concurrency and recovery observation"
+    },
+    "tenant_isolation": {
+      "default": "tenant_id_required_from_first_schema",
+      "status": "repository_gate_passed",
+      "confirmation_required": "target PostgreSQL and identity-provider tenant tests"
+    },
+    "login": {
+      "default": "oidc_pkce_with_mfa",
+      "status": "repository_gate_passed",
+      "confirmation_required": "target Keycloak ACR-to-LoA, PKCE and Device Flow evidence"
+    },
+    "capacity_basis": {
+      "users": 100,
+      "concurrent_tasks": 10,
+      "status": "unvalidated_planning_default",
+      "confirmation_required": "target load profile, provider limits and deployment decision"
+    },
+    "mail_code": {
+      "visibility": "current_task_only",
+      "consumption": "one_time",
+      "ttl_seconds": 60,
+      "status": "repository_gate_passed",
+      "confirmation_required": "real provider stale-code and delivery-delay evidence"
+    }
+  }
+}

@@ -60,19 +60,25 @@ Seal and independently verify the record:
 ```powershell
 python -m scripts.training_evidence create `
   --input C:\secure\phase6-training-session.json `
-  --output release\evidence\phase6-role-training-evidence.json
+  --output C:\secure\release-evidence\phase6-role-training-evidence.json
 python -m scripts.training_evidence verify `
-  --input release\evidence\phase6-role-training-evidence.json `
+  --input C:\secure\release-evidence\phase6-role-training-evidence.json `
   --expected-release-tag v1.2.3 `
   --expected-release-commit 0123456789abcdef0123456789abcdef01234567
 ```
 
-The writer invalidates stale output first, uses a same-directory temporary file,
-flushes it, replaces atomically, and verifies the published bytes. The closed
-schema rejects unknown fields and secret-like identifiers; integrity covers the
-canonical payload SHA-256. The `release/` directory is ignored by Git. Store the
-target record in the controlled release evidence archive and copy only its file
-and payload SHA-256 into the production signoff.
+Both creation input and sealed-evidence verification use a single bounded
+stable-file read with a 64 KiB limit. Link/reparse paths, duplicate JSON keys,
+and any identity, link-count, size, or modification-state change during the
+read fail closed without printing the record content.
+
+The closed schema rejects unknown fields and secret-like identifiers; integrity
+covers the canonical payload SHA-256. The output must be an absent absolute path
+outside the repository under an existing non-symlink directory. Output preflight
+happens before the input is read; publication uses a no-replace hard-link commit point
+and never deletes or overwrites a final target. Store the target record in
+the controlled release evidence archive and copy only its file and payload
+SHA-256 into the production signoff.
 
 This repository's unit tests and asset verifier prove the evidence tool's
 behavior only. They do not replace the target session, real participants, or

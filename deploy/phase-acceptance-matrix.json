@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "plan_chapter": "12",
+  "production_acceptance": false,
+  "phases": [
+    {
+      "phase": 0,
+      "scope": "确认 Sub2 API、卡字段、邮箱供应商、角色和部署环境",
+      "acceptance_criterion": "形成接口样例、数据分类、合规边界和不可变更项",
+      "repository_status": "boundary_partial",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "approved data classification and immutable-boundary record",
+        "deployment-domain and control-plane ownership record"
+      ],
+      "missing_inputs": [
+        "redacted Sub2 request, response and authentication samples",
+        "redacted mail-provider request, response, authentication and rate-limit samples",
+        "card PAN/CVV field inventory and PCI scope decision",
+        "Keycloak ACR-to-LoA mapping and production deployment identity"
+      ]
+    },
+    {
+      "phase": 1,
+      "scope": "FastAPI/React/PostgreSQL/Keycloak/Vault 骨架、CI/CD",
+      "acceptance_criterion": "能登录、鉴权、审计、生成 OpenAPI 和前端客户端",
+      "repository_status": "repository_gate_passed",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "target Keycloak and Vault login, authorization, audit and administrator-separation evidence",
+        "target PostgreSQL, Redis, TLS, secret-manager, backup and CI release evidence"
+      ],
+      "missing_inputs": []
+    },
+    {
+      "phase": 2,
+      "scope": "任务、邮箱连接器、mail session、验证码 API",
+      "acceptance_criterion": "EXE 能登录并只通过 session 获取验证码；原始凭据不出服务端",
+      "repository_status": "repository_gate_passed",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "real mail-provider concurrency, outage, rate-limit and stale-code evidence",
+        "worker-only credential and egress-policy evidence"
+      ],
+      "missing_inputs": [
+        "real mail-provider interface and policy samples"
+      ]
+    },
+    {
+      "phase": 3,
+      "scope": "卡池、分配、租约、掩码和一次性揭示",
+      "acceptance_criterion": "并发分配无重复；用户无法越权；完整动作有审计",
+      "repository_status": "repository_gate_passed",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "target PostgreSQL concurrent-allocation and migration evidence",
+        "target Keycloak step-up and PCI scope evidence"
+      ],
+      "missing_inputs": [
+        "card PAN/CVV and PCI compliance boundary decision",
+        "production Keycloak MFA ACR-to-LoA mapping"
+      ]
+    },
+    {
+      "phase": 4,
+      "scope": "Sub2 Adapter、策略、幂等、未知结果核对",
+      "acceptance_criterion": "客户端无 Sub2 配置；成功/失败/未知可区分和回放",
+      "repository_status": "generic_adapter_gate_passed",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "real Sub2 success, failure, timeout, idempotency-query and unknown-reconciliation evidence",
+        "target Vault-path denial and domain egress-policy evidence"
+      ],
+      "missing_inputs": [
+        "real Sub2 interface, authentication, idempotency and status-query samples"
+      ]
+    },
+    {
+      "phase": 5,
+      "scope": "EXE 登录改造、平台任务工作台、自动填充适配",
+      "acceptance_criterion": "现有连续复制/粘贴体验保留，注销/过期可安全停止",
+      "repository_status": "repository_gate_passed",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "Windows EXE login, lock, logout, offline recovery, update rollback and clipboard evidence",
+        "real business-page field-order and continuous-paste evidence"
+      ],
+      "missing_inputs": [
+        "approved real business-page field sequence and Windows pilot environment"
+      ]
+    },
+    {
+      "phase": 6,
+      "scope": "小范围试点、监控、培训、回滚演练",
+      "acceptance_criterion": "试点用户全流程完成；无越权、无敏感日志、可追溯",
+      "repository_status": "preflight_only",
+      "production_acceptance": false,
+      "target_evidence_required": [
+        "real pilot-user end-to-end evidence and independent review",
+        "real alert delivery, backup restore, rollback, training and audit-trace evidence",
+        "non-production IAM and storage denial, data provenance, fixture digest, live connector and mailbox-secret absence, and independent review evidence"
+      ],
+      "missing_inputs": [
+        "pilot users, target operators, alert receivers and approved maintenance window",
+        "target development and demo data-provenance and access-control evidence"
+      ]
+    }
+  ]
+}

@@ -30,12 +30,26 @@ from session_store import (
     SessionStoreError,
     WindowsDpapiSessionStore,
 )
+from scripts.external_json import parse_unique_json_bytes
 
 
 PLATFORM_BASE_URL_ENV = "PLATFORM_BASE_URL"
 API_PREFIX = "/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_CARD_REVEAL_ACR_VALUES = "urn:email-platform:acr:mfa"
+MAX_JSON_RESPONSE_BYTES = 64 * 1024
+MAX_DEVICE_AUTHORIZATION_LIFETIME_SECONDS = 600
+AUTH_CONFIG_FIELDS = frozenset(
+    {
+        "mode",
+        "issuer",
+        "client_id",
+        "desktop_client_id",
+        "audience",
+        "admin_role_change_acr",
+    }
+)
+_LEGACY_AUTH_CONFIG_FIELDS = AUTH_CONFIG_FIELDS - {"admin_role_change_acr"}
 
 
 class PlatformClientError(Exception):
@@ -82,12 +96,14 @@ class PlatformApiError(PlatformClientError):
         *,
         code: str,
         status: int,
+        recovery_hint: str,
         trace_id: str | None = None,
         details: Any = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+        self.recovery_hint = recovery_hint
         self.trace_id = trace_id
         self.details = details
 
@@ -108,6 +124,100 @@ class PlatformSessionError(PlatformClientError):
     """A securely persisted OIDC refresh session could not be used."""
 
 
+def _read_json_response(
+    response: Any,
+    *,
+    message: str,
+    status: int | None = None,
+    trace_id: str | None = None,
+) -> bytes:
+    body = response.read(MAX_JSON_RESPONSE_BYTES + 1)
+    if len(body) > MAX_JSON_RESPONSE_BYTES:
+        raise PlatformProtocolError(message, status=status, trace_id=trace_id)
+    return body
+
+
+class TaskTransitionCleanup:
+    """Own compensating task closes across a desktop session transition."""
+
+    def __init__(self, client: "PlatformClient", access_token: str) -> None:
+        self._client = client
+        self._access_token: str | None = access_token
+        self._lock = threading.Lock()
+        self._task_ids: list[str] = []
+        self._reserved: set[str] = set()
+        self._cancelled = False
+        self._worker_finished = False
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def attach(self, task_id: str) -> Callable[[], None] | None:
+        normalized = _required_value(task_id, "task_id")
+        with self._lock:
+            if normalized not in self._task_ids:
+                self._task_ids.append(normalized)
+            return self._reserve_locked((normalized,)) if self._cancelled else None
+
+    def close(self, task_id: str) -> Callable[[], None] | None:
+        normalized = _required_value(task_id, "task_id")
+        with self._lock:
+            if normalized not in self._task_ids:
+                self._task_ids.append(normalized)
+            return self._reserve_locked((normalized,))
+
+    def cancel(self) -> Callable[[], None] | None:
+        with self._lock:
+            self._cancelled = True
+            cleanup = self._reserve_locked(tuple(self._task_ids))
+            if self._worker_finished:
+                self._access_token = None
+            return cleanup
+
+    def worker_finished(self) -> Callable[[], None] | None:
+        with self._lock:
+            self._worker_finished = True
+            cleanup = (
+                self._reserve_locked(tuple(self._task_ids))
+                if self._cancelled
+                else None
+            )
+            if self._cancelled:
+                self._access_token = None
+            return cleanup
+
+    def commit(self) -> bool:
+        with self._lock:
+            if self._cancelled or not self._worker_finished:
+                return False
+            self._access_token = None
+            return True
+
+    def _reserve_locked(
+        self, task_ids: tuple[str, ...]
+    ) -> Callable[[], None] | None:
+        token = self._access_token
+        pending = tuple(task_id for task_id in task_ids if task_id not in self._reserved)
+        if token is None or not pending:
+            return None
+        self._reserved.update(pending)
+
+        def cleanup() -> None:
+            first_error: PlatformClientError | None = None
+            for task_id in pending:
+                try:
+                    self._client._close_task_with_access_token(task_id, token)
+                except PlatformClientError as error:
+                    if first_error is None:
+                        first_error = error
+            if first_error is not None:
+                raise first_error
+
+        return cleanup
+
+
 @dataclass(frozen=True)
 class MailSessionSnapshot:
     id: str
@@ -116,12 +226,15 @@ class MailSessionSnapshot:
     expires_at: str
     trace_id: str | None = None
     session_token: str | None = dataclass_field(default=None, repr=False)
+    polling_interval: int | None = None
 
 
 @dataclass(frozen=True)
 class MailCodeSnapshot:
     status: str
-    code: str | None = None
+    code: str | None = dataclass_field(default=None, repr=False)
+    received_at: str | None = None
+    message_id_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +282,17 @@ class StepUpAuthorization:
 
 
 @dataclass(frozen=True)
+class DeviceSnapshot:
+    id: str
+    tenant_id: str
+    user_id: str
+    name: str
+    revoked_at: str
+    last_seen_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class UploadJobSnapshot:
     id: str
     task_id: str
@@ -203,6 +327,36 @@ class TaskSnapshot:
     created_at: str
     expires_at: str | None
     closed_at: str | None
+
+
+@dataclass(frozen=True)
+class TaskTimelineMailSnapshot:
+    id: str
+    email_masked: str
+    status: str
+    expires_at: str
+    consumed_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class TaskTimelineAllocationSnapshot:
+    id: str
+    card_masked: str
+    brand: str
+    status: str
+    expires_at: str
+    released_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class TaskRecoverySnapshot:
+    task: TaskSnapshot
+    mail_session: TaskTimelineMailSnapshot | None
+    card_allocations: tuple[TaskTimelineAllocationSnapshot, ...]
+    uploads: tuple[UploadJobSnapshot, ...]
+    workbench_step: str | None = None
 
 
 class LoopbackAuthorizationReceiver:
@@ -383,6 +537,7 @@ class PlatformClient:
         self._state_lock = threading.RLock()
         self._refresh_lock = threading.Lock()
         self._auth_generation = 0
+        self._pending_refresh_revocations: dict[int, list[str]] = {}
         self._oidc_session_active = False
         self.last_trace_id: str | None = None
 
@@ -431,6 +586,19 @@ class PlatformClient:
                 self._session_store.clear()
             except SessionStoreError as error:
                 raise PlatformSessionError("无法清除已保存的平台会话") from error
+
+    def begin_task_transition(
+        self, previous_task_id: str | None = None
+    ) -> TaskTransitionCleanup:
+        """Capture only the current access token for bounded task compensation."""
+
+        with self._state_lock:
+            if self._access_token is None:
+                raise PlatformAuthenticationRequiredError("请先登录平台")
+            cleanup = TaskTransitionCleanup(self, self._access_token)
+        if isinstance(previous_task_id, str) and previous_task_id.strip():
+            cleanup.attach(previous_task_id)
+        return cleanup
 
     def _activate_oidc_tokens(
         self,
@@ -509,8 +677,13 @@ class PlatformClient:
 
     def get_auth_config(self) -> dict[str, str | None]:
         response = self._request_json("GET", "/auth/config", authenticated=False)
-        expected = {"mode", "issuer", "client_id", "desktop_client_id", "audience"}
-        if set(response) != expected or response.get("mode") not in {"local", "oidc"}:
+        if set(response) not in {
+            AUTH_CONFIG_FIELDS,
+            _LEGACY_AUTH_CONFIG_FIELDS,
+        } or response.get("mode") not in {
+            "local",
+            "oidc",
+        }:
             raise PlatformProtocolError("平台身份配置响应无效", trace_id=self.last_trace_id)
         if any(
             value is not None and not isinstance(value, str)
@@ -636,8 +809,6 @@ class PlatformClient:
     ) -> StepUpAuthorization:
         """Run isolated PKCE step-up without replacing the primary session."""
 
-        if authorization_timeout <= 0:
-            raise ValueError("authorization_timeout 必须大于 0")
         normalized_acr = _required_value(acr_values, "acr_values")
         if (
             len(normalized_acr) > 255
@@ -645,6 +816,69 @@ class PlatformClient:
             or not normalized_acr.startswith(("urn:", "https://"))
         ):
             raise PlatformProtocolError("卡揭示二次认证等级无效")
+        return self._reauthenticate_with_pkce(
+            on_authorization_url,
+            acr_values=normalized_acr,
+            authorization_timeout=authorization_timeout,
+            cancelled=cancelled,
+            loopback_factory=loopback_factory,
+        )
+
+    def reauthenticate_for_unlock(
+        self,
+        on_authorization_url: Callable[[str], None],
+        *,
+        expected_tenant_id: str,
+        expected_user_id: str,
+        expected_device_id: str,
+        authorization_timeout: float = 300.0,
+        cancelled: Callable[[], bool] | None = None,
+        loopback_factory: Callable[[], LoopbackAuthorizationReceiver] = LoopbackAuthorizationReceiver,
+    ) -> dict[str, Any]:
+        """Force an isolated login and prove it is the locked principal."""
+
+        expected_identity = (
+            _required_value(expected_tenant_id, "expected_tenant_id"),
+            _required_value(expected_user_id, "expected_user_id"),
+            _required_value(expected_device_id, "expected_device_id"),
+        )
+        authorization = self._reauthenticate_with_pkce(
+            on_authorization_url,
+            authorization_timeout=authorization_timeout,
+            cancelled=cancelled,
+            loopback_factory=loopback_factory,
+        )
+        profile = _decode_me(
+            self._request_json(
+                "GET", "/me", _access_token_override=authorization.access_token
+            ),
+            self.last_trace_id,
+        )
+        identity_values = tuple(
+            profile.get(field) for field in ("tenant_id", "id", "device_id")
+        )
+        if any(not isinstance(value, str) or not value.strip() for value in identity_values):
+            raise PlatformProtocolError("解锁身份响应不完整")
+        actual_identity = tuple(value.strip() for value in identity_values)
+        if actual_identity != expected_identity:
+            raise PlatformDeviceAuthorizationError(
+                "解锁身份与当前会话不一致", code="identity_mismatch"
+            )
+        return profile
+
+    def _reauthenticate_with_pkce(
+        self,
+        on_authorization_url: Callable[[str], None],
+        *,
+        acr_values: str | None = None,
+        authorization_timeout: float = 300.0,
+        cancelled: Callable[[], bool] | None = None,
+        loopback_factory: Callable[[], LoopbackAuthorizationReceiver] = LoopbackAuthorizationReceiver,
+    ) -> StepUpAuthorization:
+        """Run forced PKCE without changing the primary access or refresh session."""
+
+        if authorization_timeout <= 0:
+            raise ValueError("authorization_timeout 必须大于 0")
         with self._state_lock:
             if self._access_token is None:
                 raise PlatformAuthenticationRequiredError("请先登录平台")
@@ -690,20 +924,26 @@ class PlatformClient:
                 or redirect.fragment
             ):
                 raise PlatformProtocolError("统一身份回调地址无效")
+            authorization_parameters = {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": receiver.redirect_uri,
+                "scope": "openid profile email",
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "prompt": "login",
+                "max_age": "0",
+            }
+            if acr_values is not None:
+                authorization_parameters["acr_values"] = acr_values
             authorization_url = authorization_endpoint + "?" + urllib.parse.urlencode(
-                {
-                    "response_type": "code",
-                    "client_id": client_id,
-                    "redirect_uri": receiver.redirect_uri,
-                    "scope": "openid profile email",
-                    "state": state,
-                    "code_challenge": challenge,
-                    "code_challenge_method": "S256",
-                    "prompt": "login",
-                    "max_age": "0",
-                    "acr_values": normalized_acr,
-                }
+                authorization_parameters
             )
+            if is_cancelled():
+                raise PlatformDeviceAuthorizationError(
+                    "二次认证已取消", code="cancelled"
+                )
             on_authorization_url(authorization_url)
             code = receiver.wait_for_code(
                 expected_state=state,
@@ -749,24 +989,34 @@ class PlatformClient:
         if refresh_token is not None:
             if not isinstance(refresh_token, str) or not refresh_token.strip():
                 raise PlatformProtocolError("卡揭示二次认证刷新令牌格式无效")
-            raw_revocation_endpoint = discovery.get("revocation_endpoint")
-            if raw_revocation_endpoint is None:
-                raise PlatformSessionError("统一身份服务无法撤销二次认证临时会话")
-            revocation_endpoint = _same_origin_oidc_endpoint(
-                raw_revocation_endpoint, issuer
-            )
-            revoke_status, _ = self._request_external_json_with_status(
-                "POST",
-                revocation_endpoint,
-                form={
-                    "client_id": client_id,
-                    "token": refresh_token,
-                    "token_type_hint": "refresh_token",
-                },
-                allow_empty=True,
-            )
-            if revoke_status < 200 or revoke_status >= 300:
-                raise PlatformSessionError("无法撤销二次认证临时会话")
+            normalized_refresh_token = refresh_token.strip()
+            try:
+                raw_revocation_endpoint = discovery.get("revocation_endpoint")
+                if raw_revocation_endpoint is None:
+                    raise PlatformSessionError("统一身份服务无法撤销二次认证临时会话")
+                revocation_endpoint = _same_origin_oidc_endpoint(
+                    raw_revocation_endpoint, issuer
+                )
+                revoke_status, _ = self._request_external_json_with_status(
+                    "POST",
+                    revocation_endpoint,
+                    form={
+                        "client_id": client_id,
+                        "token": normalized_refresh_token,
+                        "token_type_hint": "refresh_token",
+                    },
+                    allow_empty=True,
+                )
+                if revoke_status < 200 or revoke_status >= 300:
+                    raise PlatformSessionError("无法撤销二次认证临时会话")
+            except PlatformClientError:
+                with self._state_lock:
+                    pending = self._pending_refresh_revocations.setdefault(
+                        generation, []
+                    )
+                    if normalized_refresh_token not in pending:
+                        pending.append(normalized_refresh_token)
+                raise
 
         with self._state_lock:
             if generation != self._auth_generation or self._access_token is None:
@@ -836,6 +1086,17 @@ class PlatformClient:
                     require_token_type=True,
                     expected_generation=generation,
                 )
+            except PlatformDeviceAuthorizationError:
+                refresh_token = token_payload.get("refresh_token")
+                if isinstance(refresh_token, str) and refresh_token.strip():
+                    with self._state_lock:
+                        pending = self._pending_refresh_revocations.setdefault(
+                            generation, []
+                        )
+                        normalized = refresh_token.strip()
+                        if normalized not in pending:
+                            pending.append(normalized)
+                raise
             except (PlatformProtocolError, PlatformSessionError):
                 with self._state_lock:
                     if generation == self._auth_generation:
@@ -898,18 +1159,23 @@ class PlatformClient:
         on_challenge(challenge)
         deadline = monotonic() + challenge.expires_in
         interval = challenge.interval
-        while monotonic() < deadline:
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
             if is_cancelled():
                 self._clear_access_for_attempt(generation)
                 raise PlatformDeviceAuthorizationError(
                     "统一身份登录已取消", code="cancelled"
                 )
-            sleep(interval)
+            sleep(min(interval, remaining))
             if is_cancelled():
                 self._clear_access_for_attempt(generation)
                 raise PlatformDeviceAuthorizationError(
                     "统一身份登录已取消", code="cancelled"
                 )
+            if monotonic() >= deadline:
+                break
             status, token_payload = self._request_external_json_with_status(
                 "POST",
                 challenge.token_endpoint,
@@ -1003,7 +1269,21 @@ class PlatformClient:
         return expires_in
 
     def me(self) -> dict[str, Any]:
-        return self._request_json("GET", "/me")
+        response = self._request_json("GET", "/me")
+        return _decode_me(response, self.last_trace_id)
+
+    def revoke_owned_device(self, device_id: str) -> DeviceSnapshot:
+        normalized_device_id = _required_value(device_id, "device_id")
+        device_path = urllib.parse.quote(normalized_device_id, safe="")
+        response = self._request_json(
+            "POST", f"/devices/{device_path}/revoke"
+        )
+        snapshot = _decode_device(response, self.last_trace_id)
+        if snapshot.id != normalized_device_id:
+            raise PlatformProtocolError(
+                "设备撤销响应与请求设备不一致", trace_id=self.last_trace_id
+            )
+        return snapshot
 
     def create_task(
         self,
@@ -1011,7 +1291,7 @@ class PlatformClient:
         idempotency_key: str,
         *,
         client_reference: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TaskSnapshot:
         """Create a task using only identifiers safe for the desktop to send."""
 
         normalized_type = task_type.strip()
@@ -1027,11 +1307,28 @@ class PlatformClient:
             payload["client_reference"] = _required_value(
                 client_reference, "client_reference"
             )
-        return self._request_json("POST", "/tasks", payload)
+        response = self._request_json("POST", "/tasks", payload)
+        snapshot = _decode_task(response, self.last_trace_id)
+        if (
+            response["type"] != normalized_type
+            or response["idempotency_key"] != payload["idempotency_key"]
+            or response["client_reference"] != payload.get("client_reference")
+        ):
+            raise PlatformProtocolError(
+                "任务创建响应与请求不一致", trace_id=self.last_trace_id
+            )
+        return snapshot
 
-    def get_task(self, task_id: str) -> dict[str, Any]:
-        task_path = urllib.parse.quote(_required_value(task_id, "task_id"), safe="")
-        return self._request_json("GET", f"/tasks/{task_path}")
+    def get_task(self, task_id: str) -> TaskSnapshot:
+        normalized_task_id = _required_value(task_id, "task_id")
+        task_path = urllib.parse.quote(normalized_task_id, safe="")
+        response = self._request_json("GET", f"/tasks/{task_path}")
+        snapshot = _decode_task(response, self.last_trace_id)
+        if snapshot.id != normalized_task_id:
+            raise PlatformProtocolError(
+                "任务响应与请求任务不一致", trace_id=self.last_trace_id
+            )
+        return snapshot
 
     def list_tasks(self, *, limit: int = 50) -> list[TaskSnapshot]:
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
@@ -1039,22 +1336,58 @@ class PlatformClient:
         response = self._request_json_list("GET", f"/tasks?limit={limit}")
         return [_decode_task(item, self.last_trace_id) for item in response]
 
-    def close_task(self, task_id: str) -> dict[str, Any]:
-        task_path = urllib.parse.quote(_required_value(task_id, "task_id"), safe="")
-        return self._request_json("POST", f"/tasks/{task_path}/close")
+    def get_task_timeline(self, task_id: str) -> TaskRecoverySnapshot:
+        normalized_task_id = _required_value(task_id, "task_id")
+        task_path = urllib.parse.quote(normalized_task_id, safe="")
+        response = self._request_json("GET", f"/tasks/{task_path}/timeline")
+        return _decode_task_timeline(
+            response,
+            requested_task_id=normalized_task_id,
+            trace_id=self.last_trace_id,
+        )
+
+    def close_task(self, task_id: str) -> TaskSnapshot:
+        normalized_task_id = _required_value(task_id, "task_id")
+        task_path = urllib.parse.quote(normalized_task_id, safe="")
+        response = self._request_json("POST", f"/tasks/{task_path}/close")
+        snapshot = _decode_task(response, self.last_trace_id)
+        if snapshot.id != normalized_task_id:
+            raise PlatformProtocolError(
+                "任务关闭响应与请求任务不一致", trace_id=self.last_trace_id
+            )
+        return snapshot
+
+    def _close_task_with_access_token(
+        self, task_id: str, access_token: str
+    ) -> TaskSnapshot:
+        normalized_task_id = _required_value(task_id, "task_id")
+        task_path = urllib.parse.quote(normalized_task_id, safe="")
+        response = self._request_json(
+            "POST",
+            f"/tasks/{task_path}/close",
+            _access_token_override=access_token,
+        )
+        snapshot = _decode_task(response, self.last_trace_id)
+        if snapshot.id != normalized_task_id:
+            raise PlatformProtocolError(
+                "任务关闭响应与请求任务不一致", trace_id=self.last_trace_id
+            )
+        return snapshot
 
     def prepare_logout_cleanup(self, task_id: str | None) -> Callable[[], None]:
         """Detach the current token and return a best-effort cleanup action.
 
         Detaching is synchronous, so a newly logged-in session cannot be
         cleared by a late cleanup thread.  The returned closure keeps the old
-        tokens private and can only close the task and revoke the refresh token
-        that belonged to the session active at logout.
+        tokens private and can only request device-scoped platform cleanup and
+        revoke the refresh token that belonged to the session active at logout.
         """
 
+        del task_id  # Retained for desktop caller compatibility; logout is device-scoped.
         session_error: PlatformSessionError | None = None
         refresh_token: str | None = None
         with self._state_lock:
+            detached_generation = self._auth_generation
             self._auth_generation += 1
             access_token = self._access_token
             self._access_token = None
@@ -1067,26 +1400,36 @@ class PlatformClient:
                     "无法清除已保存的平台会话"
                 )
                 session_error.__cause__ = error
-        normalized_task_id = task_id.strip() if isinstance(task_id, str) else ""
+        remaining_refresh_tokens = [refresh_token] if refresh_token is not None else []
 
         def cleanup() -> None:
             first_error: PlatformClientError | None = None
-            if access_token is not None and normalized_task_id:
-                task_path = urllib.parse.quote(normalized_task_id, safe="")
+            with self._refresh_lock:
+                with self._state_lock:
+                    late_tokens = self._pending_refresh_revocations.pop(
+                        detached_generation, []
+                    )
+                for late_token in late_tokens:
+                    if late_token not in remaining_refresh_tokens:
+                        remaining_refresh_tokens.append(late_token)
+            if access_token is not None:
                 try:
                     self._request_json(
                         "POST",
-                        f"/tasks/{task_path}/close",
+                        "/auth/logout",
                         _access_token_override=access_token,
                     )
                 except PlatformClientError as error:
                     first_error = error
-            if refresh_token is not None:
+            failed_refresh_tokens: list[str] = []
+            for captured_refresh_token in remaining_refresh_tokens:
                 try:
-                    self._revoke_oidc_refresh_token(refresh_token)
+                    self._revoke_oidc_refresh_token(captured_refresh_token)
                 except PlatformClientError as error:
+                    failed_refresh_tokens.append(captured_refresh_token)
                     if first_error is None:
                         first_error = error
+            remaining_refresh_tokens[:] = failed_refresh_tokens
             if session_error is not None:
                 raise session_error
             if first_error is not None:
@@ -1106,7 +1449,7 @@ class PlatformClient:
         )
         raw_endpoint = discovery.get("revocation_endpoint")
         if raw_endpoint is None:
-            return
+            raise PlatformSessionError("统一身份服务未提供会话撤销能力")
         revocation_endpoint = _same_origin_oidc_endpoint(raw_endpoint, issuer)
         client_id = _required_value(
             str(config["desktop_client_id"]), "desktop_client_id"
@@ -1130,7 +1473,10 @@ class PlatformClient:
         task_path = urllib.parse.quote(_required_value(task_id, "task_id"), safe="")
         response = self._request_json("POST", f"/tasks/{task_path}/mail-sessions")
         return _decode_mail_session(
-            response, self.last_trace_id, require_session_token=True
+            response,
+            self.last_trace_id,
+            require_session_token=True,
+            require_polling_interval=True,
         )
 
     def get_mail_code(
@@ -1345,14 +1691,25 @@ class PlatformClient:
 
         try:
             with self._opener(request, timeout=self.timeout) as response:
-                response_body = response.read()
                 self.last_trace_id = (
                     _response_trace_id(getattr(response, "headers", None)) or trace_id
                 )
                 status = getattr(response, "status", 200)
+                response_body = _read_json_response(
+                    response,
+                    message="平台返回了无效的 JSON 响应",
+                    status=status,
+                    trace_id=self.last_trace_id,
+                )
         except urllib.error.HTTPError as error:
             self.last_trace_id = _response_trace_id(error.headers) or trace_id
-            self._raise_api_error(error.code, error.read(), self.last_trace_id)
+            response_body = _read_json_response(
+                error,
+                message=f"平台返回 HTTP {error.code}，但错误响应格式无效",
+                status=error.code,
+                trace_id=self.last_trace_id,
+            )
+            self._raise_api_error(error.code, response_body, self.last_trace_id)
         except (TimeoutError, socket.timeout) as error:
             self.last_trace_id = trace_id
             raise PlatformTimeoutError(
@@ -1402,10 +1759,14 @@ class PlatformClient:
         try:
             with self._opener(request, timeout=self.timeout) as response:
                 status = getattr(response, "status", 200)
-                response_body = response.read()
+                response_body = _read_json_response(
+                    response, message="统一身份服务返回无效 JSON"
+                )
         except urllib.error.HTTPError as error:
             status = error.code
-            response_body = error.read()
+            response_body = _read_json_response(
+                error, message="统一身份服务返回无效 JSON"
+            )
         except (TimeoutError, socket.timeout) as error:
             raise PlatformTimeoutError("统一身份服务请求超时") from error
         except urllib.error.URLError as error:
@@ -1417,7 +1778,7 @@ class PlatformClient:
         if allow_empty and not response_body.strip():
             return status, {}
         try:
-            payload = json.loads(response_body.decode("utf-8"))
+            payload = parse_unique_json_bytes(response_body)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise PlatformProtocolError("统一身份服务返回无效 JSON") from error
         if not isinstance(payload, dict):
@@ -1428,7 +1789,7 @@ class PlatformClient:
         self, body: bytes, status: int, trace_id: str | None
     ) -> Any:
         try:
-            payload = json.loads(body.decode("utf-8"))
+            payload = parse_unique_json_bytes(body)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise PlatformProtocolError(
                 "平台返回了无效的 JSON 响应",
@@ -1447,28 +1808,55 @@ class PlatformClient:
         self, status: int, body: bytes, header_trace_id: str | None
     ) -> None:
         try:
-            payload = json.loads(body.decode("utf-8"))
-            envelope = payload["error"]
-            code = envelope["code"]
-            message = envelope["message"]
+            payload = parse_unique_json_bytes(body)
         except (
             UnicodeDecodeError,
             json.JSONDecodeError,
-            KeyError,
-            TypeError,
         ) as error:
             raise PlatformProtocolError(
                 f"平台返回 HTTP {status}，但错误响应格式无效",
                 status=status,
                 trace_id=header_trace_id,
             ) from error
-        if not isinstance(code, str) or not isinstance(message, str):
+        if not isinstance(payload, dict) or set(payload) != {"error"}:
             raise PlatformProtocolError(
                 f"平台返回 HTTP {status}，但错误响应格式无效",
                 status=status,
                 trace_id=header_trace_id,
             )
-        trace_id = envelope.get("trace_id") or header_trace_id
+        envelope = payload["error"]
+        required = {"code", "message", "recovery_hint", "trace_id"}
+        allowed = required | {"details"}
+        if not isinstance(envelope, dict) or set(envelope) - allowed or not required.issubset(envelope):
+            raise PlatformProtocolError(
+                f"平台返回 HTTP {status}，但错误响应格式无效",
+                status=status,
+                trace_id=header_trace_id,
+            )
+        code = envelope["code"]
+        message = envelope["message"]
+        recovery_hint = envelope["recovery_hint"]
+        trace_id = envelope["trace_id"]
+        if (
+            not isinstance(code, str)
+            or re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", code) is None
+            or not isinstance(message, str)
+            or not 1 <= len(message) <= 1000
+            or any(ord(character) < 32 or ord(character) == 127 for character in message)
+            or not isinstance(recovery_hint, str)
+            or not 1 <= len(recovery_hint) <= 500
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in recovery_hint
+            )
+            or not isinstance(trace_id, str)
+            or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", trace_id) is None
+        ):
+            raise PlatformProtocolError(
+                f"平台返回 HTTP {status}，但错误响应格式无效",
+                status=status,
+                trace_id=header_trace_id,
+            )
         self.last_trace_id = trace_id
         error_type = (
             PlatformAuthenticationError if status in {401, 403} else PlatformApiError
@@ -1477,6 +1865,7 @@ class PlatformClient:
             message,
             code=code,
             status=status,
+            recovery_hint=recovery_hint,
             trace_id=trace_id,
             details=envelope.get("details"),
         )
@@ -1542,6 +1931,7 @@ def _decode_device_challenge(
         or not isinstance(expires_in, int)
         or isinstance(expires_in, bool)
         or expires_in <= 0
+        or expires_in > MAX_DEVICE_AUTHORIZATION_LIFETIME_SECONDS
         or not isinstance(interval, int)
         or isinstance(interval, bool)
         or interval <= 0
@@ -1559,6 +1949,84 @@ def _decode_device_challenge(
         device_code=device_code,
         token_endpoint=token_endpoint,
         client_id=client_id,
+    )
+
+
+def _decode_response_timestamp(
+    value: Any,
+    *,
+    field_label: str,
+    allow_none: bool,
+    trace_id: str | None,
+) -> str | None:
+    if value is None and allow_none:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise PlatformProtocolError(f"{field_label}无效", trace_id=trace_id)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise PlatformProtocolError(f"{field_label}无效", trace_id=trace_id) from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise PlatformProtocolError(f"{field_label}必须包含时区", trace_id=trace_id)
+    return value
+
+
+def _decode_me(payload: Mapping[str, Any], trace_id: str | None) -> dict[str, Any]:
+    expected = {"id", "tenant_id", "email", "device_id", "role"}
+    if set(payload) != expected or any(
+        not isinstance(payload[key], str) or not payload[key].strip()
+        for key in expected
+    ):
+        raise PlatformProtocolError("当前身份响应字段无效", trace_id=trace_id)
+    return dict(payload)
+
+
+def _decode_device(
+    payload: Mapping[str, Any], trace_id: str | None
+) -> DeviceSnapshot:
+    expected = {
+        "id",
+        "tenant_id",
+        "user_id",
+        "name",
+        "revoked_at",
+        "last_seen_at",
+        "created_at",
+    }
+    if set(payload) != expected or any(
+        not isinstance(payload[key], str) or not payload[key].strip()
+        for key in ("id", "tenant_id", "user_id", "name")
+    ):
+        raise PlatformProtocolError("设备撤销响应字段无效", trace_id=trace_id)
+    revoked_at = _decode_response_timestamp(
+        payload["revoked_at"],
+        field_label="设备撤销时间",
+        allow_none=False,
+        trace_id=trace_id,
+    )
+    last_seen_at = _decode_response_timestamp(
+        payload["last_seen_at"],
+        field_label="设备最后活动时间",
+        allow_none=True,
+        trace_id=trace_id,
+    )
+    created_at = _decode_response_timestamp(
+        payload["created_at"],
+        field_label="设备创建时间",
+        allow_none=False,
+        trace_id=trace_id,
+    )
+    if revoked_at is None or created_at is None:
+        raise PlatformProtocolError("设备撤销响应时间无效", trace_id=trace_id)
+    return DeviceSnapshot(
+        id=payload["id"],
+        tenant_id=payload["tenant_id"],
+        user_id=payload["user_id"],
+        name=payload["name"],
+        revoked_at=revoked_at,
+        last_seen_at=last_seen_at,
+        created_at=created_at,
     )
 
 
@@ -1624,11 +2092,242 @@ def _decode_task(payload: Mapping[str, Any], trace_id: str | None) -> TaskSnapsh
     )
 
 
+def _timeline_timestamp(
+    value: Any,
+    *,
+    allow_none: bool,
+    trace_id: str | None,
+) -> str | None:
+    if value is None and allow_none:
+        return None
+    if not isinstance(value, str):
+        raise PlatformProtocolError("任务恢复时间字段无效", trace_id=trace_id)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise PlatformProtocolError("任务恢复时间字段无效", trace_id=trace_id) from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise PlatformProtocolError("任务恢复时间必须包含时区", trace_id=trace_id)
+    return value
+
+
+def _decode_task_timeline(
+    payload: Mapping[str, Any],
+    *,
+    requested_task_id: str,
+    trace_id: str | None,
+) -> TaskRecoverySnapshot:
+    required_fields = {
+        "task",
+        "mail_session",
+        "card_allocations",
+        "uploads",
+        "events",
+    }
+    if set(payload) not in {frozenset(required_fields), frozenset(required_fields | {"workbench_step"})}:
+        raise PlatformProtocolError("任务恢复响应字段无效", trace_id=trace_id)
+    workbench_step = payload.get("workbench_step")
+    if workbench_step is not None and workbench_step not in {
+        "logged_in",
+        "card_allocated",
+        "waiting_code",
+        "code_received",
+        "uploading",
+        "completed",
+    }:
+        raise PlatformProtocolError("任务恢复工作台步骤无效", trace_id=trace_id)
+
+    task_payload = payload["task"]
+    if not isinstance(task_payload, dict):
+        raise PlatformProtocolError("任务恢复任务字段无效", trace_id=trace_id)
+    task = _decode_task(task_payload, trace_id)
+    if task.id != requested_task_id:
+        raise PlatformProtocolError("任务恢复响应与请求任务不一致", trace_id=trace_id)
+
+    mail_payload = payload["mail_session"]
+    mail_session: TaskTimelineMailSnapshot | None
+    if mail_payload is None:
+        mail_session = None
+    elif isinstance(mail_payload, dict):
+        expected_mail = {
+            "id",
+            "email_masked",
+            "status",
+            "expires_at",
+            "consumed_at",
+            "created_at",
+        }
+        if set(mail_payload) != expected_mail:
+            raise PlatformProtocolError("任务恢复邮箱字段无效", trace_id=trace_id)
+        if any(
+            not isinstance(mail_payload[key], str) or not mail_payload[key].strip()
+            for key in ("id", "email_masked", "status")
+        ) or mail_payload["status"] not in {
+            "initializing",
+            "waiting",
+            "code_ready",
+            "consumed",
+            "expired",
+            "revoked",
+        }:
+            raise PlatformProtocolError("任务恢复邮箱状态无效", trace_id=trace_id)
+        mail_session = TaskTimelineMailSnapshot(
+            id=mail_payload["id"],
+            email_masked=mail_payload["email_masked"],
+            status=mail_payload["status"],
+            expires_at=_timeline_timestamp(
+                mail_payload["expires_at"], allow_none=False, trace_id=trace_id
+            ),
+            consumed_at=_timeline_timestamp(
+                mail_payload["consumed_at"], allow_none=True, trace_id=trace_id
+            ),
+            created_at=_timeline_timestamp(
+                mail_payload["created_at"], allow_none=False, trace_id=trace_id
+            ),
+        )
+    else:
+        raise PlatformProtocolError("任务恢复邮箱字段无效", trace_id=trace_id)
+
+    allocation_payloads = payload["card_allocations"]
+    if not isinstance(allocation_payloads, list) or any(
+        not isinstance(item, dict) for item in allocation_payloads
+    ):
+        raise PlatformProtocolError("任务恢复卡租约字段无效", trace_id=trace_id)
+    allocations: list[TaskTimelineAllocationSnapshot] = []
+    expected_allocation = {
+        "id",
+        "card_masked",
+        "brand",
+        "status",
+        "expires_at",
+        "released_at",
+        "created_at",
+    }
+    for item in allocation_payloads:
+        if set(item) != expected_allocation:
+            raise PlatformProtocolError("任务恢复卡租约字段无效", trace_id=trace_id)
+        if any(
+            not isinstance(item[key], str) or not item[key].strip()
+            for key in ("id", "card_masked", "brand", "status")
+        ) or item["status"] not in {"active", "released", "expired"}:
+            raise PlatformProtocolError("任务恢复卡租约状态无效", trace_id=trace_id)
+        allocations.append(
+            TaskTimelineAllocationSnapshot(
+                id=item["id"],
+                card_masked=item["card_masked"],
+                brand=item["brand"],
+                status=item["status"],
+                expires_at=_timeline_timestamp(
+                    item["expires_at"], allow_none=False, trace_id=trace_id
+                ),
+                released_at=_timeline_timestamp(
+                    item["released_at"], allow_none=True, trace_id=trace_id
+                ),
+                created_at=_timeline_timestamp(
+                    item["created_at"], allow_none=False, trace_id=trace_id
+                ),
+            )
+        )
+
+    upload_payloads = payload["uploads"]
+    if not isinstance(upload_payloads, list) or any(
+        not isinstance(item, dict) for item in upload_payloads
+    ):
+        raise PlatformProtocolError("任务恢复上传字段无效", trace_id=trace_id)
+    uploads: list[UploadJobSnapshot] = []
+    expected_upload = {
+        "id",
+        "business_name",
+        "status",
+        "policy_version",
+        "external_ref",
+        "error_code",
+        "created_at",
+        "updated_at",
+    }
+    for item in upload_payloads:
+        if set(item) != expected_upload:
+            raise PlatformProtocolError("任务恢复上传字段无效", trace_id=trace_id)
+        if any(
+            not isinstance(item[key], str) or not item[key].strip()
+            for key in ("id", "business_name", "status", "policy_version")
+        ) or item["status"] not in {
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "unknown",
+            "cancelled",
+            "cancel_pending",
+        }:
+            raise PlatformProtocolError("任务恢复上传状态无效", trace_id=trace_id)
+        if any(
+            item[key] is not None and not isinstance(item[key], str)
+            for key in ("external_ref", "error_code")
+        ):
+            raise PlatformProtocolError("任务恢复上传字段类型无效", trace_id=trace_id)
+        uploads.append(
+            UploadJobSnapshot(
+                id=item["id"],
+                task_id=task.id,
+                status=item["status"],
+                business_name=item["business_name"],
+                policy_version=item["policy_version"],
+                external_ref=item["external_ref"],
+                error_code=item["error_code"],
+                created_at=_timeline_timestamp(
+                    item["created_at"], allow_none=False, trace_id=trace_id
+                ),
+                updated_at=_timeline_timestamp(
+                    item["updated_at"], allow_none=False, trace_id=trace_id
+                ),
+                trace_id=task.trace_id,
+            )
+        )
+
+    event_payloads = payload["events"]
+    if not isinstance(event_payloads, list) or any(
+        not isinstance(item, dict) for item in event_payloads
+    ):
+        raise PlatformProtocolError("任务恢复事件字段无效", trace_id=trace_id)
+    expected_event = {
+        "id",
+        "event_type",
+        "action",
+        "result",
+        "entity_type",
+        "entity_id",
+        "policy_version",
+        "created_at",
+    }
+    for item in event_payloads:
+        if set(item) != expected_event:
+            raise PlatformProtocolError("任务恢复事件字段无效", trace_id=trace_id)
+        if any(
+            not isinstance(item[key], str) or not item[key].strip()
+            for key in ("id", "event_type", "action", "result", "entity_type")
+        ) or any(
+            item[key] is not None and not isinstance(item[key], str)
+            for key in ("entity_id", "policy_version")
+        ):
+            raise PlatformProtocolError("任务恢复事件字段类型无效", trace_id=trace_id)
+        _timeline_timestamp(item["created_at"], allow_none=False, trace_id=trace_id)
+
+    return TaskRecoverySnapshot(
+        task=task,
+        mail_session=mail_session,
+        card_allocations=tuple(allocations),
+        uploads=tuple(uploads),
+        workbench_step=workbench_step,
+    )
+
+
 def _decode_mail_session(
     payload: Mapping[str, Any],
     trace_id: str | None,
     *,
     require_session_token: bool = False,
+    require_polling_interval: bool = False,
 ) -> MailSessionSnapshot:
     expected = {
         "id",
@@ -1637,16 +2336,20 @@ def _decode_mail_session(
         "expires_at",
         "trace_id",
         "session_token",
+        "polling_interval",
     }
-    required = expected - {"trace_id"}
+    required = expected - {"trace_id", "polling_interval"}
     if not require_session_token:
         required.remove("session_token")
+    if require_polling_interval:
+        required.add("polling_interval")
     if set(payload) - expected or not required.issubset(payload):
         raise PlatformProtocolError(
             "邮箱会话响应字段无效",
             trace_id=trace_id,
         )
-    if not all(isinstance(payload[field], str) for field in required):
+    string_required = required - {"polling_interval"}
+    if not all(isinstance(payload[field], str) for field in string_required):
         raise PlatformProtocolError(
             "邮箱会话响应字段类型无效",
             trace_id=trace_id,
@@ -1663,6 +2366,14 @@ def _decode_mail_session(
                 not isinstance(payload["session_token"], str)
                 or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["session_token"])
                 is None
+            )
+        )
+        or (
+            payload.get("polling_interval") is not None
+            and (
+                isinstance(payload["polling_interval"], bool)
+                or not isinstance(payload["polling_interval"], int)
+                or not 1 <= payload["polling_interval"] <= 60
             )
         )
     ):
@@ -1690,13 +2401,19 @@ def _decode_mail_session(
         expires_at=payload["expires_at"],
         trace_id=payload.get("trace_id"),
         session_token=payload.get("session_token"),
+        polling_interval=payload.get("polling_interval"),
     )
 
 
 def _decode_mail_code(
     payload: Mapping[str, Any], trace_id: str | None
 ) -> MailCodeSnapshot:
-    if set(payload) - {"status", "code"} or "status" not in payload:
+    previous_fields = frozenset({"status", "code"})
+    extended_fields = frozenset(
+        {"status", "code", "received_at", "message_id_hash"}
+    )
+    fields = frozenset(payload)
+    if fields not in {previous_fields, extended_fields}:
         raise PlatformProtocolError(
             "邮箱验证码响应字段无效",
             trace_id=trace_id,
@@ -1727,7 +2444,40 @@ def _decode_mail_code(
             "邮箱验证码响应状态与代码不一致",
             trace_id=trace_id,
         )
-    return MailCodeSnapshot(status=status, code=code)
+    received_at: str | None = None
+    message_id_hash: str | None = None
+    if fields == extended_fields:
+        received_at_value = payload["received_at"]
+        message_id_hash_value = payload["message_id_hash"]
+        if (received_at_value is None) != (message_id_hash_value is None):
+            raise PlatformProtocolError(
+                "邮箱验证码消息元数据不完整", trace_id=trace_id
+            )
+        if received_at_value is not None:
+            received_at = _decode_response_timestamp(
+                received_at_value,
+                field_label="邮箱验证码接收时间",
+                allow_none=False,
+                trace_id=trace_id,
+            )
+            if (
+                not isinstance(message_id_hash_value, str)
+                or re.fullmatch(r"[0-9a-f]{64}", message_id_hash_value) is None
+            ):
+                raise PlatformProtocolError(
+                    "邮箱验证码消息哈希无效", trace_id=trace_id
+                )
+            message_id_hash = message_id_hash_value
+        if (code is None) != (received_at is None):
+            raise PlatformProtocolError(
+                "邮箱验证码响应代码与消息元数据不一致", trace_id=trace_id
+            )
+    return MailCodeSnapshot(
+        status=status,
+        code=code,
+        received_at=received_at,
+        message_id_hash=message_id_hash,
+    )
 
 
 def _decode_upload_job(
@@ -1840,7 +2590,7 @@ def _decode_card_reveal(
         "reveal_expires_at",
         "trace_id",
     }
-    if set(payload) - expected:
+    if set(payload) != expected:
         raise PlatformProtocolError("卡详情响应字段无效", trace_id=trace_id)
     for key in (
         "id",
@@ -1854,11 +2604,24 @@ def _decode_card_reveal(
             raise PlatformProtocolError("卡详情响应字段类型无效", trace_id=trace_id)
     if payload.get("trace_id") is not None and not isinstance(payload["trace_id"], str):
         raise PlatformProtocolError("卡详情响应字段类型无效", trace_id=trace_id)
+    if re.fullmatch(r"[0-9]{12,19}", payload["pan"]) is None:
+        raise PlatformProtocolError("卡详情响应卡号格式无效", trace_id=trace_id)
     for key in ("expiry_month", "expiry_year"):
         if payload[key] is not None and (
             not isinstance(payload[key], int) or isinstance(payload[key], bool)
         ):
             raise PlatformProtocolError("卡详情响应有效期无效", trace_id=trace_id)
+    expiry_month = payload["expiry_month"]
+    expiry_year = payload["expiry_year"]
+    if (
+        (expiry_month is None) != (expiry_year is None)
+        or (expiry_month is not None and not 1 <= expiry_month <= 12)
+        or (expiry_year is not None and not 2000 <= expiry_year <= 9999)
+    ):
+        raise PlatformProtocolError("卡详情响应有效期无效", trace_id=trace_id)
+    _timeline_timestamp(
+        payload["reveal_expires_at"], allow_none=False, trace_id=trace_id
+    )
     return CardRevealSnapshot(
         id=payload["id"],
         allocation_id=payload["allocation_id"],
@@ -1888,6 +2651,7 @@ def _decode_card_reveal_challenge(
         or not acr_values.startswith(("urn:", "https://"))
     ):
         raise PlatformProtocolError("卡揭示二次认证等级无效", trace_id=trace_id)
+    _timeline_timestamp(payload["expires_at"], allow_none=False, trace_id=trace_id)
     return CardRevealChallenge(
         challenge_id=payload["challenge_id"],
         acr_values=payload["acr_values"],
@@ -1904,6 +2668,7 @@ def _decode_card_reveal_grant(
         for key in expected
     ):
         raise PlatformProtocolError("卡揭示授权响应无效", trace_id=trace_id)
+    _timeline_timestamp(payload["expires_at"], allow_none=False, trace_id=trace_id)
     return CardRevealGrant(
         reveal_grant=payload["reveal_grant"], expires_at=payload["expires_at"]
     )

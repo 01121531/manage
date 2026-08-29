@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "record_type": "phase6_pilot_evidence_index",
+  "index_reference": "pilot-evidence-index:synthetic-42",
+  "synthetic": true,
+  "index_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "execution_scope": {
+    "origin": "target_environment",
+    "identity_mode": "oidc",
+    "connector_mode": "reviewed_real_mail_and_sub2",
+    "evidence_policy": "repository_external_worm_metadata_only"
+  },
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "phase6_pilot_inputs_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "pilot_subjects": {
+    "operator": null,
+    "security_auditor": null
+  },
+  "trace_set_reference": null,
+  "window": {
+    "started_at": null,
+    "finished_at": null
+  },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
+  },
+  "scenarios": {
+    "authenticated_platform_session": null,
+    "full_business_flow": null,
+    "one_time_verification": null,
+    "server_side_upload": null,
+    "resource_cleanup": null,
+    "authorization_isolation": null,
+    "persistent_secret_scan": null,
+    "audit_trace_replay": null,
+    "audit_resource_replay": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_provider_payloads": false,
+    "contains_request_or_response_bodies": false,
+    "contains_provider_urls": false,
+    "contains_raw_logs_or_mail_content": false,
+    "contains_pan_or_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "c15b55106a85f70c7a9fb29272e012871c03321a8d7c0e4e7aa427a1e92f9a74"
+  }
+}

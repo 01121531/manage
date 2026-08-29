@@ -1,0 +1,45 @@
+{
+  "durability_prerequisites": {
+    "commit_ack_and_readback_required": true,
+    "deny_delete_required": true,
+    "independent_durability_evidence_required": true,
+    "platform_crash_recovery_evidence_required": true,
+    "retention_policy_required": true,
+    "stable_storage_identity_required": true,
+    "state": "unverified",
+    "worm_or_object_lock_required": true
+  },
+  "not_committed_eligible": false,
+  "policy_effect": "declaration_only",
+  "policy_kind": "tls_rotation_attempt_publisher_prerequisites",
+  "production_acceptance": false,
+  "publisher_integration_enabled": false,
+  "publisher_ordering": {
+    "evidence_link_attempt_limit": 1,
+    "required_steps": [
+      "canonical_evidence_bytes_fsynced",
+      "ready_receipt_signed",
+      "ready_receipt_durable_write_once_committed",
+      "ready_receipt_stable_readback_confirmed",
+      "evidence_link_attempted_once"
+    ],
+    "state": "not_implemented"
+  },
+  "receipt_schema_version": 1,
+  "schema_version": 1,
+  "signer_custody_requirements": {
+    "dedicated_signing_key_required": true,
+    "independent_custody_evidence_required": true,
+    "independent_reviewer_required": true,
+    "private_key_cli_environment_transport": "forbidden",
+    "private_key_in_repository": "forbidden",
+    "usage_scope": "tls_rotation_publication_attempt_v1_only"
+  },
+  "trust_anchor": {
+    "algorithm": "Ed25519",
+    "key_id": null,
+    "public_key_b64url": null,
+    "source": "release_governed_repository_configuration",
+    "state": "unconfigured"
+  }
+}

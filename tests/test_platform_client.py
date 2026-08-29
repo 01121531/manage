@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import socket
+import threading
 import unittest
 import urllib.error
 import urllib.parse
@@ -11,6 +12,7 @@ from email.message import Message
 from unittest import mock
 
 from platform_client import (
+    AUTH_CONFIG_FIELDS,
     CardAllocationSnapshot,
     CardRevealChallenge,
     CardRevealGrant,
@@ -26,13 +28,33 @@ from platform_client import (
     MailSessionSnapshot,
     PlatformProtocolError,
     PlatformDeviceAuthorizationError,
+    PlatformSessionError,
     LoopbackAuthorizationReceiver,
     PlatformTimeoutError,
+    StepUpAuthorization,
     UploadJobSnapshot,
     DeviceAuthorizationChallenge,
+    TaskRecoverySnapshot,
     TaskSnapshot,
+    TaskTimelineAllocationSnapshot,
+    TaskTimelineMailSnapshot,
+    TaskTransitionCleanup,
 )
+from platform.schemas import AuthConfigResponse
 from session_store import MemorySessionStore
+
+
+_MAX_TEST_JSON_RESPONSE_BYTES = 64 * 1024
+
+
+class RecordingBytesIO(io.BytesIO):
+    def __init__(self, value: bytes):
+        super().__init__(value)
+        self.read_sizes: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        return super().read(size)
 
 
 class FakeResponse:
@@ -41,9 +63,11 @@ class FakeResponse:
         self.status = status
         self.headers = Message()
         self.headers["X-Trace-Id"] = trace_id
+        self.read_sizes: list[int] = []
 
-    def read(self):
-        return self.body
+    def read(self, size: int = -1):
+        self.read_sizes.append(size)
+        return self.body if size < 0 else self.body[:size]
 
     def __enter__(self):
         return self
@@ -56,6 +80,12 @@ class EmptyResponse(FakeResponse):
     def __init__(self, *, status=204):
         super().__init__({}, status=status)
         self.body = b""
+
+
+class RawResponse(FakeResponse):
+    def __init__(self, body: bytes, *, trace_id="server-trace", status=200):
+        super().__init__({}, trace_id=trace_id, status=status)
+        self.body = body
 
 
 class RecordingOpener:
@@ -80,7 +110,183 @@ class SequenceOpener:
         return self.responses.pop(0)
 
 
+def task_timeline_payload() -> dict[str, object]:
+    task_trace_id = "00000000-0000-0000-0000-000000000016"
+    return {
+        "workbench_step": "uploading",
+        "task": {
+            "id": "task-1",
+            "tenant_id": "tenant-1",
+            "user_id": "user-1",
+            "device_id": "device-1",
+            "type": "mail_code",
+            "idempotency_key": "request-1",
+            "client_reference": None,
+            "trace_id": task_trace_id,
+            "status": "created",
+            "expires_at": "2026-08-19T12:30:00+00:00",
+            "closed_at": None,
+            "created_at": "2026-08-19T12:00:00+00:00",
+        },
+        "mail_session": {
+            "id": "session-1",
+            "email_masked": "m***@example.test",
+            "status": "consumed",
+            "expires_at": "2026-08-19T12:20:00+00:00",
+            "consumed_at": "2026-08-19T12:05:00+00:00",
+            "created_at": "2026-08-19T12:01:00+00:00",
+        },
+        "card_allocations": [
+            {
+                "id": "allocation-1",
+                "card_masked": "**** **** **** 4242",
+                "brand": "visa",
+                "status": "active",
+                "expires_at": "2026-08-19T12:25:00+00:00",
+                "released_at": None,
+                "created_at": "2026-08-19T12:02:00+00:00",
+            }
+        ],
+        "uploads": [
+            {
+                "id": "upload-1",
+                "business_name": "Example Business",
+                "status": "running",
+                "policy_version": "sub2-v1",
+                "external_ref": None,
+                "error_code": None,
+                "created_at": "2026-08-19T12:06:00+00:00",
+                "updated_at": "2026-08-19T12:07:00+00:00",
+            }
+        ],
+        "events": [
+            {
+                "id": "event-1",
+                "event_type": "upload.started",
+                "action": "upload.submit",
+                "result": "success",
+                "entity_type": "upload_job",
+                "entity_id": "upload-1",
+                "policy_version": "sub2-v1",
+                "created_at": "2026-08-19T12:06:00+00:00",
+            }
+        ],
+    }
+
+
+def task_response_payload(
+    *,
+    task_id: str = "task-1",
+    status: str = "created",
+    client_reference: str | None = None,
+) -> dict[str, object]:
+    return {
+        "id": task_id,
+        "tenant_id": "tenant-1",
+        "user_id": "user-1",
+        "device_id": "device-1",
+        "type": "mail_code",
+        "idempotency_key": "request-1",
+        "client_reference": client_reference,
+        "trace_id": "00000000-0000-0000-0000-000000000016",
+        "status": status,
+        "expires_at": "2026-08-19T12:30:00+00:00",
+        "closed_at": None,
+        "created_at": "2026-08-19T12:00:00+00:00",
+    }
+
+
+def padded_json_bytes(payload: object, size: int) -> bytes:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    if len(raw) > size:
+        raise AssertionError("test JSON exceeds requested size")
+    return raw + (b" " * (size - len(raw)))
+
+
 class PlatformClientTests(unittest.TestCase):
+    def test_auth_config_contract_matches_api_and_accepts_current_response(self):
+        payload = {
+            "mode": "oidc",
+            "issuer": "https://identity.example.test/realms/email-platform",
+            "client_id": "email-platform-web",
+            "desktop_client_id": "email-platform-desktop",
+            "audience": "email-platform-api",
+            "admin_role_change_acr": "urn:email-platform:acr:mfa",
+        }
+        self.assertEqual(AUTH_CONFIG_FIELDS, frozenset(AuthConfigResponse.model_fields))
+        client = PlatformClient(
+            "https://platform.example",
+            opener=RecordingOpener(FakeResponse(payload)),
+            session_store=MemorySessionStore(),
+        )
+
+        self.assertEqual(client.get_auth_config(), payload)
+
+    def test_task_transition_cleanup_uses_captured_access_after_logout(self):
+        opener = RecordingOpener(
+            FakeResponse(
+                task_response_payload(
+                    task_id="task-created-after-logout", status="closed"
+                )
+            )
+        )
+        client = PlatformClient(
+            "https://platform.example",
+            opener=opener,
+            session_store=MemorySessionStore(),
+        )
+        client.set_access_token("captured-access")
+        transition = client.begin_task_transition()
+
+        client.prepare_logout_cleanup(None)
+        self.assertFalse(client.is_authenticated)
+        self.assertIsNone(transition.cancel())
+        cleanup = transition.attach("task-created-after-logout")
+        self.assertIsNotNone(cleanup)
+        cleanup()
+        transition.worker_finished()
+
+        self.assertEqual(len(opener.requests), 1)
+        request, _ = opener.requests[0]
+        self.assertTrue(request.full_url.endswith("/tasks/task-created-after-logout/close"))
+        self.assertEqual(request.get_header("Authorization"), "Bearer captured-access")
+        self.assertNotIn("captured-access", repr(transition))
+
+    def test_task_transition_cleanup_is_exactly_once_and_commit_preserves_task(self):
+        client = mock.Mock()
+        transition = TaskTransitionCleanup(client, "captured-access")
+        transition.attach("task-1")
+        first = transition.cancel()
+        self.assertIsNotNone(first)
+        self.assertIsNone(transition.cancel())
+        self.assertIsNone(transition.attach("task-1"))
+        first()
+        self.assertIsNone(transition.worker_finished())
+        self.assertFalse(transition.commit())
+        client._close_task_with_access_token.assert_called_once_with(
+            "task-1", "captured-access"
+        )
+
+        committed_client = mock.Mock()
+        committed = TaskTransitionCleanup(committed_client, "another-access")
+        committed.attach("task-2")
+        self.assertIsNone(committed.worker_finished())
+        self.assertTrue(committed.commit())
+        self.assertIsNone(committed.cancel())
+        committed_client._close_task_with_access_token.assert_not_called()
+
+        late_client = mock.Mock()
+        late = TaskTransitionCleanup(late_client, "late-access")
+        late.attach("task-3")
+        late.worker_finished()
+        late_cleanup = late.cancel()
+        self.assertIsNotNone(late_cleanup)
+        self.assertIsNone(late._access_token)
+        late_cleanup()
+        late_client._close_task_with_access_token.assert_called_once_with(
+            "task-3", "late-access"
+        )
+
     def test_reads_base_url_from_environment(self):
         with mock.patch.dict(
             os.environ, {"PLATFORM_BASE_URL": "https://platform.example/"}
@@ -215,6 +421,172 @@ class PlatformClientTests(unittest.TestCase):
         ).lower()
         self.assertNotIn("password", all_request_data)
         self.assertNotIn("short-lived-access", all_request_data)
+
+    def test_oidc_device_flow_applies_slow_down_and_surfaces_denial(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+
+        def responses(*token_responses):
+            return [
+                FakeResponse(
+                    {
+                        "mode": "oidc",
+                        "issuer": issuer,
+                        "client_id": "email-platform-web",
+                        "desktop_client_id": "email-platform-desktop",
+                        "audience": "email-platform-api",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "device_authorization_endpoint": f"{issuer}/device-auth",
+                        "token_endpoint": f"{issuer}/token",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "device_code": "opaque-device-code",
+                        "user_code": "ABCD-EFGH",
+                        "verification_uri": f"{issuer}/device",
+                        "expires_in": 600,
+                        "interval": 1,
+                    }
+                ),
+                *token_responses,
+            ]
+
+        opener = SequenceOpener(
+            responses(
+                FakeResponse({"error": "slow_down"}, status=400),
+                FakeResponse({"error": "authorization_pending"}, status=400),
+                FakeResponse(
+                    {
+                        "access_token": "short-lived-access",
+                        "refresh_token": "device-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 300,
+                    }
+                ),
+            )
+        )
+        waits: list[float] = []
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock[0] += seconds
+
+        client = PlatformClient("https://platform.example", opener=opener)
+        self.assertEqual(
+            client.login_with_device_authorization(
+                lambda _: None,
+                sleep=sleep,
+                monotonic=lambda: clock[0],
+            ),
+            300,
+        )
+        self.assertEqual(waits, [1, 6, 6])
+
+        denied_client = PlatformClient(
+            "https://platform.example",
+            opener=SequenceOpener(
+                responses(FakeResponse({"error": "access_denied"}, status=400))
+            ),
+        )
+        with self.assertRaises(PlatformDeviceAuthorizationError) as denied:
+            denied_client.login_with_device_authorization(
+                lambda _: None,
+                sleep=lambda _: None,
+                monotonic=lambda: 0,
+            )
+        self.assertEqual(denied.exception.code, "access_denied")
+        self.assertFalse(denied_client.is_authenticated)
+
+    def test_oidc_device_flow_never_polls_after_its_deadline(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        opener = SequenceOpener(
+            [
+                FakeResponse(
+                    {
+                        "mode": "oidc",
+                        "issuer": issuer,
+                        "client_id": "email-platform-web",
+                        "desktop_client_id": "email-platform-desktop",
+                        "audience": "email-platform-api",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "device_authorization_endpoint": f"{issuer}/device-auth",
+                        "token_endpoint": f"{issuer}/token",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "device_code": "opaque-device-code",
+                        "user_code": "ABCD-EFGH",
+                        "verification_uri": f"{issuer}/device",
+                        "expires_in": 3,
+                        "interval": 5,
+                    }
+                ),
+            ]
+        )
+        clock = [0.0]
+        waits: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock[0] += seconds
+
+        client = PlatformClient("https://platform.example", opener=opener)
+        with self.assertRaises(PlatformDeviceAuthorizationError) as expired:
+            client.login_with_device_authorization(
+                lambda _: None,
+                sleep=sleep,
+                monotonic=lambda: clock[0],
+            )
+        self.assertEqual(expired.exception.code, "expired_token")
+        self.assertEqual(waits, [3])
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_oidc_device_flow_rejects_non_short_lifetime(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        opener = SequenceOpener(
+            [
+                FakeResponse(
+                    {
+                        "mode": "oidc",
+                        "issuer": issuer,
+                        "client_id": "email-platform-web",
+                        "desktop_client_id": "email-platform-desktop",
+                        "audience": "email-platform-api",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "device_authorization_endpoint": f"{issuer}/device-auth",
+                        "token_endpoint": f"{issuer}/token",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "device_code": "opaque-device-code",
+                        "user_code": "ABCD-EFGH",
+                        "verification_uri": f"{issuer}/device",
+                        "expires_in": 601,
+                        "interval": 5,
+                    }
+                ),
+            ]
+        )
+        client = PlatformClient("https://platform.example", opener=opener)
+        with self.assertRaises(PlatformProtocolError):
+            client.login_with_device_authorization(
+                lambda _: None,
+                sleep=lambda _: None,
+                monotonic=lambda: 0,
+            )
+        self.assertEqual(len(opener.requests), 3)
 
     def test_oidc_authorization_code_uses_loopback_pkce_and_rotatable_session(self):
         issuer = "https://identity.example.test/realms/email-platform"
@@ -413,6 +785,242 @@ class PlatformClientTests(unittest.TestCase):
             "Bearer primary-access",
         )
 
+    def test_failed_temporary_refresh_revocation_transfers_to_logout_cleanup(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        token_endpoint = f"{issuer}/protocol/openid-connect/token"
+        revocation_endpoint = f"{issuer}/protocol/openid-connect/revoke"
+        temporary_refresh = "temporary-refresh-secret"
+        config = {
+            "mode": "oidc",
+            "issuer": issuer,
+            "client_id": "email-platform-web",
+            "desktop_client_id": "email-platform-desktop",
+            "audience": "email-platform-api",
+        }
+
+        class TemporaryRevocationOpener:
+            def __init__(self):
+                self.revoked_tokens = []
+
+            def __call__(self, request, *, timeout):
+                del timeout
+                if request.full_url.endswith("/auth/config"):
+                    return FakeResponse(config)
+                if request.full_url.endswith("/.well-known/openid-configuration"):
+                    return FakeResponse(
+                        {
+                            "authorization_endpoint": f"{issuer}/authorize",
+                            "token_endpoint": token_endpoint,
+                            "revocation_endpoint": revocation_endpoint,
+                        }
+                    )
+                if request.full_url == token_endpoint:
+                    return FakeResponse(
+                        {
+                            "access_token": "temporary-access-secret",
+                            "refresh_token": temporary_refresh,
+                            "token_type": "Bearer",
+                            "expires_in": 120,
+                        }
+                    )
+                if request.full_url == revocation_endpoint:
+                    form = urllib.parse.parse_qs(request.data.decode("ascii"))
+                    self.revoked_tokens.append(form["token"][0])
+                    if len(self.revoked_tokens) == 1:
+                        return FakeResponse(
+                            {"error": "raw-upstream-revocation-failure"}, status=503
+                        )
+                    return EmptyResponse()
+                if request.full_url.endswith("/auth/logout"):
+                    return FakeResponse({"status": "logged_out"})
+                raise AssertionError(f"unexpected request: {request.full_url}")
+
+        class FakeReceiver:
+            redirect_uri = "http://127.0.0.1:54321/callback"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            @staticmethod
+            def wait_for_code(**_):
+                return "unlock-code"
+
+        opener = TemporaryRevocationOpener()
+        store = MemorySessionStore()
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        client.set_access_token("primary-access-secret")
+
+        with self.assertRaises(PlatformSessionError) as raised:
+            client.reauthenticate_for_unlock(
+                lambda _url: None,
+                expected_tenant_id="tenant-1",
+                expected_user_id="user-1",
+                expected_device_id="device-1",
+                loopback_factory=FakeReceiver,
+            )
+
+        self.assertEqual(str(raised.exception), "无法撤销二次认证临时会话")
+        failure = repr(raised.exception)
+        self.assertNotIn(temporary_refresh, failure)
+        self.assertNotIn(issuer, failure)
+        self.assertNotIn("raw-upstream-revocation-failure", failure)
+        self.assertEqual(opener.revoked_tokens, [temporary_refresh])
+
+        cleanup = client.prepare_logout_cleanup(None)
+        self.assertFalse(client.is_authenticated)
+        self.assertIsNone(store.load())
+        cleanup()
+        cleanup()
+
+        self.assertEqual(
+            opener.revoked_tokens,
+            [temporary_refresh, temporary_refresh],
+        )
+
+    def test_unlock_reauthentication_is_forced_and_keeps_primary_session(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        store = MemorySessionStore()
+        store.save("primary-refresh")
+        opener = SequenceOpener(
+            [
+                FakeResponse(
+                    {
+                        "mode": "oidc",
+                        "issuer": issuer,
+                        "client_id": "email-platform-web",
+                        "desktop_client_id": "email-platform-desktop",
+                        "audience": "email-platform-api",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "authorization_endpoint": f"{issuer}/protocol/openid-connect/auth",
+                        "token_endpoint": f"{issuer}/protocol/openid-connect/token",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "access_token": "unlock-only-access",
+                        "token_type": "Bearer",
+                        "expires_in": 90,
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "id": "user-1",
+                        "tenant_id": "tenant-1",
+                        "email": "operator@example.test",
+                        "device_id": "device-1",
+                        "role": "operator",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "id": "user-1",
+                        "tenant_id": "tenant-1",
+                        "email": "operator@example.test",
+                        "device_id": "device-1",
+                        "role": "operator",
+                    }
+                ),
+            ]
+        )
+
+        class FakeReceiver:
+            redirect_uri = "http://127.0.0.1:54321/callback"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def wait_for_code(self, *, expected_state, timeout, cancelled):
+                self.expected_state = expected_state
+                return "unlock-code"
+
+        receiver = FakeReceiver()
+        urls = []
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        client.set_access_token("primary-access")
+
+        profile = client.reauthenticate_for_unlock(
+            urls.append,
+            expected_tenant_id="tenant-1",
+            expected_user_id="user-1",
+            expected_device_id="device-1",
+            loopback_factory=lambda: receiver,
+        )
+        client.me()
+
+        self.assertEqual(profile["id"], "user-1")
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(urls[0]).query)
+        self.assertEqual(query["state"], [receiver.expected_state])
+        self.assertEqual(query["prompt"], ["login"])
+        self.assertEqual(query["max_age"], ["0"])
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+        self.assertNotIn("acr_values", query)
+        self.assertEqual(
+            opener.requests[3][0].get_header("Authorization"),
+            "Bearer unlock-only-access",
+        )
+        self.assertEqual(
+            opener.requests[4][0].get_header("Authorization"),
+            "Bearer primary-access",
+        )
+        self.assertEqual(store.load(), "primary-refresh")
+
+    def test_unlock_reauthentication_rejects_different_identity(self):
+        store = MemorySessionStore()
+        store.save("primary-refresh")
+        client = PlatformClient(
+            "https://platform.example", session_store=store
+        )
+        client.set_access_token("primary-access")
+
+        with (
+            mock.patch.object(
+                client,
+                "_reauthenticate_with_pkce",
+                return_value=StepUpAuthorization(
+                    access_token="unlock-only-access", expires_in=90
+                ),
+            ),
+            mock.patch.object(
+                client,
+                "_request_json",
+                return_value={
+                    "id": "other-user",
+                    "tenant_id": "tenant-1",
+                    "email": "other@example.test",
+                    "device_id": "device-1",
+                    "role": "operator",
+                },
+            ) as request_json,
+        ):
+            with self.assertRaises(PlatformDeviceAuthorizationError) as raised:
+                client.reauthenticate_for_unlock(
+                    lambda _url: None,
+                    expected_tenant_id="tenant-1",
+                    expected_user_id="user-1",
+                    expected_device_id="device-1",
+                )
+
+        self.assertEqual(raised.exception.code, "identity_mismatch")
+        self.assertEqual(
+            request_json.call_args.kwargs["_access_token_override"],
+            "unlock-only-access",
+        )
+        self.assertTrue(client.is_authenticated)
+        self.assertEqual(store.load(), "primary-refresh")
+
     def test_refresh_rotates_dpapi_boundary_and_invalid_grant_clears_session(self):
         issuer = "https://identity.example.test/realms/email-platform"
         config = {
@@ -467,6 +1075,137 @@ class PlatformClientTests(unittest.TestCase):
             client.refresh_oidc_session()
         self.assertFalse(client.is_authenticated)
         self.assertIsNone(store.load())
+
+    def test_logout_waits_for_late_refresh_and_retries_its_rotated_token(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        token_endpoint = f"{issuer}/protocol/openid-connect/token"
+        revocation_endpoint = f"{issuer}/protocol/openid-connect/revoke"
+        config = {
+            "mode": "oidc",
+            "issuer": issuer,
+            "client_id": "email-platform-web",
+            "desktop_client_id": "email-platform-desktop",
+            "audience": "email-platform-api",
+        }
+        discovery = {
+            "token_endpoint": token_endpoint,
+            "revocation_endpoint": revocation_endpoint,
+        }
+
+        class RefreshRaceOpener:
+            def __init__(self):
+                self.requests = []
+                self.refresh_started = threading.Event()
+                self.release_refresh = threading.Event()
+                self.revoked_tokens = []
+                self.late_revocation_attempts = 0
+                self.lock = threading.Lock()
+
+            def __call__(self, request, *, timeout):
+                with self.lock:
+                    self.requests.append((request, timeout))
+                if request.full_url.endswith("/auth/config"):
+                    return FakeResponse(config)
+                if request.full_url.endswith("/.well-known/openid-configuration"):
+                    return FakeResponse(discovery)
+                if request.full_url == token_endpoint:
+                    self.refresh_started.set()
+                    self.release_refresh.wait(2)
+                    return FakeResponse(
+                        {
+                            "access_token": "late-access-secret",
+                            "refresh_token": "late-refresh-secret",
+                            "token_type": "Bearer",
+                            "expires_in": 600,
+                        }
+                    )
+                if request.full_url == revocation_endpoint:
+                    form = urllib.parse.parse_qs(request.data.decode("ascii"))
+                    token = form["token"][0]
+                    self.revoked_tokens.append(token)
+                    if token == "late-refresh-secret":
+                        self.late_revocation_attempts += 1
+                        if self.late_revocation_attempts == 1:
+                            return FakeResponse(
+                                {"error": "temporarily_unavailable"}, status=503
+                            )
+                    return EmptyResponse()
+                if request.full_url.endswith("/auth/logout"):
+                    return FakeResponse({"status": "logged_out"})
+                raise AssertionError(f"unexpected request: {request.full_url}")
+
+        opener = RefreshRaceOpener()
+        store = MemorySessionStore()
+        store.save("old-refresh-secret")
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        client.set_access_token("old-access-secret")
+        refresh_errors = []
+        refresh_thread = threading.Thread(
+            target=lambda: self._capture_thread_error(
+                refresh_errors, client.refresh_oidc_session
+            )
+        )
+        refresh_thread.start()
+        self.assertTrue(opener.refresh_started.wait(1))
+
+        cleanup = client.prepare_logout_cleanup(None)
+        self.assertFalse(client.is_authenticated)
+        self.assertIsNone(store.load())
+        client._begin_auth_attempt()
+        client.set_access_token("new-access-secret")
+        store.save("new-refresh-secret")
+        cleanup_errors = []
+        cleanup_thread = threading.Thread(
+            target=lambda: self._capture_thread_error(cleanup_errors, cleanup)
+        )
+        cleanup_thread.start()
+        cleanup_thread.join(0.05)
+        self.assertTrue(cleanup_thread.is_alive())
+        self.assertEqual(opener.revoked_tokens, [])
+
+        opener.release_refresh.set()
+        refresh_thread.join(1)
+        cleanup_thread.join(1)
+        self.assertFalse(refresh_thread.is_alive())
+        self.assertFalse(cleanup_thread.is_alive())
+        self.assertEqual(len(refresh_errors), 1)
+        self.assertIsInstance(refresh_errors[0], PlatformDeviceAuthorizationError)
+        self.assertEqual(refresh_errors[0].code, "cancelled")
+        self.assertEqual(len(cleanup_errors), 1)
+        self.assertIsInstance(cleanup_errors[0], PlatformDeviceAuthorizationError)
+        self.assertEqual(
+            opener.revoked_tokens,
+            ["old-refresh-secret", "late-refresh-secret"],
+        )
+        self.assertTrue(client.is_authenticated)
+        self.assertEqual(client._access_token, "new-access-secret")
+        self.assertEqual(store.load(), "new-refresh-secret")
+
+        cleanup()
+        self.assertEqual(
+            opener.revoked_tokens,
+            ["old-refresh-secret", "late-refresh-secret", "late-refresh-secret"],
+        )
+        self.assertTrue(client.is_authenticated)
+        self.assertEqual(client._access_token, "new-access-secret")
+        self.assertEqual(store.load(), "new-refresh-secret")
+        combined_repr = repr(client) + repr(refresh_errors) + repr(cleanup_errors)
+        for secret in (
+            "old-refresh-secret",
+            "late-refresh-secret",
+            "new-refresh-secret",
+            "late-access-secret",
+        ):
+            self.assertNotIn(secret, combined_repr)
+
+    @staticmethod
+    def _capture_thread_error(errors, action):
+        try:
+            action()
+        except Exception as error:
+            errors.append(error)
 
     def test_loopback_callback_ignores_forged_state_and_accepts_valid_code(self):
         with LoopbackAuthorizationReceiver() as receiver:
@@ -591,21 +1330,55 @@ class PlatformClientTests(unittest.TestCase):
         self.assertFalse(client.is_authenticated)
 
     def test_me_sends_bearer_and_saves_server_trace_id(self):
-        opener = RecordingOpener(FakeResponse({"user_id": "user-1"}))
+        profile = {
+            "id": "user-1",
+            "tenant_id": "tenant-1",
+            "email": "user@example.test",
+            "device_id": "device-1",
+            "role": "operator",
+        }
+        opener = RecordingOpener(FakeResponse(profile))
         client = PlatformClient("https://platform.example", opener=opener)
         client.set_access_token("access-secret")
 
         result = client.me()
 
         request, timeout = opener.requests[0]
-        self.assertEqual(result, {"user_id": "user-1"})
+        self.assertEqual(result, profile)
         self.assertEqual(request.full_url, "https://platform.example/api/v1/me")
         self.assertEqual(request.get_header("Authorization"), "Bearer access-secret")
         self.assertEqual(timeout, DEFAULT_TIMEOUT_SECONDS)
         self.assertEqual(client.last_trace_id, "server-trace")
 
+    def test_me_rejects_unknown_sensitive_fields_and_invalid_identity(self):
+        profile = {
+            "id": "user-1",
+            "tenant_id": "tenant-1",
+            "email": "user@example.test",
+            "device_id": "device-1",
+            "role": "operator",
+        }
+        for payload in (
+            {**profile, "pan": "4111111111111111"},
+            {**profile, "session_token": "s" * 32},
+            {**profile, "device_id": ""},
+            {**profile, "role": 1},
+        ):
+            with self.subTest(payload=payload):
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("access-secret")
+                with self.assertRaises(PlatformProtocolError):
+                    client.me()
+
     def test_create_task_has_a_strict_non_secret_payload(self):
-        opener = RecordingOpener(FakeResponse({"task_id": "task-1"}))
+        opener = RecordingOpener(
+            FakeResponse(
+                task_response_payload(client_reference="desktop-job-1")
+            )
+        )
         client = PlatformClient("https://platform.example", opener=opener)
         client.set_access_token("access-secret")
 
@@ -649,7 +1422,7 @@ class PlatformClientTests(unittest.TestCase):
         self.assertIn(b'"password"', login_request.data)
         self.assertTrue(login_request.full_url.endswith("/auth/login"))
 
-        task_opener = RecordingOpener(FakeResponse({"task_id": "task-1"}))
+        task_opener = RecordingOpener(FakeResponse(task_response_payload()))
         task_client = PlatformClient(
             "https://platform.example", opener=task_opener
         )
@@ -668,7 +1441,9 @@ class PlatformClientTests(unittest.TestCase):
             self.assertNotIn(forbidden, task_body)
 
     def test_get_task_url_quotes_the_identifier(self):
-        opener = RecordingOpener(FakeResponse({"task_id": "task/1"}))
+        opener = RecordingOpener(
+            FakeResponse(task_response_payload(task_id="task/1"))
+        )
         client = PlatformClient("https://platform.example", opener=opener)
         client.set_access_token("access-secret")
         client.get_task("task/1")
@@ -676,6 +1451,57 @@ class PlatformClientTests(unittest.TestCase):
         self.assertEqual(
             request.full_url, "https://platform.example/api/v1/tasks/task%2F1"
         )
+
+    def test_create_get_and_close_task_share_strict_response_decoder(self):
+        cases = (
+            (
+                lambda client: client.create_task("mail_code", "request-1"),
+                task_response_payload(),
+            ),
+            (lambda client: client.get_task("task-1"), task_response_payload()),
+            (
+                lambda client: client.close_task("task-1"),
+                task_response_payload(status="closed"),
+            ),
+        )
+        for method, payload in cases:
+            with self.subTest(method=method):
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("access-secret")
+                self.assertIsInstance(method(client), TaskSnapshot)
+
+                for field, value in (
+                    ("pan", "4111111111111111"),
+                    ("session_token", "s" * 32),
+                ):
+                    invalid_client = PlatformClient(
+                        "https://platform.example",
+                        opener=RecordingOpener(
+                            FakeResponse({**payload, field: value})
+                        ),
+                    )
+                    invalid_client.set_access_token("access-secret")
+                    with self.assertRaises(PlatformProtocolError):
+                        method(invalid_client)
+
+    def test_get_and_close_task_reject_mismatched_response_id(self):
+        for method in (
+            lambda client: client.get_task("task-1"),
+            lambda client: client.close_task("task-1"),
+        ):
+            with self.subTest(method=method):
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(
+                        FakeResponse(task_response_payload(task_id="task-2"))
+                    ),
+                )
+                client.set_access_token("access-secret")
+                with self.assertRaises(PlatformProtocolError):
+                    method(client)
 
     def test_list_tasks_is_bounded_and_returns_safe_trace_snapshots(self):
         response = {
@@ -706,11 +1532,162 @@ class PlatformClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             client.list_tasks(limit=101)
 
+    def test_get_task_timeline_decodes_safe_recovery_projection(self):
+        payload = task_timeline_payload()
+        opener = RecordingOpener(FakeResponse(payload))
+        client = PlatformClient("https://platform.example", opener=opener)
+        client.set_access_token("platform-access")
+
+        snapshot = client.get_task_timeline("task-1")
+
+        self.assertIsInstance(snapshot, TaskRecoverySnapshot)
+        self.assertIsInstance(snapshot.task, TaskSnapshot)
+        self.assertIsInstance(snapshot.mail_session, TaskTimelineMailSnapshot)
+        self.assertIsInstance(
+            snapshot.card_allocations[0], TaskTimelineAllocationSnapshot
+        )
+        self.assertIsInstance(snapshot.card_allocations, tuple)
+        self.assertIsInstance(snapshot.uploads, tuple)
+        self.assertEqual(snapshot.task.id, "task-1")
+        self.assertEqual(snapshot.uploads[0].task_id, "task-1")
+        self.assertEqual(snapshot.workbench_step, "uploading")
+        self.assertEqual(snapshot.uploads[0].trace_id, snapshot.task.trace_id)
+        self.assertTrue(
+            opener.requests[0][0].full_url.endswith("/tasks/task-1/timeline")
+        )
+        serialized = repr(snapshot).lower()
+        for forbidden in (
+            "idempotency_key",
+            "tenant_id",
+            "user_id",
+            "device_id",
+            "event-1",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_task_timeline_accepts_previous_response_without_workbench_step(self):
+        payload = task_timeline_payload()
+        del payload["workbench_step"]
+        client = PlatformClient(
+            "https://platform.example",
+            opener=RecordingOpener(FakeResponse(payload)),
+        )
+        client.set_access_token("platform-access")
+
+        snapshot = client.get_task_timeline("task-1")
+
+        self.assertIsNone(snapshot.workbench_step)
+
+    def test_task_timeline_rejects_invalid_workbench_step(self):
+        payload = task_timeline_payload()
+        payload["workbench_step"] = "revealing_secret"
+        client = PlatformClient(
+            "https://platform.example",
+            opener=RecordingOpener(FakeResponse(payload)),
+        )
+        client.set_access_token("platform-access")
+
+        with self.assertRaises(PlatformProtocolError):
+            client.get_task_timeline("task-1")
+
+    def test_get_task_timeline_quotes_task_id(self):
+        payload = task_timeline_payload()
+        payload["task"]["id"] = "task/1"
+        opener = RecordingOpener(FakeResponse(payload))
+        client = PlatformClient("https://platform.example", opener=opener)
+        client.set_access_token("platform-access")
+
+        client.get_task_timeline("task/1")
+
+        self.assertEqual(
+            opener.requests[0][0].full_url,
+            "https://platform.example/api/v1/tasks/task%2F1/timeline",
+        )
+
+    def test_task_timeline_rejects_mismatched_task_id_or_trace(self):
+        cases = (("id", "other-task"), ("trace_id", ""))
+        for field, value in cases:
+            with self.subTest(field=field):
+                payload = task_timeline_payload()
+                payload["task"][field] = value
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("platform-access")
+
+                with self.assertRaises(PlatformProtocolError):
+                    client.get_task_timeline("task-1")
+
+    def test_task_timeline_rejects_unknown_or_sensitive_fields(self):
+        cases = (
+            (None, "session_token", "opaque-secret"),
+            ("task", "password", "secret"),
+            ("mail_session", "session_token", "opaque-secret"),
+            ("card_allocations", "pan", "4111111111111111"),
+            ("card_allocations", "cvv", "123"),
+            ("uploads", "secret_ref", "vault://secret/sub2"),
+            ("events", "details", {"credential": "secret"}),
+        )
+        for section, field, value in cases:
+            with self.subTest(section=section, field=field):
+                payload = task_timeline_payload()
+                target = payload if section is None else payload[section]
+                if isinstance(target, list):
+                    target = target[0]
+                target[field] = value
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("platform-access")
+
+                with self.assertRaises(PlatformProtocolError):
+                    client.get_task_timeline("task-1")
+
+        payload = task_timeline_payload()
+        del payload["events"]
+        client = PlatformClient(
+            "https://platform.example",
+            opener=RecordingOpener(FakeResponse(payload)),
+        )
+        client.set_access_token("platform-access")
+        with self.assertRaises(PlatformProtocolError):
+            client.get_task_timeline("task-1")
+
+    def test_task_timeline_rejects_invalid_resource_status_or_naive_time(self):
+        cases = (
+            ("mail_session", "status", "ready"),
+            ("card_allocations", "status", "available"),
+            ("uploads", "status", "retrying"),
+            ("mail_session", "expires_at", "2026-08-19T12:20:00"),
+            ("card_allocations", "created_at", "2026-08-19T12:02:00"),
+            ("uploads", "updated_at", "2026-08-19T12:07:00"),
+            ("events", "created_at", "2026-08-19T12:06:00"),
+        )
+        for section, field, value in cases:
+            with self.subTest(section=section, field=field):
+                payload = task_timeline_payload()
+                target = payload[section]
+                if isinstance(target, list):
+                    target = target[0]
+                target[field] = value
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("platform-access")
+
+                with self.assertRaises(PlatformProtocolError):
+                    client.get_task_timeline("task-1")
+
     def test_close_task_and_logout_cleanup_use_only_captured_session(self):
         issuer = "https://identity.example.test/realms/email-platform"
         opener = SequenceOpener(
             [
-                FakeResponse({}),
+                FakeResponse(
+                    task_response_payload(task_id="task/unsafe", status="closed")
+                ),
                 FakeResponse({}),
                 FakeResponse(
                     {
@@ -750,9 +1727,12 @@ class PlatformClientTests(unittest.TestCase):
         self.assertTrue(client.is_authenticated)
         self.assertEqual(store.load(), "new-refresh-token")
         second_request = opener.requests[1][0]
+        self.assertTrue(second_request.full_url.endswith("/auth/logout"))
         self.assertEqual(
             second_request.headers["Authorization"], "Bearer old-session-token"
         )
+        self.assertIsNone(second_request.data)
+        self.assertNotIn("task%2Funsafe", second_request.full_url)
         revocation_request = opener.requests[4][0]
         self.assertEqual(
             revocation_request.full_url,
@@ -774,6 +1754,7 @@ class PlatformClientTests(unittest.TestCase):
         store.save("old-refresh-token")
         opener = SequenceOpener(
             [
+                FakeResponse({}),
                 FakeResponse(
                     {
                         "mode": "oidc",
@@ -805,8 +1786,77 @@ class PlatformClientTests(unittest.TestCase):
         with self.assertRaises(PlatformDeviceAuthorizationError):
             cleanup()
 
+        logout_request = opener.requests[0][0]
+        self.assertTrue(logout_request.full_url.endswith("/auth/logout"))
+        self.assertEqual(
+            logout_request.headers["Authorization"], "Bearer old-access-token"
+        )
+        self.assertIsNone(logout_request.data)
         self.assertEqual(store.load(), "new-refresh-token")
         self.assertTrue(client.is_authenticated is False)
+
+    def test_logout_cleanup_retries_same_refresh_when_discovery_lacks_revocation(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        revocation_endpoint = f"{issuer}/protocol/openid-connect/revoke"
+        refresh_token = "old-refresh-token-secret"
+        config = {
+            "mode": "oidc",
+            "issuer": issuer,
+            "client_id": "email-platform-web",
+            "desktop_client_id": "email-platform-desktop",
+            "audience": "email-platform-api",
+        }
+
+        class RevocationDiscoveryOpener:
+            def __init__(self):
+                self.discovery_attempts = 0
+                self.revoked_tokens = []
+
+            def __call__(self, request, *, timeout):
+                del timeout
+                if request.full_url.endswith("/auth/logout"):
+                    return FakeResponse({"status": "logged_out"})
+                if request.full_url.endswith("/auth/config"):
+                    return FakeResponse(config)
+                if request.full_url.endswith("/.well-known/openid-configuration"):
+                    self.discovery_attempts += 1
+                    if self.discovery_attempts == 1:
+                        return FakeResponse({"token_endpoint": f"{issuer}/token"})
+                    return FakeResponse({"revocation_endpoint": revocation_endpoint})
+                if request.full_url == revocation_endpoint:
+                    form = urllib.parse.parse_qs(request.data.decode("ascii"))
+                    self.revoked_tokens.append(form["token"][0])
+                    return EmptyResponse()
+                raise AssertionError(f"unexpected request: {request.full_url}")
+
+        opener = RevocationDiscoveryOpener()
+        store = MemorySessionStore()
+        store.save(refresh_token)
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        client.set_access_token("old-access-token-secret")
+
+        cleanup = client.prepare_logout_cleanup(None)
+        self.assertFalse(client.is_authenticated)
+        self.assertIsNone(store.load())
+
+        with self.assertRaises(PlatformSessionError) as raised:
+            cleanup()
+
+        self.assertEqual(
+            str(raised.exception), "统一身份服务未提供会话撤销能力"
+        )
+        failure = repr(raised.exception)
+        self.assertNotIn(refresh_token, failure)
+        self.assertNotIn(issuer, failure)
+        self.assertNotIn("token_endpoint", failure)
+        self.assertEqual(opener.revoked_tokens, [])
+
+        cleanup()
+
+        self.assertEqual(opener.revoked_tokens, [refresh_token])
+        self.assertIsNone(store.load())
 
     def test_create_mail_session_quotes_id_and_sends_empty_body(self):
         opener = RecordingOpener(
@@ -817,6 +1867,7 @@ class PlatformClientTests(unittest.TestCase):
                     "status": "waiting",
                     "expires_at": "2026-08-19T12:00:00Z",
                     "session_token": "s" * 43,
+                    "polling_interval": 7,
                 }
             )
         )
@@ -833,6 +1884,7 @@ class PlatformClientTests(unittest.TestCase):
                 "m***@example.com",
                 "waiting",
                 "2026-08-19T12:00:00Z",
+                polling_interval=7,
                 session_token="s" * 43,
             ),
         )
@@ -852,6 +1904,8 @@ class PlatformClientTests(unittest.TestCase):
         result = client.get_mail_code("session/1", "opaque-session-token")
 
         request, _ = opener.requests[0]
+        self.assertEqual(result.code, "123456")
+        self.assertNotIn("123456", repr(result))
         self.assertEqual(result, MailCodeSnapshot("consumed", "123456"))
         self.assertEqual(
             request.full_url,
@@ -861,13 +1915,117 @@ class PlatformClientTests(unittest.TestCase):
             request.get_header("X-mail-session-token"),
             "opaque-session-token",
         )
-        waiting_opener = RecordingOpener(FakeResponse({"status": "waiting"}))
+        waiting_opener = RecordingOpener(
+            FakeResponse({"status": "waiting", "code": None})
+        )
         waiting_client = PlatformClient("https://platform.example", opener=waiting_opener)
         waiting_client.set_access_token("access-secret")
         self.assertEqual(
             waiting_client.get_mail_code("session-1", "opaque-session-token"),
             MailCodeSnapshot("waiting"),
         )
+
+    def test_mail_code_accepts_previous_and_extended_response_shapes(self):
+        extended = {
+            "status": "consumed",
+            "code": "123456",
+            "received_at": "2026-08-19T12:04:00+00:00",
+            "message_id_hash": "a" * 64,
+        }
+        client = PlatformClient(
+            "https://platform.example",
+            opener=RecordingOpener(FakeResponse(extended)),
+        )
+        client.set_access_token("access-secret")
+
+        self.assertEqual(
+            client.get_mail_code("session-1", "s" * 32),
+            MailCodeSnapshot(
+                "consumed",
+                "123456",
+                received_at="2026-08-19T12:04:00+00:00",
+                message_id_hash="a" * 64,
+            ),
+        )
+        waiting_client = PlatformClient(
+            "https://platform.example",
+            opener=RecordingOpener(
+                FakeResponse(
+                    {
+                        "status": "waiting",
+                        "code": None,
+                        "received_at": None,
+                        "message_id_hash": None,
+                    }
+                )
+            ),
+        )
+        waiting_client.set_access_token("access-secret")
+        self.assertEqual(
+            waiting_client.get_mail_code("session-1", "s" * 32),
+            MailCodeSnapshot("waiting"),
+        )
+
+    def test_mail_code_rejects_partial_unknown_or_invalid_extended_shape(self):
+        valid = {
+            "status": "consumed",
+            "code": "123456",
+            "received_at": "2026-08-19T12:04:00+00:00",
+            "message_id_hash": "a" * 64,
+        }
+        invalid_payloads = (
+            {"status": "waiting"},
+            {**valid, "message_id_hash": None},
+            {key: value for key, value in valid.items() if key != "message_id_hash"},
+            {**valid, "body": "message"},
+            {**valid, "received_at": "2026-08-19T12:04:00"},
+            {**valid, "message_id_hash": "A" * 64},
+            {**valid, "message_id_hash": "a" * 63},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("access-secret")
+                with self.assertRaises(PlatformProtocolError):
+                    client.get_mail_code("session-1", "s" * 32)
+
+    def test_revoke_owned_device_quotes_id_and_strictly_decodes_response(self):
+        payload = {
+            "id": "device/1",
+            "tenant_id": "tenant-1",
+            "user_id": "user-1",
+            "name": "Operator workstation",
+            "revoked_at": "2026-08-19T12:05:00+00:00",
+            "last_seen_at": "2026-08-19T12:04:00+00:00",
+            "created_at": "2026-08-01T12:00:00+00:00",
+        }
+        opener = RecordingOpener(FakeResponse(payload))
+        client = PlatformClient("https://platform.example", opener=opener)
+        client.set_access_token("access-secret")
+
+        result = client.revoke_owned_device("device/1")
+
+        self.assertEqual(result.id, "device/1")
+        self.assertEqual(
+            opener.requests[0][0].full_url,
+            "https://platform.example/api/v1/devices/device%2F1/revoke",
+        )
+        for invalid in (
+            {**payload, "session_token": "s" * 32},
+            {**payload, "revoked_at": None},
+            {**payload, "created_at": "2026-08-01T12:00:00"},
+            {**payload, "id": "device-2"},
+        ):
+            invalid_client = PlatformClient(
+                "https://platform.example",
+                opener=RecordingOpener(FakeResponse(invalid)),
+            )
+            invalid_client.set_access_token("access-secret")
+            with self.assertRaises(PlatformProtocolError):
+                invalid_client.revoke_owned_device("device/1")
 
     def test_revoke_mail_session_sends_opaque_session_token(self):
         opener = RecordingOpener(
@@ -1066,6 +2224,73 @@ class PlatformClientTests(unittest.TestCase):
         self.assertNotIn("opaque-reveal-grant", repr(grant))
         self.assertNotIn("secret_ref", repr(snapshot).lower())
 
+    def test_card_reveal_rejects_malformed_sensitive_fields(self):
+        base = {
+            "id": "reveal-1",
+            "allocation_id": "allocation-1",
+            "trace_id": "task-trace",
+            "card_masked": "VISA •••• 1111",
+            "brand": "VISA",
+            "expiry_month": 12,
+            "expiry_year": 2030,
+            "pan": "4111111111111111",
+            "reveal_expires_at": "2026-08-19T12:00:45Z",
+        }
+        cases = (
+            ("pan", "4111 1111 1111 1111"),
+            ("pan", "41111111111"),
+            ("pan", "4111111111111111\n"),
+            ("expiry_month", 13),
+            ("expiry_year", None),
+            ("reveal_expires_at", "2026-08-19T12:00:45"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                payload = dict(base)
+                payload[field] = value
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("platform-access")
+
+                with self.assertRaises(PlatformProtocolError):
+                    client.reveal_card_allocation("allocation-1", "one-shot-grant")
+
+    def test_card_reveal_challenge_and_grant_require_timezone(self):
+        cases = (
+            (
+                "challenge",
+                {
+                    "challenge_id": "challenge-1",
+                    "acr_values": DEFAULT_CARD_REVEAL_ACR_VALUES,
+                    "expires_at": "2026-08-19T12:00:30",
+                },
+            ),
+            (
+                "grant",
+                {
+                    "reveal_grant": "opaque-reveal-grant",
+                    "expires_at": "2026-08-19T12:00:45",
+                },
+            ),
+        )
+        for operation, payload in cases:
+            with self.subTest(operation=operation):
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(FakeResponse(payload)),
+                )
+                client.set_access_token("primary-access")
+
+                with self.assertRaises(PlatformProtocolError):
+                    if operation == "challenge":
+                        client.create_card_reveal_challenge("allocation-1")
+                    else:
+                        client.create_card_reveal_grant(
+                            "allocation-1", "challenge-1", "step-up-access"
+                        )
+
     def test_rejected_step_up_grant_does_not_clear_primary_session(self):
         headers = Message()
         body = json.dumps(
@@ -1073,6 +2298,8 @@ class PlatformClientTests(unittest.TestCase):
                 "error": {
                     "code": "forbidden",
                     "message": "Required authentication level missing",
+                    "recovery_hint": "重新完成卡揭示二次认证后再试",
+                    "trace_id": "00000000-0000-0000-0000-000000000018",
                 }
             }
         ).encode("utf-8")
@@ -1103,6 +2330,7 @@ class PlatformClientTests(unittest.TestCase):
                 "error": {
                     "code": "task_not_found",
                     "message": "任务不存在",
+                    "recovery_hint": "刷新任务列表并确认任务仍然存在",
                     "trace_id": "body-trace",
                     "details": {"task_id": "missing"},
                 }
@@ -1126,12 +2354,232 @@ class PlatformClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "task_not_found")
         self.assertEqual(caught.exception.status, 404)
         self.assertEqual(caught.exception.trace_id, "body-trace")
+        self.assertEqual(
+            caught.exception.recovery_hint,
+            "刷新任务列表并确认任务仍然存在",
+        )
         self.assertEqual(caught.exception.details, {"task_id": "missing"})
         self.assertEqual(client.last_trace_id, "body-trace")
 
+    def test_error_envelope_requires_safe_recovery_hint_and_exact_fields(self):
+        base = {
+            "code": "conflict",
+            "message": "server-controlled message",
+            "recovery_hint": "刷新当前任务状态后继续",
+            "trace_id": "00000000-0000-0000-0000-000000000016",
+        }
+        invalid_envelopes = (
+            {key: value for key, value in base.items() if key != "recovery_hint"},
+            {**base, "recovery_hint": "retry\nsecret"},
+            {**base, "recovery_hint": ""},
+            {**base, "trace_id": "bad trace"},
+            {**base, "session_token": "s" * 32},
+        )
+        for envelope in invalid_envelopes:
+            with self.subTest(envelope=envelope):
+                body = json.dumps({"error": envelope}).encode("utf-8")
+                http_error = urllib.error.HTTPError(
+                    "https://platform.example/api/v1/tasks/task-1",
+                    409,
+                    "Conflict",
+                    Message(),
+                    io.BytesIO(body),
+                )
+                client = PlatformClient(
+                    "https://platform.example",
+                    opener=RecordingOpener(http_error),
+                )
+                client.set_access_token("access-secret")
+                with self.assertRaises(PlatformProtocolError):
+                    client.get_task("task-1")
+
+    def test_platform_success_json_is_bounded_and_rejects_duplicate_keys(self):
+        payload = {
+            "mode": "local",
+            "issuer": None,
+            "client_id": None,
+            "desktop_client_id": None,
+            "audience": None,
+            "admin_role_change_acr": None,
+        }
+        boundary_response = RawResponse(
+            padded_json_bytes(payload, _MAX_TEST_JSON_RESPONSE_BYTES)
+        )
+        boundary_client = PlatformClient(
+            "https://platform.example", opener=RecordingOpener(boundary_response)
+        )
+
+        self.assertEqual(boundary_client.get_auth_config(), payload)
+        self.assertEqual(
+            boundary_response.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+        )
+
+        duplicate = (
+            b'{"mode":"local","mode":"local","issuer":null,'
+            b'"client_id":null,"desktop_client_id":null,"audience":null,'
+            b'"admin_role_change_acr":null}'
+        )
+        oversized = padded_json_bytes(payload, _MAX_TEST_JSON_RESPONSE_BYTES + 1)
+        for raw in (duplicate, oversized):
+            with self.subTest(size=len(raw)):
+                response = RawResponse(raw)
+                client = PlatformClient(
+                    "https://platform.example", opener=RecordingOpener(response)
+                )
+                with self.assertRaises(PlatformProtocolError):
+                    client.get_auth_config()
+                self.assertEqual(
+                    response.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+                )
+
+    def test_platform_error_json_is_bounded_and_rejects_duplicate_keys(self):
+        envelope = {
+            "error": {
+                "code": "conflict",
+                "message": "server-controlled message",
+                "recovery_hint": "刷新当前任务状态后继续",
+                "trace_id": "body-trace",
+            }
+        }
+
+        def client_for(raw: bytes) -> tuple[PlatformClient, RecordingBytesIO]:
+            headers = Message()
+            headers["X-Trace-Id"] = "header-trace"
+            stream = RecordingBytesIO(raw)
+            error = urllib.error.HTTPError(
+                "https://platform.example/api/v1/me",
+                409,
+                "Conflict",
+                headers,
+                stream,
+            )
+            client = PlatformClient(
+                "https://platform.example", opener=RecordingOpener(error)
+            )
+            client.set_access_token("access-secret")
+            return client, stream
+
+        boundary_client, boundary_stream = client_for(
+            padded_json_bytes(envelope, _MAX_TEST_JSON_RESPONSE_BYTES)
+        )
+        with self.assertRaises(PlatformApiError):
+            boundary_client.me()
+        self.assertEqual(
+            boundary_stream.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+        )
+
+        duplicate = (
+            b'{"error":{"code":"conflict","code":"conflict",'
+            b'"message":"server-controlled message",'
+            b'"recovery_hint":"refresh current task state",'
+            b'"trace_id":"body-trace"}}'
+        )
+        oversized = padded_json_bytes(envelope, _MAX_TEST_JSON_RESPONSE_BYTES + 1)
+        for raw in (duplicate, oversized):
+            with self.subTest(size=len(raw)):
+                client, stream = client_for(raw)
+                with self.assertRaises(PlatformProtocolError):
+                    client.me()
+                self.assertEqual(
+                    stream.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+                )
+
+    def test_oidc_success_json_is_bounded_and_rejects_duplicate_keys(self):
+        payload = {
+            "token_endpoint": "https://identity.example/protocol/openid-connect/token"
+        }
+        boundary_response = RawResponse(
+            padded_json_bytes(payload, _MAX_TEST_JSON_RESPONSE_BYTES)
+        )
+        boundary_client = PlatformClient(
+            "https://platform.example", opener=RecordingOpener(boundary_response)
+        )
+
+        self.assertEqual(
+            boundary_client._request_external_json(
+                "GET", "https://identity.example/.well-known/openid-configuration"
+            ),
+            payload,
+        )
+        self.assertEqual(
+            boundary_response.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+        )
+
+        duplicate = (
+            b'{"token_endpoint":"https://identity.example/token",'
+            b'"token_endpoint":"https://identity.example/token"}'
+        )
+        oversized = padded_json_bytes(payload, _MAX_TEST_JSON_RESPONSE_BYTES + 1)
+        for raw in (duplicate, oversized):
+            with self.subTest(size=len(raw)):
+                response = RawResponse(raw)
+                client = PlatformClient(
+                    "https://platform.example", opener=RecordingOpener(response)
+                )
+                with self.assertRaises(PlatformProtocolError):
+                    client._request_external_json(
+                        "GET",
+                        "https://identity.example/.well-known/openid-configuration",
+                    )
+                self.assertEqual(
+                    response.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+                )
+
+    def test_oidc_error_json_is_bounded_and_rejects_duplicate_keys(self):
+        payload = {"error": "authorization_pending"}
+
+        def client_for(raw: bytes) -> tuple[PlatformClient, RecordingBytesIO]:
+            stream = RecordingBytesIO(raw)
+            error = urllib.error.HTTPError(
+                "https://identity.example/token",
+                400,
+                "Bad Request",
+                Message(),
+                stream,
+            )
+            return (
+                PlatformClient(
+                    "https://platform.example", opener=RecordingOpener(error)
+                ),
+                stream,
+            )
+
+        boundary_client, boundary_stream = client_for(
+            padded_json_bytes(payload, _MAX_TEST_JSON_RESPONSE_BYTES)
+        )
+        self.assertEqual(
+            boundary_client._request_external_json_with_status(
+                "POST", "https://identity.example/token"
+            ),
+            (400, payload),
+        )
+        self.assertEqual(
+            boundary_stream.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+        )
+
+        duplicate = b'{"error":"authorization_pending","error":"authorization_pending"}'
+        oversized = padded_json_bytes(payload, _MAX_TEST_JSON_RESPONSE_BYTES + 1)
+        for raw in (duplicate, oversized):
+            with self.subTest(size=len(raw)):
+                client, stream = client_for(raw)
+                with self.assertRaises(PlatformProtocolError):
+                    client._request_external_json_with_status(
+                        "POST", "https://identity.example/token"
+                    )
+                self.assertEqual(
+                    stream.read_sizes, [_MAX_TEST_JSON_RESPONSE_BYTES + 1]
+                )
+
     def test_classifies_authentication_and_protocol_errors(self):
         auth_body = json.dumps(
-            {"error": {"code": "unauthorized", "message": "登录已失效"}}
+            {
+                "error": {
+                    "code": "unauthorized",
+                    "message": "登录已失效",
+                    "recovery_hint": "重新登录后再试",
+                    "trace_id": "00000000-0000-0000-0000-000000000017",
+                }
+            }
         ).encode("utf-8")
         auth_error = urllib.error.HTTPError(
             "https://platform.example/api/v1/me",

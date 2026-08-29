@@ -140,12 +140,106 @@
         "title": "AdminAuditResponse",
         "type": "object"
       },
+      "AdminCardAllocationResponse": {
+        "properties": {
+          "allocation_reason_code": {
+            "title": "Allocation Reason Code",
+            "type": "string"
+          },
+          "brand": {
+            "title": "Brand",
+            "type": "string"
+          },
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "card_masked": {
+            "title": "Card Masked",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "release_reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Reason Code"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "card_id",
+          "card_masked",
+          "brand",
+          "user_id",
+          "task_id",
+          "device_id",
+          "status",
+          "allocation_reason_code",
+          "expires_at",
+          "released_at",
+          "release_reason_code",
+          "trace_id",
+          "created_at"
+        ],
+        "title": "AdminCardAllocationResponse",
+        "type": "object"
+      },
       "AdminCardCreate": {
         "additionalProperties": false,
         "properties": {
           "brand": {
-            "maxLength": 40,
-            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$",
             "title": "Brand",
             "type": "string"
           },
@@ -180,10 +274,21 @@
             "title": "Last4",
             "type": "string"
           },
+          "pool_key": {
+            "default": "legacy-unclassified",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Pool Key",
+            "type": "string"
+          },
           "provider_ref": {
-            "maxLength": 160,
-            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
             "title": "Provider Ref",
+            "type": "string"
+          },
+          "region": {
+            "default": "legacy-unclassified",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Region",
             "type": "string"
           },
           "secret_ref": {
@@ -200,6 +305,114 @@
           "secret_ref"
         ],
         "title": "AdminCardCreate",
+        "type": "object"
+      },
+      "AdminCardEventResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "after_masked": {
+            "$ref": "#/components/schemas/CardEventMaskedState"
+          },
+          "allocation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Id"
+          },
+          "before_masked": {
+            "$ref": "#/components/schemas/CardEventMaskedState"
+          },
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "card_id",
+          "allocation_id",
+          "actor_id",
+          "action",
+          "reason_code",
+          "before_masked",
+          "after_masked",
+          "trace_id",
+          "created_at"
+        ],
+        "title": "AdminCardEventResponse",
+        "type": "object"
+      },
+      "AdminCardQuarantineRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_code": {
+            "pattern": "^[a-z][a-z0-9_]{1,63}$",
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason_code"
+        ],
+        "title": "AdminCardQuarantineRequest",
+        "type": "object"
+      },
+      "AdminCardRecycleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_code": {
+            "pattern": "^[a-z][a-z0-9_]{1,63}$",
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason_code"
+        ],
+        "title": "AdminCardRecycleRequest",
         "type": "object"
       },
       "AdminCardResponse": {
@@ -247,8 +460,49 @@
             "title": "Last4",
             "type": "string"
           },
+          "pool_key": {
+            "title": "Pool Key",
+            "type": "string"
+          },
           "provider_ref": {
             "title": "Provider Ref",
+            "type": "string"
+          },
+          "quarantine_reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantine Reason Code"
+          },
+          "quarantined_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantined At"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "allocated",
+              "disabled",
+              "quarantined"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "tenant_id": {
@@ -260,10 +514,15 @@
           "id",
           "tenant_id",
           "provider_ref",
+          "pool_key",
+          "region",
           "brand",
           "last4",
           "expiry_month",
           "expiry_year",
+          "status",
+          "quarantine_reason_code",
+          "quarantined_at",
           "is_active",
           "created_at"
         ],
@@ -284,6 +543,84 @@
         "title": "AdminCardStateUpdate",
         "type": "object"
       },
+      "AdminCardTimelineResponse": {
+        "properties": {
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/AdminCardAllocationResponse"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "allocations_has_more": {
+            "title": "Allocations Has More",
+            "type": "boolean"
+          },
+          "allocations_next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocations Next Cursor"
+          },
+          "card": {
+            "$ref": "#/components/schemas/AdminCardResponse"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AdminCardEventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "events_has_more": {
+            "title": "Events Has More",
+            "type": "boolean"
+          },
+          "events_next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events Next Cursor"
+          }
+        },
+        "required": [
+          "card",
+          "allocations",
+          "events",
+          "allocations_has_more",
+          "events_has_more",
+          "allocations_next_cursor",
+          "events_next_cursor"
+        ],
+        "title": "AdminCardTimelineResponse",
+        "type": "object"
+      },
+      "AdminDeviceCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "AdminDeviceCreate",
+        "type": "object"
+      },
       "AdminDeviceResponse": {
         "properties": {
           "created_at": {
@@ -294,6 +631,18 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
           },
           "name": {
             "title": "Name",
@@ -326,6 +675,7 @@
           "user_id",
           "name",
           "revoked_at",
+          "last_seen_at",
           "created_at"
         ],
         "title": "AdminDeviceResponse",
@@ -349,6 +699,12 @@
             "maxLength": 512,
             "minLength": 1,
             "title": "Secret Ref",
+            "type": "string"
+          },
+          "task_type": {
+            "default": "mail_code",
+            "pattern": "^[a-z][a-z0-9_-]{0,79}$",
+            "title": "Task Type",
             "type": "string"
           }
         },
@@ -388,6 +744,120 @@
           "is_active"
         ],
         "title": "AdminMailboxStateUpdate",
+        "type": "object"
+      },
+      "AdminRoleChangeResponse": {
+        "properties": {
+          "applied_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "approval_trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Trace Id"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expected_old_role": {
+            "enum": [
+              "operator",
+              "ops_admin",
+              "security_auditor",
+              "platform_admin"
+            ],
+            "title": "Expected Old Role",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "new_role": {
+            "enum": [
+              "operator",
+              "ops_admin",
+              "security_auditor",
+              "platform_admin"
+            ],
+            "title": "New Role",
+            "type": "string"
+          },
+          "request_trace_id": {
+            "title": "Request Trace Id",
+            "type": "string"
+          },
+          "requested_by": {
+            "title": "Requested By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target_user_id": {
+            "title": "Target User Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "target_user_id",
+          "expected_old_role",
+          "new_role",
+          "status",
+          "requested_by",
+          "approved_by",
+          "request_trace_id",
+          "approval_trace_id",
+          "created_at",
+          "expires_at",
+          "applied_at"
+        ],
+        "title": "AdminRoleChangeResponse",
         "type": "object"
       },
       "AdminUploadResponse": {
@@ -435,6 +905,19 @@
             "title": "Id",
             "type": "string"
           },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "phase_sequence": {
+            "title": "Phase Sequence",
+            "type": "integer"
+          },
+          "phase_updated_at": {
+            "format": "date-time",
+            "title": "Phase Updated At",
+            "type": "string"
+          },
           "policy_version": {
             "title": "Policy Version",
             "type": "string"
@@ -473,6 +956,9 @@
           "device_id",
           "card_allocation_id",
           "status",
+          "phase",
+          "phase_sequence",
+          "phase_updated_at",
           "business_name",
           "trace_id",
           "policy_version",
@@ -482,6 +968,25 @@
           "updated_at"
         ],
         "title": "AdminUploadResponse",
+        "type": "object"
+      },
+      "AdminUserBatchDisable": {
+        "additionalProperties": false,
+        "properties": {
+          "user_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "user_ids"
+        ],
+        "title": "AdminUserBatchDisable",
         "type": "object"
       },
       "AdminUserResponse": {
@@ -524,8 +1029,91 @@
         "title": "AdminUserResponse",
         "type": "object"
       },
+      "AdminUserRoleUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "operator",
+              "ops_admin",
+              "security_auditor",
+              "platform_admin"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "AdminUserRoleUpdate",
+        "type": "object"
+      },
+      "ApiErrorDetail": {
+        "additionalProperties": false,
+        "description": "Stable, non-secret error fields shared by every API operation.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "recovery_hint": {
+            "title": "Recovery Hint",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "recovery_hint",
+          "trace_id"
+        ],
+        "title": "ApiErrorDetail",
+        "type": "object"
+      },
+      "ApiErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ApiErrorResponse",
+        "type": "object"
+      },
       "AuthConfigResponse": {
         "properties": {
+          "admin_role_change_acr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Role Change Acr"
+          },
           "audience": {
             "anyOf": [
               {
@@ -583,6 +1171,10 @@
       },
       "CardAllocationResponse": {
         "properties": {
+          "allocation_reason_code": {
+            "title": "Allocation Reason Code",
+            "type": "string"
+          },
           "brand": {
             "title": "Brand",
             "type": "string"
@@ -639,9 +1231,205 @@
           "expiry_month",
           "expiry_year",
           "status",
+          "allocation_reason_code",
           "expires_at"
         ],
         "title": "CardAllocationResponse",
+        "type": "object"
+      },
+      "CardEventMaskedState": {
+        "properties": {
+          "allocation_status": {
+            "enum": [
+              "active",
+              "released",
+              "expired"
+            ],
+            "title": "Allocation Status",
+            "type": "string"
+          },
+          "brand": {
+            "title": "Brand",
+            "type": "string"
+          },
+          "card_masked": {
+            "title": "Card Masked",
+            "type": "string"
+          },
+          "card_status": {
+            "enum": [
+              "available",
+              "allocated",
+              "disabled",
+              "quarantined"
+            ],
+            "title": "Card Status",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "enum": [
+                "pan",
+                "expiry"
+              ],
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "revealed": {
+            "title": "Revealed",
+            "type": "boolean"
+          }
+        },
+        "title": "CardEventMaskedState",
+        "type": "object"
+      },
+      "CardPolicyVersionCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation_order": {
+            "const": "oldest_available",
+            "default": "oldest_available",
+            "title": "Allocation Order",
+            "type": "string"
+          },
+          "change_note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Change Note",
+            "type": "string"
+          },
+          "lease_ttl_seconds": {
+            "maximum": 86400.0,
+            "minimum": 60.0,
+            "title": "Lease Ttl Seconds",
+            "type": "integer"
+          },
+          "reveal_ttl_seconds": {
+            "maximum": 300.0,
+            "minimum": 30.0,
+            "title": "Reveal Ttl Seconds",
+            "type": "integer"
+          },
+          "selection_rules": {
+            "items": {
+              "$ref": "#/components/schemas/CardSelectionRule"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Selection Rules",
+            "type": "array"
+          },
+          "version": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "change_note",
+          "lease_ttl_seconds",
+          "reveal_ttl_seconds"
+        ],
+        "title": "CardPolicyVersionCreate",
+        "type": "object"
+      },
+      "CardPolicyVersionResponse": {
+        "properties": {
+          "allocation_order": {
+            "const": "oldest_available",
+            "title": "Allocation Order",
+            "type": "string"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "change_note": {
+            "title": "Change Note",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lease_ttl_seconds": {
+            "title": "Lease Ttl Seconds",
+            "type": "integer"
+          },
+          "reveal_ttl_seconds": {
+            "title": "Reveal Ttl Seconds",
+            "type": "integer"
+          },
+          "selection_rules": {
+            "items": {
+              "$ref": "#/components/schemas/CardSelectionRule"
+            },
+            "title": "Selection Rules",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "approved",
+              "active",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "status",
+          "change_note",
+          "created_by",
+          "approved_by",
+          "approved_at",
+          "created_at",
+          "lease_ttl_seconds",
+          "reveal_ttl_seconds",
+          "allocation_order",
+          "selection_rules"
+        ],
+        "title": "CardPolicyVersionResponse",
         "type": "object"
       },
       "CardRevealChallengeResponse": {
@@ -773,8 +1561,15 @@
             "type": "string"
           },
           "pan": {
-            "title": "Pan",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pan"
           },
           "reveal_expires_at": {
             "format": "date-time",
@@ -794,10 +1589,107 @@
           "brand",
           "expiry_month",
           "expiry_year",
-          "pan",
           "reveal_expires_at"
         ],
         "title": "CardRevealResponse",
+        "type": "object"
+      },
+      "CardSelectionRule": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation_order": {
+            "default": "oldest_available",
+            "enum": [
+              "oldest_available",
+              "expiry_soonest"
+            ],
+            "title": "Allocation Order",
+            "type": "string"
+          },
+          "brands": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Brands",
+            "type": "array"
+          },
+          "minimum_validity_days": {
+            "default": 0,
+            "maximum": 3650.0,
+            "minimum": 0.0,
+            "title": "Minimum Validity Days",
+            "type": "integer"
+          },
+          "pool_key": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Pool Key",
+            "type": "string"
+          },
+          "region": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Region",
+            "type": "string"
+          },
+          "task_type": {
+            "pattern": "^[a-z][a-z0-9_-]{0,79}$",
+            "title": "Task Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_type",
+          "pool_key",
+          "region"
+        ],
+        "title": "CardSelectionRule",
+        "type": "object"
+      },
+      "DashboardRecentTaskResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "trace_id",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "DashboardRecentTaskResponse",
         "type": "object"
       },
       "DashboardSummaryResponse": {
@@ -809,6 +1701,18 @@
           "allocated_cards": {
             "title": "Allocated Cards",
             "type": "integer"
+          },
+          "available_cards": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Cards"
           },
           "card_allocation_statuses": {
             "additionalProperties": {
@@ -829,9 +1733,21 @@
             "title": "Mail Session Statuses",
             "type": "object"
           },
+          "pending_exceptions": {
+            "minimum": 0.0,
+            "title": "Pending Exceptions",
+            "type": "integer"
+          },
           "queued_uploads": {
             "title": "Queued Uploads",
             "type": "integer"
+          },
+          "recent_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardRecentTaskResponse"
+            },
+            "title": "Recent Tasks",
+            "type": "array"
           },
           "scope": {
             "enum": [
@@ -847,6 +1763,31 @@
             },
             "title": "Task Statuses",
             "type": "object"
+          },
+          "today_completed_uploads": {
+            "minimum": 0.0,
+            "title": "Today Completed Uploads",
+            "type": "integer"
+          },
+          "today_started_at": {
+            "format": "date-time",
+            "title": "Today Started At",
+            "type": "string"
+          },
+          "today_succeeded_uploads": {
+            "minimum": 0.0,
+            "title": "Today Succeeded Uploads",
+            "type": "integer"
+          },
+          "today_tasks": {
+            "minimum": 0.0,
+            "title": "Today Tasks",
+            "type": "integer"
+          },
+          "unavailable_mailboxes": {
+            "minimum": 0.0,
+            "title": "Unavailable Mailboxes",
+            "type": "integer"
           },
           "unknown_uploads": {
             "title": "Unknown Uploads",
@@ -867,6 +1808,13 @@
         "required": [
           "scope",
           "generated_at",
+          "today_started_at",
+          "today_tasks",
+          "pending_exceptions",
+          "today_succeeded_uploads",
+          "today_completed_uploads",
+          "unavailable_mailboxes",
+          "recent_tasks",
           "active_tasks",
           "allocated_cards",
           "waiting_mail_sessions",
@@ -880,20 +1828,8 @@
         "title": "DashboardSummaryResponse",
         "type": "object"
       },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
-        "type": "object"
-      },
       "LoginRequest": {
+        "additionalProperties": false,
         "properties": {
           "device_id": {
             "maxLength": 36,
@@ -929,6 +1865,18 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "LogoutResponse": {
+        "properties": {
+          "status": {
+            "const": "logged_out",
+            "default": "logged_out",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "LogoutResponse",
+        "type": "object"
+      },
       "MailCodeResponse": {
         "properties": {
           "code": {
@@ -942,6 +1890,30 @@
             ],
             "title": "Code"
           },
+          "message_id_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id Hash"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -951,6 +1923,143 @@
           "status"
         ],
         "title": "MailCodeResponse",
+        "type": "object"
+      },
+      "MailPolicyVersionCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "change_note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Change Note",
+            "type": "string"
+          },
+          "code_ttl_seconds": {
+            "maximum": 300.0,
+            "minimum": 30.0,
+            "title": "Code Ttl Seconds",
+            "type": "integer"
+          },
+          "poll_interval_seconds": {
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Poll Interval Seconds",
+            "type": "integer"
+          },
+          "session_ttl_seconds": {
+            "maximum": 3600.0,
+            "minimum": 60.0,
+            "title": "Session Ttl Seconds",
+            "type": "integer"
+          },
+          "version": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "change_note",
+          "session_ttl_seconds",
+          "code_ttl_seconds",
+          "poll_interval_seconds"
+        ],
+        "title": "MailPolicyVersionCreate",
+        "type": "object"
+      },
+      "MailPolicyVersionResponse": {
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "change_note": {
+            "title": "Change Note",
+            "type": "string"
+          },
+          "code_ttl_seconds": {
+            "title": "Code Ttl Seconds",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "poll_interval_seconds": {
+            "title": "Poll Interval Seconds",
+            "type": "integer"
+          },
+          "session_ttl_seconds": {
+            "title": "Session Ttl Seconds",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "approved",
+              "active",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "status",
+          "change_note",
+          "created_by",
+          "approved_by",
+          "approved_at",
+          "created_at",
+          "session_ttl_seconds",
+          "code_ttl_seconds",
+          "poll_interval_seconds"
+        ],
+        "title": "MailPolicyVersionResponse",
+        "type": "object"
+      },
+      "MailSessionCreateRequest": {
+        "additionalProperties": false,
+        "description": "An intentionally empty operator contract; routing is server-owned.",
+        "properties": {},
+        "title": "MailSessionCreateRequest",
         "type": "object"
       },
       "MailSessionCreateResponse": {
@@ -967,6 +2076,12 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "polling_interval": {
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Polling Interval",
+            "type": "integer"
           },
           "session_token": {
             "maxLength": 128,
@@ -989,7 +2104,8 @@
           "email_masked",
           "status",
           "expires_at",
-          "session_token"
+          "session_token",
+          "polling_interval"
         ],
         "title": "MailSessionCreateResponse",
         "type": "object"
@@ -1047,6 +2163,15 @@
             "title": "Email Masked",
             "type": "string"
           },
+          "health_status": {
+            "enum": [
+              "unknown",
+              "healthy",
+              "unavailable"
+            ],
+            "title": "Health Status",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1054,6 +2179,33 @@
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "connector_not_configured",
+                  "connector_unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
           },
           "status": {
             "enum": [
@@ -1063,14 +2215,22 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "task_type": {
+            "title": "Task Type",
+            "type": "string"
           }
         },
         "required": [
           "id",
           "email_masked",
           "connector_type",
+          "task_type",
           "is_active",
           "status",
+          "health_status",
+          "last_checked_at",
+          "last_error_code",
           "active_session_count",
           "created_at"
         ],
@@ -1108,6 +2268,125 @@
           "role"
         ],
         "title": "MeResponse",
+        "type": "object"
+      },
+      "OperationalPolicyDeployRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "rollout_percent": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Rollout Percent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rollout_percent"
+        ],
+        "title": "OperationalPolicyDeployRequest",
+        "type": "object"
+      },
+      "OperationalPolicyDeploymentResponse": {
+        "properties": {
+          "active_version": {
+            "title": "Active Version",
+            "type": "string"
+          },
+          "domain": {
+            "enum": [
+              "mail",
+              "card"
+            ],
+            "title": "Domain",
+            "type": "string"
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Version"
+          },
+          "rollout_percent": {
+            "title": "Rollout Percent",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "active_version",
+          "previous_version",
+          "rollout_percent",
+          "updated_at"
+        ],
+        "title": "OperationalPolicyDeploymentResponse",
+        "type": "object"
+      },
+      "OperationalPolicyStatusResponse": {
+        "properties": {
+          "active_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version"
+          },
+          "domain": {
+            "enum": [
+              "mail",
+              "card"
+            ],
+            "title": "Domain",
+            "type": "string"
+          },
+          "governance_configured": {
+            "title": "Governance Configured",
+            "type": "boolean"
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Version"
+          },
+          "rollout_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollout Percent"
+          }
+        },
+        "required": [
+          "domain",
+          "governance_configured",
+          "active_version",
+          "previous_version",
+          "rollout_percent"
+        ],
+        "title": "OperationalPolicyStatusResponse",
         "type": "object"
       },
       "TaskCreate": {
@@ -1237,6 +2516,342 @@
         "title": "TaskResponse",
         "type": "object"
       },
+      "TaskTimelineCardAllocationResponse": {
+        "properties": {
+          "brand": {
+            "title": "Brand",
+            "type": "string"
+          },
+          "card_masked": {
+            "title": "Card Masked",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "card_masked",
+          "brand",
+          "status",
+          "expires_at",
+          "released_at",
+          "created_at"
+        ],
+        "title": "TaskTimelineCardAllocationResponse",
+        "type": "object"
+      },
+      "TaskTimelineEventResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "phase_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Sequence"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Version"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "action",
+          "result",
+          "entity_type",
+          "entity_id",
+          "trace_id",
+          "policy_version",
+          "created_at"
+        ],
+        "title": "TaskTimelineEventResponse",
+        "type": "object"
+      },
+      "TaskTimelineMailSessionResponse": {
+        "properties": {
+          "consumed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consumed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email_masked": {
+            "title": "Email Masked",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email_masked",
+          "status",
+          "expires_at",
+          "consumed_at",
+          "created_at"
+        ],
+        "title": "TaskTimelineMailSessionResponse",
+        "type": "object"
+      },
+      "TaskTimelineResponse": {
+        "properties": {
+          "card_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/TaskTimelineCardAllocationResponse"
+            },
+            "title": "Card Allocations",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TaskTimelineEventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "mail_session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskTimelineMailSessionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskResponse"
+          },
+          "uploads": {
+            "items": {
+              "$ref": "#/components/schemas/TaskTimelineUploadResponse"
+            },
+            "title": "Uploads",
+            "type": "array"
+          },
+          "workbench_step": {
+            "enum": [
+              "logged_in",
+              "card_allocated",
+              "waiting_code",
+              "code_received",
+              "uploading",
+              "completed"
+            ],
+            "title": "Workbench Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "workbench_step",
+          "mail_session",
+          "card_allocations",
+          "uploads",
+          "events"
+        ],
+        "title": "TaskTimelineResponse",
+        "type": "object"
+      },
+      "TaskTimelineUploadResponse": {
+        "properties": {
+          "business_name": {
+            "title": "Business Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "phase_sequence": {
+            "title": "Phase Sequence",
+            "type": "integer"
+          },
+          "phase_updated_at": {
+            "format": "date-time",
+            "title": "Phase Updated At",
+            "type": "string"
+          },
+          "policy_version": {
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "business_name",
+          "status",
+          "trace_id",
+          "phase",
+          "phase_sequence",
+          "phase_updated_at",
+          "policy_version",
+          "external_ref",
+          "error_code",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TaskTimelineUploadResponse",
+        "type": "object"
+      },
       "TokenResponse": {
         "properties": {
           "access_token": {
@@ -1350,6 +2965,19 @@
             "title": "Id",
             "type": "string"
           },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "phase_sequence": {
+            "title": "Phase Sequence",
+            "type": "integer"
+          },
+          "phase_updated_at": {
+            "format": "date-time",
+            "title": "Phase Updated At",
+            "type": "string"
+          },
           "policy_version": {
             "title": "Policy Version",
             "type": "string"
@@ -1376,6 +3004,9 @@
           "id",
           "task_id",
           "status",
+          "phase",
+          "phase_sequence",
+          "phase_updated_at",
           "business_name",
           "trace_id",
           "policy_version",
@@ -1620,6 +3251,7 @@
             "anyOf": [
               {
                 "maxLength": 80,
+                "pattern": "^[a-z][a-z0-9_]{0,79}$",
                 "type": "string"
               },
               {
@@ -1632,6 +3264,7 @@
             "anyOf": [
               {
                 "maxLength": 160,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
                 "type": "string"
               },
               {
@@ -1655,46 +3288,6 @@
         ],
         "title": "UploadReconcileRequest",
         "type": "object"
-      },
-      "ValidationError": {
-        "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "msg": {
-            "title": "Message",
-            "type": "string"
-          },
-          "type": {
-            "title": "Error Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError",
-        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1714,6 +3307,42 @@
       "get": {
         "operationId": "admin_list_audit_api_v1_admin_audit_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "card_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Card Id"
+            }
+          },
           {
             "in": "query",
             "name": "trace_id",
@@ -1767,6 +3396,24 @@
           },
           {
             "in": "query",
+            "name": "device_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Device Id"
+            }
+          },
+          {
+            "in": "query",
             "name": "entity_type",
             "required": false,
             "schema": {
@@ -1814,6 +3461,24 @@
                 }
               ],
               "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
             }
           },
           {
@@ -1899,11 +3564,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -1922,6 +3597,42 @@
         "description": "Export bounded, redacted evidence; free-form details are intentionally omitted.",
         "operationId": "admin_export_audit_api_v1_admin_audit_export_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "card_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Card Id"
+            }
+          },
           {
             "in": "query",
             "name": "trace_id",
@@ -1975,6 +3686,24 @@
           },
           {
             "in": "query",
+            "name": "device_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Device Id"
+            }
+          },
+          {
+            "in": "query",
             "name": "entity_type",
             "required": false,
             "schema": {
@@ -2022,6 +3751,24 @@
                 }
               ],
               "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
             }
           },
           {
@@ -2103,11 +3850,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2138,6 +3895,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2177,11 +3954,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2234,11 +4021,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2247,6 +4044,323 @@
           }
         ],
         "summary": "Admin Update Card State",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/cards/{card_id}/allocations/{allocation_id}/recycle": {
+      "post": {
+        "operationId": "admin_recycle_card_allocation_api_v1_admin_cards__card_id__allocations__allocation_id__recycle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "allocation_id",
+            "required": true,
+            "schema": {
+              "title": "Allocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCardRecycleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCardAllocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Recycle Card Allocation",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/cards/{card_id}/quarantine": {
+      "post": {
+        "operationId": "admin_quarantine_card_api_v1_admin_cards__card_id__quarantine_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCardQuarantineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Quarantine Card",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/cards/{card_id}/release-quarantine": {
+      "post": {
+        "operationId": "admin_release_card_quarantine_api_v1_admin_cards__card_id__release_quarantine_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Release Card Quarantine",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/cards/{card_id}/timeline": {
+      "get": {
+        "operationId": "admin_get_card_timeline_api_v1_admin_cards__card_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "allocations_cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Allocations Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "events_cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Events Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "allocation_limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Allocation Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Event Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCardTimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Get Card Timeline",
         "tags": [
           "admin"
         ]
@@ -2269,6 +4383,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2311,11 +4445,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2357,11 +4501,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2414,11 +4568,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2471,11 +4635,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2484,6 +4658,646 @@
           }
         ],
         "summary": "Admin Rotate Mailbox Secret",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/card": {
+      "get": {
+        "operationId": "admin_card_policy_status_api_v1_admin_policies_card_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalPolicyStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Card Policy Status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/card/rollback": {
+      "post": {
+        "operationId": "admin_rollback_card_policy_api_v1_admin_policies_card_rollback_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalPolicyDeploymentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Rollback Card Policy",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/card/versions": {
+      "get": {
+        "operationId": "admin_list_card_policy_versions_api_v1_admin_policies_card_versions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CardPolicyVersionResponse"
+                  },
+                  "title": "Response Admin List Card Policy Versions Api V1 Admin Policies Card Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin List Card Policy Versions",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "admin_register_card_policy_version_api_v1_admin_policies_card_versions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardPolicyVersionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardPolicyVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Register Card Policy Version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/card/versions/{policy_id}/approve": {
+      "post": {
+        "operationId": "admin_approve_card_policy_version_api_v1_admin_policies_card_versions__policy_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardPolicyVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Approve Card Policy Version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/card/versions/{policy_id}/deploy": {
+      "post": {
+        "operationId": "admin_deploy_card_policy_version_api_v1_admin_policies_card_versions__policy_id__deploy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationalPolicyDeployRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalPolicyDeploymentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Deploy Card Policy Version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/mail": {
+      "get": {
+        "operationId": "admin_mail_policy_status_api_v1_admin_policies_mail_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalPolicyStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Mail Policy Status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/mail/rollback": {
+      "post": {
+        "operationId": "admin_rollback_mail_policy_api_v1_admin_policies_mail_rollback_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalPolicyDeploymentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Rollback Mail Policy",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/mail/versions": {
+      "get": {
+        "operationId": "admin_list_mail_policy_versions_api_v1_admin_policies_mail_versions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MailPolicyVersionResponse"
+                  },
+                  "title": "Response Admin List Mail Policy Versions Api V1 Admin Policies Mail Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin List Mail Policy Versions",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "admin_register_mail_policy_version_api_v1_admin_policies_mail_versions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailPolicyVersionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailPolicyVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Register Mail Policy Version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/mail/versions/{policy_id}/approve": {
+      "post": {
+        "operationId": "admin_approve_mail_policy_version_api_v1_admin_policies_mail_versions__policy_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailPolicyVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Approve Mail Policy Version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/mail/versions/{policy_id}/deploy": {
+      "post": {
+        "operationId": "admin_deploy_mail_policy_version_api_v1_admin_policies_mail_versions__policy_id__deploy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationalPolicyDeployRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalPolicyDeploymentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Deploy Mail Policy Version",
         "tags": [
           "admin"
         ]
@@ -2503,6 +5317,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2529,6 +5363,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2559,6 +5413,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2599,11 +5473,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2646,11 +5530,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2703,11 +5597,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2716,6 +5620,136 @@
           }
         ],
         "summary": "Admin Deploy Upload Policy Version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/role-change-requests": {
+      "get": {
+        "operationId": "admin_list_role_change_requests_api_v1_admin_role_change_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "applied",
+                    "expired"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminRoleChangeResponse"
+                  },
+                  "title": "Response Admin List Role Change Requests Api V1 Admin Role Change Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin List Role Change Requests",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/role-change-requests/{role_change_id}/approve": {
+      "post": {
+        "operationId": "admin_approve_role_change_request_api_v1_admin_role_change_requests__role_change_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role_change_id",
+            "required": true,
+            "schema": {
+              "title": "Role Change Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRoleChangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Approve Role Change Request",
         "tags": [
           "admin"
         ]
@@ -2738,6 +5772,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2768,6 +5822,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2776,6 +5850,133 @@
           }
         ],
         "summary": "Admin List Users",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/batch-disable": {
+      "post": {
+        "operationId": "admin_batch_disable_users_api_v1_admin_users_batch_disable_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserBatchDisable"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUserResponse"
+                  },
+                  "title": "Response Admin Batch Disable Users Api V1 Admin Users Batch Disable Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Batch Disable Users",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/devices": {
+      "post": {
+        "operationId": "admin_register_device_api_v1_admin_users__user_id__devices_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDeviceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDeviceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Register Device",
         "tags": [
           "admin"
         ]
@@ -2810,11 +6011,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2823,6 +6034,140 @@
           }
         ],
         "summary": "Admin Disable User",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/role": {
+      "patch": {
+        "operationId": "admin_update_user_role_api_v1_admin_users__user_id__role_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserRoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Update User Role",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/role-change-requests": {
+      "post": {
+        "operationId": "admin_request_user_role_change_api_v1_admin_users__user_id__role_change_requests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserRoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRoleChangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Request User Role Change",
         "tags": [
           "admin"
         ]
@@ -2841,6 +6186,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "summary": "Auth Config",
@@ -2877,14 +6242,70 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Logout",
         "tags": [
           "auth"
         ]
@@ -2900,6 +6321,15 @@
             "required": true,
             "schema": {
               "title": "Allocation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
               "type": "string"
             }
           }
@@ -2919,11 +6349,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -2966,11 +6406,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3023,11 +6473,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3071,11 +6531,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3129,11 +6599,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3161,6 +6641,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3203,11 +6703,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3239,6 +6749,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "summary": "Health",
@@ -3259,6 +6789,24 @@
               "title": "Session Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Opaque capability returned when the mail session is created or rotated",
+            "in": "header",
+            "name": "X-Mail-Session-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque capability returned when the mail session is created or rotated",
+              "title": "X-Mail-Session-Token"
+            }
           }
         ],
         "responses": {
@@ -3276,11 +6824,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3306,6 +6864,24 @@
               "title": "Session Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Opaque capability returned when the mail session is created or rotated",
+            "in": "header",
+            "name": "X-Mail-Session-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque capability returned when the mail session is created or rotated",
+              "title": "X-Mail-Session-Token"
+            }
           }
         ],
         "responses": {
@@ -3321,11 +6897,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3351,6 +6937,24 @@
               "title": "Session Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Opaque capability returned when the mail session is created or rotated",
+            "in": "header",
+            "name": "X-Mail-Session-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque capability returned when the mail session is created or rotated",
+              "title": "X-Mail-Session-Token"
+            }
           }
         ],
         "responses": {
@@ -3368,11 +6972,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3398,6 +7012,24 @@
               "title": "Session Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Opaque capability returned when the mail session is created or rotated",
+            "in": "header",
+            "name": "X-Mail-Session-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque capability returned when the mail session is created or rotated",
+              "title": "X-Mail-Session-Token"
+            }
           }
         ],
         "responses": {
@@ -3415,11 +7047,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3445,6 +7087,24 @@
               "title": "Session Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Opaque capability returned when the mail session is created or rotated",
+            "in": "header",
+            "name": "X-Mail-Session-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque capability returned when the mail session is created or rotated",
+              "title": "X-Mail-Session-Token"
+            }
           }
         ],
         "responses": {
@@ -3460,11 +7120,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3490,6 +7160,24 @@
               "title": "Session Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Opaque capability returned when the mail session is created or rotated",
+            "in": "header",
+            "name": "X-Mail-Session-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque capability returned when the mail session is created or rotated",
+              "title": "X-Mail-Session-Token"
+            }
           }
         ],
         "responses": {
@@ -3507,11 +7195,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3543,6 +7241,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3569,6 +7287,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3597,6 +7335,60 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "user_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "trace_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trace Id"
+            }
           }
         ],
         "responses": {
@@ -3618,11 +7410,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3672,11 +7474,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3719,11 +7531,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3776,11 +7598,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3833,11 +7665,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3846,6 +7688,82 @@
           }
         ],
         "summary": "Allocate Card",
+        "tags": [
+          "cards"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/card-allocations/{allocation_id}/replace": {
+      "post": {
+        "operationId": "replace_card_allocation_api_v1_tasks__task_id__card_allocations__allocation_id__replace_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "allocation_id",
+            "required": true,
+            "schema": {
+              "title": "Allocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardAllocationResponse"
+                }
+              }
+            },
+            "description": "Idempotent replacement replay"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardAllocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Card Allocation",
         "tags": [
           "cards"
         ]
@@ -3880,11 +7798,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3912,6 +7840,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MailSessionCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": " Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -3937,11 +7882,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -3969,6 +7924,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MailSessionCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": " Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -3994,11 +7966,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4009,6 +7991,63 @@
         "summary": "Create Mail Session",
         "tags": [
           "mail"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/timeline": {
+      "get": {
+        "operationId": "get_task_timeline_api_v1_tasks__task_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskTimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Task Timeline",
+        "tags": [
+          "tasks"
         ]
       }
     },
@@ -4061,11 +8100,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4108,11 +8157,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4155,11 +8214,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4212,11 +8281,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4268,11 +8347,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4315,11 +8404,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4335,7 +8434,7 @@
     },
     "/api/v1/uploads/{job_id}/cancel": {
       "post": {
-        "operationId": "cancel_upload_job_api_v1_uploads__job_id__cancel_post",
+        "operationId": "cancel_upload_job_legacy_api_v1_uploads__job_id__cancel_post",
         "parameters": [
           {
             "in": "path",
@@ -4362,11 +8461,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4374,7 +8483,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Cancel Upload Job",
+        "summary": "Cancel Upload Job Legacy",
         "tags": [
           "uploads"
         ]
@@ -4419,11 +8528,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "security": [
@@ -4455,6 +8574,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
           }
         },
         "summary": "Version",

@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
-from scripts import training_evidence
+from scripts import backup_output_policy, training_evidence
 from scripts.verify_training_assets import training_asset_errors
 
 
@@ -141,7 +142,7 @@ class TrainingEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(training_evidence.TrainingEvidenceError, "integrity"):
             training_evidence.validate_evidence(evidence)
 
-    def test_failed_create_invalidates_stale_output_and_cli_is_safe(self) -> None:
+    def test_create_is_write_once_and_preflight_precedes_input_read(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             input_path = root / "input.json"
@@ -153,15 +154,94 @@ class TrainingEvidenceTests(unittest.TestCase):
                 ),
                 0,
             )
-            self.assertTrue(output_path.exists())
+            original = output_path.read_bytes()
             input_path.write_text("{}", encoding="utf-8")
-            self.assertEqual(
-                training_evidence.main(
-                    ["create", "--input", str(input_path), "--output", str(output_path)]
-                ),
-                1,
+            with mock.patch.object(training_evidence, "_read_json") as read_json:
+                self.assertEqual(
+                    training_evidence.main(
+                        [
+                            "create",
+                            "--input",
+                            str(input_path),
+                            "--output",
+                            str(output_path),
+                        ]
+                    ),
+                    1,
+                )
+            read_json.assert_not_called()
+            self.assertEqual(output_path.read_bytes(), original)
+
+    def test_unsafe_outputs_are_rejected_before_input_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            existing = root / "existing.json"
+            existing.write_bytes(b"existing-output")
+            missing_parent = root / "missing" / "evidence.json"
+            unsafe_outputs = (
+                Path("relative-training-evidence.json"),
+                backup_output_policy.REPOSITORY_ROOT / "training-evidence.json",
+                existing,
+                missing_parent,
             )
-            self.assertFalse(output_path.exists())
+            for output in unsafe_outputs:
+                with self.subTest(output=output):
+                    with mock.patch.object(training_evidence, "_read_json") as read_json:
+                        with self.assertRaises(ValueError):
+                            training_evidence.create_evidence(
+                                root / "unused-input.json", output
+                            )
+                    read_json.assert_not_called()
+            self.assertEqual(existing.read_bytes(), b"existing-output")
+            self.assertFalse(missing_parent.parent.exists())
+
+    def test_publish_race_preserves_winning_target(self) -> None:
+        evidence = training_evidence.seal_evidence(valid_payload())
+        winner = b"race-winner"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "evidence.json"
+            real_publish = backup_output_policy.publish_write_once_file
+
+            def publish_after_race(temporary_path: Path, output_path: Path) -> None:
+                output_path.write_bytes(winner)
+                real_publish(temporary_path, output_path)
+
+            with mock.patch.object(
+                training_evidence,
+                "publish_write_once_file",
+                side_effect=publish_after_race,
+            ):
+                with self.assertRaises(FileExistsError):
+                    training_evidence.write_evidence(output, evidence)
+
+            self.assertEqual(output.read_bytes(), winner)
+            self.assertEqual(list(root.glob(f".{output.name}.*.tmp")), [])
+
+    def test_publish_cleanup_failure_is_still_committed(self) -> None:
+        evidence = training_evidence.seal_evidence(valid_payload())
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "evidence.json"
+            with mock.patch.object(
+                Path, "unlink", side_effect=OSError("temporary cleanup failed")
+            ):
+                training_evidence.write_evidence(output, evidence)
+
+            self.assertEqual(training_evidence.verify_evidence(output), evidence)
+
+    def test_prepublication_failure_leaves_no_partial_final_file(self) -> None:
+        evidence = training_evidence.seal_evidence(valid_payload())
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "evidence.json"
+            with mock.patch.object(
+                training_evidence.os, "fsync", side_effect=OSError("fsync failed")
+            ):
+                with self.assertRaises(OSError):
+                    training_evidence.write_evidence(output, evidence)
+
+            self.assertFalse(output.exists())
+            self.assertEqual(list(root.glob(f".{output.name}.*.tmp")), [])
 
     def test_create_refuses_to_overwrite_its_input(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -178,12 +258,30 @@ class TrainingEvidenceTests(unittest.TestCase):
 
     def test_repository_training_assets_cover_all_roles_and_scenarios(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        runbook = (root / "deploy" / "runbooks" / "role-training.md").read_text(
+            encoding="utf-8"
+        )
+        signoff = (root / "deploy" / "production-signoff-template.md").read_text(
+            encoding="utf-8"
+        )
         errors = training_asset_errors(
-            (root / "deploy" / "runbooks" / "role-training.md").read_text(
-                encoding="utf-8"
-            ),
-            (root / "deploy" / "production-signoff-template.md").read_text(
-                encoding="utf-8"
-            ),
+            runbook,
+            signoff,
         )
         self.assertEqual(errors, [])
+        self.assertTrue(
+            training_asset_errors(
+                runbook.replace("no-replace hard-link commit point", "replace", 1),
+                signoff,
+            )
+        )
+        self.assertTrue(
+            training_asset_errors(
+                runbook,
+                signoff.replace(
+                    "Phase 6 rehearsal/training external write-once paths and pre-existing-target refusal evidence:",
+                    "Phase 6 evidence:",
+                    1,
+                ),
+            )
+        )

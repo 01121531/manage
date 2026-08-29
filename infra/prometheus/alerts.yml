@@ -1,6 +1,19 @@
 groups:
   - name: platform-availability
     rules:
+      - alert: PlatformAlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Platform alert delivery service is unreachable
+      - alert: PlatformMonitoringWatchdog
+        expr: vector(1)
+        labels:
+          severity: watchdog
+        annotations:
+          summary: Platform monitoring heartbeat
       - alert: PlatformApiDown
         expr: up{job="api"} == 0
         for: 2m
@@ -8,15 +21,44 @@ groups:
           severity: page
         annotations:
           summary: Platform API is unreachable
+      - alert: PlatformKeycloakDown
+        expr: up{job="keycloak"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Platform identity service is unreachable
+      - alert: PlatformKeycloakLoginFailures
+        expr: >-
+          sum(increase(keycloak_user_events_total{job="keycloak",realm="email-platform",event="login",error!=""}[5m])) >= 5
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Platform identity login failures are sustained
       - alert: PlatformMailWorkerStalled
-        expr: time() - platform_worker_last_batch_timestamp_seconds{job="worker-mail"} > 120
+        expr: >-
+          up{job="worker-mail"} == 0
+          or
+          time() - platform_worker_last_batch_timestamp_seconds{job="worker-mail"} > 120
         for: 2m
         labels:
           severity: page
         annotations:
           summary: Mail worker batch loop is stalled
+      - alert: PlatformMailConnectorUnavailable
+        expr: >-
+          increase(platform_worker_batch_results_total{job="worker-mail",worker="mail",result="connector_unavailable"}[5m]) >= 3
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Mail connectors are persistently unavailable
       - alert: PlatformSub2WorkerStalled
-        expr: time() - platform_worker_last_batch_timestamp_seconds{job="worker-sub2"} > 120
+        expr: >-
+          up{job="worker-sub2"} == 0
+          or
+          time() - platform_worker_heartbeat_timestamp_seconds{job="worker-sub2"} > 120
         for: 2m
         labels:
           severity: page

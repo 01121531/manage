@@ -12,6 +12,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.external_json import load_unique_json
+
+
+_MAX_SARIF_BYTES = 32 * 1024 * 1024
+
 
 def _github_escape(value: object) -> str:
     return (
@@ -23,7 +28,7 @@ def _github_escape(value: object) -> str:
 
 
 def findings(path: Path) -> list[tuple[str, str]]:
-    payload: Any = json.loads(path.read_text(encoding="utf-8"))
+    payload: Any = load_unique_json(path, max_bytes=_MAX_SARIF_BYTES)
     runs = payload.get("runs") if isinstance(payload, dict) else None
     if not isinstance(runs, list):
         raise ValueError("SARIF runs must be a list")

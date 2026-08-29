@@ -2,15 +2,19 @@
   "release_id": "0.1.3",
   "backend_version": "0.1.3",
   "frontend_version": "0.1.3",
-  "migration_head": "0014_audit_evidence_fields",
+  "migration_head": "0032_upload_phase_tracking",
   "compose_images": {
-    "migrate": "${PLATFORM_API_IMAGE:-email-platform-api:local}",
-    "api": "${PLATFORM_API_IMAGE:-email-platform-api:local}",
-    "worker-mail": "${PLATFORM_API_IMAGE:-email-platform-api:local}",
-    "worker-sub2": "${PLATFORM_API_IMAGE:-email-platform-api:local}",
-    "web": "${PLATFORM_WEB_IMAGE:-email-platform-web:local}",
-    "edge": "${PLATFORM_EDGE_IMAGE:-email-platform-edge:local}",
-    "prometheus": "prom/prometheus:v2.55.1"
+    "postgres": "postgres@sha256:${POSTGRES_IMAGE_SHA256:?set reviewed 64-hex POSTGRES_IMAGE_SHA256 in .env}",
+    "redis": "redis@sha256:${REDIS_IMAGE_SHA256:?set reviewed 64-hex REDIS_IMAGE_SHA256 in .env}",
+    "keycloak": "quay.io/keycloak/keycloak@sha256:${KEYCLOAK_IMAGE_SHA256:?set reviewed 64-hex KEYCLOAK_IMAGE_SHA256 in .env}",
+    "migrate": "${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}",
+    "api": "${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}",
+    "worker-mail": "${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}",
+    "worker-sub2": "${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}",
+    "web": "${PLATFORM_WEB_IMAGE:?set immutable PLATFORM_WEB_IMAGE in .env}",
+    "edge": "${PLATFORM_EDGE_IMAGE:?set immutable PLATFORM_EDGE_IMAGE in .env}",
+    "alertmanager": "prom/alertmanager@sha256:${ALERTMANAGER_IMAGE_SHA256:?set reviewed 64-hex ALERTMANAGER_IMAGE_SHA256 in .env}",
+    "prometheus": "prom/prometheus@sha256:${PROMETHEUS_IMAGE_SHA256:?set reviewed 64-hex PROMETHEUS_IMAGE_SHA256 in .env}"
   },
   "rollback_policy": "Use scripts.rollback_release with an immutable container manifest and its release-bound platform plus Keycloak backup bundle."
 }

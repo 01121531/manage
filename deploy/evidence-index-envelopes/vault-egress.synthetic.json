@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "record_type": "vault_egress_evidence_index",
+  "index_reference": "synthetic-vault-egress-evidence-index",
+  "synthetic": true,
+  "index_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "sub2_contract_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "window": {
+    "started_at": null,
+    "finished_at": null
+  },
+  "scenarios": {
+    "vault_api_cards_allowed": null,
+    "vault_api_mailboxes_denied": null,
+    "vault_api_sub2_credential_denied": null,
+    "vault_api_sub2_proxy_denied": null,
+    "vault_mail_cards_denied": null,
+    "vault_mail_mailboxes_allowed": null,
+    "vault_mail_sub2_credential_denied": null,
+    "vault_mail_sub2_proxy_denied": null,
+    "vault_sub2_cards_allowed": null,
+    "vault_sub2_mailboxes_denied": null,
+    "vault_sub2_credential_allowed": null,
+    "vault_sub2_proxy_allowed": null,
+    "sub2_application_approved_origin_allowed": null,
+    "sub2_application_unapproved_origin_denied": null,
+    "sub2_application_unapproved_port_denied": null,
+    "sub2_application_similar_suffix_denied": null,
+    "sub2_network_approved_destination_allowed": null,
+    "sub2_network_unapproved_destination_denied": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_vault_responses": false,
+    "contains_provider_payloads": false,
+    "contains_request_or_response_bodies": false,
+    "contains_provider_urls": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "6f6509885273dc7cc49b62feca76112cf222146dcc5228084af92b426b757c76"
+  }
+}

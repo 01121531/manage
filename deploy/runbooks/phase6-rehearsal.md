@@ -13,14 +13,19 @@ Run and verify it from the repository root:
 
 ```powershell
 $commit = (git rev-parse HEAD).Trim()
-python scripts/phase6_rehearsal.py run --output release/evidence/phase6-ci-rehearsal.json --commit $commit
-python scripts/phase6_rehearsal.py verify --input release/evidence/phase6-ci-rehearsal.json --expected-commit $commit
+$evidence = "C:\secure\release-evidence\phase6-ci-rehearsal-$commit.json"
+python scripts/phase6_rehearsal.py run --output $evidence --commit $commit
+python scripts/phase6_rehearsal.py verify --input $evidence --expected-commit $commit
 ```
 
-The writer removes stale output before starting, publishes through a same-directory
-temporary file plus `os.replace`, and then verifies the closed schema and canonical
+The output path must be absolute, outside the repository, below an existing
+non-symlink directory, and absent before the command starts. The writer performs
+that preflight before running the rehearsal, publishes through a same-directory
+temporary file with a no-replace hard-link commit point, never deletes or
+overwrites a final target, and then verifies the closed schema and canonical
 payload SHA-256. Any failed or tampered check returns a non-zero exit code. The CI
-workflow uploads the resulting JSON as `phase6-ci-rehearsal-<commit>`.
+workflow uses its external runner temporary directory and uploads the resulting
+JSON as `phase6-ci-rehearsal-<commit>`.
 
 For a semantic-version Tag release, the publishing job downloads that exact
 commit-bound artifact, verifies it again with `--expected-commit`, and publishes
@@ -34,6 +39,11 @@ The JSON always contains:
 - `evidence_kind=phase6_ci_rehearsal`
 - `identity_mode=local_test`
 - `production_acceptance=false`
+
+Independent verification uses a single bounded stable-file read with a 64 KiB
+limit, rejects link/reparse paths, duplicate JSON keys at any nesting level,
+and any identity, link-count, size, or modification-state change during the
+read. Errors remain redacted and never print evidence content.
 
 The rehearsal uses in-memory SQLite and fake Mail/Sub2 adapters. It proves that
 the repository's API, ownership checks, workers, outbox, cleanup, audit replay,

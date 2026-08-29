@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: email-platform
+  labels:
+    app.kubernetes.io/part-of: email-platform
+  annotations:
+    email-platform.io/template-only: "true"
+    email-platform.io/production-acceptance: "false"

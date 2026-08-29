@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "record_type": "phase3_card_evidence_index",
+  "index_reference": "synthetic-phase3-card-index",
+  "synthetic": true,
+  "index_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "card_pci_boundary_sha256": null,
+    "oidc_deployment_identity_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "window": {
+    "started_at": null,
+    "finished_at": null
+  },
+  "scenarios": {
+    "postgres_concurrent_allocation": null,
+    "target_migration": null,
+    "keycloak_step_up": null,
+    "pci_scope_enforcement": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_request_or_response_bodies": false,
+    "contains_provider_urls": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "84d38a4b4989cd1838db9340c509b02ef14848bf40590b8c9e1e7ec368912aca"
+  }
+}

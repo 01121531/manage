@@ -6,6 +6,11 @@ from pathlib import Path
 import re
 import sys
 
+try:
+    from scripts.external_text import load_stable_text
+except ModuleNotFoundError:  # Direct script loading from scripts/.
+    from external_text import load_stable_text
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "infra" / "nginx" / "email-platform.conf.template"
@@ -45,7 +50,7 @@ def _location_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def _check_file(path: Path, *, allow_missing_csp_for: set[str] | None = None) -> tuple[bool, str]:
-    text = path.read_text(encoding="utf-8")
+    text = load_stable_text(path)
     missing: list[str] = []
     for label, body in _location_blocks(text):
         for header in _REQUIRED:
@@ -61,10 +66,16 @@ def _check_file(path: Path, *, allow_missing_csp_for: set[str] | None = None) ->
 
 
 def main() -> int:
-    template_ok, template_errors = _check_file(TEMPLATE)
+    try:
+        template_ok, template_errors = _check_file(TEMPLATE)
+    except OSError:
+        return _fail("Unable to load Nginx header assets")
     if not template_ok:
         return _fail("Missing Nginx headers: " + template_errors)
-    web_ok, web_errors = _check_file(WEB_CONF)
+    try:
+        web_ok, web_errors = _check_file(WEB_CONF)
+    except OSError:
+        return _fail("Unable to load Nginx header assets")
     if not web_ok:
         return _fail("Missing Nginx headers: " + web_errors)
     print("nginx-headers-ok location-level-security-headers-present")

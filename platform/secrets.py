@@ -13,6 +13,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from platform.file_boundary import read_stable_runtime_bytes_with_metadata
+from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
+
 
 class SecretResolverUnavailable(RuntimeError):
     """A secret reference cannot be resolved by this process."""
@@ -46,6 +49,7 @@ class JsonEnvironmentSecretResolver:
 
 ResponseOpener = Callable[..., Any]
 _MAX_VAULT_TOKEN_BYTES = 4096
+_MAX_VAULT_RESPONSE_BYTES = 64 * 1024
 _PRODUCTION_VAULT_TOKEN_ROOTS = ("/run/secrets/", "/var/run/secrets/")
 
 
@@ -115,28 +119,15 @@ class VaultSecretResolver:
         if self._static_token is not None:
             return self._static_token
         assert self._token_file is not None
-        flags = os.O_RDONLY
-        if hasattr(os, "O_CLOEXEC"):
-            flags |= os.O_CLOEXEC
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
         try:
-            descriptor = os.open(self._token_file, flags)
-            try:
-                metadata = os.fstat(descriptor)
-                if (
-                    not stat.S_ISREG(metadata.st_mode)
-                    or metadata.st_size <= 0
-                    or metadata.st_size > _MAX_VAULT_TOKEN_BYTES
-                ):
-                    raise OSError("invalid token file")
-                if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & (
-                    stat.S_IWGRP | stat.S_IWOTH
-                ):
-                    raise OSError("insecure token file permissions")
-                raw = os.read(descriptor, _MAX_VAULT_TOKEN_BYTES + 1)
-            finally:
-                os.close(descriptor)
+            raw, metadata = read_stable_runtime_bytes_with_metadata(
+                Path(self._token_file),
+                max_bytes=_MAX_VAULT_TOKEN_BYTES,
+            )
+            if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & (
+                stat.S_IWGRP | stat.S_IWOTH
+            ):
+                raise OSError("insecure token file permissions")
             token = raw.decode("utf-8").strip()
             if (
                 not token
@@ -145,8 +136,14 @@ class VaultSecretResolver:
             ):
                 raise ValueError("invalid token file contents")
             return token
-        except (OSError, UnicodeError, ValueError) as error:
+        except (OSError, UnicodeError, ValueError):
             raise SecretResolverUnavailable("Vault token file is unavailable") from None
+
+    def validate_token_source(self) -> None:
+        """Validate a file-backed token without caching it or contacting Vault."""
+
+        if self._token_file is not None:
+            self._token()
 
     def _open(self, request: urllib.request.Request, timeout: int) -> Any:
         if self._opener is not None:
@@ -164,16 +161,17 @@ class VaultSecretResolver:
         request = urllib.request.Request(url, method="GET", headers=headers)
         try:
             with self._open(request, timeout=self.timeout) as response:
-                charset = response.headers.get_content_charset() or "utf-8"
-                raw = response.read().decode(charset, errors="replace")
+                raw = response.read(_MAX_VAULT_RESPONSE_BYTES + 1)
+                if len(raw) > _MAX_VAULT_RESPONSE_BYTES:
+                    raise SecretResolverUnavailable("Vault returned invalid JSON")
         except urllib.error.HTTPError as error:
             raise SecretResolverUnavailable(f"Vault returned HTTP {error.code}") from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise SecretResolverUnavailable("Vault is unavailable") from error
         try:
-            value = json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise SecretResolverUnavailable("Vault returned invalid JSON") from error
+            value = parse_unique_json_bytes(raw)
+        except JsonBoundaryError:
+            raise SecretResolverUnavailable("Vault returned invalid JSON") from None
         if not isinstance(value, dict):
             raise SecretResolverUnavailable("Vault returned invalid data")
         data = value.get("data")
@@ -224,7 +222,21 @@ def secret_resolver_from_settings(settings: Any) -> SecretResolver:
     )
     environment = str(getattr(settings, "environment", "development")).strip().lower()
     is_local = environment in {"development", "test"}
-    if vault_addr:
+    cleaned_vault_addr = (
+        vault_addr.strip() if isinstance(vault_addr, str) else ""
+    )
+    if not cleaned_vault_addr and not is_local:
+        raise RuntimeError(
+            "PLATFORM_VAULT_ADDR is required outside development/test"
+        )
+    if cleaned_vault_addr:
+        if (
+            not is_local
+            and urllib.parse.urlsplit(cleaned_vault_addr).scheme.lower() != "https"
+        ):
+            raise RuntimeError(
+                "PLATFORM_VAULT_ADDR must use HTTPS outside development/test"
+            )
         cleaned_token = token_value.strip() if isinstance(token_value, str) else ""
         cleaned_token_file = (
             vault_token_file.strip() if isinstance(vault_token_file, str) else ""
@@ -247,15 +259,18 @@ def secret_resolver_from_settings(settings: Any) -> SecretResolver:
                     "PLATFORM_VAULT_TOKEN_FILE must be under /run/secrets or "
                     "/var/run/secrets outside development/test"
                 )
+        vault_resolver = VaultSecretResolver(
+            cleaned_vault_addr,
+            cleaned_token or None,
+            token_file=cleaned_token_file or None,
+            namespace=getattr(settings, "vault_namespace", None),
+            timeout=getattr(settings, "vault_timeout_seconds", 10),
+        )
+        if not is_local:
+            vault_resolver.validate_token_source()
         return SchemeSecretResolver(
             env=env_resolver,
             allow_env=is_local,
-            vault=VaultSecretResolver(
-                vault_addr,
-                cleaned_token or None,
-                token_file=cleaned_token_file or None,
-                namespace=getattr(settings, "vault_namespace", None),
-                timeout=getattr(settings, "vault_timeout_seconds", 10),
-            ),
+            vault=vault_resolver,
         )
     return SchemeSecretResolver(env=env_resolver, allow_env=is_local)

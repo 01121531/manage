@@ -7,17 +7,25 @@ import ast
 from pathlib import Path
 from typing import Iterable
 
+try:
+    from scripts.external_text import load_stable_text
+except ModuleNotFoundError:  # Direct script loading from scripts/.
+    from external_text import load_stable_text
+
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "build.ps1"
+MAX_DESKTOP_SOURCE_BYTES = 256 * 1024
 FORBIDDEN_MODULES = frozenset({"legacy_app", "admin_oauth", "oauth_dialog"})
 REQUIRED_MODULES = frozenset(
     {
         "app_version",
+        "platform_clipboard",
         "platform_client",
         "platform_desktop",
         "platform_login_dialog",
         "session_store",
+        "scripts.external_json",
         "update_client",
     }
 )
@@ -42,9 +50,12 @@ def _local_module_path(module: str) -> Path | None:
     return package if package.is_file() else None
 
 
-def reachable_local_modules(entry: str = "app") -> dict[str, Path]:
+def _reachable_local_module_sources(
+    entry: str = "app",
+) -> tuple[dict[str, Path], dict[str, str]]:
     pending = [entry]
     found: dict[str, Path] = {}
+    sources: dict[str, str] = {}
     while pending:
         module = pending.pop()
         if module in found:
@@ -53,7 +64,12 @@ def reachable_local_modules(entry: str = "app") -> dict[str, Path]:
         if path is None:
             continue
         found[module] = path
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        source = load_stable_text(
+            path,
+            max_bytes=MAX_DESKTOP_SOURCE_BYTES,
+        )
+        sources[module] = source
+        tree = ast.parse(source, filename=str(path))
         imports: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -63,12 +79,20 @@ def reachable_local_modules(entry: str = "app") -> dict[str, Path]:
         for imported in imports:
             if _local_module_path(imported) is not None:
                 pending.append(imported)
-    return found
+    return found, sources
+
+
+def reachable_local_modules(entry: str = "app") -> dict[str, Path]:
+    reachable, _ = _reachable_local_module_sources(entry)
+    return reachable
 
 
 def source_boundary_errors() -> list[str]:
     errors: list[str] = []
-    build_text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    build_text = load_stable_text(
+        BUILD_SCRIPT,
+        max_bytes=MAX_DESKTOP_SOURCE_BYTES,
+    )
     if '"release\\windows"' not in build_text:
         errors.append("build output is not isolated under release/windows")
     for module in sorted(FORBIDDEN_MODULES):
@@ -77,15 +101,14 @@ def source_boundary_errors() -> list[str]:
     if "verify_desktop_package.py --exe" not in build_text:
         errors.append("build does not verify the completed EXE archive")
 
-    reachable = reachable_local_modules()
+    reachable, sources = _reachable_local_module_sources()
     missing = REQUIRED_MODULES.difference(reachable)
     if missing:
         errors.append("platform entry modules are not reachable: " + ", ".join(sorted(missing)))
     forbidden = FORBIDDEN_MODULES.intersection(reachable)
     if forbidden:
         errors.append("legacy modules are reachable from app.py: " + ", ".join(sorted(forbidden)))
-    for module, path in reachable.items():
-        source = path.read_text(encoding="utf-8")
+    for module, source in sources.items():
         for marker in FORBIDDEN_SOURCE_MARKERS:
             if marker in source:
                 errors.append(f"{module} contains forbidden legacy marker {marker}")
@@ -138,7 +161,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path)
     args = parser.parse_args()
-    errors = source_boundary_errors()
+    try:
+        errors = source_boundary_errors()
+    except (OSError, UnicodeError, SyntaxError):
+        print("desktop-package-error: Cannot inspect desktop package sources")
+        return 1
     if args.exe is not None:
         errors.extend(inspect_executable(args.exe.resolve()))
     if errors:

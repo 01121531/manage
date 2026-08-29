@@ -1,12 +1,14 @@
 """Password hashing, short-lived HS256 JWTs, and the shared auth dependency."""
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import secrets
+import ssl
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 import jwt
@@ -14,11 +16,12 @@ from jwt import PyJWKClient
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from platform.database import get_db
-from platform.models import Device, User
+from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
+from platform.models import Device, RevokedAccessToken, RevokedOidcSession, User
 
 
 ROLE_OPERATOR = "operator"
@@ -35,9 +38,23 @@ USER_ROLES = frozenset(
         ROLE_WORKER_SERVICE,
     }
 )
+INTERACTIVE_ROLES = frozenset(
+    {
+        ROLE_OPERATOR,
+        ROLE_OPS_ADMIN,
+        ROLE_SECURITY_AUDITOR,
+        ROLE_PLATFORM_ADMIN,
+    }
+)
 
 
 _PASSWORD_ITERATIONS = 210_000
+_DEVICE_LAST_SEEN_INTERVAL = timedelta(seconds=60)
+_OIDC_SESSION_HASH_DOMAIN = b"email-platform|oidc-session-v1\0"
+_MAX_ACCESS_TOKEN_CHARS = 8 * 1024
+_MAX_JWT_HEADER_BYTES = 2 * 1024
+_MAX_JWT_PAYLOAD_BYTES = 6 * 1024
+_MAX_JWT_SIGNATURE_BYTES = 1024
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -47,6 +64,84 @@ def _b64url_encode(value: bytes) -> str:
 
 def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _decode_compact_jwt_segment(value: str, *, max_bytes: int) -> bytes:
+    max_chars = (max_bytes * 8 + 5) // 6
+    if not value or len(value) > max_chars or "=" in value:
+        raise ValueError("Invalid compact JWT segment")
+    try:
+        encoded = value.encode("ascii")
+        decoded = base64.b64decode(
+            encoded + b"=" * (-len(encoded) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (UnicodeError, binascii.Error):
+        raise ValueError("Invalid compact JWT segment") from None
+    if len(decoded) > max_bytes or _b64url_encode(decoded) != value:
+        raise ValueError("Invalid compact JWT segment")
+    return decoded
+
+
+def _preflight_compact_access_token(
+    token: str,
+) -> tuple[str, str, bytes, dict[str, Any], dict[str, Any]]:
+    if type(token) is not str or not token or len(token) > _MAX_ACCESS_TOKEN_CHARS:
+        raise ValueError("Invalid compact JWT")
+    try:
+        encoded_header, encoded_payload, encoded_signature = token.split(".")
+    except ValueError:
+        raise ValueError("Invalid compact JWT") from None
+    raw_header = _decode_compact_jwt_segment(
+        encoded_header, max_bytes=_MAX_JWT_HEADER_BYTES
+    )
+    raw_payload = _decode_compact_jwt_segment(
+        encoded_payload, max_bytes=_MAX_JWT_PAYLOAD_BYTES
+    )
+    signature = _decode_compact_jwt_segment(
+        encoded_signature, max_bytes=_MAX_JWT_SIGNATURE_BYTES
+    )
+    try:
+        header = parse_unique_json_bytes(raw_header)
+        payload = parse_unique_json_bytes(raw_payload)
+    except JsonBoundaryError:
+        raise ValueError("Invalid compact JWT JSON") from None
+    if not isinstance(header, dict) or not isinstance(payload, dict):
+        raise ValueError("Invalid compact JWT JSON")
+    return encoded_header, encoded_payload, signature, header, payload
+
+
+def _validated_oidc_sid(claims: dict[str, Any]) -> str | None:
+    raw_sid = claims.get("sid")
+    if raw_sid is None:
+        return None
+    if (
+        not isinstance(raw_sid, str)
+        or not raw_sid
+        or len(raw_sid) > 255
+        or raw_sid != raw_sid.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in raw_sid)
+    ):
+        raise ValueError("Invalid sid claim")
+    return raw_sid
+
+
+def _oidc_session_fingerprint(claims: dict[str, Any]) -> str | None:
+    if claims.get("identity_kind") != "oidc":
+        return None
+    sid = _validated_oidc_sid(claims)
+    if sid is None:
+        return None
+    issuer = claims.get("iss")
+    if not isinstance(issuer, str) or not issuer:
+        raise ValueError("Missing issuer claim for OIDC session")
+    digest = hashlib.sha256()
+    digest.update(_OIDC_SESSION_HASH_DOMAIN)
+    digest.update(issuer.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(sid.encode("utf-8"))
+    return digest.hexdigest()
 
 
 def hash_password(password: str) -> str:
@@ -107,6 +202,7 @@ def create_access_token(
         "auth_time": int((auth_time or issued_at).timestamp()),
         "acr": acr,
         "amr": list(amr),
+        "jti": secrets.token_urlsafe(24),
         "exp": issued_timestamp + ttl_seconds,
     }
     unsigned = ".".join(
@@ -121,27 +217,25 @@ def create_access_token(
 
 def decode_access_token(token: str, secret: str) -> dict[str, Any]:
     try:
-        encoded_header, encoded_payload, encoded_signature = token.split(".")
+        encoded_header, encoded_payload, signature, header, payload = (
+            _preflight_compact_access_token(token)
+        )
         unsigned = f"{encoded_header}.{encoded_payload}"
         expected = hmac.new(
             secret.encode(), unsigned.encode(), hashlib.sha256
         ).digest()
-        if not hmac.compare_digest(_b64url_decode(encoded_signature), expected):
+        if not hmac.compare_digest(signature, expected):
             raise ValueError("Invalid signature")
-        header = json.loads(_b64url_decode(encoded_header))
-        payload = json.loads(_b64url_decode(encoded_payload))
-        if not isinstance(header, dict) or not isinstance(payload, dict):
-            raise ValueError("Invalid token JSON")
         if header.get("alg") != "HS256":
             raise ValueError("Unsupported algorithm")
-        required = ("sub", "tenant_id", "device_id", "exp")
+        required = ("sub", "tenant_id", "device_id", "jti", "exp")
         if any(not payload.get(name) for name in required):
             raise ValueError("Missing claim")
         if int(payload["exp"]) <= int(datetime.now(timezone.utc).timestamp()):
             raise ValueError("Expired token")
         return payload
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
-        raise ValueError("Invalid access token") from exc
+    except (ValueError, TypeError, KeyError):
+        raise ValueError("Invalid access token") from None
 
 
 class AccessTokenVerifier(Protocol):
@@ -171,17 +265,44 @@ class OidcAccessTokenVerifier:
         issuer: str,
         audience: str,
         jwks_url: str,
+        allowed_client_ids: tuple[str, ...],
+        internal_ca_file: str | None = None,
         tenant_claim: str = "tenant_id",
         device_claim: str = "device_id",
     ) -> None:
+        if type(allowed_client_ids) is not tuple or not allowed_client_ids:
+            raise ValueError("OIDC allowed client IDs must be a non-empty tuple")
+        client_ids = allowed_client_ids
+        if any(
+            type(client_id) is not str
+            or not client_id
+            or len(client_id) > 255
+            or client_id != client_id.strip()
+            for client_id in client_ids
+        ):
+            raise ValueError("OIDC allowed client IDs must be exact non-empty strings")
+        if len(set(client_ids)) != len(client_ids):
+            raise ValueError("OIDC allowed client IDs must be unique")
         self.issuer = issuer.rstrip("/")
         self.audience = audience
+        self.allowed_client_ids = frozenset(client_ids)
         self.tenant_claim = tenant_claim
         self.device_claim = device_claim
-        self.jwks_client = PyJWKClient(jwks_url, cache_keys=True)
+        ssl_context = None
+        if internal_ca_file:
+            ssl_context = ssl.create_default_context(cafile=internal_ca_file)
+            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+            ssl_context.check_hostname = True
+        self.jwks_client = PyJWKClient(
+            jwks_url,
+            cache_keys=True,
+            ssl_context=ssl_context,
+        )
 
     def verify(self, token: str) -> dict[str, Any]:
         try:
+            _preflight_compact_access_token(token)
             signing_key = self.jwks_client.get_signing_key_from_jwt(token)
             claims = jwt.decode(
                 token,
@@ -189,22 +310,34 @@ class OidcAccessTokenVerifier:
                 algorithms=["RS256"],
                 audience=self.audience,
                 issuer=self.issuer,
-                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+                options={
+                    "require": ["exp", "iat", "iss", "aud", "sub", "jti", "azp"]
+                },
             )
+            authorized_party = claims.get("azp")
+            if (
+                type(authorized_party) is not str
+                or authorized_party not in self.allowed_client_ids
+            ):
+                raise ValueError("Invalid authorized party claim")
             tenant_id = claims.get(self.tenant_claim)
             device_id = claims.get(self.device_claim)
             if not isinstance(tenant_id, str) or not tenant_id:
                 raise ValueError("Missing tenant claim")
             if not isinstance(device_id, str) or not device_id:
                 raise ValueError("Missing device claim")
+            jti = claims.get("jti")
+            if not isinstance(jti, str) or len(jti) < 16:
+                raise ValueError("Invalid jti claim")
+            _validated_oidc_sid(claims)
             return {
                 **claims,
                 "tenant_id": tenant_id,
                 "device_id": device_id,
                 "identity_kind": "oidc",
             }
-        except (jwt.PyJWTError, ValueError) as exc:
-            raise ValueError("Invalid OIDC access token") from exc
+        except (jwt.PyJWTError, ValueError):
+            raise ValueError("Invalid OIDC access token") from None
 
 
 @dataclass(frozen=True)
@@ -218,6 +351,11 @@ class AuthPrincipal:
     auth_time: datetime | None
     acr: str | None
     amr: tuple[str, ...]
+    access_token_hash: str
+    access_token_expires_at: datetime
+    access_token_revoked: bool
+    oidc_session_hash: str | None = None
+    oidc_session_revoked: bool = False
 
 
 def unauthorized() -> HTTPException:
@@ -228,17 +366,71 @@ def unauthorized() -> HTTPException:
     )
 
 
-def get_current_principal(
+def _touch_device_last_seen(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
-    db: Session = Depends(get_db),
+    *,
+    tenant_id: str,
+    user_id: str,
+    device_id: str,
+    observed_at: datetime,
+) -> None:
+    """Persist throttled activity without committing a route's DB session."""
+
+    cutoff = observed_at - _DEVICE_LAST_SEEN_INTERVAL
+    with request.app.state.session_factory.begin() as activity_db:
+        activity_db.execute(
+            update(Device)
+            .where(
+                Device.id == device_id,
+                Device.tenant_id == tenant_id,
+                Device.user_id == user_id,
+                Device.revoked_at.is_(None),
+                or_(
+                    Device.last_seen_at.is_(None),
+                    Device.last_seen_at <= cutoff,
+                ),
+            )
+            .values(last_seen_at=observed_at)
+        )
+
+
+def _resolve_principal(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+    db: Session,
+    *,
+    allow_revoked: bool,
+    touch_last_seen: bool,
 ) -> AuthPrincipal:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise unauthorized()
     try:
         claims = request.app.state.access_token_verifier.verify(credentials.credentials)
+        oidc_session_hash = _oidc_session_fingerprint(claims)
     except ValueError:
         raise unauthorized() from None
+
+    observed_at = datetime.now(timezone.utc)
+    token_hash = hashlib.sha256(credentials.credentials.encode("utf-8")).hexdigest()
+    token_revoked = db.scalar(
+        select(RevokedAccessToken.token_hash).where(
+            RevokedAccessToken.token_hash == token_hash,
+            RevokedAccessToken.expires_at > observed_at,
+        )
+    ) is not None
+    oidc_session_revoked = False
+    if oidc_session_hash is not None:
+        oidc_session_revoked = db.scalar(
+            select(RevokedOidcSession.session_hash).where(
+                RevokedOidcSession.session_hash == oidc_session_hash,
+                or_(
+                    RevokedOidcSession.expires_at.is_(None),
+                    RevokedOidcSession.expires_at > observed_at,
+                ),
+            )
+        ) is not None
+    if (token_revoked or oidc_session_revoked) and not allow_revoked:
+        raise unauthorized()
 
     identity_filter = (
         User.oidc_subject == claims["sub"]
@@ -260,8 +452,20 @@ def get_current_principal(
             Device.revoked_at.is_(None),
         )
     )
-    if user is None or device is None:
+    if (
+        user is None
+        or device is None
+        or user.role not in INTERACTIVE_ROLES
+    ):
         raise unauthorized()
+    if touch_last_seen and not token_revoked and not oidc_session_revoked:
+        _touch_device_last_seen(
+            request,
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            device_id=device.id,
+            observed_at=observed_at,
+        )
     auth_time: datetime | None = None
     raw_auth_time = claims.get("auth_time")
     if isinstance(raw_auth_time, (int, float)) and not isinstance(raw_auth_time, bool):
@@ -277,6 +481,16 @@ def get_current_principal(
         if isinstance(raw_amr, list)
         else ()
     )
+    raw_exp = claims.get("exp")
+    try:
+        access_token_expires_at = datetime.fromtimestamp(
+            int(raw_exp), tz=timezone.utc
+        )
+    except (OverflowError, OSError, TypeError, ValueError):
+        # Injected test verifiers may omit exp. Real local/OIDC verifiers require it.
+        access_token_expires_at = observed_at + timedelta(
+            seconds=request.app.state.settings.access_token_ttl_seconds
+        )
     return AuthPrincipal(
         user_id=user.id,
         tenant_id=user.tenant_id,
@@ -287,7 +501,62 @@ def get_current_principal(
         auth_time=auth_time,
         acr=acr,
         amr=amr,
+        access_token_hash=token_hash,
+        access_token_expires_at=access_token_expires_at,
+        access_token_revoked=token_revoked,
+        oidc_session_hash=oidc_session_hash,
+        oidc_session_revoked=oidc_session_revoked,
     )
+
+
+def get_current_principal(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> AuthPrincipal:
+    return _resolve_principal(
+        request,
+        credentials,
+        db,
+        allow_revoked=False,
+        touch_last_seen=True,
+    )
+
+
+def get_logout_principal(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> AuthPrincipal:
+    """Authenticate logout retries without re-enabling a revoked bearer token."""
+
+    return _resolve_principal(
+        request,
+        credentials,
+        db,
+        allow_revoked=True,
+        touch_last_seen=False,
+    )
+
+
+def get_interactive_principal(
+    principal: AuthPrincipal = Depends(get_current_principal),
+) -> AuthPrincipal:
+    """Allow only human identities on interactive API surfaces."""
+
+    if principal.role not in INTERACTIVE_ROLES:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    return principal
+
+
+def get_operator_principal(
+    principal: AuthPrincipal = Depends(get_current_principal),
+) -> AuthPrincipal:
+    """Allow only operators to access owner-bound business resources."""
+
+    if principal.role != ROLE_OPERATOR:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    return principal
 
 
 def require_roles(*roles: str) -> Callable[..., AuthPrincipal]:

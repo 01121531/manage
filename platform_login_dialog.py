@@ -125,6 +125,14 @@ def _safe_error_metadata(error: BaseException) -> str:
     return "，".join(parts)
 
 
+class _PartialLoginCleanupError(PlatformClientError):
+    """Preserve the login failure while marking remote cleanup uncertain."""
+
+    def __init__(self, identity_error: BaseException) -> None:
+        super().__init__("partial login cleanup was not confirmed")
+        self.identity_error = identity_error
+
+
 def format_login_error(error: BaseException) -> str:
     """Convert platform failures into reason + recovery advice.
 
@@ -133,38 +141,47 @@ def format_login_error(error: BaseException) -> str:
     place for either value.
     """
 
-    if isinstance(error, PlatformAuthenticationError):
+    cleanup_unconfirmed = isinstance(error, _PartialLoginCleanupError)
+    effective_error = error.identity_error if cleanup_unconfirmed else error
+
+    if isinstance(effective_error, PlatformAuthenticationError):
         reason = "平台账号或密码不正确，或账号无权访问该租户"
         advice = "请核对租户 ID、平台邮箱和密码；仍失败时联系管理员确认账号状态"
-    elif isinstance(error, PlatformConfigurationError):
+    elif isinstance(effective_error, PlatformConfigurationError):
         reason = "平台地址配置无效"
         advice = "请检查 PLATFORM_BASE_URL 是否为正确的 HTTPS 地址"
-    elif isinstance(error, PlatformTimeoutError):
+    elif isinstance(effective_error, PlatformTimeoutError):
         reason = "平台请求超时"
         advice = "请检查网络后重试；持续超时请联系管理员"
-    elif isinstance(error, PlatformTransportError):
+    elif isinstance(effective_error, PlatformTransportError):
         reason = "无法连接平台"
         advice = "请确认网络和平台服务状态后重试"
-    elif isinstance(error, PlatformSessionError):
+    elif isinstance(effective_error, PlatformSessionError):
         reason = "无法安全保存或恢复平台会话"
         advice = "请检查当前 Windows 用户的 DPAPI 与应用数据目录后重新登录"
-    elif isinstance(error, PlatformProtocolError):
+    elif isinstance(effective_error, PlatformProtocolError):
         reason = "平台返回的数据格式异常"
         advice = "请升级客户端或联系管理员检查平台版本"
-    elif isinstance(error, PlatformDeviceAuthorizationError):
+    elif isinstance(effective_error, PlatformDeviceAuthorizationError):
         reason = "统一身份登录未完成"
         advice = "请重新打开浏览器登录；持续失败时联系管理员检查账号和设备绑定"
-    elif isinstance(error, PlatformApiError):
+    elif isinstance(effective_error, PlatformApiError):
         reason = "平台拒绝了登录请求"
         advice = "请核对输入并稍后重试；持续失败请联系管理员"
-    elif isinstance(error, ValueError):
+    elif isinstance(effective_error, ValueError):
         reason = "登录信息格式无效"
         advice = "请检查所有字段后重试"
     else:
         reason = "登录失败"
         advice = "请稍后重试；持续失败请联系管理员"
-    metadata = _safe_error_metadata(error)
+    metadata = _safe_error_metadata(effective_error)
     suffix = f"（{metadata}）" if metadata else ""
+    if cleanup_unconfirmed:
+        return (
+            f"原因：{reason}{suffix}。"
+            "影响：本地会话已清除，但服务端设备会话清理未确认。"
+            "下一步：检查网络后重新登录；持续失败请联系管理员核对当前设备会话。"
+        )
     return f"{reason}{suffix}。建议：{advice}。"
 
 
@@ -231,6 +248,36 @@ class PlatformLoginController:
         self._generation = 0
         self._device_cancel = threading.Event()
 
+    def _compensate_partial_login(self, error: BaseException) -> BaseException:
+        """Detach a token issued before identity lookup failed, then clean it once."""
+
+        if not self.client.is_authenticated:
+            return error
+        cleanup = self.client.prepare_logout_cleanup(None)
+        try:
+            cleanup()
+        except PlatformClientError:
+            return _PartialLoginCleanupError(error)
+        return error
+
+    def _schedule_current(
+        self,
+        generation: int,
+        callback: Callable[[], None],
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
+        """Schedule a callback only while its login attempt is still current."""
+
+        def deliver() -> None:
+            if generation != self._generation:
+                return
+            if cancel_event is not None and cancel_event.is_set():
+                return
+            callback()
+
+        self._schedule(deliver)
+
     def submit(
         self,
         tenant_id: str | None,
@@ -271,6 +318,7 @@ class PlatformLoginController:
                     return
             except BaseException as error:  # marshal all worker failures safely
                 if generation == self._generation:
+                    error = self._compensate_partial_login(error)
                     self._schedule(lambda error=error: on_error(error))
             else:
                 self._schedule(lambda: on_success(profile, expires_in))
@@ -306,8 +354,17 @@ class PlatformLoginController:
 
         def worker() -> None:
             try:
+                def publish_challenge(
+                    challenge: DeviceAuthorizationChallenge,
+                ) -> None:
+                    self._schedule_current(
+                        generation,
+                        lambda challenge=challenge: on_challenge(challenge),
+                        cancel_event=cancel_event,
+                    )
+
                 expires_in = self.client.login_with_device_authorization(
-                    lambda challenge: self._schedule(lambda: on_challenge(challenge)),
+                    publish_challenge,
                     cancelled=cancel_event.is_set,
                 )
                 profile = safe_user_info(self.client.me())
@@ -315,9 +372,18 @@ class PlatformLoginController:
                     return
             except BaseException as error:
                 if generation == self._generation:
-                    self._schedule(lambda error=error: on_error(error))
+                    error = self._compensate_partial_login(error)
+                    self._schedule_current(
+                        generation,
+                        lambda error=error: on_error(error),
+                        cancel_event=cancel_event,
+                    )
             else:
-                self._schedule(lambda: on_success(profile, expires_in))
+                self._schedule_current(
+                    generation,
+                    lambda: on_success(profile, expires_in),
+                    cancel_event=cancel_event,
+                )
             finally:
                 def finish() -> None:
                     if generation != self._generation:
@@ -363,6 +429,7 @@ class PlatformLoginController:
                     return
             except BaseException as error:
                 if generation == self._generation:
+                    error = self._compensate_partial_login(error)
                     self._schedule(lambda error=error: on_error(error))
             else:
                 self._schedule(lambda: on_success(profile, expires_in))
@@ -428,8 +495,14 @@ class PlatformLoginDialog:
         self.email_var = tk.StringVar(self.window, value=email)
         self.password_var = tk.StringVar(self.window)
         self.device_var = tk.StringVar(self.window, value=device_id)
+        self.device_verification_uri_var = tk.StringVar(self.window)
+        self.device_user_code_var = tk.StringVar(self.window)
         self._password_visible = False
         self._auth_mode = "loading"
+        self._device_challenge_generation = 0
+        self._device_verification_uri: str | None = None
+        self._device_user_code: str | None = None
+        self._device_clipboard_value: str | None = None
 
         self._configure_styles()
         self._build_widgets()
@@ -539,6 +612,88 @@ class PlatformLoginDialog:
         )
         self.device_fallback_button.pack(anchor="w", pady=(0, 4))
 
+        self.device_challenge_panel = tk.Frame(
+            self.oidc_panel, bg=FIELD, padx=10, pady=8
+        )
+        self.device_challenge_panel.grid_columnconfigure(1, weight=1)
+        tk.Label(
+            self.device_challenge_panel,
+            text="登录网址",
+            bg=FIELD,
+            fg=MUTED,
+            anchor="w",
+            font=("Microsoft YaHei UI", 9),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8), pady=3)
+        self.device_verification_uri_entry = tk.Entry(
+            self.device_challenge_panel,
+            textvariable=self.device_verification_uri_var,
+            state="readonly",
+            readonlybackground=FIELD,
+            fg=TEXT,
+            relief="flat",
+            font=("Consolas", 9),
+            takefocus=True,
+        )
+        self.device_verification_uri_entry.grid(
+            row=0, column=1, sticky="ew", pady=3, ipady=3
+        )
+        self.copy_device_uri_button = ttk.Button(
+            self.device_challenge_panel,
+            text="复制登录网址",
+            command=self.copy_device_verification_uri,
+            style="PlatformLogin.Action.TButton",
+            takefocus=True,
+        )
+        self.copy_device_uri_button.grid(row=0, column=2, padx=(8, 0), pady=3)
+        tk.Label(
+            self.device_challenge_panel,
+            text="设备代码",
+            bg=FIELD,
+            fg=MUTED,
+            anchor="w",
+            font=("Microsoft YaHei UI", 9),
+        ).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=3)
+        self.device_user_code_entry = tk.Entry(
+            self.device_challenge_panel,
+            textvariable=self.device_user_code_var,
+            state="readonly",
+            readonlybackground=FIELD,
+            fg=TEXT,
+            relief="flat",
+            font=("Consolas", 10, "bold"),
+            takefocus=True,
+        )
+        self.device_user_code_entry.grid(
+            row=1, column=1, sticky="ew", pady=3, ipady=3
+        )
+        self.copy_device_code_button = ttk.Button(
+            self.device_challenge_panel,
+            text="复制设备代码",
+            command=self.copy_device_user_code,
+            style="PlatformLogin.Action.TButton",
+            takefocus=True,
+        )
+        self.copy_device_code_button.grid(row=1, column=2, padx=(8, 0), pady=3)
+        self.device_expiry_label = tk.Label(
+            self.device_challenge_panel,
+            text="",
+            bg=FIELD,
+            fg=MUTED,
+            anchor="w",
+            font=("Microsoft YaHei UI", 8),
+        )
+        self.device_expiry_label.grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(5, 0)
+        )
+        self.cancel_device_button = ttk.Button(
+            self.device_challenge_panel,
+            text="取消设备登录",
+            command=self.cancel_device_fallback,
+            style="PlatformLogin.Action.TButton",
+            takefocus=True,
+        )
+        self.cancel_device_button.grid(row=2, column=2, padx=(8, 0), pady=(5, 0))
+
         self.status_label = tk.Label(
             panel,
             text="请输入平台账号信息",
@@ -568,13 +723,19 @@ class PlatformLoginDialog:
         self.close_button.pack(side="right")
 
         # Creation order plus explicit takefocus keeps keyboard traversal
-        # predictable: tenant → email → password → 显示/隐藏 → device → actions.
+        # predictable in local and OIDC/device-code modes.
         for widget in (
             self.tenant_entry,
             self.email_entry,
             self.password_entry,
             self.password_toggle,
             self.device_entry,
+            self.device_fallback_button,
+            self.device_verification_uri_entry,
+            self.copy_device_uri_button,
+            self.device_user_code_entry,
+            self.copy_device_code_button,
+            self.cancel_device_button,
             self.login_button,
             self.close_button,
         ):
@@ -690,6 +851,14 @@ class PlatformLoginDialog:
             self._set_busy(False)
         return started
 
+    def cancel_device_fallback(self) -> None:
+        if self._closed or self._device_verification_uri is None:
+            return
+        self._controller.cancel()
+        self._set_busy(False)
+        self._clear_device_challenge()
+        self._set_status("已取消设备代码登录；可重新选择登录方式。", MUTED)
+
     def _load_auth_config(self, client: PlatformClient) -> None:
         def worker() -> None:
             try:
@@ -726,20 +895,113 @@ class PlatformLoginDialog:
     def _handle_device_challenge(self, challenge: DeviceAuthorizationChallenge) -> None:
         if self._closed:
             return
-        url = challenge.verification_uri_complete or challenge.verification_uri
-        opened = webbrowser.open(url, new=2)
-        prefix = "浏览器已打开" if opened else "请手动打开统一身份页面"
+        self._clear_device_challenge()
+        generation = self._device_challenge_generation
+        self._device_verification_uri = challenge.verification_uri
+        self._device_user_code = challenge.user_code
+        self.device_verification_uri_var.set(challenge.verification_uri)
+        self.device_user_code_var.set(challenge.user_code)
+        self.device_expiry_label.configure(
+            text=f"设备代码将在 {challenge.expires_in} 秒后过期"
+        )
+        for button in (
+            self.copy_device_uri_button,
+            self.copy_device_code_button,
+            self.cancel_device_button,
+        ):
+            button.configure(state="normal")
+        self.device_challenge_panel.pack(fill="x", pady=(5, 4))
+        self.window.after(
+            max(1, int(challenge.expires_in)) * 1000,
+            self._expire_device_challenge,
+            generation,
+        )
+        browser_url = challenge.verification_uri_complete or challenge.verification_uri
+        try:
+            opened = webbrowser.open(browser_url, new=2)
+        except (OSError, webbrowser.Error):
+            opened = False
+        prefix = "浏览器已打开" if opened else "请使用下方登录网址"
         self._set_status(
-            f"{prefix}，按提示登录。设备代码：{challenge.user_code}",
+            f"{prefix}，在任一设备完成统一身份认证。",
             ACCENT,
         )
+
+    def copy_device_verification_uri(self) -> None:
+        self._copy_device_challenge_value(
+            self._device_verification_uri,
+            "登录网址已复制；设备代码到期后将自动清理。",
+        )
+
+    def copy_device_user_code(self) -> None:
+        self._copy_device_challenge_value(
+            self._device_user_code,
+            "设备代码已复制；到期后将自动清理。",
+        )
+
+    def _copy_device_challenge_value(self, value: str | None, message: str) -> None:
+        if self._closed or not value:
+            return
+        try:
+            self.window.clipboard_clear()
+            self.window.clipboard_append(value)
+            self.window.update_idletasks()
+        except tk.TclError:
+            self._set_status("无法安全写入剪贴板，请手动选择并复制。", ERROR)
+            return
+        self._device_clipboard_value = value
+        self._set_status(message, ACCENT)
+
+    def _clear_owned_device_clipboard(self) -> None:
+        owned_value = self._device_clipboard_value
+        self._device_clipboard_value = None
+        if not owned_value:
+            return
+        try:
+            if self.window.clipboard_get() != owned_value:
+                return
+            self.window.clipboard_clear()
+            self.window.update_idletasks()
+        except tk.TclError:
+            return
+
+    def _clear_device_challenge(self) -> None:
+        self._device_challenge_generation += 1
+        self._clear_owned_device_clipboard()
+        self._device_verification_uri = None
+        self._device_user_code = None
+        self.device_verification_uri_var.set("")
+        self.device_user_code_var.set("")
+        self.device_expiry_label.configure(text="")
+        for button in (
+            self.copy_device_uri_button,
+            self.copy_device_code_button,
+            self.cancel_device_button,
+        ):
+            button.configure(state="disabled")
+        self.device_challenge_panel.pack_forget()
+
+    def _expire_device_challenge(self, generation: int) -> None:
+        if self._closed or generation != self._device_challenge_generation:
+            return
+        self._controller.cancel()
+        self._set_busy(False)
+        self._clear_device_challenge()
+        self._set_status("设备代码已过期并清理，请重新发起设备登录。", ERROR)
 
     def _handle_authorization_url(self, url: str) -> None:
         if self._closed:
             return
-        opened = webbrowser.open(url, new=2)
-        prefix = "浏览器已打开" if opened else "请手动打开统一身份页面"
-        self._set_status(f"{prefix}，完成平台登录后返回此窗口。", ACCENT)
+        try:
+            opened = webbrowser.open(url, new=2)
+        except (OSError, webbrowser.Error):
+            opened = False
+        if not opened:
+            self._controller.cancel()
+            self._set_busy(False)
+            self._set_status("无法打开系统浏览器，请使用设备代码登录。", ERROR)
+            return
+        self._set_status("浏览器已打开，完成平台登录后返回此窗口。", ACCENT)
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -764,12 +1026,14 @@ class PlatformLoginDialog:
     def _handle_success(self, profile: dict[str, Any], expires_in: int) -> None:
         if self._closed:
             return
+        self._clear_device_challenge()
         self._set_status("登录成功", SUCCESS)
         self._on_success(profile, expires_in)
 
     def _handle_error(self, error: BaseException) -> None:
         if self._closed:
             return
+        self._clear_device_challenge()
         self._set_status(format_login_error(error), ERROR)
 
     def _set_status(self, text: str, color: str = MUTED) -> None:
@@ -814,6 +1078,7 @@ class PlatformLoginDialog:
     def close(self) -> None:
         if self._closed:
             return
+        self._clear_device_challenge()
         self._closed = True
         self._controller.cancel()
         self.password_var.set("")

@@ -1,0 +1,674 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: email-platform
+  labels:
+    app.kubernetes.io/name: email-platform
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: email-platform
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: api
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: email-platform
+              app.kubernetes.io/component: api
+      initContainers:
+        - name: schema-current
+          image: registry.example.invalid/email-platform/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["python", "-m", "infra.check_database_schema"]
+          env:
+            - name: PLATFORM_ENVIRONMENT
+              value: production
+            - name: PLATFORM_DATABASE_URL_FILE
+              value: /run/secrets/runtime/database-url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: runtime
+              mountPath: /run/secrets/runtime
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: api
+          image: registry.example.invalid/email-platform/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command:
+            - uvicorn
+            - platform.app:create_app
+            - --factory
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8443"
+            - --ssl-certfile
+            - /run/secrets/internal-tls/tls.crt
+            - --ssl-keyfile
+            - /run/secrets/internal-tls/tls.key
+          envFrom:
+            - configMapRef:
+                name: platform-api-config
+          env:
+            - name: PLATFORM_DATABASE_URL_FILE
+              value: /run/secrets/runtime/database-url
+            - name: PLATFORM_REDIS_URL_FILE
+              value: /run/secrets/runtime/redis-url
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            failureThreshold: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /readyz
+              port: https
+            failureThreshold: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: runtime
+              mountPath: /run/secrets/runtime
+              readOnly: true
+            - name: internal-ca
+              mountPath: /run/secrets/internal-tls/ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.crt
+              subPath: tls.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.key
+              subPath: tls.key
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime
+          secret:
+            secretName: platform-api-runtime
+            defaultMode: 288
+            items:
+              - key: database-url
+                path: database-url
+              - key: redis-url
+                path: redis-url
+              - key: vault-token
+                path: vault-token
+        - name: internal-ca
+          secret:
+            secretName: platform-internal-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: internal-tls
+          secret:
+            secretName: platform-api-internal-tls
+            defaultMode: 288
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: email-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: email-platform
+    app.kubernetes.io/component: api
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-mail
+  namespace: email-platform
+  labels:
+    app.kubernetes.io/name: email-platform
+    app.kubernetes.io/component: worker-mail
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: worker-mail
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: email-platform
+        app.kubernetes.io/component: worker-mail
+    spec:
+      serviceAccountName: worker-mail
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: email-platform
+              app.kubernetes.io/component: worker-mail
+      initContainers:
+        - name: schema-current
+          image: registry.example.invalid/email-platform/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["python", "-m", "infra.check_database_schema"]
+          env:
+            - name: PLATFORM_ENVIRONMENT
+              value: production
+            - name: PLATFORM_DATABASE_URL_FILE
+              value: /run/secrets/runtime/database-url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: runtime
+              mountPath: /run/secrets/runtime
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: worker-mail
+          image: registry.example.invalid/email-platform/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["python", "-m", "infra.mail_worker"]
+          envFrom:
+            - configMapRef:
+                name: platform-mail-config
+          env:
+            - name: PLATFORM_DATABASE_URL_FILE
+              value: /run/secrets/runtime/database-url
+          ports:
+            - name: metrics
+              containerPort: 9101
+              protocol: TCP
+          startupProbe:
+            exec:
+              command: ["python", "-m", "infra.check_worker_heartbeat"]
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "infra.check_worker_heartbeat"]
+            failureThreshold: 3
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "infra.check_worker_heartbeat"]
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 160Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: runtime
+              mountPath: /run/secrets/runtime
+              readOnly: true
+            - name: provider-origins
+              mountPath: /run/config/mail/allowed-origins
+              subPath: mail-allowed-origins
+              readOnly: true
+            - name: internal-ca
+              mountPath: /run/secrets/internal-tls/ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.crt
+              subPath: tls.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.key
+              subPath: tls.key
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime
+          secret:
+            secretName: platform-mail-runtime
+            defaultMode: 288
+            items:
+              - key: database-url
+                path: database-url
+              - key: vault-token
+                path: vault-token
+        - name: provider-origins
+          configMap:
+            name: platform-provider-origins
+        - name: internal-ca
+          secret:
+            secretName: platform-internal-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: internal-tls
+          secret:
+            secretName: platform-worker-mail-internal-tls
+            defaultMode: 288
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-sub2
+  namespace: email-platform
+  labels:
+    app.kubernetes.io/name: email-platform
+    app.kubernetes.io/component: worker-sub2
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: worker-sub2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: email-platform
+        app.kubernetes.io/component: worker-sub2
+    spec:
+      serviceAccountName: worker-sub2
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: email-platform
+              app.kubernetes.io/component: worker-sub2
+      initContainers:
+        - name: schema-current
+          image: registry.example.invalid/email-platform/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["python", "-m", "infra.check_database_schema"]
+          env:
+            - name: PLATFORM_ENVIRONMENT
+              value: production
+            - name: PLATFORM_DATABASE_URL_FILE
+              value: /run/secrets/runtime/database-url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: runtime
+              mountPath: /run/secrets/runtime
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: worker-sub2
+          image: registry.example.invalid/email-platform/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["python", "-m", "infra.worker"]
+          envFrom:
+            - configMapRef:
+                name: platform-sub2-config
+          env:
+            - name: PLATFORM_DATABASE_URL_FILE
+              value: /run/secrets/runtime/database-url
+            - name: PLATFORM_REDIS_URL_FILE
+              value: /run/secrets/runtime/redis-url
+          ports:
+            - name: metrics
+              containerPort: 9102
+              protocol: TCP
+          startupProbe:
+            exec:
+              command: ["python", "-m", "infra.check_worker_heartbeat"]
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "infra.check_worker_heartbeat"]
+            failureThreshold: 3
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "infra.check_worker_heartbeat"]
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: runtime
+              mountPath: /run/secrets/runtime
+              readOnly: true
+            - name: provider-origins
+              mountPath: /run/config/sub2/allowed-origins
+              subPath: sub2-allowed-origins
+              readOnly: true
+            - name: internal-ca
+              mountPath: /run/secrets/internal-tls/ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.crt
+              subPath: tls.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.key
+              subPath: tls.key
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime
+          secret:
+            secretName: platform-sub2-runtime
+            defaultMode: 288
+            items:
+              - key: database-url
+                path: database-url
+              - key: redis-url
+                path: redis-url
+              - key: vault-token
+                path: vault-token
+        - name: provider-origins
+          configMap:
+            name: platform-provider-origins
+        - name: internal-ca
+          secret:
+            secretName: platform-internal-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: internal-tls
+          secret:
+            secretName: platform-worker-sub2-internal-tls
+            defaultMode: 288
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: email-platform
+  labels:
+    app.kubernetes.io/name: email-platform
+    app.kubernetes.io/component: web
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: email-platform
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: web
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: email-platform
+              app.kubernetes.io/component: web
+      containers:
+        - name: web
+          image: registry.example.invalid/email-platform/web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          startupProbe:
+            tcpSocket:
+              port: https
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: https
+            failureThreshold: 3
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: https
+            failureThreshold: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: internal-ca
+              mountPath: /run/secrets/internal-tls/ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.crt
+              subPath: tls.crt
+              readOnly: true
+            - name: internal-tls
+              mountPath: /run/secrets/internal-tls/tls.key
+              subPath: tls.key
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: internal-ca
+          secret:
+            secretName: platform-internal-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: internal-tls
+          secret:
+            secretName: platform-web-internal-tls
+            defaultMode: 288
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: email-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: email-platform
+    app.kubernetes.io/component: web
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP

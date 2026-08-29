@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "policy_kind": "github_artifact_attestation_trust_policy",
+  "synthetic": true,
+  "policy_status": "pending",
+  "policy_effect": "offline_origin_authentication_only",
+  "production_acceptance": false,
+  "repository": null,
+  "identity": null,
+  "trusted_root": null,
+  "verifier": null,
+  "review": null,
+  "integrity": {
+    "payload_sha256": "d4d42914b685505016817107d07a0f76eb2592dc8b9dbc4a939217cb78f23d32"
+  }
+}

@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-import yaml
+try:
+    from scripts.external_text import load_stable_text
+    from scripts.external_yaml import load_unique_yaml
+except ModuleNotFoundError:  # Direct script loading from scripts/.
+    from external_text import load_stable_text  # type: ignore[no-redef]
+    from external_yaml import load_unique_yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +46,7 @@ def _cap_drop(service: dict[str, object]) -> set[str]:
 
 
 def main() -> int:
-    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    compose = load_unique_yaml(COMPOSE)
     targets = {
         "migrate": {"/tmp"},
         "api": {"/tmp"},
@@ -68,8 +73,13 @@ def main() -> int:
     if migrate.get("command") != ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]:
         return _fail("migrate must run alembic upgrade head")
     environment = migrate.get("environment", {})
-    if not isinstance(environment, dict) or "ALEMBIC_DATABASE_URL" not in environment:
-        return _fail("migrate must use ALEMBIC_DATABASE_URL")
+    if (
+        not isinstance(environment, dict)
+        or environment.get("ALEMBIC_DATABASE_URL_FILE")
+        != "/run/secrets/runtime/migration-database-url"
+        or "ALEMBIC_DATABASE_URL" in environment
+    ):
+        return _fail("migrate must use only ALEMBIC_DATABASE_URL_FILE")
     for name in ("api", "worker-mail", "worker-sub2"):
         service = _service(compose, name)
         if service is None:
@@ -83,10 +93,13 @@ def main() -> int:
     postgres_environment = postgres.get("environment", {}) if postgres else {}
     if not isinstance(postgres_environment, dict) or not {
         "POSTGRES_APP_USER",
-        "POSTGRES_APP_PASSWORD",
+        "POSTGRES_APP_PASSWORD_FILE",
     }.issubset(postgres_environment):
         return _fail("postgres must receive the separate runtime role bootstrap values")
-    runtime_role_text = RUNTIME_ROLE_INIT.read_text(encoding="utf-8")
+    try:
+        runtime_role_text = load_stable_text(RUNTIME_ROLE_INIT)
+    except (OSError, UnicodeError):
+        return _fail("Cannot inspect container hardening assets")
     for required in (
         "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT",
         "GRANT SELECT, INSERT, UPDATE, DELETE",

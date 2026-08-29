@@ -1,0 +1,199 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: email-platform
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dns-egress
+  namespace: email-platform
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: api
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              email-platform.io/ingress: "true"
+      ports:
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              email-platform.io/monitoring: "true"
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-ingress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: web
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              email-platform.io/ingress: "true"
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-mail-metrics-ingress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: worker-mail
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              email-platform.io/monitoring: "true"
+      ports:
+        - protocol: TCP
+          port: 9101
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-sub2-metrics-ingress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: worker-sub2
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              email-platform.io/monitoring: "true"
+      ports:
+        - protocol: TCP
+          port: 9102
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: migrate-egress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: migrate
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-egress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: api
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-mail-egress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: worker-mail
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8200
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-sub2-egress
+  namespace: email-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: email-platform
+      app.kubernetes.io/component: worker-sub2
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 8200

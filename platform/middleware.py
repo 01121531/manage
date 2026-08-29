@@ -1,5 +1,7 @@
-"""Request tracing and last-resort error handling middleware."""
+"""Request tracing, browser-origin enforcement, and safe error handling."""
 
+from collections.abc import Iterable
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import Request
@@ -8,6 +10,94 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from platform.audit import bind_audit_request_metadata, reset_audit_request_metadata
+
+
+_CORS_ALLOW_HEADERS = (
+    "Authorization, Content-Type, X-Trace-Id, X-Mail-Session-Token"
+)
+_CORS_ALLOW_METHODS = "GET, POST, PATCH, DELETE, OPTIONS"
+_CORS_EXPOSE_HEADERS = "X-Trace-Id, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining"
+
+
+def parse_allowed_origins(value: str, *, require_https: bool) -> tuple[str, ...]:
+    """Parse a comma-separated exact-origin allowlist.
+
+    Origins may not contain credentials, paths, queries, fragments, or a
+    wildcard. Managed environments require HTTPS. Development may use HTTP for
+    loopback hosts only.
+    """
+
+    origins: list[str] = []
+    for raw_origin in value.split(","):
+        origin = raw_origin.strip()
+        if not origin:
+            continue
+        parsed = urlsplit(origin)
+        hostname = (parsed.hostname or "").lower()
+        is_loopback = hostname in {"localhost", "127.0.0.1", "::1"}
+        valid_scheme = parsed.scheme == "https" or (
+            not require_https and parsed.scheme == "http" and is_loopback
+        )
+        if (
+            origin == "*"
+            or not valid_scheme
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("allowed_origins contains an invalid origin")
+        normalized = f"{parsed.scheme}://{parsed.netloc}"
+        if normalized not in origins:
+            origins.append(normalized)
+    return tuple(origins)
+
+
+class OriginPolicyMiddleware(BaseHTTPMiddleware):
+    """Reject browser requests from unapproved origins and answer preflight."""
+
+    def __init__(self, app, *, allowed_origins: Iterable[str]) -> None:
+        super().__init__(app)
+        self._allowed_origins = frozenset(allowed_origins)
+
+    @staticmethod
+    def _apply_cors_headers(response: Response, origin: str) -> None:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = _CORS_ALLOW_METHODS
+        response.headers["Access-Control-Allow-Headers"] = _CORS_ALLOW_HEADERS
+        response.headers["Access-Control-Expose-Headers"] = _CORS_EXPOSE_HEADERS
+        response.headers["Access-Control-Max-Age"] = "600"
+        response.headers.add_vary_header("Origin")
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        origin = request.headers.get("Origin")
+        if origin is None:
+            return await call_next(request)
+        if origin not in self._allowed_origins:
+            trace_id = getattr(request.state, "trace_id", "")
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "origin_not_allowed",
+                        "message": "Request origin is not allowed",
+                        "recovery_hint": "请从受信任的平台入口重试",
+                        "trace_id": trace_id,
+                    }
+                },
+            )
+        if request.method == "OPTIONS" and request.headers.get(
+            "Access-Control-Request-Method"
+        ):
+            response = Response(status_code=204)
+        else:
+            response = await call_next(request)
+        self._apply_cors_headers(response, origin)
+        return response
 
 
 def _trace_id(value: str | None) -> str:

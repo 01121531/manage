@@ -7,6 +7,21 @@ import sys
 
 import yaml
 
+try:
+    from scripts.external_yaml import load_unique_yaml
+    from scripts.verify_ci_workflow import (
+        checkout_credential_errors,
+        continue_on_error_errors,
+        has_unsafe_continue_on_error,
+    )
+except ModuleNotFoundError:  # Direct `python scripts/...` execution.
+    from external_yaml import load_unique_yaml  # type: ignore[no-redef]
+    from verify_ci_workflow import (  # type: ignore[no-redef]
+        checkout_credential_errors,
+        continue_on_error_errors,
+        has_unsafe_continue_on_error,
+    )
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "security.yml"
@@ -18,16 +33,90 @@ def _fail(message: str) -> int:
     return 1
 
 
+def dependency_gate_step_errors(
+    job: object, *, require_repository_checks: bool
+) -> list[str]:
+    """Validate commands, not labels, so a renamed no-op cannot satisfy the gate."""
+
+    if not isinstance(job, dict):
+        return ["dependency security job is invalid"]
+    if has_unsafe_continue_on_error(job):
+        return ["dependency security job must fail closed"]
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return ["dependency security steps are invalid"]
+    named = {
+        step.get("name"): step
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("name"), str)
+    }
+    expected: dict[str, tuple[str, str | None]] = {
+        "Secret scan": ("python scripts/secret_scan.py", None),
+        "Python dependency audit": (
+            "pip-audit -r platform/requirements.txt",
+            None,
+        ),
+        "Python test dependency audit": (
+            "pip-audit -r platform/requirements-test.txt",
+            None,
+        ),
+        "Python desktop build dependency audit": (
+            "pip-audit -r requirements-desktop-build.txt",
+            None,
+        ),
+        "Frontend dependency audit": (
+            "npm audit --audit-level=high "
+            "--include=prod --include=dev --include=optional --include=peer",
+            "frontend",
+        ),
+    }
+    if require_repository_checks:
+        expected.update(
+            {
+                "Verify release manifest": (
+                    "python scripts/verify_release_manifest.py",
+                    None,
+                ),
+                "Verify signoff template": (
+                    "python scripts/verify_signoff_template.py",
+                    None,
+                ),
+            }
+        )
+    errors: list[str] = []
+    for name, (command, working_directory) in expected.items():
+        step = named.get(name)
+        if not isinstance(step, dict):
+            errors.append(f"dependency security gate is missing: {name}")
+            continue
+        if has_unsafe_continue_on_error(step):
+            errors.append(f"dependency security step must fail closed: {name}")
+        if str(step.get("run", "")).strip() != command:
+            errors.append(f"dependency security step has unsafe command: {name}")
+        if working_directory is not None and step.get("working-directory") != working_directory:
+            errors.append(f"dependency security step has wrong working directory: {name}")
+    return errors
+
+
 def main() -> int:
     if not WORKFLOW.exists():
         return _fail("Missing security workflow")
-    data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    try:
+        data = load_unique_yaml(WORKFLOW)
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return _fail("Security workflow is invalid")
     if not isinstance(data, dict):
         return _fail("Security workflow is invalid")
     jobs = data.get("jobs")
     required_jobs = {"codeql", "security-gate", "container-supply-chain"}
     if not isinstance(jobs, dict) or not required_jobs.issubset(jobs):
         return _fail("Security workflow missing SAST, dependency, or container gate job")
+    checkout_errors = checkout_credential_errors(jobs, label="Security")
+    if checkout_errors:
+        return _fail("; ".join(checkout_errors))
+    fail_open_errors = continue_on_error_errors(jobs, label="Security")
+    if fail_open_errors:
+        return _fail("; ".join(fail_open_errors))
     codeql_job = jobs["codeql"]
     if not isinstance(codeql_job, dict):
         return _fail("CodeQL job is invalid")
@@ -61,7 +150,7 @@ def main() -> int:
         step for step in codeql_steps
         if isinstance(step, dict) and step.get("uses") == expected_actions[0]
     )
-    if init_step.get("continue-on-error") is True:
+    if has_unsafe_continue_on_error(init_step):
         return _fail("CodeQL initialization cannot continue on error")
     init_with = init_step.get("with")
     if not isinstance(init_with, dict) or init_with.get("languages") != "${{ matrix.language }}":
@@ -72,8 +161,10 @@ def main() -> int:
         step for step in codeql_steps
         if isinstance(step, dict) and step.get("uses") == expected_actions[1]
     )
-    if analyze_step.get("continue-on-error") is True:
+    if has_unsafe_continue_on_error(analyze_step):
         return _fail("CodeQL analysis cannot continue on error")
+    if has_unsafe_continue_on_error(codeql_job):
+        return _fail("CodeQL job must fail closed")
     job = jobs["security-gate"]
     if not isinstance(job, dict):
         return _fail("Security workflow job is invalid")
@@ -89,11 +180,18 @@ def main() -> int:
         "Verify release manifest",
         "Verify signoff template",
         "Python dependency audit",
+        "Python test dependency audit",
+        "Python desktop build dependency audit",
         "Frontend dependency audit",
     ]
     missing = [item for item in required if item not in rendered]
     if missing:
         return _fail("Security workflow missing steps: " + ", ".join(missing))
+    command_errors = dependency_gate_step_errors(
+        job, require_repository_checks=True
+    )
+    if command_errors:
+        return _fail("; ".join(command_errors))
     container_job = jobs["container-supply-chain"]
     if not isinstance(container_job, dict):
         return _fail("Security container gate job is invalid")

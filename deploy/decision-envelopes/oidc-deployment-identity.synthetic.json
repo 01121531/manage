@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "decision_type": "oidc_deployment_identity",
+  "decision_reference": "synthetic-oidc-deployment-identity",
+  "synthetic": true,
+  "decision_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "deployment_identity": {
+    "issuer_reference": null,
+    "subject_claim": "sub",
+    "tenant_claim": "tenant_id",
+    "device_claim": "device_id",
+    "device_id_ownership": "platform_registration_bound_to_subject",
+    "token_sample_policy": "omitted"
+  },
+  "acr_to_loa": {
+    "required_acr": "urn:email-platform:acr:mfa",
+    "loa": "multi_factor",
+    "authentication_methods": [
+      "otp"
+    ],
+    "mapping_review_reference": null
+  },
+  "clients": {
+    "web": {
+      "client_type": "public",
+      "authorization_flow": "authorization_code",
+      "pkce_method": "S256",
+      "device_flow": "disabled"
+    },
+    "desktop": {
+      "client_type": "public",
+      "authorization_flow": "authorization_code",
+      "pkce_method": "S256",
+      "device_flow": "fallback_enabled"
+    }
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_token_values": false
+  }
+}

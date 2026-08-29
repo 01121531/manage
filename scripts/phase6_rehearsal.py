@@ -19,7 +19,7 @@ import re
 import sys
 import tempfile
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,7 @@ from platform.app import create_app
 from platform.auth import create_access_token
 from platform.bootstrap import create_user_with_device
 from platform.config import Settings
+from platform.mail_consumption import hash_message_id
 from platform.mail_connectors import MailCodeMessage, MailboxAccess
 from platform.mail_worker import process_mail_session
 from platform.models import (
@@ -52,7 +53,20 @@ from platform.models import (
     UploadJob,
     User,
 )
-from platform.uploads import Sub2UploadResult, process_queued_uploads
+from platform.uploads import (
+    Sub2ConcurrencyLimiter,
+    Sub2UploadResult,
+    process_queued_uploads,
+)
+from scripts.backup_output_policy import (
+    prepare_write_once_file,
+    publish_write_once_file,
+)
+from scripts.external_json import (
+    StableFileError,
+    parse_unique_json_bytes,
+    read_stable_bytes,
+)
 
 
 SCHEMA_VERSION = "phase6-ci-rehearsal/v1"
@@ -61,6 +75,11 @@ SCENARIO = "login-task-card-mail-code-upload-close-audit"
 TASK_TRACE_ID = "00000000-0000-4000-8000-000000000006"
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _MAX_EVIDENCE_BYTES = 64 * 1024
+_UPLOAD_PHASE_EVENTS = {
+    "upload.preflight_started",
+    "upload.provider_submit_started",
+    "upload.provider_result_received",
+}
 _EXPECTED_EVENTS = frozenset(
     {
         "card.allocated",
@@ -68,16 +87,32 @@ _EXPECTED_EVENTS = frozenset(
         "mail_session.code_consumed",
         "mail_session.code_ready",
         "mail_session.created",
+        "mail_session.revoked",
         "mail_session.watermark_initialized",
-        "task.closed",
+        "mailbox.health_changed",
+        "task.completed",
         "task.created",
         "upload.queued",
         "upload.succeeded",
+        *_UPLOAD_PHASE_EVENTS,
     }
 )
 _EXPECTED_EVENT_TYPES = sorted(_EXPECTED_EVENTS | {"mail_session.code_checked"})
+_EXPECTED_TASK_EVENT_TYPES = sorted(
+    set(_EXPECTED_EVENT_TYPES) - {"mailbox.health_changed"}
+)
+_EXPECTED_CARD_EVENT_TYPES = sorted(
+    {
+        "card.allocated",
+        "card.released",
+        "upload.queued",
+        "upload.succeeded",
+        *_UPLOAD_PHASE_EVENTS,
+    }
+)
 _CHECK_KEYS = frozenset(
     {
+        "audit_resource_replay",
         "authenticated_platform_session",
         "audit_trace_replay",
         "authorization_isolation",
@@ -90,9 +125,9 @@ _CHECK_KEYS = frozenset(
 )
 _RESOURCE_STATES = {
     "card_allocation": "released",
-    "mail_session": "consumed_and_erased",
+    "mail_session": "revoked_and_erased",
     "outbox": "processed",
-    "task": "closed",
+    "task": "completed",
     "upload_job": "succeeded",
 }
 _PERSISTENT_SURFACES = [
@@ -121,13 +156,15 @@ class RehearsalMailConnector:
         self.raw_password = "MAIL_PASSWORD_SENTINEL_71fd3bc0d8154f4a"
         self.calls = 0
 
-    def current_watermark(self, mailbox: MailboxAccess) -> str | None:
+    def watermark_at(
+        self, mailbox: MailboxAccess, task_started_at: datetime
+    ) -> str:
         self._assert_opaque_boundary(mailbox)
         self.calls += 1
-        return self.messages[-1].watermark if self.messages else None
+        return self.messages[-1].watermark if self.messages else "0"
 
     def find_code_after(
-        self, mailbox: MailboxAccess, watermark: str | None
+        self, mailbox: MailboxAccess, watermark: str
     ) -> MailCodeMessage | None:
         self._assert_opaque_boundary(mailbox)
         self.calls += 1
@@ -315,25 +352,31 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
     connector.messages.append(
         MailCodeMessage(message_id="old", watermark="1", code="11111111")
     )
-    app = create_app(
-        Settings(
-            app_name="phase6-ci-rehearsal",
-            environment="test",
-            database_url="sqlite+pysqlite:///:memory:",
-            jwt_hmac_secret="phase6-rehearsal-hmac-secret-not-for-production",
-            mail_poll_mode="worker",
-            mail_session_ttl_seconds=300,
-            mail_code_ttl_seconds=60,
-            card_lease_ttl_seconds=600,
-            sub2_policy_version="phase6-policy-v1",
-            sub2_proxy_ref="vault://proxy/phase6-rehearsal",
-            sub2_group_id=49,
-            sub2_concurrency=4,
-            sub2_credential_ref="vault://sub2/phase6-rehearsal",
-        ),
-        mail_connectors={"rehearsal": connector},
-        sub2_adapter=adapter,
-    )
+    database_directory = tempfile.TemporaryDirectory(prefix="phase6-rehearsal-")
+    database_path = Path(database_directory.name) / "phase6.db"
+    try:
+        app = create_app(
+            Settings(
+                app_name="phase6-ci-rehearsal",
+                environment="test",
+                database_url=f"sqlite+pysqlite:///{database_path.as_posix()}",
+                jwt_hmac_secret="phase6-rehearsal-hmac-secret-not-for-production",
+                mail_poll_mode="worker",
+                mail_session_ttl_seconds=300,
+                mail_code_ttl_seconds=60,
+                card_lease_ttl_seconds=600,
+                sub2_policy_version="phase6-policy-v1",
+                sub2_proxy_ref="vault://proxy/phase6-rehearsal",
+                sub2_group_id=49,
+                sub2_concurrency=4,
+                sub2_credential_ref="vault://sub2/phase6-rehearsal",
+            ),
+            mail_connectors={"rehearsal": connector},
+            sub2_adapter=adapter,
+        )
+    except Exception:
+        database_directory.cleanup()
+        raise
     log_stream = io.StringIO()
     log_handler = logging.StreamHandler(log_stream)
     root_logger = logging.getLogger()
@@ -375,6 +418,7 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
                         tenant_id="tenant-phase6",
                         email_masked="p***@example.invalid",
                         connector_type="rehearsal",
+                        task_type="card_checkout",
                         secret_ref="vault://mailboxes/phase6-rehearsal",
                     ),
                     Card(
@@ -460,6 +504,11 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
             raise RehearsalError("card trace binding failed")
         if any(key in allocation_payload for key in ("pan", "cvv", "secret_ref")):
             raise RehearsalError("card masking boundary failed")
+        with app.state.session_factory() as db:
+            allocated_card = db.get(CardAllocation, allocation_id)
+            if allocated_card is None:
+                raise RehearsalError("allocated card binding failed")
+            card_id = allocated_card.card_id
 
         mail_session = _request(
             app,
@@ -486,7 +535,10 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
             raise RehearsalError("mail watermark initialization failed")
         connector.messages.append(
             MailCodeMessage(
-                message_id="new", watermark="2", code=verification_code
+                message_id="new",
+                watermark="2",
+                code=verification_code,
+                received_at=datetime.now(timezone.utc),
             )
         )
         if process_mail_session(
@@ -505,10 +557,24 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
             headers=mail_headers,
         )
         _expect(consumed, 200, "mail code consumption")
-        if consumed.headers.get("cache-control") != "no-store" or consumed.json() != {
-            "status": "consumed",
-            "code": verification_code,
-        }:
+        consumed_payload = consumed.json()
+        try:
+            received_at = datetime.fromisoformat(
+                consumed_payload.get("received_at", "").replace("Z", "+00:00")
+            )
+        except (AttributeError, ValueError):
+            received_at = None
+        if (
+            consumed.headers.get("cache-control") != "no-store"
+            or set(consumed_payload)
+            != {"status", "code", "received_at", "message_id_hash"}
+            or consumed_payload["status"] != "consumed"
+            or consumed_payload["code"] != verification_code
+            or consumed_payload["message_id_hash"] != hash_message_id("new")
+            or received_at is None
+            or received_at.tzinfo is None
+            or received_at.utcoffset() is None
+        ):
             raise RehearsalError("mail code consumption contract failed")
         consumed_again = _request(
             app,
@@ -554,6 +620,7 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
             app.state.session_factory,
             adapter=adapter,
             policy=app.state.sub2_policy,
+            concurrency_limiter=Sub2ConcurrencyLimiter(),
         ) != 1:
             raise RehearsalError("upload worker did not process one job")
         if len(adapter.commands) != 1:
@@ -578,7 +645,11 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
                 f"/api/v1/mail-sessions/{mail_session_id}/code",
                 {"headers": {**attack_headers, "X-Mail-Session-Token": mail_session_token}},
             ),
-            ("GET", f"/api/v1/card-allocations/{allocation_id}", {}),
+            (
+                "GET",
+                f"/api/v1/card-allocations/{allocation_id}?task_id={task_id}",
+                {},
+            ),
             ("GET", f"/api/v1/uploads/{upload_id}", {}),
         ]
         for method, path, options in cross_tenant_requests:
@@ -601,7 +672,11 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
                 f"/api/v1/mail-sessions/{mail_session_id}/code",
                 second_mail_headers,
             ),
-            ("GET", f"/api/v1/card-allocations/{allocation_id}", second_headers),
+            (
+                "GET",
+                f"/api/v1/card-allocations/{allocation_id}?task_id={task_id}",
+                second_headers,
+            ),
             ("GET", f"/api/v1/uploads/{upload_id}", second_headers),
         ]
         for method, path, request_headers in cross_device_requests:
@@ -624,17 +699,17 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
             f"/api/v1/tasks/{task_id}/close",
             headers=_headers(owner_token),
         )
-        _expect(closed, 200, "task close")
+        _expect(closed, 200, "completed task terminal replay")
         response_surfaces.append(_response_surface(closed))
-        if closed.json().get("status") != "closed":
-            raise RehearsalError("task did not close")
+        if closed.json().get("status") != "completed":
+            raise RehearsalError("successful upload did not complete its task")
         close_replay = _request(
             app,
             "POST",
             f"/api/v1/tasks/{task_id}/close",
             headers=_headers(owner_token),
         )
-        _expect(close_replay, 200, "task close replay")
+        _expect(close_replay, 200, "completed task terminal replay")
         response_surfaces.append(_response_surface(close_replay))
 
         closed_code = _request(
@@ -643,10 +718,10 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
             f"/api/v1/mail-sessions/{mail_session_id}/code",
             headers=mail_headers,
         )
-        _expect(closed_code, 200, "closed task code state")
+        _expect(closed_code, 200, "completed task code state")
         response_surfaces.append(_response_surface(closed_code))
-        if closed_code.json() != {"status": "consumed", "code": None}:
-            raise RehearsalError("closed task retained a verification code")
+        if closed_code.json() != {"status": "revoked", "code": None}:
+            raise RehearsalError("completed task retained an active mail session")
 
         audit = _request(
             app,
@@ -677,6 +752,52 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
         if any(event.get("trace_id") != TASK_TRACE_ID for event in audit_payload):
             raise RehearsalError("audit replay trace binding failed")
         response_surfaces.append(_response_surface(audit))
+
+        resource_replays = (
+            ("task_id", task_id, _EXPECTED_TASK_EVENT_TYPES),
+            ("card_id", card_id, _EXPECTED_CARD_EVENT_TYPES),
+        )
+        for parameter, resource_id, expected_event_types in resource_replays:
+            replay_response = _request(
+                app,
+                "GET",
+                f"/api/v1/admin/audit?{parameter}={resource_id}&limit=200",
+                headers=_headers(
+                    auditor_token, "00000000-0000-4000-8000-000000000005"
+                ),
+            )
+            _expect(replay_response, 200, f"audit {parameter} replay")
+            replay_payload = replay_response.json()
+            replay_event_types = sorted(
+                event["event_type"]
+                for event in replay_payload
+                if isinstance(event, dict) and isinstance(event.get("event_type"), str)
+            )
+            if replay_event_types != expected_event_types:
+                raise RehearsalError(f"audit {parameter} replay was incomplete")
+            if any(event.get("user_id") != owner.user_id for event in replay_payload):
+                raise RehearsalError(f"audit {parameter} subject binding failed")
+            response_surfaces.append(_response_surface(replay_response))
+
+        user_replay = _request(
+            app,
+            "GET",
+            f"/api/v1/admin/audit?user_id={owner.user_id}&limit=200",
+            headers=_headers(
+                auditor_token, "00000000-0000-4000-8000-000000000005"
+            ),
+        )
+        _expect(user_replay, 200, "audit user replay")
+        user_replay_payload = user_replay.json()
+        if (
+            not user_replay_payload
+            or any(event.get("user_id") != owner.user_id for event in user_replay_payload)
+            or not set(_EXPECTED_TASK_EVENT_TYPES).issubset(
+                {event.get("event_type") for event in user_replay_payload}
+            )
+        ):
+            raise RehearsalError("audit user replay was incomplete")
+        response_surfaces.append(_response_surface(user_replay))
 
         audit_export = _request(
             app,
@@ -734,9 +855,9 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
                 )
             ):
                 raise RehearsalError("resource trace chain failed")
-            if persisted_task.status != "closed":
-                raise RehearsalError("closed task state failed")
-            if persisted_session.status != "consumed" or any(
+            if persisted_task.status != "completed":
+                raise RehearsalError("completed task state failed")
+            if persisted_session.status != "revoked" or any(
                 value is not None
                 for value in (
                     persisted_session.delivered_code,
@@ -826,6 +947,7 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
     finally:
         root_logger.removeHandler(log_handler)
         app.state.engine.dispose()
+        database_directory.cleanup()
 
 
 def _validate_evidence(value: Any) -> dict[str, Any]:
@@ -905,30 +1027,42 @@ def _validate_evidence(value: Any) -> dict[str, Any]:
     return value
 
 
-def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
+def prepare_evidence_output(path: Path) -> Path:
+    """Validate an external write-once evidence leaf without creating it."""
+
+    try:
+        return prepare_write_once_file(path)
+    except ValueError as error:
+        raise RehearsalError("evidence output path is unsafe") from error
+
+
+def write_evidence(path: Path, evidence: dict[str, Any]) -> dict[str, Any]:
     """Atomically publish evidence and verify the bytes that were published."""
 
-    path.unlink(missing_ok=True)
     _validate_evidence(evidence)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    destination = prepare_evidence_output(path)
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
+            "wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
             suffix=".tmp",
             delete=False,
         ) as stream:
             temporary_path = Path(stream.name)
-            json.dump(evidence, stream, ensure_ascii=False, indent=2, sort_keys=True)
-            stream.write("\n")
+            serialized = (
+                json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n"
+            ).encode("utf-8")
+            if len(serialized) > _MAX_EVIDENCE_BYTES:
+                raise RehearsalError("evidence size is invalid")
+            stream.write(serialized)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary_path, path)
+        publish_write_once_file(temporary_path, destination)
         temporary_path = None
-        verify_evidence(path)
+        return verify_evidence(destination)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -938,13 +1072,13 @@ def verify_evidence(
     path: Path, *, expected_commit: str | None = None
 ) -> dict[str, Any]:
     try:
-        raw = path.read_bytes()
-    except OSError as error:
+        raw = read_stable_bytes(path, max_bytes=_MAX_EVIDENCE_BYTES)
+    except StableFileError as error:
+        if error.reason == "size":
+            raise RehearsalError("evidence size is invalid") from error
         raise RehearsalError("evidence cannot be read") from error
-    if not raw or len(raw) > _MAX_EVIDENCE_BYTES:
-        raise RehearsalError("evidence size is invalid")
     try:
-        value = json.loads(raw.decode("utf-8"))
+        value = parse_unique_json_bytes(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RehearsalError("evidence JSON is invalid") from error
     evidence = _validate_evidence(value)
@@ -970,21 +1104,16 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(arguments: list[str] | None = None) -> int:
     options = _parser().parse_args(arguments)
-    output = options.output if options.command == "run" else None
-    if output is not None:
-        output.unlink(missing_ok=True)
     try:
         if options.command == "run":
+            prepare_evidence_output(options.output)
             evidence = run_rehearsal(options.commit)
-            write_evidence(options.output, evidence)
-            verified = evidence
+            verified = write_evidence(options.output, evidence)
         else:
             verified = verify_evidence(
                 options.input, expected_commit=options.expected_commit
             )
     except (RehearsalError, OSError):
-        if output is not None:
-            output.unlink(missing_ok=True)
         print("phase6-ci-rehearsal-failed", file=sys.stderr)
         return 1
     print(

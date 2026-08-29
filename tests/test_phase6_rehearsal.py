@@ -2,8 +2,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from scripts.backup_output_policy import publish_write_once_file
 from scripts.phase6_rehearsal import (
+    REPOSITORY_ROOT,
     RehearsalError,
     SCHEMA_VERSION,
     _assert_no_secret,
@@ -35,6 +38,7 @@ class Phase6RehearsalTests(unittest.TestCase):
         self.assertEqual(first["status"], "passed")
         self.assertFalse(first["production_acceptance"])
         self.assertTrue(all(first["checks"].values()))
+        self.assertIn("mailbox.health_changed", first["audit_event_types"])
         serialized = json.dumps(first)
         for forbidden in (
             "SENTINEL",
@@ -63,14 +67,10 @@ class Phase6RehearsalTests(unittest.TestCase):
 
             tampered = dict(evidence)
             tampered["unexpected"] = "value"
-            evidence_path.write_text(json.dumps(tampered), encoding="utf-8")
+            invalid_path = Path(directory) / "invalid-evidence.json"
             with self.assertRaises(RehearsalError):
-                verify_evidence(evidence_path)
-
-            write_evidence(evidence_path, evidence)
-            with self.assertRaises(RehearsalError):
-                write_evidence(evidence_path, tampered)
-            self.assertFalse(evidence_path.exists())
+                write_evidence(invalid_path, tampered)
+            self.assertFalse(invalid_path.exists())
 
     def test_verifier_binds_evidence_to_expected_release_commit(self) -> None:
         commit = "c" * 40
@@ -99,21 +99,154 @@ class Phase6RehearsalTests(unittest.TestCase):
                 1,
             )
 
-    def test_failed_run_invalidates_stale_evidence(self) -> None:
+    def test_output_policy_rejects_relative_repository_and_existing_paths_before_run(
+        self,
+    ) -> None:
+        evidence = run_rehearsal("e" * 40)
         with tempfile.TemporaryDirectory() as directory:
-            evidence_path = Path(directory) / "phase6-evidence.json"
-            evidence_path.write_text("stale", encoding="utf-8")
-            result = main(
-                [
-                    "run",
-                    "--output",
-                    str(evidence_path),
-                    "--commit",
-                    "not-a-commit",
-                ]
+            existing = Path(directory) / "existing.json"
+            existing.write_bytes(b"stale-evidence")
+            repository_path = REPOSITORY_ROOT / "tests" / "phase6-output-forbidden.json"
+            paths = (Path("relative.json"), repository_path, existing)
+            with mock.patch(
+                "scripts.phase6_rehearsal.run_rehearsal", return_value=evidence
+            ) as rehearsal:
+                for output in paths:
+                    with self.subTest(output=output):
+                        self.assertEqual(
+                            main(
+                                [
+                                    "run",
+                                    "--output",
+                                    str(output),
+                                    "--commit",
+                                    "e" * 40,
+                                ]
+                            ),
+                            1,
+                        )
+            rehearsal.assert_not_called()
+            self.assertEqual(existing.read_bytes(), b"stale-evidence")
+
+    def test_second_run_does_not_overwrite_committed_evidence(self) -> None:
+        evidence = run_rehearsal("f" * 40)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "phase6-evidence.json"
+            with mock.patch(
+                "scripts.phase6_rehearsal.run_rehearsal", return_value=evidence
+            ) as rehearsal:
+                self.assertEqual(
+                    main(
+                        [
+                            "run",
+                            "--output",
+                            str(output),
+                            "--commit",
+                            "f" * 40,
+                        ]
+                    ),
+                    0,
+                )
+                original = output.read_bytes()
+                self.assertEqual(
+                    main(
+                        [
+                            "run",
+                            "--output",
+                            str(output),
+                            "--commit",
+                            "f" * 40,
+                        ]
+                    ),
+                    1,
+                )
+            self.assertEqual(rehearsal.call_count, 1)
+            self.assertEqual(output.read_bytes(), original)
+
+    def test_publish_race_preserves_target_winner_and_cleans_temporary_file(self) -> None:
+        evidence = run_rehearsal("1" * 40)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "phase6-evidence.json"
+
+            def publish_after_race(temporary_path: Path, destination: Path) -> None:
+                destination.write_bytes(b"race-winner")
+                publish_write_once_file(temporary_path, destination)
+
+            with mock.patch(
+                "scripts.phase6_rehearsal.publish_write_once_file",
+                side_effect=publish_after_race,
+            ):
+                with self.assertRaises(FileExistsError):
+                    write_evidence(output, evidence)
+            self.assertEqual(output.read_bytes(), b"race-winner")
+            self.assertEqual(list(output.parent.glob(f".{output.name}.*.tmp")), [])
+
+    def test_publish_cleanup_failure_is_a_committed_success(self) -> None:
+        evidence = run_rehearsal("2" * 40)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "phase6-evidence.json"
+            with mock.patch(
+                "scripts.backup_output_policy.Path.unlink",
+                side_effect=PermissionError("temporary cleanup denied"),
+            ):
+                self.assertEqual(write_evidence(output, evidence), evidence)
+            self.assertEqual(verify_evidence(output), evidence)
+
+    def test_prepublication_failure_leaves_no_final_or_temporary_file(self) -> None:
+        evidence = run_rehearsal("3" * 40)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "phase6-evidence.json"
+            with mock.patch(
+                "scripts.phase6_rehearsal.os.fsync",
+                side_effect=OSError("fsync failed"),
+            ):
+                with self.assertRaises(OSError):
+                    write_evidence(output, evidence)
+            self.assertFalse(output.exists())
+            self.assertEqual(list(output.parent.glob(f".{output.name}.*.tmp")), [])
+
+    def test_unexpected_exception_and_base_exception_propagate_without_output(self) -> None:
+        failures: tuple[BaseException, ...] = (
+            RuntimeError("unexpected rehearsal failure"),
+            KeyboardInterrupt(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, failure in enumerate(failures):
+                with self.subTest(failure=type(failure).__name__):
+                    output = Path(directory) / f"phase6-evidence-{index}.json"
+                    with mock.patch(
+                        "scripts.phase6_rehearsal.run_rehearsal",
+                        side_effect=failure,
+                    ):
+                        with self.assertRaises(type(failure)) as raised:
+                            main(
+                                [
+                                    "run",
+                                    "--output",
+                                    str(output),
+                                    "--commit",
+                                    "4" * 40,
+                                ]
+                            )
+                    self.assertIs(raised.exception, failure)
+                    self.assertFalse(output.exists())
+
+    def test_handled_run_failure_leaves_no_partial_final_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "phase6-evidence.json"
+            self.assertEqual(
+                main(
+                    [
+                        "run",
+                        "--output",
+                        str(output),
+                        "--commit",
+                        "not-a-commit",
+                    ]
+                ),
+                1,
             )
-            self.assertEqual(result, 1)
-            self.assertFalse(evidence_path.exists())
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "record_type": "windows_pilot_input_inventory",
+  "inventory_reference": "synthetic-windows-pilot-inputs",
+  "synthetic": true,
+  "inventory_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "bindings": {
+    "target_platform_inventory_sha256": null
+  },
+  "windows_target": {
+    "environment_reference": null,
+    "os_family": null,
+    "architecture": null,
+    "update_channel_reference": null
+  },
+  "business_page": {
+    "page_reference": null,
+    "field_sequence": [],
+    "continuous_paste_required": true
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_request_or_response_bodies": false,
+    "contains_provider_urls": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "8da07fae5620d2ff91e17661ade8fec16672ff1c2a7e0a98bf5f8297f35479b9"
+  }
+}

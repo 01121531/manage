@@ -1,0 +1,137 @@
+# Production Web/API blue-green extension.  Use only through
+# scripts/rolling_release.py, together with the pinned base Compose file.
+services:
+  migrate:
+    image: ${PLATFORM_ROLLING_MIGRATION_IMAGE:?set target API digest through rolling_release.py}
+
+  worker-mail:
+    image: ${PLATFORM_ROLLING_WORKER_MAIL_IMAGE:?set current worker-mail digest through rolling_release.py}
+
+  worker-sub2:
+    image: ${PLATFORM_ROLLING_WORKER_SUB2_IMAGE:?set current worker-sub2 digest through rolling_release.py}
+
+  api-green:
+    image: ${PLATFORM_ROLLING_GREEN_API_IMAGE:?set green API digest through rolling_release.py}
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    environment:
+      PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
+      PLATFORM_RELEASE_TAG: ${PLATFORM_ROLLING_GREEN_RELEASE_TAG:?set green release tag through rolling_release.py}
+      PLATFORM_RELEASE_COMMIT: ${PLATFORM_ROLLING_GREEN_RELEASE_COMMIT:?set green release commit through rolling_release.py}
+      PLATFORM_RELEASE_MIGRATION_HEAD: ${PLATFORM_ROLLING_GREEN_MIGRATION_HEAD:?set green migration head through rolling_release.py}
+      PLATFORM_RELEASE_SLOT: green
+      PLATFORM_ALLOWED_ORIGINS: https://${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
+      PLATFORM_DATABASE_URL_FILE: /run/secrets/runtime/database-url
+      PLATFORM_RATE_LIMIT_ENABLED: "true"
+      PLATFORM_MAX_ACTIVE_DEVICES_PER_USER: ${PLATFORM_MAX_ACTIVE_DEVICES_PER_USER:-5}
+      PLATFORM_REDIS_URL_FILE: /run/secrets/runtime/redis-url
+      PLATFORM_AUTH_MODE: oidc
+      PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
+      PLATFORM_OIDC_AUDIENCE: email-platform-api
+      PLATFORM_OIDC_CLIENT_ID: email-platform-web
+      PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+      PLATFORM_OIDC_JWKS_URL: https://keycloak:8443/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:?set PLATFORM_VAULT_ADDR in .env}
+      PLATFORM_VAULT_TOKEN_FILE: /run/secrets/email-platform-vault/token
+      PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
+      PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
+      PLATFORM_MAIL_POLL_MODE: worker
+      PLATFORM_ADMIN_ROLE_CHANGE_ACR: ${PLATFORM_ADMIN_ROLE_CHANGE_ACR:-urn:email-platform:acr:mfa}
+      PLATFORM_ADMIN_ROLE_CHANGE_TTL_SECONDS: ${PLATFORM_ADMIN_ROLE_CHANGE_TTL_SECONDS:-900}
+      PLATFORM_SUB2_POLICY_VERSION: ${PLATFORM_SUB2_POLICY_VERSION:-sub2-v1}
+    volumes:
+      - type: bind
+        source: ${PLATFORM_VAULT_API_TOKEN_DIR:?set PLATFORM_VAULT_API_TOKEN_DIR in .env}
+        target: /run/secrets/email-platform-vault
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_DATABASE_URL_FILE:?set PLATFORM_DATABASE_URL_FILE in .env}
+        target: /run/secrets/runtime/database-url
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_REDIS_URL_FILE:?set PLATFORM_REDIS_URL_FILE in .env}
+        target: /run/secrets/runtime/redis-url
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_ROLLING_GREEN_API_CERT_FILE:?set api-green certificate path in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_ROLLING_GREEN_API_KEY_FILE:?set api-green key path in .env}
+        target: /run/secrets/internal-tls/tls.key
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+    command: ["uvicorn", "platform.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8443", "--ssl-certfile", "/run/secrets/internal-tls/tls.crt", "--ssl-keyfile", "/run/secrets/internal-tls/tls.key"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl, urllib.request; urllib.request.urlopen('https://api-green:8443/readyz', context=ssl.create_default_context(cafile='/run/secrets/internal-tls/ca.crt'), timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [frontend, postgres-backend, redis-backend, vault-backend, metrics]
+
+  web-green:
+    image: ${PLATFORM_ROLLING_GREEN_WEB_IMAGE:?set green Web digest through rolling_release.py}
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/run, /var/cache/nginx]
+    volumes:
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_ROLLING_GREEN_WEB_CERT_FILE:?set web-green certificate path in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${PLATFORM_ROLLING_GREEN_WEB_KEY_FILE:?set web-green key path in .env}
+        target: /run/secrets/internal-tls/tls.key
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t -q && kill -0 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [frontend]
+
+  edge:
+    volumes:
+      - type: bind
+        source: ${PLATFORM_ROLLING_ROUTE_DIR:?set protected absolute rolling route directory in .env}
+        target: /etc/nginx/edge-routing
+        read_only: true
+        bind: {create_host_path: false}

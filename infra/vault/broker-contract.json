@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "production_acceptance": false,
+  "auth_method": "approle",
+  "revocation_actor": "external-approved-rotator",
+  "rotation_sequence": [
+    "issue_new_secret_id",
+    "exchange_new_token",
+    "validate_new_token_contract",
+    "atomic_sink_replace",
+    "consumer_canary",
+    "revoke_old_token_by_accessor",
+    "verify_old_token_invalid"
+  ],
+  "services": [
+    {
+      "service": "api",
+      "approle": "email-platform-api-cards",
+      "service_policy": "email-platform-api-cards",
+      "issuer_policy": "email-platform-broker-issuer-api",
+      "issuer_policy_file": "email-platform-broker-issuer-api.hcl",
+      "role_id_path": "auth/approle/role/email-platform-api-cards/role-id",
+      "secret_id_path": "auth/approle/role/email-platform-api-cards/secret-id",
+      "token_sink_directory_variable": "PLATFORM_VAULT_API_TOKEN_DIR",
+      "token_sink_leaf": "token",
+      "secret_id_num_uses": 1,
+      "secret_id_ttl_seconds": 600,
+      "token_ttl_seconds": 900,
+      "token_explicit_max_ttl_seconds": 3600,
+      "positive_capabilities": {
+        "auth/approle/role/email-platform-api-cards/role-id": ["read"],
+        "auth/approle/role/email-platform-api-cards/secret-id": ["update"]
+      },
+      "denied_probe_paths": [
+        "auth/approle/role/email-platform-api-cards",
+        "auth/approle/role/email-platform-mail/role-id",
+        "auth/approle/role/email-platform-mail/secret-id",
+        "auth/approle/role/email-platform-sub2/role-id",
+        "auth/approle/role/email-platform-sub2/secret-id",
+        "auth/token/revoke-accessor",
+        "secret/data/cards/canary",
+        "secret/data/mailboxes/canary",
+        "secret/data/sub2/credential",
+        "sys/policies/acl/email-platform-broker-issuer-api"
+      ]
+    },
+    {
+      "service": "mail",
+      "approle": "email-platform-mail",
+      "service_policy": "email-platform-mail",
+      "issuer_policy": "email-platform-broker-issuer-mail",
+      "issuer_policy_file": "email-platform-broker-issuer-mail.hcl",
+      "role_id_path": "auth/approle/role/email-platform-mail/role-id",
+      "secret_id_path": "auth/approle/role/email-platform-mail/secret-id",
+      "token_sink_directory_variable": "PLATFORM_VAULT_MAIL_TOKEN_DIR",
+      "token_sink_leaf": "token",
+      "secret_id_num_uses": 1,
+      "secret_id_ttl_seconds": 600,
+      "token_ttl_seconds": 900,
+      "token_explicit_max_ttl_seconds": 3600,
+      "positive_capabilities": {
+        "auth/approle/role/email-platform-mail/role-id": ["read"],
+        "auth/approle/role/email-platform-mail/secret-id": ["update"]
+      },
+      "denied_probe_paths": [
+        "auth/approle/role/email-platform-mail",
+        "auth/approle/role/email-platform-api-cards/role-id",
+        "auth/approle/role/email-platform-api-cards/secret-id",
+        "auth/approle/role/email-platform-sub2/role-id",
+        "auth/approle/role/email-platform-sub2/secret-id",
+        "auth/token/revoke-accessor",
+        "secret/data/cards/canary",
+        "secret/data/mailboxes/canary",
+        "secret/data/sub2/credential",
+        "sys/policies/acl/email-platform-broker-issuer-mail"
+      ]
+    },
+    {
+      "service": "sub2",
+      "approle": "email-platform-sub2",
+      "service_policy": "email-platform-sub2",
+      "issuer_policy": "email-platform-broker-issuer-sub2",
+      "issuer_policy_file": "email-platform-broker-issuer-sub2.hcl",
+      "role_id_path": "auth/approle/role/email-platform-sub2/role-id",
+      "secret_id_path": "auth/approle/role/email-platform-sub2/secret-id",
+      "token_sink_directory_variable": "PLATFORM_VAULT_SUB2_TOKEN_DIR",
+      "token_sink_leaf": "token",
+      "secret_id_num_uses": 1,
+      "secret_id_ttl_seconds": 600,
+      "token_ttl_seconds": 900,
+      "token_explicit_max_ttl_seconds": 3600,
+      "positive_capabilities": {
+        "auth/approle/role/email-platform-sub2/role-id": ["read"],
+        "auth/approle/role/email-platform-sub2/secret-id": ["update"]
+      },
+      "denied_probe_paths": [
+        "auth/approle/role/email-platform-sub2",
+        "auth/approle/role/email-platform-api-cards/role-id",
+        "auth/approle/role/email-platform-api-cards/secret-id",
+        "auth/approle/role/email-platform-mail/role-id",
+        "auth/approle/role/email-platform-mail/secret-id",
+        "auth/token/revoke-accessor",
+        "secret/data/cards/canary",
+        "secret/data/mailboxes/canary",
+        "secret/data/sub2/credential",
+        "sys/policies/acl/email-platform-broker-issuer-sub2"
+      ]
+    }
+  ],
+  "required_target_evidence": [
+    "three_distinct_external_principals",
+    "exact_effective_capabilities_by_accessor",
+    "cross_service_issuance_denied",
+    "single_use_secret_id_consumed",
+    "new_token_exact_service_policy_no_default",
+    "atomic_sink_replacement",
+    "consumer_canary_succeeded",
+    "old_token_revoked_by_external_rotator",
+    "old_token_rejected",
+    "vault_audit_trace_reviewed"
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "record_type": "target_platform_inventory",
+  "inventory_reference": "synthetic-target-platform-inventory",
+  "synthetic": true,
+  "inventory_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "public_endpoints": {
+    "platform_domain": null,
+    "application_origin": null,
+    "identity_issuer": null,
+    "external_dns_owner_reference": null,
+    "external_certificate_owner_reference": null
+  },
+  "control_planes": {
+    "keycloak_owner_reference": null,
+    "vault_owner_reference": null,
+    "internal_dns_owner_reference": null
+  },
+  "certificate_ownership": {
+    "internal_ca_owner_reference": null,
+    "issuance_owner_reference": null,
+    "rotation_owner_reference": null,
+    "leaf_dns_sans": {
+      "api": "api",
+      "web": "web",
+      "api-green": "api-green",
+      "web-green": "web-green",
+      "keycloak": "keycloak",
+      "worker-mail": "worker-mail",
+      "worker-sub2": "worker-sub2",
+      "prometheus": "prometheus",
+      "alertmanager": "alertmanager"
+    }
+  },
+  "runtime_locations": {
+    "path_policy": "repository_external_target_host_paths_only",
+    "repository_external_confirmed": false,
+    "secret_files": {
+      "POSTGRES_PASSWORD_FILE": null,
+      "POSTGRES_APP_PASSWORD_FILE": null,
+      "KEYCLOAK_DB_PASSWORD_FILE": null,
+      "PLATFORM_MIGRATION_DATABASE_URL_FILE": null,
+      "PLATFORM_DATABASE_URL_FILE": null,
+      "PLATFORM_REDIS_URL_FILE": null,
+      "REDIS_CONFIG_FILE": null,
+      "REDIS_ACL_FILE": null,
+      "REDIS_HEALTHCHECK_PASSWORD_FILE": null,
+      "KEYCLOAK_CONFIG_FILE": null
+    },
+    "vault_token_directories": {
+      "PLATFORM_VAULT_API_TOKEN_DIR": null,
+      "PLATFORM_VAULT_MAIL_TOKEN_DIR": null,
+      "PLATFORM_VAULT_SUB2_TOKEN_DIR": null
+    },
+    "policy_files": {
+      "PLATFORM_MAIL_ALLOWED_ORIGINS_FILE": null,
+      "PLATFORM_SUB2_ALLOWED_ORIGINS_FILE": null,
+      "ALERTMANAGER_CONFIG_FILE": null
+    },
+    "internal_tls_root": null,
+    "rolling_route_directory": null,
+    "evidence_root": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_private_key_values": false,
+    "contains_certificate_values": false,
+    "contains_token_values": false,
+    "contains_secret_values": false,
+    "contains_pan_or_cvv_values": false
+  }
+}

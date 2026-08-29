@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "contract_type": "sub2",
+  "provider_reference": "synthetic-sub2-contract",
+  "synthetic": true,
+  "review_reference": null,
+  "production_acceptance": false,
+  "transport": {
+    "https_required": true,
+    "redirect_policy": "forbid",
+    "auth_location": "authorization_header",
+    "max_response_bytes": 65536
+  },
+  "capabilities": {
+    "submit_method": "POST",
+    "idempotency_location": "header",
+    "idempotency_name": "Idempotency-Key",
+    "task_correlation_location": "header",
+    "task_correlation_name": "X-Platform-Task-ID",
+    "success_reference_field": "external_ref",
+    "pagination": "not_applicable",
+    "rate_limit_strategy": "unknown_on_429",
+    "unknown_http_statuses": [
+      408,
+      409,
+      425,
+      429,
+      500,
+      502,
+      503,
+      504
+    ],
+    "status_query": {
+      "supported": true,
+      "idempotency_lookup": true,
+      "method": "GET",
+      "reference_location": "query",
+      "reference_name": "idempotency_key",
+      "result_field": "status",
+      "outcomes": [
+        "processing",
+        "succeeded",
+        "failed",
+        "not_found",
+        "unknown"
+      ]
+    }
+  },
+  "field_shapes": {
+    "request_fields": [
+      "job_id",
+      "task_id",
+      "business_name",
+      "card",
+      "policy"
+    ],
+    "response_fields": [
+      "external_ref",
+      "status"
+    ]
+  },
+  "redaction": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_cardholder_data": false,
+    "contains_message_content": false,
+    "contains_verification_codes": false
+  }
+}

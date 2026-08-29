@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from collections.abc import Callable
 
 import httpx
 from fastapi import Request
@@ -59,6 +60,9 @@ def _production_settings(**overrides: object) -> Settings:
         "oidc_client_id": "platform-web",
         "oidc_desktop_client_id": "platform-desktop",
         "oidc_jwks_url": "https://identity.example.test/jwks",
+        "internal_ca_file": "/run/secrets/internal-tls/ca.crt",
+        "allowed_origins": "https://platform.example.test",
+        "mail_poll_mode": "worker",
         "rate_limit_enabled": True,
         "redis_url": "redis://redis.example.test:6379/0",
     }
@@ -72,10 +76,23 @@ class RateLimitTests(unittest.TestCase):
         *,
         backend: FakeRateLimitBackend | None = None,
         settings: Settings | None = None,
+        clock: Callable[[], float] | None = None,
     ):
         app = create_app(
             settings or _settings(),
+            access_token_verifier=(
+                object()
+                if settings is not None and settings.auth_mode == "oidc"
+                else None
+            ),
             rate_limit_backend=backend or FakeRateLimitBackend(),
+            rate_limit_clock=clock or (lambda: 1_700_000_000.0),
+            secret_resolver=(
+                object()
+                if settings is not None
+                and settings.environment not in {"development", "test"}
+                else None
+            ),
         )
         self.addCleanup(app.state.engine.dispose)
         return app
@@ -270,6 +287,22 @@ class RateLimitTests(unittest.TestCase):
             settings.redis_url.get_secret_value(),
             repr(settings),
         )
+
+    def test_worker_bootstrap_skips_api_only_origin_and_rate_limit_gates(self) -> None:
+        app = create_app(
+            _production_settings(
+                allowed_origins="",
+                rate_limit_enabled=False,
+                redis_url=None,
+            ),
+            service_role="worker",
+            access_token_verifier=object(),
+            secret_resolver=object(),
+        )
+        try:
+            self.assertIsNone(app.state.rate_limit_backend)
+        finally:
+            app.state.engine.dispose()
 
     def test_readyz_checks_redis_when_enabled(self) -> None:
         healthy = self.make_app(backend=FakeRateLimitBackend())

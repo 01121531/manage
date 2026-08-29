@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "record_type": "phase5_windows_evidence_index",
+  "index_reference": "synthetic-phase5-windows-index",
+  "synthetic": true,
+  "index_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "windows_pilot_inputs_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "window": {
+    "started_at": null,
+    "finished_at": null
+  },
+  "scenarios": {
+    "windows_exe_login": null,
+    "lock_logout_expiry_stop": null,
+    "offline_recovery": null,
+    "update_rollback": null,
+    "clipboard_continuous_paste": null,
+    "business_field_order": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_request_or_response_bodies": false,
+    "contains_provider_urls": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "fdbcedf7932bf740053de47f9998c0773cb85e3b48a060d05e21ec6f81847859"
+  }
+}

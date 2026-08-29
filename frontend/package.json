@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/verify_lazy_manifest.mjs",
     "typecheck": "tsc -b --pretty false",
     "generate:api": "python ../scripts/export_openapi.py --output openapi.json && openapi-typescript openapi.json -o src/generated/openapi.ts",
     "check:api": "python ../scripts/verify_openapi_client.py",
-    "test:e2e": "playwright test"
+    "test:unit": "node --test tests/*.test.mjs",
+    "test:e2e": "node ./node_modules/@playwright/test/cli.js test"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",

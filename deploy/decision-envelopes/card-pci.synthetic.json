@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "decision_type": "card_pci_boundary",
+  "decision_reference": "synthetic-card-pci-boundary",
+  "synthetic": true,
+  "decision_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "field_inventory": {
+    "pan": {
+      "source": "external_card_vault",
+      "platform_database_storage": false,
+      "api_reveal": "mfa_one_time",
+      "sub2_egress": "reviewed_contract_only"
+    },
+    "expiry": {
+      "source": "external_card_vault_optional",
+      "platform_database_storage": false,
+      "api_reveal": "with_pan",
+      "sub2_egress": "reviewed_contract_only"
+    },
+    "cvv": {
+      "source": "prohibited",
+      "platform_database_storage": false,
+      "api_reveal": "prohibited",
+      "sub2_egress": "prohibited"
+    }
+  },
+  "pci_scope": {
+    "classification": "pending",
+    "assessment_reference": null,
+    "card_vault_owner_reference": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_pan_values": false,
+    "contains_cvv_values": false,
+    "contains_token_values": false
+  }
+}

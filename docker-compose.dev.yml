@@ -1,0 +1,25 @@
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+  worker-mail:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+  worker-sub2:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+  web:
+    build:
+      context: .
+      dockerfile: infra/frontend.Dockerfile
+  edge:
+    build:
+      context: .
+      dockerfile: infra/edge.Dockerfile

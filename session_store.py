@@ -9,8 +9,16 @@ from abc import ABC, abstractmethod
 from ctypes import wintypes
 from pathlib import Path
 
+from scripts.external_json import (
+    StableFileError,
+    read_stable_bytes,
+    write_atomic_bytes,
+)
+
 
 CRYPTPROTECT_UI_FORBIDDEN = 0x01
+MAX_REFRESH_TOKEN_BYTES = 64 * 1024
+MAX_SESSION_CIPHERTEXT_BYTES = 128 * 1024
 
 
 class SessionStoreError(Exception):
@@ -175,26 +183,27 @@ class WindowsDpapiSessionStore(SessionStore):
 
     def save(self, refresh_token: str) -> None:
         token = _validate_refresh_token(refresh_token)
-        ciphertext = _protect_data(token.encode("utf-8"), self._entropy)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        encoded = token.encode("utf-8")
+        if len(encoded) > MAX_REFRESH_TOKEN_BYTES:
+            raise ValueError("refresh token 格式无效")
+        ciphertext = _protect_data(encoded, self._entropy)
+        if not ciphertext or len(ciphertext) > MAX_SESSION_CIPHERTEXT_BYTES:
+            raise SessionStoreError("无法保存已加密的平台会话")
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_bytes(ciphertext)
-            os.replace(temporary, self.path)
+            write_atomic_bytes(self.path, ciphertext)
         except OSError as error:
             raise SessionStoreError("无法保存已加密的平台会话") from error
-        finally:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
 
     def load(self) -> str | None:
-        if not self.path.exists():
-            return None
         try:
-            ciphertext = self.path.read_bytes()
-        except OSError as error:
+            ciphertext = read_stable_bytes(
+                self.path,
+                max_bytes=MAX_SESSION_CIPHERTEXT_BYTES,
+                allow_empty=True,
+            )
+        except StableFileError as error:
+            if error.reason == "missing":
+                return None
             raise SessionStoreError("无法读取已加密的平台会话") from error
         if not ciphertext:
             raise SessionStoreError("已保存的平台会话无效")

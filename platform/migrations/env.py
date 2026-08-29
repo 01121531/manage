@@ -1,7 +1,7 @@
 """Alembic environment for the platform schema.
 
-The URL is supplied by ``-x db_url=...``, ``ALEMBIC_DATABASE_URL`` or the
-platform settings.  No credentials are stored in this repository.
+Production reads its URL from ``ALEMBIC_DATABASE_URL_FILE``. Development may
+also use ``-x db_url=...`` or ``ALEMBIC_DATABASE_URL`` for local tooling.
 """
 
 from __future__ import annotations
@@ -39,6 +39,18 @@ target_metadata = Base.metadata
 
 def _database_url() -> str:
     cli_url = context.get_x_argument(as_dictionary=True).get("db_url")
+    file_path = os.getenv("ALEMBIC_DATABASE_URL_FILE")
+    environment = os.getenv("PLATFORM_ENVIRONMENT", "development").strip().lower()
+    managed_environment = environment not in {"development", "test"}
+    if managed_environment:
+        if os.getenv("ALEMBIC_DATABASE_URL") or cli_url:
+            raise RuntimeError(
+                "Production Alembic forbids inline database URLs; use "
+                "ALEMBIC_DATABASE_URL_FILE"
+            )
+        return Settings._read_runtime_secret(file_path, "ALEMBIC_DATABASE_URL")
+    if file_path:
+        return Settings._read_runtime_secret(file_path, "ALEMBIC_DATABASE_URL")
     url = cli_url or os.getenv("ALEMBIC_DATABASE_URL") or Settings().database_url
     if not url:
         raise RuntimeError(

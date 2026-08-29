@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from scripts.external_json import (
+    StableFileError,
+    read_stable_bytes,
+    write_atomic_bytes,
+)
+
 
 ADMIN_API_BASE = "http://subscriber-api.qnxie.com/api/v1/admin"
 ADMIN_ORIGIN = "http://subscriber-api.qnxie.com"
@@ -21,6 +27,10 @@ PROXY_ID = 2940
 CONCURRENCY = 40
 GROUP_IDS = [49]
 REQUEST_TIMEOUT_SECONDS = 30
+MAX_ACCOUNT_NAME_BYTES = 4 * 200
+MAX_PROXY_ID_BYTES = 4300
+MAX_ADMIN_TOKEN_BYTES = 64 * 1024
+MAX_ADMIN_TOKEN_CIPHERTEXT_BYTES = 128 * 1024
 
 DEFAULT_MODEL_MAPPING = {
     model: model
@@ -228,22 +238,25 @@ class AccountNameStore:
             raise AccountNameStoreError("账号名称不能为空")
         if len(normalized) > 200 or "\n" in normalized or "\r" in normalized:
             raise AccountNameStoreError("账号名称格式无效")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
         try:
-            temporary.write_text(normalized, encoding="utf-8")
-            os.replace(temporary, self.path)
+            write_atomic_bytes(self.path, normalized.encode("utf-8"))
         except OSError as error:
             raise AccountNameStoreError("无法保存账号名称") from error
-        finally:
-            temporary.unlink(missing_ok=True)
 
     def load(self) -> str | None:
-        if not self.path.exists():
-            return None
         try:
-            name = self.path.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeError) as error:
+            raw = read_stable_bytes(
+                self.path,
+                max_bytes=MAX_ACCOUNT_NAME_BYTES,
+                allow_empty=True,
+            )
+        except StableFileError as error:
+            if error.reason == "missing":
+                return None
+            raise AccountNameStoreError("无法读取已保存的账号名称") from error
+        try:
+            name = raw.decode("utf-8").strip()
+        except UnicodeError as error:
             raise AccountNameStoreError("无法读取已保存的账号名称") from error
         if not name:
             return None
@@ -272,23 +285,26 @@ class ProxyIdStore:
 
     def save(self, proxy_id: Any) -> int:
         normalized = normalize_proxy_id(proxy_id)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
         try:
-            temporary.write_text(str(normalized), encoding="ascii")
-            os.replace(temporary, self.path)
+            write_atomic_bytes(self.path, str(normalized).encode("ascii"))
         except OSError as error:
             raise ProxyIdStoreError("无法保存代理 ID") from error
-        finally:
-            temporary.unlink(missing_ok=True)
         return normalized
 
     def load(self) -> int:
-        if not self.path.exists():
-            return PROXY_ID
         try:
-            value = self.path.read_text(encoding="ascii")
-        except (OSError, UnicodeError) as error:
+            raw = read_stable_bytes(
+                self.path,
+                max_bytes=MAX_PROXY_ID_BYTES,
+                allow_empty=True,
+            )
+        except StableFileError as error:
+            if error.reason == "missing":
+                return PROXY_ID
+            raise ProxyIdStoreError("无法读取已保存的代理 ID") from error
+        try:
+            value = raw.decode("ascii")
+        except UnicodeError as error:
             raise ProxyIdStoreError("无法读取已保存的代理 ID") from error
         return normalize_proxy_id(value)
 
@@ -301,22 +317,31 @@ class AdminTokenStore:
         normalized = normalize_bearer_token(token)
         if not normalized:
             raise TokenValidationError("管理令牌不能为空")
-        encrypted = _protect_data(normalized.encode("utf-8"))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
+        encoded = normalized.encode("utf-8")
+        if len(encoded) > MAX_ADMIN_TOKEN_BYTES:
+            raise TokenValidationError("管理令牌格式无效")
+        encrypted = _protect_data(encoded)
+        if not encrypted or len(encrypted) > MAX_ADMIN_TOKEN_CIPHERTEXT_BYTES:
+            raise TokenStoreError("无法保存已加密的管理令牌")
         try:
-            temporary.write_bytes(encrypted)
-            os.replace(temporary, self.path)
-        finally:
-            temporary.unlink(missing_ok=True)
+            write_atomic_bytes(self.path, encrypted)
+        except OSError as error:
+            raise TokenStoreError("无法保存已加密的管理令牌") from error
 
     def load(self) -> str | None:
-        if not self.path.exists():
-            return None
         try:
-            encrypted = self.path.read_bytes()
-            if not encrypted:
-                raise TokenStoreError("已保存的管理令牌数据为空")
+            encrypted = read_stable_bytes(
+                self.path,
+                max_bytes=MAX_ADMIN_TOKEN_CIPHERTEXT_BYTES,
+                allow_empty=True,
+            )
+        except StableFileError as error:
+            if error.reason == "missing":
+                return None
+            raise TokenStoreError("无法读取已保存的管理令牌") from error
+        if not encrypted:
+            raise TokenStoreError("已保存的管理令牌数据为空")
+        try:
             return _unprotect_data(encrypted).decode("utf-8")
         except TokenStoreError:
             raise
@@ -354,6 +379,8 @@ def validate_admin_token(token: str, now: float | None = None) -> str:
     normalized = normalize_bearer_token(token)
     if not normalized:
         raise TokenValidationError("请输入管理端 Bearer Token")
+    if len(normalized.encode("utf-8")) > MAX_ADMIN_TOKEN_BYTES:
+        raise TokenValidationError("管理令牌格式无效")
     expiry = jwt_expiry(normalized)
     if expiry is not None and expiry <= int(time.time() if now is None else now):
         raise TokenValidationError("管理令牌已过期，请更新后重试")

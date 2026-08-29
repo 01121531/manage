@@ -1,56 +1,135 @@
+x-platform-logging: &platform-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres@sha256:${POSTGRES_IMAGE_SHA256:?set reviewed 64-hex POSTGRES_IMAGE_SHA256 in .env}
     restart: unless-stopped
+    logging: *platform-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres/superuser-password
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:?set POSTGRES_APP_USER in .env}
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in .env}
+      POSTGRES_APP_PASSWORD_FILE: /run/secrets/postgres/platform-password
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:?set KEYCLOAK_DB_USER in .env}
+      KEYCLOAK_DB_PASSWORD_FILE: /run/secrets/postgres/keycloak-password
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+      - type: bind
+        source: ./infra/postgres-healthcheck.sh
+        target: /usr/local/bin/postgres-healthcheck
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${POSTGRES_PASSWORD_FILE:?set POSTGRES_PASSWORD_FILE in .env}
+        target: /run/secrets/postgres/superuser-password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${POSTGRES_APP_PASSWORD_FILE:?set POSTGRES_APP_PASSWORD_FILE in .env}
+        target: /run/secrets/postgres/platform-password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KEYCLOAK_DB_PASSWORD_FILE:?set KEYCLOAK_DB_PASSWORD_FILE in .env}
+        target: /run/secrets/postgres/keycloak-password
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      test: ["CMD", "sh", "/usr/local/bin/postgres-healthcheck"]
       interval: 5s
       timeout: 5s
       retries: 12
-    networks: [backend]
+    networks: [postgres-backend]
 
   redis:
-    image: redis:7-alpine
+    image: redis@sha256:${REDIS_IMAGE_SHA256:?set reviewed 64-hex REDIS_IMAGE_SHA256 in .env}
     restart: unless-stopped
+    logging: *platform-logging
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+      REDIS_HEALTHCHECK_PASSWORD_FILE: /run/secrets/redis/healthcheck-password
+    command: ["redis-server", "/run/config/redis.conf"]
     volumes:
       - redis-data:/data
+      - ./infra/redis-healthcheck.sh:/usr/local/bin/redis-healthcheck:ro
+      - type: bind
+        source: ${REDIS_CONFIG_FILE:?set REDIS_CONFIG_FILE in .env}
+        target: /run/config/redis.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${REDIS_ACL_FILE:?set REDIS_ACL_FILE in .env}
+        target: /run/secrets/redis/users.acl
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${REDIS_HEALTHCHECK_PASSWORD_FILE:?set REDIS_HEALTHCHECK_PASSWORD_FILE in .env}
+        target: /run/secrets/redis/healthcheck-password
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      test: ["CMD", "/usr/local/bin/redis-healthcheck"]
       interval: 5s
       timeout: 5s
       retries: 12
-    networks: [backend]
+    networks: [redis-backend]
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.3
+    image: quay.io/keycloak/keycloak@sha256:${KEYCLOAK_IMAGE_SHA256:?set reviewed 64-hex KEYCLOAK_IMAGE_SHA256 in .env}
     restart: unless-stopped
-    command: ["start", "--import-realm", "--http-enabled=true"]
+    logging: *platform-logging
+    command: ["--config-file=/opt/keycloak/conf/runtime.conf", "start", "--import-realm", "--http-enabled=false", "--https-port=8443"]
     environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?set KEYCLOAK_ADMIN_USERNAME in .env}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+      KC_EVENT_METRICS_USER_ENABLED: "true"
+      KC_EVENT_METRICS_USER_EVENTS: login
+      KC_EVENT_METRICS_USER_TAGS: realm
+      KC_HTTPS_CERTIFICATE_FILE: /run/secrets/internal-tls/tls.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /run/secrets/internal-tls/tls.key
+      KC_HTTPS_CERTIFICATES_RELOAD_PERIOD: 1h
+      KC_HTTP_MANAGEMENT_SCHEME: inherited
       KC_HOSTNAME: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
       KC_PROXY_HEADERS: xforwarded
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
     volumes:
       - ./infra/keycloak/email-platform-realm.json:/opt/keycloak/data/import/email-platform-realm.json:ro
+      - type: bind
+        source: ${KEYCLOAK_CONFIG_FILE:?set KEYCLOAK_CONFIG_FILE in .env}
+        target: /opt/keycloak/conf/runtime.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_KEYCLOAK_CERT_FILE:?set PLATFORM_INTERNAL_KEYCLOAK_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_KEYCLOAK_KEY_FILE:?set PLATFORM_INTERNAL_KEYCLOAK_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +138,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
-    networks: [backend]
+    networks: [frontend, postgres-backend, metrics]
 
   # Local-only helper for integration tests. The dev server and root token are
   # intentionally behind a profile and must never be enabled in production.
@@ -77,34 +156,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks: [backend]
+    networks: [vault-backend]
 
   migrate:
-    build:
-      context: .
-      dockerfile: infra/Dockerfile
-    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
+    image: ${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}
     restart: "no"
-    user: "10001:10001"
-    read_only: true
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    tmpfs:
-      - /tmp
-    environment:
-      ALEMBIC_DATABASE_URL: ${PLATFORM_MIGRATION_DATABASE_URL:?set PLATFORM_MIGRATION_DATABASE_URL in .env}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
-    networks: [backend]
-
-  api:
-    build:
-      context: .
-      dockerfile: infra/Dockerfile
-    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
-    restart: unless-stopped
+    logging: *platform-logging
     user: "10001:10001"
     read_only: true
     cap_drop: ["ALL"]
@@ -113,25 +170,95 @@ services:
       - /tmp
     environment:
       PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
-      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      ALEMBIC_DATABASE_URL_FILE: /run/secrets/runtime/migration-database-url
+    volumes:
+      - type: bind
+        source: ${PLATFORM_MIGRATION_DATABASE_URL_FILE:?set PLATFORM_MIGRATION_DATABASE_URL_FILE in .env}
+        target: /run/secrets/runtime/migration-database-url
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    networks: [postgres-backend]
+
+  api:
+    image: ${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}
+    restart: unless-stopped
+    logging: *platform-logging
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    environment:
+      PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
+      PLATFORM_RELEASE_TAG: ${PLATFORM_RELEASE_TAG:-unidentified}
+      PLATFORM_RELEASE_COMMIT: ${PLATFORM_RELEASE_COMMIT:-unidentified}
+      PLATFORM_RELEASE_MIGRATION_HEAD: ${PLATFORM_RELEASE_MIGRATION_HEAD:-unidentified}
+      PLATFORM_RELEASE_SLOT: blue
+      PLATFORM_ALLOWED_ORIGINS: https://${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
+      PLATFORM_DATABASE_URL_FILE: /run/secrets/runtime/database-url
       PLATFORM_RATE_LIMIT_ENABLED: "true"
-      PLATFORM_REDIS_URL: ${PLATFORM_REDIS_URL:?set PLATFORM_REDIS_URL in .env}
+      PLATFORM_MAX_ACTIVE_DEVICES_PER_USER: ${PLATFORM_MAX_ACTIVE_DEVICES_PER_USER:-5}
+      PLATFORM_REDIS_URL_FILE: /run/secrets/runtime/redis-url
       PLATFORM_AUTH_MODE: oidc
       PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
       PLATFORM_OIDC_AUDIENCE: email-platform-api
       PLATFORM_OIDC_CLIENT_ID: email-platform-web
       PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
-      PLATFORM_OIDC_JWKS_URL: http://keycloak:8080/realms/email-platform/protocol/openid-connect/certs
-      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:-}
+      PLATFORM_OIDC_JWKS_URL: https://keycloak:8443/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:?set PLATFORM_VAULT_ADDR in .env}
       PLATFORM_VAULT_TOKEN_FILE: /run/secrets/email-platform-vault/token
       PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
       PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
       PLATFORM_MAIL_POLL_MODE: worker
+      PLATFORM_ADMIN_ROLE_CHANGE_ACR: ${PLATFORM_ADMIN_ROLE_CHANGE_ACR:-urn:email-platform:acr:mfa}
+      PLATFORM_ADMIN_ROLE_CHANGE_TTL_SECONDS: ${PLATFORM_ADMIN_ROLE_CHANGE_TTL_SECONDS:-900}
       PLATFORM_SUB2_POLICY_VERSION: ${PLATFORM_SUB2_POLICY_VERSION:-sub2-v1}
+      PLATFORM_SUB2_GROUP_ID: ${PLATFORM_SUB2_GROUP_ID:-49}
+      PLATFORM_SUB2_CONCURRENCY: ${PLATFORM_SUB2_CONCURRENCY:-10}
+      PLATFORM_SUB2_PROXY_REF: ${PLATFORM_SUB2_PROXY_REF:?set PLATFORM_SUB2_PROXY_REF in .env}
+      PLATFORM_SUB2_CREDENTIAL_REF: ${PLATFORM_SUB2_CREDENTIAL_REF:?set PLATFORM_SUB2_CREDENTIAL_REF in .env}
+      PLATFORM_SUB2_UPLOAD_URL: ${PLATFORM_SUB2_UPLOAD_URL:-}
     volumes:
       - type: bind
         source: ${PLATFORM_VAULT_API_TOKEN_DIR:?set PLATFORM_VAULT_API_TOKEN_DIR in .env}
         target: /run/secrets/email-platform-vault
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_DATABASE_URL_FILE:?set PLATFORM_DATABASE_URL_FILE in .env}
+        target: /run/secrets/runtime/database-url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_REDIS_URL_FILE:?set PLATFORM_REDIS_URL_FILE in .env}
+        target: /run/secrets/runtime/redis-url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_API_CERT_FILE:?set PLATFORM_INTERNAL_API_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_API_KEY_FILE:?set PLATFORM_INTERNAL_API_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
         read_only: true
         bind:
           create_host_path: false
@@ -144,20 +271,18 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
-    command: ["uvicorn", "platform.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "platform.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8443", "--ssl-certfile", "/run/secrets/internal-tls/tls.crt", "--ssl-keyfile", "/run/secrets/internal-tls/tls.key"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      test: ["CMD", "python", "-c", "import ssl, urllib.request; urllib.request.urlopen('https://api:8443/readyz', context=ssl.create_default_context(cafile='/run/secrets/internal-tls/ca.crt'), timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 12
-    networks: [backend]
+    networks: [frontend, postgres-backend, redis-backend, vault-backend, metrics]
 
   worker-mail:
-    build:
-      context: .
-      dockerfile: infra/Dockerfile
-    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
+    image: ${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}
     restart: unless-stopped
+    logging: *platform-logging
     user: "10001:10001"
     read_only: true
     cap_drop: ["ALL"]
@@ -166,28 +291,62 @@ services:
       - /tmp
     environment:
       PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
-      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      PLATFORM_DATABASE_URL_FILE: /run/secrets/runtime/database-url
       PLATFORM_AUTH_MODE: oidc
       PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
       PLATFORM_OIDC_AUDIENCE: email-platform-api
       PLATFORM_OIDC_CLIENT_ID: email-platform-web
       PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
-      PLATFORM_OIDC_JWKS_URL: http://keycloak:8080/realms/email-platform/protocol/openid-connect/certs
-      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:-}
+      PLATFORM_OIDC_JWKS_URL: https://keycloak:8443/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:?set PLATFORM_VAULT_ADDR in .env}
       PLATFORM_VAULT_TOKEN_FILE: /run/secrets/email-platform-vault/token
       PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
       PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
       PLATFORM_MAIL_POLL_MODE: worker
       PLATFORM_MAIL_API_URL: ${PLATFORM_MAIL_API_URL:?set PLATFORM_MAIL_API_URL in .env}
+      PLATFORM_MAIL_ALLOWED_ORIGINS_FILE: /run/config/mail/allowed-origins
       PLATFORM_MAIL_TIMEOUT_SECONDS: ${PLATFORM_MAIL_TIMEOUT_SECONDS:-20}
       PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
       PLATFORM_WORKER_METRICS_PORT: 9101
+      PLATFORM_WORKER_METRICS_TLS_CERT_FILE: /run/secrets/internal-tls/tls.crt
+      PLATFORM_WORKER_METRICS_TLS_KEY_FILE: /run/secrets/internal-tls/tls.key
       PLATFORM_WORKER_HEARTBEAT_PATH: /tmp/email-platform-mail-worker.heartbeat
       PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS: ${PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-30}
     volumes:
       - type: bind
+        source: ${PLATFORM_MAIL_ALLOWED_ORIGINS_FILE:?set PLATFORM_MAIL_ALLOWED_ORIGINS_FILE in .env}
+        target: /run/config/mail/allowed-origins
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source: ${PLATFORM_VAULT_MAIL_TOKEN_DIR:?set PLATFORM_VAULT_MAIL_TOKEN_DIR in .env}
         target: /run/secrets/email-platform-vault
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_DATABASE_URL_FILE:?set PLATFORM_DATABASE_URL_FILE in .env}
+        target: /run/secrets/runtime/database-url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_WORKER_MAIL_CERT_FILE:?set PLATFORM_INTERNAL_WORKER_MAIL_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_WORKER_MAIL_KEY_FILE:?set PLATFORM_INTERNAL_WORKER_MAIL_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
         read_only: true
         bind:
           create_host_path: false
@@ -206,14 +365,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-    networks: [backend]
+    networks: [postgres-backend, vault-backend, metrics]
 
   worker-sub2:
-    build:
-      context: .
-      dockerfile: infra/Dockerfile
-    image: ${PLATFORM_API_IMAGE:-email-platform-api:local}
+    image: ${PLATFORM_API_IMAGE:?set immutable PLATFORM_API_IMAGE in .env}
     restart: unless-stopped
+    logging: *platform-logging
     user: "10001:10001"
     read_only: true
     cap_drop: ["ALL"]
@@ -222,31 +379,72 @@ services:
       - /tmp
     environment:
       PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
-      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL in .env}
+      PLATFORM_DATABASE_URL_FILE: /run/secrets/runtime/database-url
+      PLATFORM_REDIS_URL_FILE: /run/secrets/runtime/redis-url
       PLATFORM_AUTH_MODE: oidc
       PLATFORM_OIDC_ISSUER_URL: https://identity.${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}/realms/email-platform
       PLATFORM_OIDC_AUDIENCE: email-platform-api
       PLATFORM_OIDC_CLIENT_ID: email-platform-web
       PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
-      PLATFORM_OIDC_JWKS_URL: http://keycloak:8080/realms/email-platform/protocol/openid-connect/certs
-      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:-}
+      PLATFORM_OIDC_JWKS_URL: https://keycloak:8443/realms/email-platform/protocol/openid-connect/certs
+      PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+      PLATFORM_VAULT_ADDR: ${PLATFORM_VAULT_ADDR:?set PLATFORM_VAULT_ADDR in .env}
       PLATFORM_VAULT_TOKEN_FILE: /run/secrets/email-platform-vault/token
       PLATFORM_VAULT_NAMESPACE: ${PLATFORM_VAULT_NAMESPACE:-}
       PLATFORM_VAULT_TIMEOUT_SECONDS: ${PLATFORM_VAULT_TIMEOUT_SECONDS:-10}
       PLATFORM_SUB2_POLICY_VERSION: ${PLATFORM_SUB2_POLICY_VERSION:-sub2-v1}
       PLATFORM_SUB2_GROUP_ID: ${PLATFORM_SUB2_GROUP_ID:-49}
-      PLATFORM_SUB2_CONCURRENCY: ${PLATFORM_SUB2_CONCURRENCY:-40}
+      PLATFORM_SUB2_CONCURRENCY: ${PLATFORM_SUB2_CONCURRENCY:-10}
       PLATFORM_SUB2_PROXY_REF: ${PLATFORM_SUB2_PROXY_REF:?set PLATFORM_SUB2_PROXY_REF in .env}
       PLATFORM_SUB2_CREDENTIAL_REF: ${PLATFORM_SUB2_CREDENTIAL_REF:?set PLATFORM_SUB2_CREDENTIAL_REF in .env}
       PLATFORM_SUB2_UPLOAD_URL: ${PLATFORM_SUB2_UPLOAD_URL:-}
+      PLATFORM_SUB2_ALLOWED_ORIGINS_FILE: /run/config/sub2/allowed-origins
       PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
       PLATFORM_WORKER_METRICS_PORT: 9102
+      PLATFORM_WORKER_METRICS_TLS_CERT_FILE: /run/secrets/internal-tls/tls.crt
+      PLATFORM_WORKER_METRICS_TLS_KEY_FILE: /run/secrets/internal-tls/tls.key
       PLATFORM_WORKER_HEARTBEAT_PATH: /tmp/email-platform-sub2-worker.heartbeat
       PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS: ${PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-30}
     volumes:
       - type: bind
+        source: ${PLATFORM_SUB2_ALLOWED_ORIGINS_FILE:?set PLATFORM_SUB2_ALLOWED_ORIGINS_FILE in .env}
+        target: /run/config/sub2/allowed-origins
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source: ${PLATFORM_VAULT_SUB2_TOKEN_DIR:?set PLATFORM_VAULT_SUB2_TOKEN_DIR in .env}
         target: /run/secrets/email-platform-vault
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_DATABASE_URL_FILE:?set PLATFORM_DATABASE_URL_FILE in .env}
+        target: /run/secrets/runtime/database-url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_REDIS_URL_FILE:?set PLATFORM_REDIS_URL_FILE in .env}
+        target: /run/secrets/runtime/redis-url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_WORKER_SUB2_CERT_FILE:?set PLATFORM_INTERNAL_WORKER_SUB2_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_WORKER_SUB2_KEY_FILE:?set PLATFORM_INTERNAL_WORKER_SUB2_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
         read_only: true
         bind:
           create_host_path: false
@@ -257,6 +455,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       api:
         condition: service_healthy
     command: ["python", "-m", "infra.worker"]
@@ -265,14 +465,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-    networks: [backend]
+    networks: [postgres-backend, redis-backend, vault-backend, metrics]
 
   web:
-    build:
-      context: .
-      dockerfile: infra/frontend.Dockerfile
-    image: ${PLATFORM_WEB_IMAGE:-email-platform-web:local}
+    image: ${PLATFORM_WEB_IMAGE:?set immutable PLATFORM_WEB_IMAGE in .env}
     restart: unless-stopped
+    logging: *platform-logging
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -280,22 +478,39 @@ services:
       - /tmp
       - /var/run
       - /var/cache/nginx
+    volumes:
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_WEB_CERT_FILE:?set PLATFORM_INTERNAL_WEB_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_WEB_KEY_FILE:?set PLATFORM_INTERNAL_WEB_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      test: ["CMD-SHELL", "nginx -t -q && kill -0 1"]
       interval: 10s
       timeout: 5s
       retries: 12
-    networks: [backend]
+    networks: [frontend]
 
   edge:
-    build:
-      context: .
-      dockerfile: infra/edge.Dockerfile
-    image: ${PLATFORM_EDGE_IMAGE:-email-platform-edge:local}
+    image: ${PLATFORM_EDGE_IMAGE:?set immutable PLATFORM_EDGE_IMAGE in .env}
     restart: unless-stopped
+    logging: *platform-logging
     user: "101:101"
     read_only: true
     cap_drop: ["ALL"]
@@ -308,8 +523,24 @@ services:
     environment:
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN in .env}
     volumes:
-      - ${PLATFORM_TLS_CERT_FILE:?set PLATFORM_TLS_CERT_FILE in .env}:/etc/nginx/tls/fullchain.pem:ro
-      - ${PLATFORM_TLS_KEY_FILE:?set PLATFORM_TLS_KEY_FILE in .env}:/etc/nginx/tls/privkey.pem:ro
+      - type: bind
+        source: ${PLATFORM_TLS_CERT_FILE:?set PLATFORM_TLS_CERT_FILE in .env}
+        target: /etc/nginx/tls/fullchain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_TLS_KEY_FILE:?set PLATFORM_TLS_KEY_FILE in .env}
+        target: /etc/nginx/tls/privkey.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "80:8080"
       - "443:8443"
@@ -325,11 +556,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-    networks: [backend]
+    networks: [frontend]
 
   alertmanager:
-    image: prom/alertmanager:v0.28.1
+    image: prom/alertmanager@sha256:${ALERTMANAGER_IMAGE_SHA256:?set reviewed 64-hex ALERTMANAGER_IMAGE_SHA256 in .env}
     restart: unless-stopped
+    logging: *platform-logging
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -338,16 +570,42 @@ services:
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
+      - --web.config.file=/etc/alertmanager/web.yml
     volumes:
-      - ${ALERTMANAGER_CONFIG_FILE:-./infra/prometheus/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
+      - type: bind
+        source: ${ALERTMANAGER_CONFIG_FILE:?set ALERTMANAGER_CONFIG_FILE to an absolute external Alertmanager config}
+        target: /etc/alertmanager/alertmanager.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./infra/prometheus/alertmanager-web.yml:/etc/alertmanager/web.yml:ro
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_ALERTMANAGER_CERT_FILE:?set PLATFORM_INTERNAL_ALERTMANAGER_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_ALERTMANAGER_KEY_FILE:?set PLATFORM_INTERNAL_ALERTMANAGER_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
+        read_only: true
+        bind:
+          create_host_path: false
       - alertmanager-data:/alertmanager
     ports:
       - "127.0.0.1:9093:9093"
-    networks: [backend]
+    networks: [alerting]
 
   prometheus:
-    image: prom/prometheus:v2.55.1
+    image: prom/prometheus@sha256:${PROMETHEUS_IMAGE_SHA256:?set reviewed 64-hex PROMETHEUS_IMAGE_SHA256 in .env}
     restart: unless-stopped
+    logging: *platform-logging
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -357,9 +615,29 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.listen-address=0.0.0.0:9090
+      - --web.config.file=/etc/prometheus/web.yml
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/alerts.yml:/etc/prometheus/rules.yml:ro
+      - ./infra/prometheus/prometheus-web.yml:/etc/prometheus/web.yml:ro
+      - type: bind
+        source: ${PLATFORM_INTERNAL_CA_FILE:?set PLATFORM_INTERNAL_CA_FILE in .env}
+        target: /run/secrets/internal-tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_PROMETHEUS_CERT_FILE:?set PLATFORM_INTERNAL_PROMETHEUS_CERT_FILE in .env}
+        target: /run/secrets/internal-tls/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_INTERNAL_PROMETHEUS_KEY_FILE:?set PLATFORM_INTERNAL_PROMETHEUS_KEY_FILE in .env}
+        target: /run/secrets/internal-tls/tls.key
+        read_only: true
+        bind:
+          create_host_path: false
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -372,7 +650,7 @@ services:
         condition: service_started
       worker-sub2:
         condition: service_started
-    networks: [backend]
+    networks: [metrics, alerting]
 
 volumes:
   postgres-data:
@@ -385,6 +663,24 @@ volumes:
     name: email-platform-alertmanager
 
 networks:
-  backend:
-    name: email-platform-backend
+  frontend:
+    name: email-platform-frontend
+    driver: bridge
+  postgres-backend:
+    name: email-platform-postgres-backend
+    driver: bridge
+    internal: true
+  redis-backend:
+    name: email-platform-redis-backend
+    driver: bridge
+    internal: true
+  vault-backend:
+    name: email-platform-vault-backend
+    driver: bridge
+    internal: true
+  metrics:
+    name: email-platform-metrics
+    driver: bridge
+  alerting:
+    name: email-platform-alerting
     driver: bridge

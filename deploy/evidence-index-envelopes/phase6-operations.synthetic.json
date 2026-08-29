@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "record_type": "phase6_operations_evidence_index",
+  "index_reference": "operations-evidence-index:synthetic-43",
+  "synthetic": true,
+  "index_status": "pending",
+  "review_reference": null,
+  "production_acceptance": false,
+  "environment": "production",
+  "execution_scope": {
+    "origin": "target_environment",
+    "alert_receiver": "approved_external_receiver",
+    "restore_scope": "release_bound_postgresql_redis_and_vault",
+    "rollback_mode": "executed_release_bound",
+    "training_mode": "reviewed_four_role_target_session",
+    "evidence_policy": "repository_external_worm_metadata_only"
+  },
+  "bindings": {
+    "release_tag": null,
+    "release_commit": null,
+    "container_manifest_sha256": null,
+    "phase6_pilot_inputs_sha256": null,
+    "phase6_pilot_evidence_sha256": null,
+    "target_platform_inventory_sha256": null
+  },
+  "role_subjects": {
+    "operator": null,
+    "ops_admin": null,
+    "security_auditor": null,
+    "platform_admin": null
+  },
+  "pilot_trace_set_reference": null,
+  "window": {
+    "started_at": null,
+    "finished_at": null
+  },
+  "release_execution": {
+    "ledger_type": null,
+    "evidence_object_reference": null,
+    "evidence_sha256": null,
+    "target_intake": {
+      "environment": null,
+      "manifest_payload_sha256": null,
+      "requirements_sha256": null,
+      "checkpoint_phase": null
+    }
+  },
+  "artifact_digests": {
+    "alertmanager_configuration_sha256": null,
+    "postgres_backup_manifest_sha256": null,
+    "redis_backup_manifest_sha256": null,
+    "vault_snapshot_sha256": null,
+    "rollback_terminal_evidence_sha256": null,
+    "role_training_evidence_sha256": null
+  },
+  "scenarios": {
+    "page_alert_firing_delivery": null,
+    "page_alert_resolved_delivery": null,
+    "watchdog_delivery_continuity": null,
+    "watchdog_missed_heartbeat_recovery": null,
+    "postgres_redis_restore": null,
+    "vault_restore": null,
+    "release_bound_rollback": null,
+    "four_role_training": null,
+    "alert_audit_trace_replay": null
+  },
+  "prohibited_content": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_receiver_urls": false,
+    "contains_delivery_payloads": false,
+    "contains_backup_or_vault_content": false,
+    "contains_raw_logs_or_audit_exports": false,
+    "contains_request_or_response_bodies": false,
+    "contains_pan_or_cvv_values": false,
+    "contains_verification_code_values": false,
+    "contains_token_values": false
+  },
+  "integrity": {
+    "payload_sha256": "43e4effc0a4f3cd36ccb83cffbc16d9e4732b5cef8be5f89d6c9d6b0080a6276"
+  }
+}

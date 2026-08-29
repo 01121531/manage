@@ -17,6 +17,16 @@ import sys
 import tempfile
 from typing import Any
 
+from scripts.backup_output_policy import (
+    prepare_write_once_file,
+    publish_write_once_file,
+)
+from scripts.external_json import (
+    StableFileError,
+    parse_unique_json_bytes,
+    read_stable_bytes,
+)
+
 
 SCHEMA_VERSION = 1
 EVIDENCE_KIND = "phase6_role_training"
@@ -205,21 +215,23 @@ def validate_evidence(value: Any) -> dict[str, Any]:
 
 def _read_json(path: Path, *, max_bytes: int = _MAX_EVIDENCE_BYTES) -> Any:
     try:
-        raw = path.read_bytes()
-    except OSError as error:
-        raise TrainingEvidenceError("training evidence file cannot be read") from error
-    if not raw or len(raw) > max_bytes:
-        raise TrainingEvidenceError("training evidence file size is invalid")
+        raw = read_stable_bytes(path, max_bytes=max_bytes)
+    except StableFileError as error:
+        if error.reason == "size":
+            raise TrainingEvidenceError(
+                "training evidence file size is invalid"
+            ) from error
+        raise TrainingEvidenceError(
+            "training evidence file cannot be read"
+        ) from error
     try:
-        return json.loads(raw.decode("utf-8"))
+        return parse_unique_json_bytes(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise TrainingEvidenceError("training evidence JSON is invalid") from error
 
 
-def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
-    path.unlink(missing_ok=True)
+def _write_evidence(path: Path, evidence: dict[str, Any]) -> None:
     validate_evidence(evidence)
-    path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -235,7 +247,7 @@ def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary_path, path)
+        publish_write_once_file(temporary_path, path)
         temporary_path = None
         verify_evidence(path)
     finally:
@@ -243,12 +255,15 @@ def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
+    destination = prepare_write_once_file(path)
+    _write_evidence(destination, evidence)
+
+
 def create_evidence(input_path: Path, output_path: Path) -> dict[str, Any]:
-    if input_path.resolve() == output_path.resolve():
-        raise TrainingEvidenceError("training input and output must be different files")
-    output_path.unlink(missing_ok=True)
+    destination = prepare_write_once_file(output_path)
     evidence = seal_evidence(_read_json(input_path))
-    write_evidence(output_path, evidence)
+    _write_evidence(destination, evidence)
     return evidence
 
 
@@ -284,13 +299,6 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(arguments: list[str] | None = None) -> int:
     options = _parser().parse_args(arguments)
-    output = options.output if options.command == "create" else None
-    if (
-        options.command == "create"
-        and options.input.resolve() == options.output.resolve()
-    ):
-        print("phase6-role-training-evidence-failed", file=sys.stderr)
-        return 1
     try:
         if options.command == "create":
             evidence = create_evidence(options.input, options.output)
@@ -300,9 +308,7 @@ def main(arguments: list[str] | None = None) -> int:
                 expected_release_tag=options.expected_release_tag,
                 expected_release_commit=options.expected_release_commit,
             )
-    except (TrainingEvidenceError, OSError):
-        if output is not None:
-            output.unlink(missing_ok=True)
+    except (ValueError, OSError):
         print("phase6-role-training-evidence-failed", file=sys.stderr)
         return 1
     print(

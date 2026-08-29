@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "policy_kind": "github_rest_collection_trust_policy",
+  "synthetic": true,
+  "policy_status": "pending",
+  "policy_effect": "offline_external_collection_authentication_only",
+  "production_acceptance": false,
+  "not_committed_eligible": false,
+  "repository": null,
+  "allowed_workflow_paths": null,
+  "allowed_job_names": null,
+  "source": null,
+  "api": null,
+  "collector": null,
+  "replay_ledger": null,
+  "time_constraints": null,
+  "review": null,
+  "integrity": {
+    "payload_sha256": "730d6f8a7582506042890e38a59fafd84257066d7869192de0c0f3fed57bbf7f"
+  }
+}

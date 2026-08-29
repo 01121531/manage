@@ -27,7 +27,7 @@ def _log_mail_batch(result_counts: dict[str, int]) -> None:
 
 
 def main() -> None:
-    application = create_app()
+    application = create_app(service_role="worker")
     stop_event = Event()
 
     def stop(*_: object) -> None:
@@ -36,11 +36,20 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     metrics = WorkerMetrics("mail")
+    environment = application.state.settings.environment
+    default_metrics_host = (
+        "127.0.0.1"
+        if environment.strip().lower() in {"development", "test"}
+        else "0.0.0.0"
+    )
     start_worker_metrics_server(
         metrics,
-        host=os.environ.get("PLATFORM_WORKER_METRICS_HOST", "0.0.0.0"),
+        host=os.environ.get("PLATFORM_WORKER_METRICS_HOST", default_metrics_host),
         port=int(os.environ.get("PLATFORM_WORKER_METRICS_PORT", "9101")),
         stop_event=stop_event,
+        environment=environment,
+        tls_cert_file=os.environ.get("PLATFORM_WORKER_METRICS_TLS_CERT_FILE"),
+        tls_key_file=os.environ.get("PLATFORM_WORKER_METRICS_TLS_KEY_FILE"),
     )
     run_mail_worker(
         application.state.session_factory,

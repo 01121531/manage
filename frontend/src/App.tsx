@@ -1,949 +1,202 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Component, Suspense, lazy, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  AuditOutlined,
-  BankOutlined,
-  CloudUploadOutlined,
-  DashboardOutlined,
-  DownloadOutlined,
-  LockOutlined,
-  CheckCircleOutlined,
-  ExclamationCircleOutlined,
-  LoadingOutlined,
-  MailOutlined,
-  SafetyCertificateOutlined,
-  SettingOutlined,
-  TeamOutlined,
-  UnorderedListOutlined,
-} from '@ant-design/icons'
-import {
-  Alert,
-  App as AntApp,
-  Button,
-  Card,
-  Col,
-  Descriptions,
-  Empty,
-  Form,
-  Input,
-  InputNumber,
-  Layout,
-  Menu,
-  Modal,
-  Row,
-  Space,
-  Spin,
-  Statistic,
-  Table,
-  Tag,
-  Select,
-  Steps,
-  Typography,
-} from 'antd'
-import type { MenuProps, TableColumnsType } from 'antd'
-import { ApiError, approveUploadPolicyVersion, cancelUploadJob, clearSession, closeTask, createCard, createMailbox, deployUploadPolicyVersion, disableUser, downloadAuditEvents, getAuthConfig, getDashboardSummary, getMe, getUploadPolicyStatus, listAuditEvents, listCards, listDevices, listMailboxes, listTasks, listUploadPolicyVersions, listUploads, listUsers, login, reconcileUploadJob, registerUploadPolicyVersion, revokeDevice, rollbackUploadPolicy, rotateMailboxSecret, setBearer, updateCardState, updateMailboxState } from './api'
-import { createOidcManager } from './oidc'
+  ApiError,
+  clearSession,
+  getAuthConfig,
+  getMe,
+  login,
+  logoutSession,
+  revokeCurrentDevice,
+  setBearer,
+} from './api'
 import type { UserManager } from 'oidc-client-ts'
-import type { AdminDevice, AdminUser, AuditEvent, AuditFilters, AuthConfig, CardCreate, CardSummary, DashboardSummary, MailboxCreate, MailboxSummary, Principal, TaskSummary, UploadPolicyStatus, UploadPolicyVersion, UploadSummary } from './types'
+import type { AuthConfig, Principal } from './types'
 
-const { Header, Content, Sider } = Layout
-const { Title, Text, Paragraph } = Typography
-
-type ViewKey = 'dashboard' | 'tasks' | 'cards' | 'mailboxes' | 'uploads' | 'users' | 'audit' | 'policies'
-
-const menuItems: MenuProps['items'] = [
-  { key: 'dashboard', icon: <DashboardOutlined />, label: '工作台' },
-  { key: 'tasks', icon: <UnorderedListOutlined />, label: '任务中心' },
-  { key: 'cards', icon: <BankOutlined />, label: '卡池管理' },
-  { key: 'mailboxes', icon: <MailOutlined />, label: '邮箱连接器' },
-  { key: 'uploads', icon: <CloudUploadOutlined />, label: 'Sub2 上传' },
-  { key: 'users', icon: <TeamOutlined />, label: '用户与权限' },
-  { key: 'audit', icon: <AuditOutlined />, label: '审计中心' },
-  { key: 'policies', icon: <SettingOutlined />, label: '策略配置' },
-]
-
-const roleViews: Record<string, ReadonlySet<ViewKey>> = {
-  operator: new Set(['dashboard', 'tasks', 'mailboxes']),
-  ops_admin: new Set(['dashboard', 'tasks', 'cards', 'mailboxes', 'users', 'policies']),
-  security_auditor: new Set(['dashboard', 'uploads', 'audit']),
-  platform_admin: new Set(['dashboard', 'tasks', 'cards', 'mailboxes', 'uploads', 'users', 'audit', 'policies']),
-  worker_service: new Set(['dashboard']),
+function ShieldIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M12 2.5 20 6v5.6c0 4.9-3.3 8.3-8 9.9-4.7-1.6-8-5-8-9.9V6l8-3.5Zm0 2.2L6 7.3v4.3c0 3.7 2.3 6.3 6 7.7 3.7-1.4 6-4 6-7.7V7.3l-6-2.6Zm-1.1 10.5-3-3 1.4-1.4 1.6 1.6 3.8-3.8 1.4 1.4-5.2 5.2Z" />
+  </svg>
 }
 
-const roleNames: Record<string, string> = {
-  operator: '操作员',
-  ops_admin: '运营管理员',
-  security_auditor: '安全审计员',
-  platform_admin: '平台管理员',
-  worker_service: '后台服务',
+function StatusAlert({ type, title, description, action }: {
+  type: 'error' | 'success' | 'warning'
+  title: string
+  description: string
+  action?: ReactNode
+}) {
+  return <div className={`status-alert status-alert-${type}`} role="alert">
+    <span className="status-alert-icon" aria-hidden="true">{type === 'success' ? '✓' : '!'}</span>
+    <div className="status-alert-copy">
+      <strong>{title}</strong>
+      <p>{description}</p>
+    </div>
+    {action ? <div className="status-alert-action">{action}</div> : null}
+  </div>
 }
 
-const statusColor: Record<string, string> = {
-  active: 'green', available: 'green', succeeded: 'green', success: 'green', enabled: 'green',
-  queued: 'blue', running: 'processing', allocated: 'orange', unknown: 'gold',
-  initializing: 'processing', code_ready: 'green',
-  busy: 'processing', ready: 'green', not_configured: 'gold',
-  draft: 'default', approved: 'blue', retired: 'default',
-  disabled: 'red', failed: 'red', error: 'red', denied: 'red', revoked: 'red', expired: 'default',
-  created: 'processing', closed: 'default',
+function LoadingState({ label = '正在加载控制台…' }: { label?: string }) {
+  return <main className="startup-state" aria-label={label}>
+    <div className="startup-loading" role="status" aria-live="polite" aria-busy="true">
+      <span className="native-spinner" aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  </main>
 }
 
-function StatusTag({ value }: { value: string }) {
-  const icon = value === 'succeeded' || value === 'success' || value === 'available' ? <CheckCircleOutlined />
-    : value === 'running' || value === 'queued' ? <LoadingOutlined />
-      : value === 'failed' || value === 'error' || value === 'denied' || value === 'unknown' || value === 'revoked' ? <ExclamationCircleOutlined /> : undefined
-  return <Tag icon={icon} color={statusColor[value] ?? 'default'}>{value}</Tag>
-}
-
-function LoginScreen({ authConfig, oidcManager, onReady }: {
+function LoginScreen({ authConfig, oidcManager, onReady, sessionNotice }: {
   authConfig: AuthConfig
   oidcManager: UserManager | null
   onReady: (principal: Principal) => void
+  sessionNotice?: { type: 'success' | 'warning'; message: string; description: string }
 }) {
-  const { message } = AntApp.useApp()
   const [loading, setLoading] = useState(false)
+  const [loginError, setLoginError] = useState<string>()
+  const [passwordVisible, setPasswordVisible] = useState(false)
+  const loginActionRef = useRef<object | null>(null)
 
-  async function submit(values: { tenant_id: string; email: string; password: string; device_id: string }) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (loginActionRef.current !== null) return
+    const fields = new FormData(event.currentTarget)
+    const values = {
+      tenant_id: String(fields.get('tenant_id') ?? ''),
+      email: String(fields.get('email') ?? ''),
+      password: String(fields.get('password') ?? ''),
+      device_id: String(fields.get('device_id') ?? ''),
+    }
+    const action = {}
+    loginActionRef.current = action
+    setLoginError(undefined)
     setLoading(true)
+    let bearerIssued = false
     try {
       await login(values)
+      bearerIssued = true
       onReady(await getMe())
     } catch (error) {
-      const detail = error instanceof ApiError && error.traceId ? `（追踪号：${error.traceId}）` : ''
-      message.error(`${error instanceof Error ? error.message : '登录失败'}${detail}`)
+      if (!bearerIssued) {
+        const detail = error instanceof ApiError && error.traceId ? `（追踪号：${error.traceId}）` : ''
+        setLoginError(`${error instanceof Error ? error.message : '登录失败'}${detail}`)
+      } else {
+        let cleanupConfirmed = false
+        try {
+          await logoutSession()
+          cleanupConfirmed = true
+        } catch {
+          cleanupConfirmed = false
+        } finally {
+          clearSession()
+        }
+        setLoginError(cleanupConfirmed
+          ? '原因：平台未能建立可用的控制台身份。影响：刚签发的会话已确认撤销，本地令牌已清除。下一步：检查账号权限或网络后重试。'
+          : '原因：平台未能建立可用的控制台身份。影响：本地令牌已清除，但服务端当前设备会话及关联资源未确认回收。下一步：检查网络后重试；持续失败请联系管理员核对当前设备资源。')
+      }
     } finally {
-      setLoading(false)
+      if (loginActionRef.current === action) {
+        loginActionRef.current = null
+        setLoading(false)
+      }
+    }
+  }
+
+  async function beginOidcLogin() {
+    if (!oidcManager || loginActionRef.current !== null) return
+    const action = {}
+    loginActionRef.current = action
+    setLoginError(undefined)
+    setLoading(true)
+    try {
+      await oidcManager.signinRedirect()
+    } catch {
+      setLoginError('原因：统一身份登录未能启动。影响：浏览器尚未建立平台会话。下一步：检查身份服务和网络后重试。')
+    } finally {
+      if (loginActionRef.current === action) {
+        loginActionRef.current = null
+        setLoading(false)
+      }
     }
   }
 
   return (
     <main className="login-shell">
       <section className="login-intro">
-        <div className="brand-mark"><SafetyCertificateOutlined /></div>
-        <Text className="eyebrow">SECURE OPERATIONS</Text>
-        <Title>验证码业务平台</Title>
-        <Paragraph>统一管理任务、卡分配、邮箱取码和 Sub2 上传。敏感上游配置只保留在服务端。</Paragraph>
-        <Space direction="vertical" size={12}>
-          <Text><LockOutlined /> 设备绑定会话</Text>
-          <Text><AuditOutlined /> 全链路操作审计</Text>
-          <Text><BankOutlined /> 卡信息按人分配与追溯</Text>
-        </Space>
+        <div className="brand-mark"><ShieldIcon /></div>
+        <span className="eyebrow">SECURE OPERATIONS</span>
+        <h1>验证码业务平台</h1>
+        <p>统一管理任务、卡分配、邮箱取码和 Sub2 上传。敏感上游配置只保留在服务端。</p>
+        <ul className="login-features">
+          <li><span aria-hidden="true">◆</span>设备绑定会话</li>
+          <li><span aria-hidden="true">✓</span>全链路操作审计</li>
+          <li><span aria-hidden="true">▣</span>卡信息按人分配与追溯</li>
+        </ul>
       </section>
-      <Card className="login-card" bordered={false}>
-        <Text className="eyebrow">运营控制台</Text>
-        <Title level={2}>登录平台</Title>
-        <Paragraph type="secondary">{authConfig.mode === 'oidc' ? '通过统一身份中心完成 PKCE 安全登录。' : '本地账号仅用于开发与联调环境。'}</Paragraph>
+      <section className="login-card" aria-labelledby="login-title">
+        <span className="eyebrow">运营控制台</span>
+        <h2 id="login-title">登录平台</h2>
+        <p className="login-description">{authConfig.mode === 'oidc' ? '通过统一身份中心完成 PKCE 安全登录。' : '本地账号仅用于开发与联调环境。'}</p>
+        {sessionNotice ? <StatusAlert
+          type={sessionNotice.type}
+          title={sessionNotice.message}
+          description={sessionNotice.description}
+        /> : null}
+        {loginError ? <StatusAlert type="error" title="登录未完成" description={loginError} /> : null}
         {authConfig.mode === 'oidc' ? (
-          <Button
-            type="primary"
-            size="large"
-            block
-            icon={<SafetyCertificateOutlined />}
-            onClick={() => oidcManager?.signinRedirect()}
-            disabled={!oidcManager}
-          >统一身份登录</Button>
-        ) : <Form layout="vertical" onFinish={submit} requiredMark="optional">
-          <Form.Item label="租户" name="tenant_id" rules={[{ required: true, message: '请输入租户标识' }]}>
-            <Input autoComplete="organization" placeholder="tenant-a" />
-          </Form.Item>
-          <Form.Item label="平台账号" name="email" rules={[{ required: true }, { type: 'email' }]}>
-            <Input autoComplete="username" placeholder="name@example.com" />
-          </Form.Item>
-          <Form.Item label="平台密码" name="password" rules={[{ required: true, message: '请输入平台密码' }]}>
-            <Input.Password autoComplete="current-password" />
-          </Form.Item>
-          <Form.Item label="设备标识" name="device_id" rules={[{ required: true }]}>
-            <Input autoComplete="off" placeholder="ops-console-01" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" loading={loading} block size="large">安全登录</Button>
-        </Form>}
-      </Card>
+          <button
+            type="button"
+            className={`login-button${loading ? ' ant-btn-loading' : ''}`}
+            aria-label="统一身份登录"
+            onClick={beginOidcLogin}
+            disabled={loading || !oidcManager}
+          ><ShieldIcon />{loading ? '正在跳转…' : '统一身份登录'}</button>
+        ) : <form className="login-form" onSubmit={submit}>
+          <fieldset disabled={loading}>
+            <label htmlFor="tenant_id">租户 <span>必填</span></label>
+            <input id="tenant_id" name="tenant_id" required autoComplete="organization" placeholder="tenant-a" />
+            <label htmlFor="email">平台账号 <span>必填</span></label>
+            <input id="email" name="email" required type="email" autoComplete="username" placeholder="name@example.invalid" />
+            <label htmlFor="password">平台密码 <span>必填</span></label>
+            <div className="password-field">
+              <input id="password" name="password" required type={passwordVisible ? 'text' : 'password'} autoComplete="current-password" />
+              <button
+                type="button"
+                className="password-toggle"
+                aria-label={passwordVisible ? '隐藏密码' : '显示密码'}
+                onClick={() => setPasswordVisible((visible) => !visible)}
+              >{passwordVisible ? '隐藏' : '显示'}</button>
+            </div>
+            <label htmlFor="device_id">设备标识 <span>必填</span></label>
+            <input id="device_id" name="device_id" required autoComplete="off" placeholder="ops-console-01" />
+            <button className={`login-button${loading ? ' ant-btn-loading' : ''}`} type="submit" aria-label="安全登录" disabled={loading}>
+              {loading ? <><span className="button-spinner" aria-hidden="true" />正在登录…</> : '安全登录'}
+            </button>
+          </fieldset>
+        </form>}
+      </section>
     </main>
   )
 }
 
-function statusRows(values: Record<string, number>) {
-  return Object.entries(values).map(([status, count]) => ({ status, count }))
-}
 
-function buildTaskLifecycle(task: TaskSummary): {
-  current: number
-  status: 'error' | 'process'
-  items: { title: string; description: string }[]
-} {
-  const terminal = ['closed', 'completed', 'cancelled', 'expired'].includes(task.status)
-  const errored = ['cancelled', 'expired'].includes(task.status)
-  const current = terminal ? 4 : task.status === 'active' ? 2 : 1
-  return {
-    current,
-    status: errored ? 'error' : 'process',
-    items: [
-      { title: '创建任务', description: task.created_at },
-      { title: '等待验证码', description: '平台代取邮箱验证码' },
-      { title: '卡分配', description: '按人绑定并留痕' },
-      { title: 'Sub2 上传', description: '由平台统一提交' },
-      { title: '关闭收尾', description: task.closed_at ?? '等待关闭' },
-    ],
-  }
-}
+const AuthenticatedShell = lazy(() => import('./AuthenticatedShell'))
 
-function Dashboard() {
-  const [summary, setSummary] = useState<DashboardSummary>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    getDashboardSummary().then((value) => {
-      if (alive) {
-        setSummary(value)
-        setError(undefined)
-      }
-    }).catch(() => {
-      if (alive) setError('运行摘要暂不可用，请稍后刷新。')
-    }).finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [])
-  const statusColumns: TableColumnsType<{ status: string; count: number }> = [
-    { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: '数量', dataIndex: 'count', align: 'right' },
-  ]
-  if (loading) return <div className="centered"><Spin /></div>
-  if (error || !summary) return <Alert type="warning" showIcon message="工作台暂不可用" description={error ?? '未读取到运行摘要'} />
-  return <>
-    <PageHeading title="工作台" description="关注正在运行的业务与需要人工处理的异常。" />
-    {summary.unknown_uploads > 0 ? <Alert
-      className="section-card"
-      type="warning"
-      showIcon
-      message="存在需要人工核对的 Sub2 上传"
-      description="这些任务的外部结果不明确，平台不会自动重试；请到 Sub2 上传页和审计中心核对。"
-    /> : null}
-    <Row gutter={[16, 16]}>
-      <Col xs={24} md={12} xl={6}><Card><Statistic title="进行中任务" value={summary.active_tasks} /></Card></Col>
-      <Col xs={24} md={12} xl={6}><Card><Statistic title="已分配卡" value={summary.allocated_cards} /></Card></Col>
-      <Col xs={24} md={12} xl={6}><Card><Statistic title="等待上传" value={summary.queued_uploads} /></Card></Col>
-      <Col xs={24} md={12} xl={6}><Card><Statistic title="需人工核对" value={summary.unknown_uploads} valueStyle={{ color: summary.unknown_uploads > 0 ? '#b86b11' : undefined }} /></Card></Col>
-    </Row>
-    <Card className="section-card" title="当前运行情况">
-      <Descriptions size="small" column={{ xs: 1, md: 2 }}>
-        <Descriptions.Item label="统计范围">{summary.scope === 'tenant' ? '当前租户' : '我的任务'}</Descriptions.Item>
-        <Descriptions.Item label="生成时间">{summary.generated_at}</Descriptions.Item>
-        <Descriptions.Item label="等待验证码邮箱">{summary.waiting_mail_sessions}</Descriptions.Item>
-      </Descriptions>
-      <Row gutter={[16, 16]} className="section-card">
-        <Col xs={24} lg={12}>
-          <Table
-            size="small"
-            columns={statusColumns}
-            dataSource={statusRows(summary.task_statuses)}
-            rowKey="status"
-            pagination={false}
-            locale={{ emptyText: <Empty description="暂无任务状态" /> }}
-          />
-        </Col>
-        <Col xs={24} lg={12}>
-          <Table
-            size="small"
-            columns={statusColumns}
-            dataSource={statusRows(summary.upload_statuses)}
-            rowKey="status"
-            pagination={false}
-            locale={{ emptyText: <Empty description="暂无上传状态" /> }}
-          />
-        </Col>
-      </Row>
-    </Card>
-  </>
-}
+class ShellLoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
 
-function PageHeading({ title, description }: { title: string; description: string }) {
-  return <div className="page-heading"><div><Title level={2}>{title}</Title><Text type="secondary">{description}</Text></div></div>
-}
-
-function PlaceholderPage({ title, description, notice }: { title: string; description: string; notice: string }) {
-  return <><PageHeading title={title} description={description} /><Card><Empty description={notice} /></Card></>
-}
-
-function RemoteTable<T extends object>({ loader, columns, empty }: {
-  loader: () => Promise<T[]>
-  columns: TableColumnsType<T>
-  empty: string
-}) {
-  const [rows, setRows] = useState<T[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  useEffect(() => {
-    let alive = true
-    loader().then((items) => { if (alive) setRows(items) }).catch((reason) => {
-      if (alive) setError(reason instanceof Error ? reason.message : '读取失败')
-    }).finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [loader])
-  if (loading) return <div className="centered"><Spin /></div>
-  if (error) return <Alert type="warning" showIcon message="数据暂不可用" description={error} />
-  return <Table columns={columns} dataSource={rows} rowKey={(row) => String((row as { id: string }).id)} locale={{ emptyText: <Empty description={empty} /> }} scroll={{ x: 760 }} />
-}
-
-function UsersPage() {
-  const { message } = AntApp.useApp()
-  const columns: TableColumnsType<AdminUser> = [
-    { title: '账号', dataIndex: 'email' },
-    { title: '角色', dataIndex: 'role', render: (role: string) => roleNames[role] ?? role },
-    { title: '状态', dataIndex: 'is_active', render: (active: boolean) => <StatusTag value={active ? 'active' : 'disabled'} /> },
-    { title: '创建时间', dataIndex: 'created_at' },
-    { title: '操作', render: (_, row) => <Button danger disabled={!row.is_active} onClick={async () => {
-      try { await disableUser(row.id); message.success('用户已停用，请刷新列表') }
-      catch (error) { message.error(error instanceof Error ? error.message : '操作失败') }
-    }}>停用</Button> },
-  ]
-  const deviceColumns: TableColumnsType<AdminDevice> = [
-    { title: '设备名称', dataIndex: 'name' },
-    { title: '设备 ID', dataIndex: 'id' },
-    { title: '所属用户', dataIndex: 'user_id' },
-    { title: '状态', dataIndex: 'revoked_at', render: (value: string | null) => <StatusTag value={value ? 'revoked' : 'active'} /> },
-    { title: '创建时间', dataIndex: 'created_at' },
-    { title: '操作', render: (_, row) => <Button danger disabled={row.revoked_at !== null} onClick={async () => {
-      try { await revokeDevice(row.id); message.success('设备已撤销，请刷新列表') }
-      catch (error) { message.error(error instanceof Error ? error.message : '设备撤销失败') }
-    }}>撤销设备</Button> },
-  ]
-  return <><PageHeading title="用户与权限" description="按角色授予最小权限，并支持即时停用账号或撤销设备。" />
-    <Card title="用户"><RemoteTable loader={listUsers} columns={columns} empty="暂无用户" /></Card>
-    <Card className="section-card" title="设备"><RemoteTable loader={listDevices} columns={deviceColumns} empty="暂无设备" /></Card>
-  </>
-}
-
-function CardsPage({ canManage }: { canManage: boolean }) {
-  const { message } = AntApp.useApp()
-  const [rows, setRows] = useState<CardSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refresh, setRefresh] = useState(0)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [form] = Form.useForm<CardCreate>()
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    listCards().then((items) => { if (alive) setRows(items) })
-      .catch(() => { if (alive) message.warning('卡资源列表暂不可用。') })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [message, refresh])
-
-  async function submitCard(values: CardCreate) {
-    setSaving(true)
-    try {
-      await createCard(values)
-      message.success('卡资源已登记。')
-      form.resetFields()
-      setCreateOpen(false)
-      setRefresh((value) => value + 1)
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '卡资源登记失败')
-    } finally {
-      setSaving(false)
-    }
+  static getDerivedStateFromError() {
+    return { failed: true }
   }
 
-  function closeCreateCard() {
-    form.resetFields()
-    setCreateOpen(false)
-  }
-
-  async function changeState(row: CardSummary, isActive: boolean) {
-    try {
-      await updateCardState(row.id, isActive)
-      message.success(isActive ? '卡资源已启用。' : '卡资源已停用，活动租约已释放。')
-      setRefresh((value) => value + 1)
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '卡资源状态更新失败')
-    }
-  }
-
-  const columns: TableColumnsType<CardSummary> = [
-    { title: '提供方引用', dataIndex: 'provider_ref' },
-    { title: '品牌', dataIndex: 'brand' },
-    { title: '尾号', dataIndex: 'last4', render: (value: string) => `•••• ${value}` },
-    { title: '有效期', render: (_, row) => row.expiry_month && row.expiry_year ? `${String(row.expiry_month).padStart(2, '0')}/${row.expiry_year}` : '—' },
-    { title: '状态', dataIndex: 'is_active', render: (value: boolean) => <StatusTag value={value ? 'available' : 'disabled'} /> },
-    ...(canManage ? [{ title: '操作', render: (_: unknown, row: CardSummary) => row.is_active ? <Button danger onClick={() => {
-      Modal.confirm({
-        title: '确认停用该卡资源？',
-        content: '停用会立即释放活动租约，并取消尚未执行的关联上传；运行中的上传将转为待人工核对。',
-        okText: '停用并释放',
-        okButtonProps: { danger: true },
-        cancelText: '取消',
-        onOk: () => changeState(row, false),
-      })
-    }}>停用</Button> : <Button onClick={() => changeState(row, true)}>启用</Button> }] : []),
-  ]
-  return <>
-    <div className="page-heading"><div><Title level={2}>卡池管理</Title><Text type="secondary">登记接口不接收 PAN/CVV；PAN 保存在 Vault 且仅经 step-up 揭示，CVV 默认不返回。</Text></div>{canManage ? <Button type="primary" onClick={() => setCreateOpen(true)}>登记卡资源</Button> : null}</div>
-    <Alert className="section-card" type="info" showIcon message="敏感卡信息必须保存在服务端密钥管理器" description="生产环境必须填写 vault://secret/cards/ 引用；env:// 仅限开发和测试。停用会释放活动租约，取消排队上传，并将运行中上传转为待人工核对。" />
-    <Card className="section-card"><Table loading={loading} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无卡资源" /> }} scroll={{ x: 900 }} /></Card>
-    <Modal title="登记卡资源" open={createOpen} onCancel={closeCreateCard} onOk={() => form.submit()} confirmLoading={saving} okText="登记" cancelText="取消" destroyOnHidden>
-      <Form form={form} layout="vertical" onFinish={submitCard} requiredMark="optional">
-        <Form.Item label="提供方引用" name="provider_ref" rules={[{ required: true }, { max: 160 }]}><Input autoComplete="off" placeholder="provider-card-001" /></Form.Item>
-        <Row gutter={12}>
-          <Col span={12}><Form.Item label="品牌" name="brand" rules={[{ required: true }, { max: 40 }]}><Input placeholder="VISA" /></Form.Item></Col>
-          <Col span={12}><Form.Item label="尾号" name="last4" rules={[{ required: true }, { pattern: /^\d{4}$/, message: '必须是 4 位数字' }]}><Input inputMode="numeric" maxLength={4} placeholder="4242" /></Form.Item></Col>
-          <Col span={12}><Form.Item label="有效期月份" name="expiry_month" dependencies={['expiry_year']} rules={[({ getFieldValue }) => ({ validator(_, value) { return (value == null) === (getFieldValue('expiry_year') == null) ? Promise.resolve() : Promise.reject(new Error('月份和年份须同时填写')) } })]}><InputNumber min={1} max={12} className="full-width" placeholder="12" /></Form.Item></Col>
-          <Col span={12}><Form.Item label="有效期年份" name="expiry_year" dependencies={['expiry_month']} rules={[({ getFieldValue }) => ({ validator(_, value) { return (value == null) === (getFieldValue('expiry_month') == null) ? Promise.resolve() : Promise.reject(new Error('月份和年份须同时填写')) } })]}><InputNumber min={2000} max={9999} className="full-width" placeholder="2030" /></Form.Item></Col>
-        </Row>
-        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/cards/；env:// 仅限开发/测试。请勿粘贴卡号或安全码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/cards\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/cards/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/cards/provider-card-001" /></Form.Item>
-      </Form>
-    </Modal>
-  </>
-}
-
-function MailboxesPage({ canManage }: { canManage: boolean }) {
-  const { message } = AntApp.useApp()
-  const [rows, setRows] = useState<MailboxSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refresh, setRefresh] = useState(0)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [rotateTarget, setRotateTarget] = useState<MailboxSummary | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [createForm] = Form.useForm<MailboxCreate>()
-  const [rotateForm] = Form.useForm<{ secret_ref: string }>()
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    listMailboxes().then((items) => { if (alive) setRows(items) })
-      .catch(() => { if (alive) message.warning('邮箱连接器列表暂不可用。') })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [message, refresh])
-
-  async function submitMailbox(values: MailboxCreate) {
-    setSaving(true)
-    try {
-      await createMailbox(values)
-      message.success('邮箱连接器已登记。')
-      createForm.resetFields()
-      setCreateOpen(false)
-      setRefresh((value) => value + 1)
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '邮箱连接器登记失败')
-    } finally { setSaving(false) }
-  }
-
-  function closeCreateMailbox() {
-    createForm.resetFields()
-    setCreateOpen(false)
-  }
-
-  function closeSecretRotation() {
-    rotateForm.resetFields()
-    setRotateTarget(null)
-  }
-
-  async function changeState(row: MailboxSummary, isActive: boolean) {
-    try {
-      await updateMailboxState(row.id, isActive)
-      message.success(isActive ? '邮箱连接器已启用。' : '邮箱连接器已停用，活动会话已撤销。')
-      setRefresh((value) => value + 1)
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '邮箱状态更新失败')
-    }
-  }
-
-  async function submitRotation(values: { secret_ref: string }) {
-    if (!rotateTarget) return
-    setSaving(true)
-    try {
-      await rotateMailboxSecret(rotateTarget.id, values.secret_ref)
-      message.success('密钥引用已轮换。')
-      rotateForm.resetFields()
-      setRotateTarget(null)
-      setRefresh((value) => value + 1)
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '密钥引用轮换失败')
-    } finally { setSaving(false) }
-  }
-
-  const columns: TableColumnsType<MailboxSummary> = [
-    { title: '邮箱', dataIndex: 'email_masked' },
-    { title: '连接器', dataIndex: 'connector_type' },
-    { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: '等待会话', dataIndex: 'active_session_count' },
-    { title: '启用', dataIndex: 'is_active', render: (value: boolean) => value ? '是' : '否' },
-    { title: '创建时间', dataIndex: 'created_at' },
-    ...(canManage ? [{ title: '操作', render: (_: unknown, row: MailboxSummary) => <Space>
-      {row.is_active ? <Button danger onClick={() => Modal.confirm({ title: '确认停用邮箱连接器？', content: '活动取码会话将立即撤销，尚未消费的验证码会被擦除。', okText: '停用并撤销会话', okButtonProps: { danger: true }, cancelText: '取消', onOk: () => changeState(row, false) })}>停用</Button> : <Button onClick={() => changeState(row, true)}>启用</Button>}
-      <Button onClick={() => setRotateTarget(row)}>轮换密钥引用</Button>
-    </Space> }] : []),
-  ]
-  return <>
-    <div className="page-heading"><div><Title level={2}>邮箱连接器</Title><Text type="secondary">只显示连接状态与掩码地址，源邮箱账号和密码不进入浏览器。</Text></div>{canManage ? <Button type="primary" onClick={() => setCreateOpen(true)}>登记邮箱连接器</Button> : null}</div>
-    <Card><Table loading={loading} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无邮箱连接器" /> }} scroll={{ x: 980 }} /></Card>
-    <Modal title="登记邮箱连接器" open={createOpen} onCancel={closeCreateMailbox} onOk={() => createForm.submit()} confirmLoading={saving} okText="登记" cancelText="取消" destroyOnHidden>
-      <Form form={createForm} layout="vertical" onFinish={submitMailbox} requiredMark="optional">
-        <Form.Item label="掩码邮箱" name="email_masked" extra="必须使用掩码地址，例如 m***@example.com。" rules={[{ required: true }, { pattern: /^[^@]*\*[^@]*@[^@]+$/, message: '请输入包含 * 的掩码邮箱' }]}><Input autoComplete="off" placeholder="m***@example.com" /></Form.Item>
-        <Form.Item label="连接器类型" name="connector_type" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_-]*$/, message: '仅允许小写字母、数字、横线和下划线' }]}><Input placeholder="http" /></Form.Item>
-        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env:// 仅限开发/测试。请勿填写邮箱账号或密码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001" /></Form.Item>
-      </Form>
-    </Modal>
-    <Modal title="轮换密钥引用" open={rotateTarget !== null} onCancel={closeSecretRotation} onOk={() => rotateForm.submit()} confirmLoading={saving} okText="确认轮换" cancelText="取消" destroyOnHidden>
-      <Alert type="warning" showIcon message="仅更新密钥引用" description="新凭据应已预先写入服务端密钥管理器；审计只记录轮换动作，不记录引用值。" />
-      <Form className="modal-form" form={rotateForm} layout="vertical" onFinish={submitRotation}>
-        <Form.Item label="新密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env:// 仅限开发/测试。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001-v2" /></Form.Item>
-      </Form>
-    </Modal>
-  </>
-}
-
-function TasksPage() {
-  const { message } = AntApp.useApp()
-  const [rows, setRows] = useState<TaskSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refresh, setRefresh] = useState(0)
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    listTasks().then((items) => {
-      if (alive) {
-        setRows(items)
-        setSelectedTaskId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null)
-      }
-    })
-      .catch(() => { if (alive) message.warning('任务列表暂不可用，请稍后刷新。') })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [message, refresh])
-  const selectedTask = rows.find((row) => row.id === selectedTaskId) ?? rows[0] ?? null
-  const lifecycle = selectedTask ? buildTaskLifecycle(selectedTask) : null
-  const columns: TableColumnsType<TaskSummary> = [
-    { title: '任务', dataIndex: 'id', render: (value: string) => value.slice(0, 12) },
-    { title: '类型', dataIndex: 'type' },
-    { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: '过期时间', dataIndex: 'expires_at', render: (value: string | null) => value ?? '—' },
-    { title: '创建时间', dataIndex: 'created_at' },
-    { title: 'trace_id', dataIndex: 'trace_id', ellipsis: true },
-    { title: '操作', render: (_, row) => <Button
-      danger
-      disabled={['closed', 'expired', 'cancelled', 'completed'].includes(row.status)}
-      onClick={async () => {
-        try {
-          await closeTask(row.id)
-          message.success('任务已关闭并释放资源。')
-          setRefresh((value) => value + 1)
-        } catch (error) {
-          message.error(error instanceof Error ? error.message : '任务关闭失败')
-        }
-      }}
-    >关闭任务</Button> },
-  ]
-  return <><PageHeading title="任务中心" description="查看任务生命周期与资源归属；关闭任务会回收卡租约和邮箱会话。" /><Card>
-    {loading ? <div className="centered"><Spin /></div> : <Table
-      columns={columns}
-      dataSource={rows}
-      rowKey="id"
-      locale={{ emptyText: <Empty description="暂无任务" /> }}
-      scroll={{ x: 980 }}
-      rowClassName={(row) => (row.id === selectedTaskId ? 'task-row-selected' : '')}
-      onRow={(row) => ({
-        onClick: () => setSelectedTaskId(row.id),
-      })}
-    />}
-    {selectedTask && lifecycle ? <Card className="task-detail-card" title="任务详情" size="small">
-      <Descriptions column={{ xs: 1, md: 2 }}>
-        <Descriptions.Item label="任务标识">{selectedTask.id}</Descriptions.Item>
-        <Descriptions.Item label="trace_id">{selectedTask.trace_id}</Descriptions.Item>
-        <Descriptions.Item label="主状态"><StatusTag value={selectedTask.status} /></Descriptions.Item>
-        <Descriptions.Item label="任务类型">{selectedTask.type}</Descriptions.Item>
-        <Descriptions.Item label="幂等键">{selectedTask.idempotency_key}</Descriptions.Item>
-        <Descriptions.Item label="客户端引用">{selectedTask.client_reference ?? '—'}</Descriptions.Item>
-        <Descriptions.Item label="过期时间">{selectedTask.expires_at ?? '—'}</Descriptions.Item>
-        <Descriptions.Item label="关闭时间">{selectedTask.closed_at ?? '—'}</Descriptions.Item>
-        <Descriptions.Item label="设备">{selectedTask.device_id}</Descriptions.Item>
-        <Descriptions.Item label="创建时间">{selectedTask.created_at}</Descriptions.Item>
-      </Descriptions>
-      <div className="task-lifecycle">
-        <Text type="secondary">生命周期概览</Text>
-        <Steps current={lifecycle.current} status={lifecycle.status} items={lifecycle.items} />
-      </div>
-    </Card> : null}
-  </Card></>
-}
-
-function UploadsPage() {
-  const { message } = AntApp.useApp()
-  const [rows, setRows] = useState<UploadSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refresh, setRefresh] = useState(0)
-  const [reconcileTarget, setReconcileTarget] = useState<UploadSummary | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [form] = Form.useForm<{ status: 'succeeded' | 'failed'; external_ref?: string; error_code?: string }>()
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    listUploads().then((items) => {
-      if (alive) setRows(items)
-    }).catch(() => {
-      if (alive) message.warning('上传列表暂不可用，请稍后刷新。')
-    }).finally(() => {
-      if (alive) setLoading(false)
-    })
-    return () => { alive = false }
-  }, [message, refresh])
-  const columns: TableColumnsType<UploadSummary> = [
-    { title: '上传标识', dataIndex: 'id' },
-    { title: '任务', dataIndex: 'task_id' },
-    { title: '业务名称', dataIndex: 'business_name' },
-    { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: '策略版本', dataIndex: 'policy_version' },
-    { title: '创建时间', dataIndex: 'created_at' },
-    { title: '操作', render: (_, row) => <Space>
-      <Button
-        disabled={!['queued', 'running'].includes(row.status)}
-        onClick={async () => {
-          try {
-            await cancelUploadJob(row.id)
-            message.success('已请求取消上传。')
-            setRefresh((value) => value + 1)
-          } catch (error) {
-            message.error(error instanceof Error ? error.message : '取消失败')
-          }
-        }}
-      >取消</Button>
-      <Button
-        type="primary"
-        disabled={row.status !== 'unknown'}
-        onClick={() => {
-          form.resetFields()
-          form.setFieldsValue({ status: 'failed' })
-          setReconcileTarget(row)
-        }}
-      >复核</Button>
-    </Space> },
-  ]
-  return <>
-    <PageHeading title="Sub2 上传" description="平台代为提交；超时结果进入人工核对，不盲目重试。" />
-    <Card>
-      {loading ? <div className="centered"><Spin /></div> : <Table
-        columns={columns}
-        dataSource={rows}
-        rowKey="id"
-        locale={{ emptyText: <Empty description="暂无上传记录" /> }}
-        scroll={{ x: 1040 }}
-      />}
-    </Card>
-    <Modal
-      open={reconcileTarget !== null}
-      title="复核 unknown 上传"
-      okText="提交复核"
-      cancelText="取消"
-      confirmLoading={saving}
-      onCancel={() => {
-        if (!saving) setReconcileTarget(null)
-      }}
-      onOk={async () => {
-        if (!reconcileTarget) return
-        try {
-          const values = await form.validateFields()
-          if (!values) return
-          setSaving(true)
-          await reconcileUploadJob(reconcileTarget.id, values)
-          message.success('复核结果已提交。')
-          setReconcileTarget(null)
-          setRefresh((value) => value + 1)
-        } catch (error) {
-          if (error && typeof error === 'object' && 'errorFields' in error) {
-            return
-          }
-          message.error(error instanceof Error ? error.message : '复核提交失败')
-        } finally {
-          setSaving(false)
-        }
-      }}
-    >
-      <Form form={form} layout="vertical" initialValues={{ status: 'failed' }}>
-        <Form.Item label="复核结果" name="status" rules={[{ required: true }]}>
-          <Select
-            options={[
-              { value: 'failed', label: '失败' },
-              { value: 'succeeded', label: '成功' },
-            ]}
-          />
-        </Form.Item>
-        <Form.Item
-          label="外部编号"
-          name="external_ref"
-          dependencies={['status']}
-          rules={[({ getFieldValue }) => ({
-            validator(_, value) {
-              if (getFieldValue('status') === 'succeeded' && !String(value ?? '').trim()) {
-                return Promise.reject(new Error('成功复核需要填写外部编号'))
-              }
-              return Promise.resolve()
-            },
-          })]}
-        >
-          <Input placeholder="Sub2 外部编号" />
-        </Form.Item>
-        <Form.Item label="错误码" name="error_code">
-          <Input placeholder="例如 manual_review_needed" />
-        </Form.Item>
-      </Form>
-    </Modal>
-  </>
-}
-
-function AuditPage() {
-  const { message } = AntApp.useApp()
-  const emptyFilters: AuditFilters = {
-    traceId: '', actorId: '', userId: '', entityType: '', entityId: '',
-    eventType: '', result: '', createdFrom: '', createdTo: '',
-  }
-  const [filters, setFilters] = useState<AuditFilters>(emptyFilters)
-  const [applied, setApplied] = useState<AuditFilters>(emptyFilters)
-  const [exporting, setExporting] = useState(false)
-  const loader = useCallback(() => listAuditEvents(applied), [applied])
-  const columns: TableColumnsType<AuditEvent> = [
-    { title: '时间', dataIndex: 'created_at', width: 190 },
-    { title: '动作', dataIndex: 'action', width: 160 },
-    { title: '结果', dataIndex: 'result', width: 110, render: (value: string) => <StatusTag value={value} /> },
-    { title: '事件类型', dataIndex: 'event_type', width: 170 },
-    { title: '操作者', dataIndex: 'actor_id', width: 150, render: (value: string | null) => value ?? '系统' },
-    { title: '关联用户', dataIndex: 'user_id', width: 150, render: (value: string | null) => value ?? '—' },
-    { title: '对象', render: (_, row) => `${row.entity_type}${row.entity_id ? ` / ${row.entity_id}` : ''}` },
-    { title: '策略版本', dataIndex: 'policy_version', width: 130, render: (value: string | null) => value ?? '—' },
-    { title: '来源 IP', dataIndex: 'ip_address', width: 140, render: (value: string | null) => value ?? '—' },
-    {
-      title: '客户端', dataIndex: 'user_agent', width: 220,
-      render: (value: string | null) => value
-        ? <Text className="audit-user-agent" title={value}>{value}</Text>
-        : '—',
-    },
-    { title: '追踪号', dataIndex: 'trace_id', width: 300 },
-  ]
-
-  function applyFilters() {
-    if (filters.createdFrom && filters.createdTo && filters.createdFrom > filters.createdTo) {
-      message.error('开始时间不能晚于结束时间。')
-      return
-    }
-    setApplied({ ...filters })
-  }
-
-  async function exportCsv() {
-    setExporting(true)
-    try {
-      await downloadAuditEvents(applied)
-      message.success('脱敏审计 CSV 已开始下载。')
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '审计导出失败，请稍后重试。')
-    } finally {
-      setExporting(false)
-    }
-  }
-
-  return <><PageHeading title="审计中心" description="按操作者、对象、动作、结果和时间范围定位全链路记录。" /><Card>
-    <form className="audit-filter-form" role="search" aria-label="审计事件筛选" onSubmit={(event) => { event.preventDefault(); applyFilters() }}>
-      <div className="audit-filter-grid">
-        <label><span>追踪号</span><Input placeholder="trace_id" value={filters.traceId} onChange={(event) => setFilters({ ...filters, traceId: event.target.value })} /></label>
-        <label><span>操作者</span><Input placeholder="actor_id" value={filters.actorId} onChange={(event) => setFilters({ ...filters, actorId: event.target.value })} /></label>
-        <label><span>关联用户</span><Input placeholder="user_id" value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })} /></label>
-        <label><span>对象类型</span><Input placeholder="entity_type" value={filters.entityType} onChange={(event) => setFilters({ ...filters, entityType: event.target.value })} /></label>
-        <label><span>对象 ID</span><Input placeholder="entity_id" value={filters.entityId} onChange={(event) => setFilters({ ...filters, entityId: event.target.value })} /></label>
-        <label><span>事件类型</span><Input placeholder="event_type" value={filters.eventType} onChange={(event) => setFilters({ ...filters, eventType: event.target.value })} /></label>
-        <label><span>结果</span><Input placeholder="result" value={filters.result} onChange={(event) => setFilters({ ...filters, result: event.target.value })} /></label>
-        <label><span>开始时间</span><Input type="datetime-local" value={filters.createdFrom} onChange={(event) => setFilters({ ...filters, createdFrom: event.target.value })} /></label>
-        <label><span>结束时间</span><Input type="datetime-local" value={filters.createdTo} onChange={(event) => setFilters({ ...filters, createdTo: event.target.value })} /></label>
-      </div>
-      <div className="audit-filter-actions">
-        <Button type="primary" htmlType="submit">检索</Button>
-        <Button onClick={() => { const empty = { ...emptyFilters }; setFilters(empty); setApplied(empty) }}>清空</Button>
-        <Button icon={<DownloadOutlined />} loading={exporting} onClick={exportCsv}>导出脱敏 CSV</Button>
-        <Text type="secondary">导出使用当前已应用筛选，且不包含自由格式详情或原始敏感值。</Text>
-      </div>
-    </form>
-    <RemoteTable loader={loader} columns={columns} empty="暂无审计事件" />
-  </Card></>
-}
-
-function PoliciesPage({ principal }: { principal: Principal }) {
-  const { message } = AntApp.useApp()
-  const [form] = Form.useForm<{ version: string; change_note: string }>()
-  const [policy, setPolicy] = useState<UploadPolicyStatus>()
-  const [versions, setVersions] = useState<UploadPolicyVersion[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  const [refresh, setRefresh] = useState(0)
-  const isPlatformAdmin = principal.role === 'platform_admin'
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    Promise.all([getUploadPolicyStatus(), listUploadPolicyVersions()]).then(([value, policyVersions]) => {
-      if (alive) {
-        setPolicy(value)
-        setVersions(policyVersions)
-        setError(undefined)
-      }
-    }).catch(() => {
-      if (alive) setError('策略状态暂不可用，请稍后刷新。')
-    }).finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [refresh])
-
-  const perform = async (operation: () => Promise<unknown>, success: string) => {
-    try {
-      await operation()
-      message.success(success)
-      setRefresh((value) => value + 1)
-    } catch {
-      message.error('操作未完成，请刷新状态后重试。')
-    }
-  }
-
-  if (loading) return <div className="centered"><Spin /></div>
-  if (error || !policy) return <Alert type="warning" showIcon message="策略配置暂不可用" description={error ?? '未读取到策略状态'} />
-  const columns: TableColumnsType<UploadPolicyVersion> = [
-    { title: '版本', dataIndex: 'version' },
-    { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: '变更说明', dataIndex: 'change_note' },
-    { title: '创建时间', dataIndex: 'created_at' },
-    {
-      title: '审批',
-      render: (_, row) => row.approved_by ? `已审批 · ${row.approved_by.slice(0, 8)}` : '待审批',
-    },
-    {
-      title: '操作',
-      render: (_, row) => !isPlatformAdmin ? '只读' : <Space wrap>
-        {row.status === 'draft' ? <Button
-          disabled={row.created_by === principal.id}
-          onClick={() => perform(() => approveUploadPolicyVersion(row.id), '策略已通过独立审批。')}
-        >审批</Button> : null}
-        {row.status === 'approved' ? <>
-          {policy.governance_configured ? <Button
-            onClick={() => perform(() => deployUploadPolicyVersion(row.id, 10), '已开始 10% 灰度。')}
-          >灰度 10%</Button> : null}
-          <Button type="primary" onClick={() => perform(
-            () => deployUploadPolicyVersion(row.id, 100),
-            '策略已全量启用。',
-          )}>全量启用</Button>
-        </> : null}
-        {row.status === 'active' && row.version === policy.active_version && policy.previous_version ? <>
-          <Button onClick={() => perform(
-            () => deployUploadPolicyVersion(row.id, 50),
-            '灰度比例已调整为 50%。',
-          )}>调整为 50%</Button>
-          <Button onClick={() => perform(
-            () => deployUploadPolicyVersion(row.id, 100),
-            '策略已扩展至 100%。',
-          )}>扩展至 100%</Button>
-        </> : null}
-      </Space>,
-    },
-  ]
-  return <>
-    <PageHeading title="策略配置" description="策略快照经独立审批后灰度发布；基础设施密钥与执行参数不进入浏览器。" />
-    {policy.status !== 'ready' ? <Alert
-      className="section-card"
-      type="warning"
-      showIcon
-      message="上传策略尚未完整配置"
-      description="请在服务端完成上传接口、上传密钥和网络路径配置后再开放生产上传。"
-    /> : null}
-    <Card title="Sub2 上传策略">
-      <Descriptions column={{ xs: 1, md: 2 }}>
-        <Descriptions.Item label="策略版本">{policy.policy_version}</Descriptions.Item>
-        <Descriptions.Item label="整体状态"><StatusTag value={policy.status} /></Descriptions.Item>
-        <Descriptions.Item label="服务端托管">{policy.server_managed ? '是' : '否'}</Descriptions.Item>
-        <Descriptions.Item label="上传接口">{policy.upload_endpoint_configured ? '已配置' : '未配置'}</Descriptions.Item>
-        <Descriptions.Item label="上传密钥">{policy.upload_secret_configured ? '已配置' : '未配置'}</Descriptions.Item>
-        <Descriptions.Item label="网络路径">{policy.network_route_configured ? '已配置' : '未配置'}</Descriptions.Item>
-        <Descriptions.Item label="治理状态">{policy.governance_configured ? '已启用' : '未启用'}</Descriptions.Item>
-        <Descriptions.Item label="当前生效">{policy.active_version ?? '使用服务端默认配置'}</Descriptions.Item>
-        <Descriptions.Item label="上一版本">{policy.previous_version ?? '无'}</Descriptions.Item>
-        <Descriptions.Item label="灰度比例">{policy.rollout_percent === null ? '未设置' : `${policy.rollout_percent}%`}</Descriptions.Item>
-      </Descriptions>
-    </Card>
-    {isPlatformAdmin ? <Card className="section-card" title="注册服务端策略快照">
-      <Alert
-        className="section-card"
-        type="info"
-        showIcon
-        message="这里只登记版本和变更说明"
-        description="代理、分组、并发、凭据引用均从当前服务端配置生成快照，不允许通过浏览器提交。创建人不能审批自己的版本。"
+  render() {
+    if (!this.state.failed) return this.props.children
+    return <main className="startup-state">
+      <StatusAlert
+        type="error"
+        title="控制台资源加载失败"
+        description="原因：登录后控制台资源未能完成下载。影响：当前内存会话尚未改变，但管理页面暂不可用。下一步：重新加载后重新登录；重新加载本身不代表服务端资源已经回收。"
+        action={<button className="startup-action" onClick={() => window.location.reload()}>重新加载控制台</button>}
       />
-      <Form
-        form={form}
-        layout="inline"
-        onFinish={(values) => perform(
-          async () => {
-            await registerUploadPolicyVersion(values)
-            form.resetFields()
-          },
-          '策略快照已登记，等待另一位管理员审批。',
-        )}
-      >
-        <Form.Item name="version" rules={[
-          { required: true, message: '请输入版本号' },
-          { pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/, message: '仅允许字母、数字、点、横线和下划线' },
-        ]}>
-          <Input placeholder="例如 sub2-2026.08.1" maxLength={80} />
-        </Form.Item>
-        <Form.Item name="change_note" rules={[{ required: true, message: '请输入变更说明' }]}>
-          <Input placeholder="变更说明" maxLength={500} />
-        </Form.Item>
-        <Button type="primary" htmlType="submit">登记快照</Button>
-      </Form>
-    </Card> : null}
-    <Card
-      className="section-card"
-      title="策略版本"
-      extra={isPlatformAdmin && policy.previous_version ? <Button danger onClick={() => {
-        Modal.confirm({
-          title: '确认回滚上传策略？',
-          content: `将恢复 ${policy.previous_version}，新任务立即使用上一版本；已排队任务仍使用原快照。`,
-          okText: '确认回滚',
-          cancelText: '取消',
-          onOk: () => perform(rollbackUploadPolicy, '策略已回滚。'),
-        })
-      }}>回滚上一版本</Button> : null}
-    >
-      <Table
-        columns={columns}
-        dataSource={versions}
-        rowKey="id"
-        pagination={false}
-        locale={{ emptyText: <Empty description="尚未登记策略版本" /> }}
-        scroll={{ x: 980 }}
-      />
-    </Card>
-  </>
-}
-
-function Shell({ principal, onLogout }: { principal: Principal; onLogout: () => void }) {
-  const [view, setView] = useState<ViewKey>('dashboard')
-  const allowedViews = roleViews[principal.role] ?? roleViews.operator
-  const visibleMenuItems = menuItems?.filter((item) => item && allowedViews.has(String(item.key) as ViewKey))
-  const content = useMemo(() => ({
-    dashboard: <Dashboard />,
-    tasks: <TasksPage />,
-    cards: <CardsPage canManage={principal.role === 'ops_admin' || principal.role === 'platform_admin'} />,
-    mailboxes: <MailboxesPage canManage={principal.role === 'ops_admin' || principal.role === 'platform_admin'} />,
-    uploads: <UploadsPage />,
-    users: <UsersPage />,
-    audit: <AuditPage />,
-    policies: <PoliciesPage principal={principal} />,
-  })[view], [view, principal])
-  return <Layout className="app-shell">
-    <Sider width={240} theme="light" className="sidebar" breakpoint="lg" collapsedWidth="0">
-      <div className="brand"><SafetyCertificateOutlined /><span>验证码平台</span></div>
-      <Menu mode="inline" selectedKeys={[view]} items={visibleMenuItems} onClick={({ key }) => setView(key as ViewKey)} />
-    </Sider>
-    <Layout>
-      <Header className="topbar">
-        <div><Text strong>{principal.email}</Text><Tag>{roleNames[principal.role] ?? principal.role}</Tag></div>
-        <Button onClick={onLogout}>退出登录</Button>
-      </Header>
-      <Content className="content">{content}</Content>
-    </Layout>
-  </Layout>
+    </main>
+  }
 }
 
 export default function App() {
@@ -951,15 +204,71 @@ export default function App() {
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null)
   const [oidcManager, setOidcManager] = useState<UserManager | null>(null)
   const [startupError, setStartupError] = useState<string>()
+  const [logoutPending, setLogoutPending] = useState(false)
+  const [deviceRevokePending, setDeviceRevokePending] = useState(false)
+  const [oidcCleanupPending, setOidcCleanupPending] = useState(false)
+  const [oidcCleanupError, setOidcCleanupError] = useState(false)
+  const [logoutError, setLogoutError] = useState<{ title: string; description: string }>()
+  const [sessionNotice, setSessionNotice] = useState<{
+    type: 'success' | 'warning'
+    message: string
+    description: string
+  }>()
+  const logoutActionRef = useRef<Promise<void> | null>(null)
+  const deviceRevokeActionRef = useRef<object | null>(null)
+  const oidcCleanupActionRef = useRef<Promise<void> | null>(null)
+  const sessionGenerationRef = useRef(0)
+
+  function clearOidcUser(manager: UserManager | null = oidcManager) {
+    if (!manager) return Promise.resolve()
+    if (oidcCleanupActionRef.current) return oidcCleanupActionRef.current
+    setOidcCleanupPending(true)
+    setOidcCleanupError(false)
+    let action: Promise<void>
+    action = Promise.resolve()
+      .then(() => manager.removeUser())
+      .catch(() => { setOidcCleanupError(true) })
+      .finally(() => {
+        if (oidcCleanupActionRef.current === action) {
+          oidcCleanupActionRef.current = null
+          setOidcCleanupPending(false)
+        }
+      })
+    oidcCleanupActionRef.current = action
+    return action
+  }
 
   useEffect(() => {
+    const handleExpiring = () => startSessionExpiryCleanup()
     const handleExpired = () => {
+      const cleanupWasPending = logoutActionRef.current !== null
+      const deviceRevokeWasPending = deviceRevokeActionRef.current !== null
+      sessionGenerationRef.current += 1
+      logoutActionRef.current = null
+      setLogoutPending(false)
+      deviceRevokeActionRef.current = null
+      setDeviceRevokePending(false)
       clearSession()
       setPrincipal(null)
+      setLogoutError(undefined)
+      void clearOidcUser()
+      setSessionNotice({
+        type: 'warning',
+        message: '平台会话已到期，本地登录状态已清除',
+        description: deviceRevokeWasPending
+          ? '当前设备撤销请求未能在令牌有效期内确认。撤销与当前设备关联资源的最终状态仍需核对；请使用其他有效设备重新登录后查看设备和任务中心，不能把响应缺失视为撤销成功或失败。'
+          : cleanupWasPending
+            ? '到期前的服务端清理请求未能在令牌有效期内确认。平台任务、邮箱会话、卡租约和待处理出站事件的回收状态仍需核对；请重新登录后查看任务中心，或联系管理员按 trace_id 检查。'
+            : '平台未确认到期前已回收当前设备资源。任务、邮箱会话、卡租约和待处理出站事件可能仍需等待服务端 TTL 或补偿流程；请重新登录后核对，不能视为已经回收。',
+      })
     }
+    window.addEventListener('platform:auth-expiring', handleExpiring)
     window.addEventListener('platform:auth-expired', handleExpired)
-    return () => window.removeEventListener('platform:auth-expired', handleExpired)
-  }, [])
+    return () => {
+      window.removeEventListener('platform:auth-expiring', handleExpiring)
+      window.removeEventListener('platform:auth-expired', handleExpired)
+    }
+  }, [authConfig, oidcManager])
 
   useEffect(() => {
     let active = true
@@ -967,18 +276,72 @@ export default function App() {
       try {
         const config = await getAuthConfig()
         if (!active) return
-        setAuthConfig(config)
-        if (config.mode !== 'oidc') return
+        if (config.mode !== 'oidc') {
+          setAuthConfig(config)
+          return
+        }
+        const { createOidcManager } = await import('./oidc')
+        if (!active) return
         const manager = createOidcManager(config)
-        setOidcManager(manager)
         const search = new URLSearchParams(window.location.search)
         if (search.has('code') && search.has('state')) {
           const user = await manager.signinRedirectCallback()
+          if (!active) {
+            await manager.removeUser().catch(() => undefined)
+            return
+          }
           const expiresIn = user.expires_at ? Math.max(1, user.expires_at - Math.floor(Date.now() / 1000)) : undefined
+          const generation = sessionGenerationRef.current + 1
+          sessionGenerationRef.current = generation
           setBearer(user.access_token, expiresIn)
           window.history.replaceState({}, document.title, '/')
-          setPrincipal(await getMe())
+          setSessionNotice(undefined)
+          try {
+            const profile = await getMe()
+            if (sessionGenerationRef.current !== generation) {
+              await manager.removeUser().catch(() => undefined)
+              if (active) {
+                setAuthConfig(config)
+                setOidcManager(manager)
+              }
+              return
+            }
+            if (!active) throw new Error('OIDC callback is no longer active')
+            setAuthConfig(config)
+            setOidcManager(manager)
+            setPrincipal(profile)
+          } catch {
+            let cleanupConfirmed = false
+            try {
+              await logoutSession()
+              cleanupConfirmed = true
+            } catch {
+              // The callback bearer is still cleared locally below.
+            } finally {
+              if (sessionGenerationRef.current === generation) clearSession()
+            }
+            if (!active) {
+              await manager.removeUser().catch(() => undefined)
+              return
+            }
+            if (sessionGenerationRef.current !== generation) {
+              await manager.removeUser().catch(() => undefined)
+              setAuthConfig(config)
+              setOidcManager(manager)
+              return
+            }
+            setAuthConfig(config)
+            setOidcManager(manager)
+            setPrincipal(null)
+            setStartupError(cleanupConfirmed
+              ? '原因：平台未能建立可用的控制台身份。影响：刚签发的 OIDC 会话已确认撤销，本地令牌与身份缓存已清除。下一步：请重新发起统一身份登录。'
+              : '原因：平台未能建立可用的控制台身份。影响：本地令牌与身份缓存已清除，但服务端当前设备会话及关联资源未确认回收。下一步：检查网络后重新发起统一身份登录；持续失败请联系管理员核对当前设备资源。')
+            await clearOidcUser(manager)
+          }
+          return
         }
+        setAuthConfig(config)
+        setOidcManager(manager)
       } catch (error) {
         if (active) setStartupError(error instanceof Error ? error.message : '身份服务初始化失败')
       }
@@ -987,18 +350,189 @@ export default function App() {
     return () => { active = false }
   }, [])
 
-  async function logout() {
-    clearSession()
-    setPrincipal(null)
-    if (authConfig?.mode === 'oidc' && oidcManager) {
-      await oidcManager.signoutRedirect().catch(() => undefined)
+  function startSessionExpiryCleanup() {
+    if (logoutActionRef.current || deviceRevokeActionRef.current) return
+    const generation = sessionGenerationRef.current
+    setLogoutPending(true)
+    setLogoutError(undefined)
+    const action: Promise<void> = logoutSession().then(async () => {
+      if (sessionGenerationRef.current !== generation) return
+      clearSession()
+      setPrincipal(null)
+      setSessionNotice({
+        type: 'success',
+        message: '会话到期前已完成安全清理',
+        description: '平台已确认回收当前设备关联的任务、邮箱会话、卡租约和待处理资源；本地令牌已清除，请重新登录后继续。',
+      })
+      await clearOidcUser()
+    }).catch((error: unknown) => {
+      if (sessionGenerationRef.current !== generation) return
+      const detail = error instanceof Error ? error.message : '平台未能确认到期前安全清理。'
+      setLogoutError({
+        title: '会话到期前安全清理未完成',
+        description: `原因：${detail} `
+          + '影响：当前令牌在最终到期前仍保持登录，但平台尚未确认任务、邮箱会话、卡租约和待处理出站事件已回收。 '
+          + '下一步：保持页面打开等待本地会话到期；到期后重新登录核对任务中心，不能把本次失败视为服务端已回收。',
+      })
+    }).finally(() => {
+      if (logoutActionRef.current === action) {
+        logoutActionRef.current = null
+        setLogoutPending(false)
+      }
+    })
+    logoutActionRef.current = action
+  }
+
+  function exitSession(intent: 'logout' | 'lock') {
+    if (logoutActionRef.current || deviceRevokeActionRef.current) return
+    const generation = sessionGenerationRef.current
+    setLogoutPending(true)
+    setLogoutError(undefined)
+    setSessionNotice(undefined)
+    const action: Promise<void> = logoutSession().then(async () => {
+      if (sessionGenerationRef.current !== generation) return
+      clearSession()
+      setPrincipal(null)
+      if (intent === 'lock') {
+        setSessionNotice({
+          type: 'success',
+          message: '控制台已安全锁定',
+          description: '平台已确认撤销当前设备会话并回收关联资源；本地身份已清除，请重新登录后继续。',
+        })
+        await clearOidcUser()
+      } else if (authConfig?.mode === 'oidc' && oidcManager) {
+        await oidcManager.signoutRedirect().catch(() => clearOidcUser())
+      }
+    }).catch((error: unknown) => {
+      if (sessionGenerationRef.current !== generation) return
+      const detail = error instanceof Error ? error.message : '平台暂时无法确认退出。'
+      const recovery = error instanceof ApiError && error.recoveryHint
+        ? ` ${error.recoveryHint}`
+        : ''
+      const actionName = intent === 'lock' ? '锁定' : '退出'
+      setLogoutError({
+        title: intent === 'lock' ? '安全锁定未完成' : '安全退出未完成',
+        description: `原因：${detail}${recovery} `
+          + `影响：您仍保持登录，平台不会显示${actionName}成功。 `
+          + `下一步：检查网络后再次点击“${intent === 'lock' ? '锁定' : '退出登录'}”。`,
+      })
+    }).finally(() => {
+      if (logoutActionRef.current === action) {
+        logoutActionRef.current = null
+        setLogoutPending(false)
+      }
+    })
+    logoutActionRef.current = action
+  }
+
+  function logout() {
+    exitSession('logout')
+  }
+
+  function lock() {
+    exitSession('lock')
+  }
+
+  async function revokeCurrentDeviceSession() {
+    if (!principal || logoutActionRef.current || deviceRevokeActionRef.current) return
+    const action = {}
+    const generation = sessionGenerationRef.current
+    const deviceId = principal.device_id
+    let terminalOutcome: 'confirmed' | 'ambiguous' | undefined
+    deviceRevokeActionRef.current = action
+    setDeviceRevokePending(true)
+    setLogoutError(undefined)
+    setSessionNotice(undefined)
+    try {
+      await revokeCurrentDevice(deviceId)
+      terminalOutcome = 'confirmed'
+    } catch (error) {
+      const explicitlyRejected = error instanceof ApiError
+        && error.status >= 400
+        && error.status < 500
+        && error.status !== 408
+        && error.code !== 'stale_session_response'
+      if (explicitlyRejected) {
+        if (sessionGenerationRef.current === generation) {
+          setLogoutError({
+            title: '当前设备撤销未完成',
+            description: '原因：平台明确拒绝了本次撤销请求。影响：当前会话仍保持登录，本次请求未被视为已撤销。下一步：核对设备状态与操作权限后再次点击“撤销当前设备”。',
+          })
+        }
+      } else {
+        terminalOutcome = 'ambiguous'
+      }
+    } finally {
+      if (terminalOutcome && sessionGenerationRef.current === generation) {
+        sessionGenerationRef.current += 1
+        clearSession()
+        setPrincipal(null)
+        setSessionNotice(terminalOutcome === 'confirmed' ? {
+          type: 'success',
+          message: '当前设备已撤销',
+          description: '平台已确认撤销当前设备及其会话；本地令牌已经清除，不会再使用已撤销令牌调用退出接口。',
+        } : {
+          type: 'warning',
+          message: '当前设备撤销结果待核对',
+          description: '原因：撤销请求的最终响应未能安全确认。影响：本地令牌已按安全终态清除，不会再次用于退出或其他平台请求。下一步：重新登录后核对设备与任务状态；持续不一致时联系管理员。',
+        })
+        await clearOidcUser()
+      }
+      if (deviceRevokeActionRef.current === action) {
+        deviceRevokeActionRef.current = null
+        setDeviceRevokePending(false)
+      }
     }
   }
 
-  if (startupError) return <AntApp><main className="startup-state"><Alert showIcon type="error" message="控制台无法启动" description={startupError} /></main></AntApp>
-  if (!authConfig) return <main className="startup-state"><Spin size="large" /></main>
-  return <AntApp>{principal
-    ? <Shell principal={principal} onLogout={logout} />
-    : <LoginScreen authConfig={authConfig} oidcManager={oidcManager} onReady={setPrincipal} />}
-  </AntApp>
+  function loginReady(profile: Principal) {
+    sessionGenerationRef.current += 1
+    setLogoutError(undefined)
+    setOidcCleanupError(false)
+    setSessionNotice(undefined)
+    setPrincipal(profile)
+  }
+
+  if (!principal && oidcCleanupError) return <main className="startup-state">
+    <StatusAlert
+      type="error"
+      title="本地身份清理未完成"
+      description="原因：浏览器未能确认旧的统一身份缓存已清除。影响：平台访问令牌已清除，但旧 OIDC 身份缓存未确认清除，新的统一身份登录入口暂不可用。下一步：点击“重试本地清理”；持续失败请重新加载或关闭当前平台页面，或联系管理员。"
+      action={<button className="startup-action" onClick={() => { void clearOidcUser() }}>重试本地清理</button>}
+    />
+  </main>
+  if (!principal && oidcCleanupPending) return <LoadingState label="正在清理本地身份，请稍候…" />
+  if (startupError) return <main className="startup-state">
+    <StatusAlert
+      type="error"
+      title="控制台无法启动"
+      description={startupError}
+      action={<button className="startup-action" onClick={() => window.location.reload()}>重新加载控制台</button>}
+    />
+  </main>
+  if (!authConfig) return <LoadingState />
+  return principal
+    ? <ShellLoadBoundary>
+      <Suspense fallback={<LoadingState label="正在加载管理控制台…" />}>
+        <AuthenticatedShell
+          principal={principal}
+          oidcManager={oidcManager}
+          roleChangeAcr={authConfig.admin_role_change_acr ?? null}
+          onLock={lock}
+          onLogout={logout}
+          onRevokeCurrentDevice={revokeCurrentDeviceSession}
+          logoutPending={logoutPending}
+          deviceRevokePending={deviceRevokePending}
+          logoutError={logoutError}
+        />
+      </Suspense>
+    </ShellLoadBoundary>
+    : deviceRevokePending || logoutPending || oidcCleanupPending
+      ? <LoadingState label="正在清理本地身份，请稍候…" />
+      : <LoginScreen
+      authConfig={authConfig}
+      oidcManager={oidcManager}
+      onReady={loginReady}
+      sessionNotice={sessionNotice}
+    />
 }

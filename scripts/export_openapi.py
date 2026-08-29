@@ -14,6 +14,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from platform.app import create_app  # noqa: E402
 from platform.config import Settings  # noqa: E402
+from scripts.external_json import write_atomic_bytes  # noqa: E402
 
 
 def export_openapi(output: Path) -> None:
@@ -29,10 +30,11 @@ def export_openapi(output: Path) -> None:
         schema = app.openapi()
     finally:
         app.state.engine.dispose()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    write_atomic_bytes(
+        output,
+        (
+            json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8"),
     )
 
 

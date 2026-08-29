@@ -8,7 +8,22 @@ import re
 from pathlib import Path
 from typing import Any, Sequence
 
-import yaml
+try:
+    from scripts.external_json import (
+        MAX_INTAKE_JSON_BYTES,
+        load_unique_json,
+        read_stable_bytes,
+        write_atomic_bytes,
+    )
+    from scripts.external_yaml import RepositoryYamlError, load_unique_yaml
+except ModuleNotFoundError:  # Direct script loading from scripts/.
+    from external_json import (
+        MAX_INTAKE_JSON_BYTES,
+        load_unique_json,
+        read_stable_bytes,
+        write_atomic_bytes,
+    )
+    from external_yaml import RepositoryYamlError, load_unique_yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,12 +33,25 @@ MIGRATIONS = ROOT / "platform" / "migrations" / "versions"
 COMPOSE = ROOT / "docker-compose.yml"
 
 
+class ReleaseManifestError(ValueError):
+    pass
+
+
 def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_unique_json(path, max_bytes=MAX_INTAKE_JSON_BYTES)
+
+
+def _read_source_text(path: Path) -> str:
+    try:
+        return read_stable_bytes(
+            path, max_bytes=MAX_INTAKE_JSON_BYTES
+        ).decode("utf-8")
+    except UnicodeError:
+        raise ReleaseManifestError("release manifest source is invalid") from None
 
 
 def _read_backend_version() -> str:
-    text = BACKEND_INIT.read_text(encoding="utf-8")
+    text = _read_source_text(BACKEND_INIT)
     match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
     if match is None:
         raise RuntimeError("Unable to read backend version")
@@ -41,6 +69,7 @@ def _read_frontend_version() -> str:
 def _read_migration_head() -> str:
     candidates: list[tuple[str, str]] = []
     for path in MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.py"):
+        read_stable_bytes(path, max_bytes=MAX_INTAKE_JSON_BYTES)
         name = path.stem
         prefix, _, _ = name.partition("_")
         if prefix.isdigit():
@@ -52,18 +81,27 @@ def _read_migration_head() -> str:
 
 
 def build_release_manifest() -> dict[str, Any]:
-    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    try:
+        compose = load_unique_yaml(COMPOSE, max_bytes=MAX_INTAKE_JSON_BYTES)
+    except (RepositoryYamlError, UnicodeError):
+        raise ReleaseManifestError("release manifest source is invalid") from None
+    if not isinstance(compose, dict):
+        raise ReleaseManifestError("release manifest source is invalid")
     services = compose.get("services", {})
     if not isinstance(services, dict):
         raise RuntimeError("Compose services block is invalid")
     compose_images: dict[str, str] = {}
     for service_name in (
+        "postgres",
+        "redis",
+        "keycloak",
         "migrate",
         "api",
         "worker-mail",
         "worker-sub2",
         "web",
         "edge",
+        "alertmanager",
         "prometheus",
     ):
         service = services.get(service_name)
@@ -91,7 +129,13 @@ def build_release_manifest() -> dict[str, Any]:
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
-    return _read_json(path)
+    try:
+        value = _read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+        raise ReleaseManifestError("release manifest is invalid") from None
+    if not isinstance(value, dict):
+        raise ReleaseManifestError("release manifest is invalid") from None
+    return value
 
 
 def verify_manifest(manifest: dict[str, Any]) -> list[str]:
@@ -127,17 +171,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         rendered = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             output = Path(args.output)
-            output.write_text(rendered, encoding="utf-8")
+            write_atomic_bytes(output, rendered.encode("utf-8"))
         else:
             print(rendered, end="")
         return 0
     if args.command == "verify":
-        manifest = load_manifest(Path(args.manifest))
-        errors = verify_manifest(manifest)
+        try:
+            manifest = load_manifest(Path(args.manifest))
+            errors = verify_manifest(manifest)
+        except (OSError, ValueError, RuntimeError, TypeError, RecursionError):
+            print("release-manifest-invalid")
+            return 1
         if errors:
             print("Release manifest verification failed: " + ", ".join(errors))
             return 1
-        print("release-manifest-ok locked-release-state")
+        print("release-manifest-ok source-snapshot-current")
         return 0
     raise AssertionError(f"Unhandled command: {args.command}")
 

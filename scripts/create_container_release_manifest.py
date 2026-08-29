@@ -9,8 +9,25 @@ from pathlib import Path
 import re
 from typing import Any, Sequence
 
+try:
+    from scripts.external_json import (
+        load_unique_json,
+        load_unique_json_with_bytes,
+        read_stable_bytes,
+        write_atomic_bytes,
+    )
+except ModuleNotFoundError:  # pragma: no cover - standalone script execution
+    from external_json import (
+        load_unique_json,
+        load_unique_json_with_bytes,
+        read_stable_bytes,
+        write_atomic_bytes,
+    )
+
 
 EXPECTED_IMAGES = ("api", "web", "edge")
+MAX_CONTAINER_METADATA_BYTES = 64 * 1024
+MAX_CONTAINER_EVIDENCE_BYTES = 32 * 1024 * 1024
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "platform" / "migrations" / "versions"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -26,7 +43,7 @@ _ATTESTATIONS = ["cosign-spdxjson", "github-build-provenance"]
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = load_unique_json(path, max_bytes=MAX_CONTAINER_METADATA_BYTES)
     if not isinstance(value, dict):
         raise ValueError(f"metadata must contain an object: {path.name}")
     return value
@@ -159,15 +176,25 @@ def load_manifest(
     expected_tag: str | None = None,
     expected_commit: str | None = None,
     expected_migration_head: str | None = None,
-) -> dict[str, Any]:
+    _include_manifest_sha256: bool = False,
+) -> dict[str, Any] | tuple[dict[str, Any], str]:
     """Load and strictly pre-validate a container release manifest."""
 
-    return verify_manifest(
-        _load_mapping(path),
+    value, raw = load_unique_json_with_bytes(
+        path,
+        max_bytes=MAX_CONTAINER_METADATA_BYTES,
+    )
+    if not isinstance(value, dict):
+        raise ValueError(f"metadata must contain an object: {path.name}")
+    manifest = verify_manifest(
+        value,
         expected_tag=expected_tag,
         expected_commit=expected_commit,
         expected_migration_head=expected_migration_head,
     )
+    if _include_manifest_sha256:
+        return manifest, hashlib.sha256(raw).hexdigest()
+    return manifest
 
 
 def build_manifest(input_dir: Path, *, tag: str, commit: str) -> dict[str, Any]:
@@ -203,7 +230,10 @@ def build_manifest(input_dir: Path, *, tag: str, commit: str) -> dict[str, Any]:
             raise ValueError(f"invalid SBOM metadata: {name}")
         sbom_path = input_dir / sbom_file
         try:
-            sbom_bytes = sbom_path.read_bytes()
+            sbom_bytes = read_stable_bytes(
+                sbom_path,
+                max_bytes=MAX_CONTAINER_EVIDENCE_BYTES,
+            )
         except OSError as error:
             raise ValueError(f"missing SBOM artifact: {name}") from error
         if hashlib.sha256(sbom_bytes).hexdigest() != sbom_sha256:
@@ -225,7 +255,10 @@ def build_manifest(input_dir: Path, *, tag: str, commit: str) -> dict[str, Any]:
             raise ValueError(f"invalid Trivy scan metadata: {name}")
         scan_path = input_dir / scan_file
         try:
-            scan_bytes = scan_path.read_bytes()
+            scan_bytes = read_stable_bytes(
+                scan_path,
+                max_bytes=MAX_CONTAINER_EVIDENCE_BYTES,
+            )
         except OSError as error:
             raise ValueError(f"missing Trivy scan artifact: {name}") from error
         if hashlib.sha256(scan_bytes).hexdigest() != scan_sha256:
@@ -280,8 +313,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     manifest = build_manifest(Path(args.input_dir), tag=args.tag, commit=args.commit)
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_atomic_bytes(
+        output,
+        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
     print(output)
     return 0
 

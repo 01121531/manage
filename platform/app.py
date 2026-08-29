@@ -1,7 +1,9 @@
 """FastAPI application factory for the platform backend."""
 
 import secrets
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,7 +19,11 @@ from platform.config import Settings, get_settings
 from platform.database import database_schema_is_current, initialize_database
 from platform.errors import http_exception_handler, validation_exception_handler
 from platform.auth import AccessTokenVerifier, LocalAccessTokenVerifier, OidcAccessTokenVerifier
-from platform.middleware import TraceAndErrorMiddleware
+from platform.middleware import (
+    OriginPolicyMiddleware,
+    TraceAndErrorMiddleware,
+    parse_allowed_origins,
+)
 from platform.metrics import MetricsRegistry
 from platform.mail_connectors import HttpMailConnector, MailConnector
 from platform.rate_limit import (
@@ -40,12 +46,14 @@ from platform import models as _models  # noqa: F401
 def create_app(
     settings: Settings | None = None,
     *,
+    service_role: str = "api",
     mail_connectors: Mapping[str, MailConnector] | None = None,
     sub2_adapter: Sub2Adapter | None = None,
     card_secret_resolver: CardSecretResolver | None = None,
     secret_resolver: SecretResolver | None = None,
     access_token_verifier: AccessTokenVerifier | None = None,
     rate_limit_backend: RateLimitBackend | None = None,
+    rate_limit_clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -55,6 +63,10 @@ def create_app(
     """
 
     resolved_settings = settings or get_settings()
+    normalized_service_role = service_role.strip().lower()
+    if normalized_service_role not in {"api", "worker"}:
+        raise RuntimeError("service_role must be api or worker")
+    serves_http_api = normalized_service_role == "api"
     auth_mode = resolved_settings.auth_mode.strip().lower()
     if auth_mode not in {"local", "oidc"}:
         raise RuntimeError("PLATFORM_AUTH_MODE must be local or oidc")
@@ -65,9 +77,10 @@ def create_app(
     managed_environment = environment not in {"development", "test"}
     if managed_environment and auth_mode != "oidc":
         raise RuntimeError("PLATFORM_AUTH_MODE=oidc is required outside development")
+    require_secret_files = managed_environment and settings is None
     redis_url = (
-        resolved_settings.redis_url.get_secret_value().strip()
-        if resolved_settings.redis_url is not None
+        resolved_settings.resolved_redis_url(require_file=require_secret_files)
+        if serves_http_api
         else ""
     )
 
@@ -91,16 +104,53 @@ def create_app(
         missing = [name for name, value in required_oidc.items() if not value]
         if missing:
             raise RuntimeError(f"Missing OIDC configuration: {', '.join(missing)}")
-    if managed_environment and not resolved_settings.rate_limit_enabled:
+        if managed_environment:
+            if urlsplit(resolved_settings.oidc_jwks_url or "").scheme.lower() != "https":
+                raise RuntimeError(
+                    "PLATFORM_OIDC_JWKS_URL must use HTTPS outside development"
+                )
+            if not resolved_settings.internal_ca_file:
+                raise RuntimeError(
+                    "PLATFORM_INTERNAL_CA_FILE is required for OIDC JWKS outside development"
+                )
+    if (
+        serves_http_api
+        and managed_environment
+        and not resolved_settings.rate_limit_enabled
+    ):
         raise RuntimeError(
             "PLATFORM_RATE_LIMIT_ENABLED=true is required outside development"
         )
-    if managed_environment and not redis_url:
+    if serves_http_api and managed_environment and not redis_url:
         raise RuntimeError("PLATFORM_REDIS_URL is required outside development")
+    try:
+        allowed_origins = (
+            parse_allowed_origins(
+                resolved_settings.allowed_origins,
+                require_https=managed_environment,
+            )
+            if serves_http_api
+            else ()
+        )
+    except ValueError as exc:
+        raise RuntimeError("PLATFORM_ALLOWED_ORIGINS is invalid") from exc
+    if serves_http_api and managed_environment and not allowed_origins:
+        raise RuntimeError(
+            "PLATFORM_ALLOWED_ORIGINS is required outside development"
+        )
+    if managed_environment and mail_poll_mode != "worker":
+        raise RuntimeError(
+            "PLATFORM_MAIL_POLL_MODE=worker is required outside development/test"
+        )
+    resolved_secret_resolver = (
+        secret_resolver
+        if secret_resolver is not None
+        else secret_resolver_from_settings(resolved_settings)
+    )
 
     manages_local_schema = environment in {"development", "test"}
     engine, session_factory = initialize_database(
-        resolved_settings.database_url,
+        resolved_settings.resolved_database_url(require_file=require_secret_files),
         create_schema=manages_local_schema,
     )
     application = FastAPI(
@@ -124,17 +174,22 @@ def create_app(
             issuer=resolved_settings.oidc_issuer_url or "",
             audience=resolved_settings.oidc_audience or "",
             jwks_url=resolved_settings.oidc_jwks_url or "",
+            allowed_client_ids=(
+                resolved_settings.oidc_client_id or "",
+                resolved_settings.oidc_desktop_client_id or "",
+            ),
+            internal_ca_file=resolved_settings.internal_ca_file,
             tenant_claim=resolved_settings.oidc_tenant_claim,
             device_claim=resolved_settings.oidc_device_claim,
         )
     )
-    resolved_secret_resolver = secret_resolver or secret_resolver_from_settings(resolved_settings)
     application.state.secret_resolver = resolved_secret_resolver
     configured_mail_connectors = dict(mail_connectors or {})
     if resolved_settings.mail_api_url and "http" not in configured_mail_connectors:
         configured_mail_connectors["http"] = HttpMailConnector(
             resolved_settings.mail_api_url,
             resolved_secret_resolver,
+            allowed_origins=resolved_settings.resolved_mail_allowed_origins(),
             timeout=resolved_settings.mail_timeout_seconds,
         )
     application.state.mail_connectors = configured_mail_connectors
@@ -155,14 +210,26 @@ def create_app(
     )
     application.state.sub2_adapter = sub2_adapter or UnconfiguredSub2Adapter()
     resolved_rate_limit_backend = rate_limit_backend
-    if resolved_settings.rate_limit_enabled and resolved_rate_limit_backend is None:
+    if (
+        serves_http_api
+        and resolved_settings.rate_limit_enabled
+        and resolved_rate_limit_backend is None
+    ):
         if not redis_url:
             raise RuntimeError(
                 "PLATFORM_REDIS_URL is required when rate limiting is enabled"
             )
         resolved_rate_limit_backend = RedisRateLimitBackend(redis_url)
     application.state.rate_limit_backend = resolved_rate_limit_backend
-    if resolved_settings.rate_limit_enabled and resolved_rate_limit_backend is not None:
+    application.add_middleware(
+        OriginPolicyMiddleware,
+        allowed_origins=allowed_origins,
+    )
+    if (
+        serves_http_api
+        and resolved_settings.rate_limit_enabled
+        and resolved_rate_limit_backend is not None
+    ):
         application.add_middleware(
             RateLimitMiddleware,
             backend=resolved_rate_limit_backend,
@@ -172,6 +239,7 @@ def create_app(
             general_limit=resolved_settings.rate_limit_general_requests,
             window_seconds=resolved_settings.rate_limit_window_seconds,
             fail_closed=managed_environment,
+            clock=rate_limit_clock,
         )
     application.add_middleware(TraceAndErrorMiddleware)
     application.add_exception_handler(
@@ -189,6 +257,22 @@ def create_app(
         """Simple infrastructure health probe."""
 
         return {"status": "ok", "service": request.app.state.settings.app_name}
+
+    @application.get("/releasez", include_in_schema=False)
+    async def releasez(request: Request) -> JSONResponse:
+        """Expose non-secret release identity for route verification."""
+
+        settings = request.app.state.settings
+        return JSONResponse(
+            content={
+                "service": settings.app_name,
+                "tag": settings.release_tag,
+                "commit": settings.release_commit,
+                "migration_head": settings.release_migration_head,
+                "slot": settings.release_slot,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @application.get("/readyz", include_in_schema=False)
     async def readyz(request: Request) -> JSONResponse:
@@ -246,6 +330,14 @@ def create_app(
             content={
                 "status": "ok",
                 "service": request.app.state.settings.app_name,
+                "release": {
+                    "tag": request.app.state.settings.release_tag,
+                    "commit": request.app.state.settings.release_commit,
+                    "migration_head": (
+                        request.app.state.settings.release_migration_head
+                    ),
+                    "slot": request.app.state.settings.release_slot,
+                },
                 "checks": {
                     "database": "ok",
                     "migrations": (

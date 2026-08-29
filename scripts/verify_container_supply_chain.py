@@ -9,6 +9,13 @@ from typing import Any
 
 import yaml
 
+try:
+    from scripts.external_text import load_stable_text
+    from scripts.external_yaml import load_unique_yaml
+except ModuleNotFoundError:  # Direct `python scripts/...` execution.
+    from external_text import load_stable_text  # type: ignore[no-redef]
+    from external_yaml import load_unique_yaml  # type: ignore[no-redef]
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SECURITY = ROOT / ".github" / "workflows" / "security.yml"
@@ -36,7 +43,7 @@ def _list(value: object) -> list[Any]:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    value = load_unique_yaml(path)
     if not isinstance(value, dict):
         raise ValueError(f"workflow must contain a mapping: {path.name}")
     return value
@@ -77,7 +84,7 @@ def _trivy_errors(step: dict[str, Any], *, label: str) -> list[str]:
         errors.append(f"{label} Trivy must gate exactly HIGH and CRITICAL")
     if settings.get("ignore-unfixed") not in (False, "false"):
         errors.append(f"{label} Trivy must not ignore unfixed vulnerabilities")
-    if step.get("continue-on-error") not in (None, False):
+    if "continue-on-error" in step and step["continue-on-error"] is not False:
         errors.append(f"{label} Trivy must not continue on error")
     return errors
 
@@ -118,14 +125,29 @@ def validate_supply_chain(
         errors.append("security Trivy findings must be safely summarized on failure")
 
     release_jobs = _mapping(release.get("jobs"))
+    if _mapping(release.get("concurrency")) != {
+        "group": "release-${{ github.ref }}",
+        "cancel-in-progress": False,
+    }:
+        errors.append("release workflow must serialize the same tag without cancellation")
     quality = _mapping(release_jobs.get("release-quality-gate"))
     container = _mapping(release_jobs.get("verified-container-release"))
     windows = _mapping(release_jobs.get("verified-windows-release"))
     if not quality or not container or not windows:
         errors.append("release workflow must contain quality, container, and Windows jobs")
         return errors
-    if container.get("needs") != "release-quality-gate":
-        errors.append("container release must wait for the release quality gate")
+    if "if" in container:
+        errors.append("container publication must not override dependency success")
+    container_needs = set(_list(container.get("needs")))
+    if container_needs != {
+        "release-quality-gate",
+        "release-browser-e2e",
+        "release-codeql",
+        "release-security-gate",
+    }:
+        errors.append(
+            "container release must wait for quality, browser E2E, SAST, and dependency gates"
+        )
     permissions = _mapping(container.get("permissions"))
     for permission in ("packages", "id-token", "attestations"):
         if permissions.get(permission) != "write":
@@ -157,19 +179,32 @@ def validate_supply_chain(
         "Trivy HIGH/CRITICAL release gate",
         "Summarize Trivy findings",
         "Login to GitHub Container Registry after scan",
-        "Push the exact scanned image",
+        "Push scanned staging digest",
         "Keyless-sign image and attach Syft SBOM",
         "Attach GitHub build provenance",
         "Verify keyless image signature and SBOM attestation",
+        "Publish verified release tag",
+        "Record immutable container evidence",
+        "Upload signed container release evidence",
     )
     indexes = [_step_index(container, name) for name in ordered_steps]
     if -1 in indexes or indexes != sorted(indexes) or len(set(indexes)) != len(indexes):
-        errors.append("release must build, SBOM, scan, push, sign, attest, then verify in order")
+        errors.append(
+            "release must build, scan, stage, sign, attest, verify, promote, and publish evidence in order"
+        )
 
-    push_script = str(_step(container, "Push the exact scanned image").get("run", ""))
-    for marker in ('docker tag "$CANDIDATE"', 'docker push "$IMAGE:', "^sha256:[0-9a-f]{64}$"):
+    push_script = str(_step(container, "Push scanned staging digest").get("run", ""))
+    for marker in (
+        'staging_ref="$IMAGE:sha-${GITHUB_SHA}"',
+        'docker tag "$CANDIDATE" "$staging_ref"',
+        'docker push "$staging_ref"',
+        'digest_ref="$(docker image inspect',
+        "^sha256:[0-9a-f]{64}$",
+    ):
         if marker not in push_script:
-            errors.append(f"release push step is missing exact-image control: {marker}")
+            errors.append(f"release staging step is missing exact-image control: {marker}")
+    if "GITHUB_REF_NAME" in push_script:
+        errors.append("release version tag must not be pushed before evidence verification")
     cosign_script = str(_step(container, "Keyless-sign image and attach Syft SBOM").get("run", ""))
     for marker in ("cosign sign --yes", "cosign attest --yes --type spdxjson", '"${IMAGE}@${DIGEST}"'):
         if marker not in cosign_script:
@@ -187,9 +222,34 @@ def validate_supply_chain(
         if marker not in verify_script:
             errors.append(f"release must verify keyless evidence: {marker}")
 
+    promote_script = str(_step(container, "Publish verified release tag").get("run", ""))
+    for marker in (
+        'release_ref="${IMAGE}:${GITHUB_REF_NAME}"',
+        'docker buildx imagetools inspect "$release_ref"',
+        "manifest unknown|not found",
+        '[[ -z "$existing_digest" || "$existing_digest" != "$DIGEST" ]]',
+        "Cannot safely determine whether the release tag already exists",
+        'docker tag "$CANDIDATE" "$release_ref"',
+        'push_output="$(docker push "$release_ref")"',
+        'published_digest=',
+        '[[ "$published_digest" != "$DIGEST" ]]',
+    ):
+        if marker not in promote_script:
+            errors.append(f"verified release-tag promotion is missing: {marker}")
+
+    if "if" in windows:
+        errors.append("Windows publication must not override dependency success")
     windows_needs = set(_list(windows.get("needs")))
-    if windows_needs != {"release-quality-gate", "verified-container-release"}:
-        errors.append("Windows release must wait for quality and verified container publication")
+    if windows_needs != {
+        "release-quality-gate",
+        "release-browser-e2e",
+        "release-codeql",
+        "release-security-gate",
+        "verified-container-release",
+    }:
+        errors.append(
+            "Windows release must wait for quality, browser E2E, SAST, dependency, and verified container publication"
+        )
     publish_script = str(_step(windows, "Publish GitHub Release after container verification").get("run", ""))
     for marker in (
         "container-release-manifest.json",
@@ -213,7 +273,15 @@ def validate_supply_chain(
 def main() -> int:
     try:
         security, release = load_workflows()
-        texts = tuple(path.read_text(encoding="utf-8") for path in DOCKERFILES)
+        try:
+            texts = tuple(load_stable_text(path) for path in DOCKERFILES)
+        except (OSError, UnicodeError):
+            print(
+                "container-supply-chain-error: "
+                "Cannot inspect container supply-chain assets",
+                file=sys.stderr,
+            )
+            return 1
         errors = validate_supply_chain(security, release, texts)
     except (OSError, ValueError, yaml.YAMLError) as error:
         print(f"container-supply-chain-error: {error}", file=sys.stderr)

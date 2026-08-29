@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-api-config
+  namespace: email-platform
+data:
+  PLATFORM_ENVIRONMENT: production
+  PLATFORM_RELEASE_TAG: unconfigured
+  PLATFORM_RELEASE_COMMIT: unconfigured
+  PLATFORM_RELEASE_MIGRATION_HEAD: unconfigured
+  PLATFORM_RELEASE_SLOT: kubernetes
+  PLATFORM_ALLOWED_ORIGINS: https://platform.example.invalid
+  PLATFORM_RATE_LIMIT_ENABLED: "true"
+  PLATFORM_MAX_ACTIVE_DEVICES_PER_USER: "5"
+  PLATFORM_AUTH_MODE: oidc
+  PLATFORM_OIDC_ISSUER_URL: https://identity.example.invalid/realms/email-platform
+  PLATFORM_OIDC_AUDIENCE: email-platform-api
+  PLATFORM_OIDC_CLIENT_ID: email-platform-web
+  PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+  PLATFORM_OIDC_JWKS_URL: https://identity.example.invalid/realms/email-platform/protocol/openid-connect/certs
+  PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+  PLATFORM_VAULT_ADDR: https://vault.example.invalid
+  PLATFORM_VAULT_TOKEN_FILE: /run/secrets/runtime/vault-token
+  PLATFORM_VAULT_NAMESPACE: ""
+  PLATFORM_VAULT_TIMEOUT_SECONDS: "10"
+  PLATFORM_MAIL_POLL_MODE: worker
+  PLATFORM_ADMIN_ROLE_CHANGE_ACR: urn:email-platform:acr:mfa
+  PLATFORM_ADMIN_ROLE_CHANGE_TTL_SECONDS: "900"
+  PLATFORM_SUB2_POLICY_VERSION: sub2-v1
+  PLATFORM_SUB2_GROUP_ID: "49"
+  PLATFORM_SUB2_CONCURRENCY: "10"
+  PLATFORM_SUB2_PROXY_REF: vault://secret/sub2/proxy
+  PLATFORM_SUB2_CREDENTIAL_REF: vault://secret/sub2/credential
+  PLATFORM_SUB2_UPLOAD_URL: https://sub2.example.invalid/api/upload
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-mail-config
+  namespace: email-platform
+data:
+  PLATFORM_ENVIRONMENT: production
+  PLATFORM_AUTH_MODE: oidc
+  PLATFORM_OIDC_ISSUER_URL: https://identity.example.invalid/realms/email-platform
+  PLATFORM_OIDC_AUDIENCE: email-platform-api
+  PLATFORM_OIDC_CLIENT_ID: email-platform-web
+  PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+  PLATFORM_OIDC_JWKS_URL: https://identity.example.invalid/realms/email-platform/protocol/openid-connect/certs
+  PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+  PLATFORM_VAULT_ADDR: https://vault.example.invalid
+  PLATFORM_VAULT_TOKEN_FILE: /run/secrets/runtime/vault-token
+  PLATFORM_VAULT_NAMESPACE: ""
+  PLATFORM_VAULT_TIMEOUT_SECONDS: "10"
+  PLATFORM_MAIL_POLL_MODE: worker
+  PLATFORM_MAIL_API_URL: https://mail.example.invalid/api
+  PLATFORM_MAIL_ALLOWED_ORIGINS_FILE: /run/config/mail/allowed-origins
+  PLATFORM_MAIL_TIMEOUT_SECONDS: "20"
+  PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
+  PLATFORM_WORKER_METRICS_PORT: "9101"
+  PLATFORM_WORKER_METRICS_TLS_CERT_FILE: /run/secrets/internal-tls/tls.crt
+  PLATFORM_WORKER_METRICS_TLS_KEY_FILE: /run/secrets/internal-tls/tls.key
+  PLATFORM_WORKER_HEARTBEAT_PATH: /tmp/email-platform-mail-worker.heartbeat
+  PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "30"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-sub2-config
+  namespace: email-platform
+data:
+  PLATFORM_ENVIRONMENT: production
+  PLATFORM_AUTH_MODE: oidc
+  PLATFORM_OIDC_ISSUER_URL: https://identity.example.invalid/realms/email-platform
+  PLATFORM_OIDC_AUDIENCE: email-platform-api
+  PLATFORM_OIDC_CLIENT_ID: email-platform-web
+  PLATFORM_OIDC_DESKTOP_CLIENT_ID: email-platform-desktop
+  PLATFORM_OIDC_JWKS_URL: https://identity.example.invalid/realms/email-platform/protocol/openid-connect/certs
+  PLATFORM_INTERNAL_CA_FILE: /run/secrets/internal-tls/ca.crt
+  PLATFORM_VAULT_ADDR: https://vault.example.invalid
+  PLATFORM_VAULT_TOKEN_FILE: /run/secrets/runtime/vault-token
+  PLATFORM_VAULT_NAMESPACE: ""
+  PLATFORM_VAULT_TIMEOUT_SECONDS: "10"
+  PLATFORM_SUB2_POLICY_VERSION: sub2-v1
+  PLATFORM_SUB2_GROUP_ID: "49"
+  PLATFORM_SUB2_CONCURRENCY: "10"
+  PLATFORM_SUB2_PROXY_REF: vault://secret/sub2/proxy
+  PLATFORM_SUB2_CREDENTIAL_REF: vault://secret/sub2/credential
+  PLATFORM_SUB2_UPLOAD_URL: https://sub2.example.invalid/api/upload
+  PLATFORM_SUB2_ALLOWED_ORIGINS_FILE: /run/config/sub2/allowed-origins
+  PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
+  PLATFORM_WORKER_METRICS_PORT: "9102"
+  PLATFORM_WORKER_METRICS_TLS_CERT_FILE: /run/secrets/internal-tls/tls.crt
+  PLATFORM_WORKER_METRICS_TLS_KEY_FILE: /run/secrets/internal-tls/tls.key
+  PLATFORM_WORKER_HEARTBEAT_PATH: /tmp/email-platform-sub2-worker.heartbeat
+  PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "30"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-provider-origins
+  namespace: email-platform
+data:
+  mail-allowed-origins: https://mail.example.invalid
+  sub2-allowed-origins: https://sub2.example.invalid

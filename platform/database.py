@@ -8,7 +8,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from fastapi import Request
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine, event, text
 from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -41,7 +41,7 @@ def create_engine(database_url: str) -> Engine:
 
 
 def _install_audit_append_only_constraints(engine: Engine) -> None:
-    """Block UPDATE/DELETE mutations on audit events at the database layer."""
+    """Protect audit immutability and tenant-scoped subject bindings."""
 
     dialect = engine.dialect.name
     with engine.begin() as connection:
@@ -61,6 +61,30 @@ def _install_audit_append_only_constraints(engine: Engine) -> None:
                 BEFORE DELETE ON audit_events
                 BEGIN
                     SELECT RAISE(ABORT, 'audit_events are append-only');
+                END;
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER IF NOT EXISTS audit_events_subject_binding
+                BEFORE INSERT ON audit_events
+                WHEN
+                    (NEW.user_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM users
+                        WHERE users.id = NEW.user_id
+                          AND users.tenant_id = NEW.tenant_id
+                    ))
+                    OR
+                    (NEW.device_id IS NOT NULL AND (
+                        NEW.user_id IS NULL OR NOT EXISTS (
+                            SELECT 1 FROM devices
+                            WHERE devices.id = NEW.device_id
+                              AND devices.tenant_id = NEW.tenant_id
+                              AND devices.user_id = NEW.user_id
+                        )
+                    ))
+                BEGIN
+                    SELECT RAISE(ABORT, 'audit_events subject binding invalid');
                 END;
                 """
             )
@@ -102,6 +126,171 @@ def _install_audit_append_only_constraints(engine: Engine) -> None:
                 FOR EACH ROW EXECUTE FUNCTION audit_events_prevent_mutation();
                 """
             )
+            connection.exec_driver_sql(
+                """
+                CREATE OR REPLACE FUNCTION audit_events_validate_subject_binding()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    IF
+                        (NEW.user_id IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM users
+                            WHERE users.id = NEW.user_id
+                              AND users.tenant_id = NEW.tenant_id
+                        ))
+                        OR
+                        (NEW.device_id IS NOT NULL AND (
+                            NEW.user_id IS NULL OR NOT EXISTS (
+                                SELECT 1 FROM devices
+                                WHERE devices.id = NEW.device_id
+                                  AND devices.tenant_id = NEW.tenant_id
+                                  AND devices.user_id = NEW.user_id
+                            )
+                        ))
+                    THEN
+                        RAISE EXCEPTION 'audit_events subject binding invalid'
+                            USING ERRCODE = '23503';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+                """
+            )
+            connection.exec_driver_sql(
+                "DROP TRIGGER IF EXISTS audit_events_subject_binding ON audit_events;"
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER audit_events_subject_binding
+                BEFORE INSERT ON audit_events
+                FOR EACH ROW EXECUTE FUNCTION audit_events_validate_subject_binding();
+                """
+            )
+
+
+def _install_card_event_append_only_constraints(engine: Engine) -> None:
+    """Protect masked card history from mutation and cross-tenant binding."""
+
+    dialect = engine.dialect.name
+    with engine.begin() as connection:
+        if dialect == "sqlite":
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER IF NOT EXISTS card_events_no_update
+                BEFORE UPDATE ON card_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'card_events are append-only');
+                END;
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER IF NOT EXISTS card_events_no_delete
+                BEFORE DELETE ON card_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'card_events are append-only');
+                END;
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER IF NOT EXISTS card_events_subject_binding
+                BEFORE INSERT ON card_events
+                WHEN
+                    NOT EXISTS (
+                        SELECT 1 FROM cards
+                        WHERE cards.id = NEW.card_id
+                          AND cards.tenant_id = NEW.tenant_id
+                    )
+                    OR (
+                        NEW.allocation_id IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM card_allocations
+                            WHERE card_allocations.id = NEW.allocation_id
+                              AND card_allocations.tenant_id = NEW.tenant_id
+                              AND card_allocations.card_id = NEW.card_id
+                        )
+                    )
+                BEGIN
+                    SELECT RAISE(ABORT, 'card_events subject binding invalid');
+                END;
+                """
+            )
+            return
+        if dialect == "postgresql":
+            connection.exec_driver_sql(
+                """
+                CREATE OR REPLACE FUNCTION card_events_prevent_mutation()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'card_events are append-only';
+                END;
+                $$;
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE OR REPLACE FUNCTION card_events_validate_subject_binding()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    IF
+                        NOT EXISTS (
+                            SELECT 1 FROM cards
+                            WHERE cards.id = NEW.card_id
+                              AND cards.tenant_id = NEW.tenant_id
+                        )
+                        OR (
+                            NEW.allocation_id IS NOT NULL
+                            AND NOT EXISTS (
+                                SELECT 1 FROM card_allocations
+                                WHERE card_allocations.id = NEW.allocation_id
+                                  AND card_allocations.tenant_id = NEW.tenant_id
+                                  AND card_allocations.card_id = NEW.card_id
+                            )
+                        )
+                    THEN
+                        RAISE EXCEPTION 'card_events subject binding invalid'
+                            USING ERRCODE = '23503';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+                """
+            )
+            for trigger in (
+                "card_events_no_update",
+                "card_events_no_delete",
+                "card_events_subject_binding",
+            ):
+                connection.exec_driver_sql(
+                    f"DROP TRIGGER IF EXISTS {trigger} ON card_events"
+                )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER card_events_no_update
+                BEFORE UPDATE ON card_events
+                FOR EACH ROW EXECUTE FUNCTION card_events_prevent_mutation();
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER card_events_no_delete
+                BEFORE DELETE ON card_events
+                FOR EACH ROW EXECUTE FUNCTION card_events_prevent_mutation();
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER card_events_subject_binding
+                BEFORE INSERT ON card_events
+                FOR EACH ROW EXECUTE FUNCTION card_events_validate_subject_binding();
+                """
+            )
 
 
 def initialize_database(
@@ -115,20 +304,67 @@ def initialize_database(
     if create_schema:
         Base.metadata.create_all(engine)
         _install_audit_append_only_constraints(engine)
+        _install_card_event_append_only_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def database_schema_is_current(engine: Engine) -> bool:
-    """Return whether the database revision exactly matches repository heads."""
+    """Return whether this release can safely serve the current database schema.
+
+    Exact head equality remains the bootstrap rule.  Once the compatibility
+    marker exists, a newer expand-only database head is accepted only when its
+    declared minimum application revision is present in this release's
+    reviewed Alembic ancestry.
+    """
 
     try:
         script_location = Path(__file__).resolve().parent / "migrations"
-        expected_heads = frozenset(ScriptDirectory(str(script_location)).get_heads())
+        script = ScriptDirectory(str(script_location))
+        expected_heads = frozenset(script.get_heads())
         with engine.connect() as connection:
             current_heads = frozenset(
                 MigrationContext.configure(connection).get_current_heads()
             )
-        return bool(expected_heads) and current_heads == expected_heads
+            if not expected_heads or not current_heads:
+                return False
+            if current_heads == expected_heads:
+                return True
+            if len(expected_heads) != 1 or len(current_heads) != 1:
+                return False
+            current_revision = next(iter(current_heads))
+            try:
+                known_current_revision = script.get_revision(current_revision)
+            except CommandError:
+                # A future expand-only head is intentionally absent from an
+                # older release's migration graph. Its compatibility floor is
+                # the only safe signal available to that release.
+                known_current_revision = None
+            if known_current_revision is not None:
+                # A non-head revision already known to this release is behind
+                # (or otherwise not the expected single head), never ahead.
+                return False
+            minimum_revision = connection.execute(
+                text(
+                    "SELECT minimum_app_revision "
+                    "FROM platform_schema_compatibility WHERE singleton_id = 1"
+                )
+            ).scalar_one_or_none()
+        if not isinstance(minimum_revision, str) or not minimum_revision:
+            return False
+        expected_revision = next(iter(expected_heads))
+        cursor: str | None = expected_revision
+        visited: set[str] = set()
+        while cursor is not None and cursor not in visited:
+            if cursor == minimum_revision:
+                return True
+            visited.add(cursor)
+            revision = script.get_revision(cursor)
+            if revision is None or not isinstance(
+                revision.down_revision, (str, type(None))
+            ):
+                return False
+            cursor = revision.down_revision
+        return False
     except (CommandError, OSError, RuntimeError, SQLAlchemyError):
         return False
 

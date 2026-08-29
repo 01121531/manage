@@ -76,6 +76,74 @@ export interface paths {
         patch: operations["admin_update_card_state_api_v1_admin_cards__card_id__patch"];
         trace?: never;
     };
+    "/api/v1/admin/cards/{card_id}/allocations/{allocation_id}/recycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Recycle Card Allocation */
+        post: operations["admin_recycle_card_allocation_api_v1_admin_cards__card_id__allocations__allocation_id__recycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/cards/{card_id}/quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Quarantine Card */
+        post: operations["admin_quarantine_card_api_v1_admin_cards__card_id__quarantine_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/cards/{card_id}/release-quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Release Card Quarantine */
+        post: operations["admin_release_card_quarantine_api_v1_admin_cards__card_id__release_quarantine_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/cards/{card_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Get Card Timeline */
+        get: operations["admin_get_card_timeline_api_v1_admin_cards__card_id__timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/devices": {
         parameters: {
             query?: never;
@@ -155,6 +223,178 @@ export interface paths {
         put?: never;
         /** Admin Rotate Mailbox Secret */
         post: operations["admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Card Policy Status */
+        get: operations["admin_card_policy_status_api_v1_admin_policies_card_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/card/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Rollback Card Policy */
+        post: operations["admin_rollback_card_policy_api_v1_admin_policies_card_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/card/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin List Card Policy Versions */
+        get: operations["admin_list_card_policy_versions_api_v1_admin_policies_card_versions_get"];
+        put?: never;
+        /** Admin Register Card Policy Version */
+        post: operations["admin_register_card_policy_version_api_v1_admin_policies_card_versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/card/versions/{policy_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Approve Card Policy Version */
+        post: operations["admin_approve_card_policy_version_api_v1_admin_policies_card_versions__policy_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/card/versions/{policy_id}/deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Deploy Card Policy Version */
+        post: operations["admin_deploy_card_policy_version_api_v1_admin_policies_card_versions__policy_id__deploy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/mail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Mail Policy Status */
+        get: operations["admin_mail_policy_status_api_v1_admin_policies_mail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/mail/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Rollback Mail Policy */
+        post: operations["admin_rollback_mail_policy_api_v1_admin_policies_mail_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/mail/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin List Mail Policy Versions */
+        get: operations["admin_list_mail_policy_versions_api_v1_admin_policies_mail_versions_get"];
+        put?: never;
+        /** Admin Register Mail Policy Version */
+        post: operations["admin_register_mail_policy_version_api_v1_admin_policies_mail_versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/mail/versions/{policy_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Approve Mail Policy Version */
+        post: operations["admin_approve_mail_policy_version_api_v1_admin_policies_mail_versions__policy_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/policies/mail/versions/{policy_id}/deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Deploy Mail Policy Version */
+        post: operations["admin_deploy_mail_policy_version_api_v1_admin_policies_mail_versions__policy_id__deploy_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -253,6 +493,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/role-change-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin List Role Change Requests */
+        get: operations["admin_list_role_change_requests_api_v1_admin_role_change_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/role-change-requests/{role_change_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Approve Role Change Request */
+        post: operations["admin_approve_role_change_request_api_v1_admin_role_change_requests__role_change_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/uploads": {
         parameters: {
             query?: never;
@@ -287,6 +561,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/batch-disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Batch Disable Users */
+        post: operations["admin_batch_disable_users_api_v1_admin_users_batch_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Register Device */
+        post: operations["admin_register_device_api_v1_admin_users__user_id__devices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{user_id}/disable": {
         parameters: {
             query?: never;
@@ -298,6 +606,40 @@ export interface paths {
         put?: never;
         /** Admin Disable User */
         post: operations["admin_disable_user_api_v1_admin_users__user_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Admin Update User Role */
+        patch: operations["admin_update_user_role_api_v1_admin_users__user_id__role_patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/role-change-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Request User Role Change */
+        post: operations["admin_request_user_role_change_api_v1_admin_users__user_id__role_change_requests_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -332,6 +674,23 @@ export interface paths {
         put?: never;
         /** Login */
         post: operations["login_api_v1_auth_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_api_v1_auth_logout_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -694,6 +1053,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tasks/{task_id}/card-allocations/{allocation_id}/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace Card Allocation */
+        post: operations["replace_card_allocation_api_v1_tasks__task_id__card_allocations__allocation_id__replace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks/{task_id}/close": {
         parameters: {
             query?: never;
@@ -739,6 +1115,23 @@ export interface paths {
         put?: never;
         /** Create Mail Session */
         post: operations["create_mail_session_api_v1_tasks__task_id__mail_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tasks/{task_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Task Timeline */
+        get: operations["get_task_timeline_api_v1_tasks__task_id__timeline_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -856,8 +1249,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel Upload Job */
-        post: operations["cancel_upload_job_api_v1_uploads__job_id__cancel_post"];
+        /** Cancel Upload Job Legacy */
+        post: operations["cancel_upload_job_legacy_api_v1_uploads__job_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -945,6 +1338,43 @@ export interface components {
             /** User Id */
             user_id: string | null;
         };
+        /** AdminCardAllocationResponse */
+        AdminCardAllocationResponse: {
+            /** Allocation Reason Code */
+            allocation_reason_code: string;
+            /** Brand */
+            brand: string;
+            /** Card Id */
+            card_id: string;
+            /** Card Masked */
+            card_masked: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Release Reason Code */
+            release_reason_code: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Status */
+            status: string;
+            /** Task Id */
+            task_id: string;
+            /** Trace Id */
+            trace_id: string;
+            /** User Id */
+            user_id: string;
+        };
         /** AdminCardCreate */
         AdminCardCreate: {
             /** Brand */
@@ -955,10 +1385,54 @@ export interface components {
             expiry_year?: number | null;
             /** Last4 */
             last4: string;
+            /**
+             * Pool Key
+             * @default legacy-unclassified
+             */
+            pool_key: string;
             /** Provider Ref */
             provider_ref: string;
+            /**
+             * Region
+             * @default legacy-unclassified
+             */
+            region: string;
             /** Secret Ref */
             secret_ref: string;
+        };
+        /** AdminCardEventResponse */
+        AdminCardEventResponse: {
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: string | null;
+            after_masked: components["schemas"]["CardEventMaskedState"];
+            /** Allocation Id */
+            allocation_id: string | null;
+            before_masked: components["schemas"]["CardEventMaskedState"];
+            /** Card Id */
+            card_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Reason Code */
+            reason_code: string | null;
+            /** Trace Id */
+            trace_id: string;
+        };
+        /** AdminCardQuarantineRequest */
+        AdminCardQuarantineRequest: {
+            /** Reason Code */
+            reason_code: string;
+        };
+        /** AdminCardRecycleRequest */
+        AdminCardRecycleRequest: {
+            /** Reason Code */
+            reason_code: string;
         };
         /** AdminCardResponse */
         AdminCardResponse: {
@@ -979,8 +1453,21 @@ export interface components {
             is_active: boolean;
             /** Last4 */
             last4: string;
+            /** Pool Key */
+            pool_key: string;
             /** Provider Ref */
             provider_ref: string;
+            /** Quarantine Reason Code */
+            quarantine_reason_code: string | null;
+            /** Quarantined At */
+            quarantined_at: string | null;
+            /** Region */
+            region: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "allocated" | "disabled" | "quarantined";
             /** Tenant Id */
             tenant_id: string;
         };
@@ -988,6 +1475,27 @@ export interface components {
         AdminCardStateUpdate: {
             /** Is Active */
             is_active: boolean;
+        };
+        /** AdminCardTimelineResponse */
+        AdminCardTimelineResponse: {
+            /** Allocations */
+            allocations: components["schemas"]["AdminCardAllocationResponse"][];
+            /** Allocations Has More */
+            allocations_has_more: boolean;
+            /** Allocations Next Cursor */
+            allocations_next_cursor: string | null;
+            card: components["schemas"]["AdminCardResponse"];
+            /** Events */
+            events: components["schemas"]["AdminCardEventResponse"][];
+            /** Events Has More */
+            events_has_more: boolean;
+            /** Events Next Cursor */
+            events_next_cursor: string | null;
+        };
+        /** AdminDeviceCreate */
+        AdminDeviceCreate: {
+            /** Name */
+            name: string;
         };
         /** AdminDeviceResponse */
         AdminDeviceResponse: {
@@ -998,6 +1506,8 @@ export interface components {
             created_at: string;
             /** Id */
             id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
             /** Name */
             name: string;
             /** Revoked At */
@@ -1015,6 +1525,11 @@ export interface components {
             email_masked: string;
             /** Secret Ref */
             secret_ref: string;
+            /**
+             * Task Type
+             * @default mail_code
+             */
+            task_type: string;
         };
         /** AdminMailboxSecretRotation */
         AdminMailboxSecretRotation: {
@@ -1025,6 +1540,50 @@ export interface components {
         AdminMailboxStateUpdate: {
             /** Is Active */
             is_active: boolean;
+        };
+        /** AdminRoleChangeResponse */
+        AdminRoleChangeResponse: {
+            /** Applied At */
+            applied_at: string | null;
+            /** Approval Trace Id */
+            approval_trace_id: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expected Old Role
+             * @enum {string}
+             */
+            expected_old_role: "operator" | "ops_admin" | "security_auditor" | "platform_admin";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /**
+             * New Role
+             * @enum {string}
+             */
+            new_role: "operator" | "ops_admin" | "security_auditor" | "platform_admin";
+            /** Request Trace Id */
+            request_trace_id: string;
+            /** Requested By */
+            requested_by: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "applied" | "expired";
+            /** Target User Id */
+            target_user_id: string;
+            /** Tenant Id */
+            tenant_id: string;
         };
         /** AdminUploadResponse */
         AdminUploadResponse: {
@@ -1045,6 +1604,15 @@ export interface components {
             external_ref: string | null;
             /** Id */
             id: string;
+            /** Phase */
+            phase: string;
+            /** Phase Sequence */
+            phase_sequence: number;
+            /**
+             * Phase Updated At
+             * Format: date-time
+             */
+            phase_updated_at: string;
             /** Policy Version */
             policy_version: string;
             /** Status */
@@ -1062,6 +1630,11 @@ export interface components {
             updated_at: string;
             /** User Id */
             user_id: string;
+        };
+        /** AdminUserBatchDisable */
+        AdminUserBatchDisable: {
+            /** User Ids */
+            user_ids: string[];
         };
         /**
          * AdminUserResponse
@@ -1084,8 +1657,38 @@ export interface components {
             /** Tenant Id */
             tenant_id: string;
         };
+        /** AdminUserRoleUpdate */
+        AdminUserRoleUpdate: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "operator" | "ops_admin" | "security_auditor" | "platform_admin";
+        };
+        /**
+         * ApiErrorDetail
+         * @description Stable, non-secret error fields shared by every API operation.
+         */
+        ApiErrorDetail: {
+            /** Code */
+            code: string;
+            /** Details */
+            details?: unknown | null;
+            /** Message */
+            message: string;
+            /** Recovery Hint */
+            recovery_hint: string;
+            /** Trace Id */
+            trace_id: string;
+        };
+        /** ApiErrorResponse */
+        ApiErrorResponse: {
+            error: components["schemas"]["ApiErrorDetail"];
+        };
         /** AuthConfigResponse */
         AuthConfigResponse: {
+            /** Admin Role Change Acr */
+            admin_role_change_acr?: string | null;
             /** Audience */
             audience?: string | null;
             /** Client Id */
@@ -1099,6 +1702,8 @@ export interface components {
         };
         /** CardAllocationResponse */
         CardAllocationResponse: {
+            /** Allocation Reason Code */
+            allocation_reason_code: string;
             /** Brand */
             brand: string;
             /** Card Masked */
@@ -1118,6 +1723,82 @@ export interface components {
             status: string;
             /** Trace Id */
             trace_id: string;
+        };
+        /** CardEventMaskedState */
+        CardEventMaskedState: {
+            /**
+             * Allocation Status
+             * @enum {string}
+             */
+            allocation_status?: "active" | "released" | "expired";
+            /** Brand */
+            brand?: string;
+            /** Card Masked */
+            card_masked?: string;
+            /**
+             * Card Status
+             * @enum {string}
+             */
+            card_status?: "available" | "allocated" | "disabled" | "quarantined";
+            /** Fields */
+            fields?: ("pan" | "expiry")[];
+            /** Revealed */
+            revealed?: boolean;
+        };
+        /** CardPolicyVersionCreate */
+        CardPolicyVersionCreate: {
+            /**
+             * Allocation Order
+             * @default oldest_available
+             * @constant
+             */
+            allocation_order: "oldest_available";
+            /** Change Note */
+            change_note: string;
+            /** Lease Ttl Seconds */
+            lease_ttl_seconds: number;
+            /** Reveal Ttl Seconds */
+            reveal_ttl_seconds: number;
+            /** Selection Rules */
+            selection_rules?: components["schemas"]["CardSelectionRule"][];
+            /** Version */
+            version: string;
+        };
+        /** CardPolicyVersionResponse */
+        CardPolicyVersionResponse: {
+            /**
+             * Allocation Order
+             * @constant
+             */
+            allocation_order: "oldest_available";
+            /** Approved At */
+            approved_at: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /** Change Note */
+            change_note: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Id */
+            id: string;
+            /** Lease Ttl Seconds */
+            lease_ttl_seconds: number;
+            /** Reveal Ttl Seconds */
+            reveal_ttl_seconds: number;
+            /** Selection Rules */
+            selection_rules: components["schemas"]["CardSelectionRule"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "approved" | "active" | "retired";
+            /** Version */
+            version: string;
         };
         /** CardRevealChallengeResponse */
         CardRevealChallengeResponse: {
@@ -1168,7 +1849,7 @@ export interface components {
             /** Id */
             id: string;
             /** Pan */
-            pan: string;
+            pan?: string | null;
             /**
              * Reveal Expires At
              * Format: date-time
@@ -1177,12 +1858,54 @@ export interface components {
             /** Trace Id */
             trace_id: string;
         };
+        /** CardSelectionRule */
+        CardSelectionRule: {
+            /**
+             * Allocation Order
+             * @default oldest_available
+             * @enum {string}
+             */
+            allocation_order: "oldest_available" | "expiry_soonest";
+            /** Brands */
+            brands?: string[];
+            /**
+             * Minimum Validity Days
+             * @default 0
+             */
+            minimum_validity_days: number;
+            /** Pool Key */
+            pool_key: string;
+            /** Region */
+            region: string;
+            /** Task Type */
+            task_type: string;
+        };
+        /** DashboardRecentTaskResponse */
+        DashboardRecentTaskResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Trace Id */
+            trace_id: string;
+            /** Type */
+            type: string;
+        };
         /** DashboardSummaryResponse */
         DashboardSummaryResponse: {
             /** Active Tasks */
             active_tasks: number;
             /** Allocated Cards */
             allocated_cards: number;
+            /** Available Cards */
+            available_cards?: number | null;
             /** Card Allocation Statuses */
             card_allocation_statuses: {
                 [key: string]: number;
@@ -1196,8 +1919,12 @@ export interface components {
             mail_session_statuses: {
                 [key: string]: number;
             };
+            /** Pending Exceptions */
+            pending_exceptions: number;
             /** Queued Uploads */
             queued_uploads: number;
+            /** Recent Tasks */
+            recent_tasks: components["schemas"]["DashboardRecentTaskResponse"][];
             /**
              * Scope
              * @enum {string}
@@ -1207,6 +1934,19 @@ export interface components {
             task_statuses: {
                 [key: string]: number;
             };
+            /** Today Completed Uploads */
+            today_completed_uploads: number;
+            /**
+             * Today Started At
+             * Format: date-time
+             */
+            today_started_at: string;
+            /** Today Succeeded Uploads */
+            today_succeeded_uploads: number;
+            /** Today Tasks */
+            today_tasks: number;
+            /** Unavailable Mailboxes */
+            unavailable_mailboxes: number;
             /** Unknown Uploads */
             unknown_uploads: number;
             /** Upload Statuses */
@@ -1215,11 +1955,6 @@ export interface components {
             };
             /** Waiting Mail Sessions */
             waiting_mail_sessions: number;
-        };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1232,13 +1967,75 @@ export interface components {
             /** Tenant Id */
             tenant_id: string;
         };
+        /** LogoutResponse */
+        LogoutResponse: {
+            /**
+             * Status
+             * @default logged_out
+             * @constant
+             */
+            status: "logged_out";
+        };
         /** MailCodeResponse */
         MailCodeResponse: {
             /** Code */
             code?: string | null;
+            /** Message Id Hash */
+            message_id_hash?: string | null;
+            /** Received At */
+            received_at?: string | null;
             /** Status */
             status: string;
         };
+        /** MailPolicyVersionCreate */
+        MailPolicyVersionCreate: {
+            /** Change Note */
+            change_note: string;
+            /** Code Ttl Seconds */
+            code_ttl_seconds: number;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+            /** Session Ttl Seconds */
+            session_ttl_seconds: number;
+            /** Version */
+            version: string;
+        };
+        /** MailPolicyVersionResponse */
+        MailPolicyVersionResponse: {
+            /** Approved At */
+            approved_at: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /** Change Note */
+            change_note: string;
+            /** Code Ttl Seconds */
+            code_ttl_seconds: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Id */
+            id: string;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+            /** Session Ttl Seconds */
+            session_ttl_seconds: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "approved" | "active" | "retired";
+            /** Version */
+            version: string;
+        };
+        /**
+         * MailSessionCreateRequest
+         * @description An intentionally empty operator contract; routing is server-owned.
+         */
+        MailSessionCreateRequest: Record<string, never>;
         /** MailSessionCreateResponse */
         MailSessionCreateResponse: {
             /** Email Masked */
@@ -1250,6 +2047,8 @@ export interface components {
             expires_at: string;
             /** Id */
             id: string;
+            /** Polling Interval */
+            polling_interval: number;
             /** Session Token */
             session_token: string;
             /** Status */
@@ -1286,15 +2085,26 @@ export interface components {
             created_at: string;
             /** Email Masked */
             email_masked: string;
+            /**
+             * Health Status
+             * @enum {string}
+             */
+            health_status: "unknown" | "healthy" | "unavailable";
             /** Id */
             id: string;
             /** Is Active */
             is_active: boolean;
+            /** Last Checked At */
+            last_checked_at: string | null;
+            /** Last Error Code */
+            last_error_code: ("connector_not_configured" | "connector_unavailable") | null;
             /**
              * Status
              * @enum {string}
              */
             status: "available" | "busy" | "disabled";
+            /** Task Type */
+            task_type: string;
         };
         /** MeResponse */
         MeResponse: {
@@ -1308,6 +2118,46 @@ export interface components {
             role: string;
             /** Tenant Id */
             tenant_id: string;
+        };
+        /** OperationalPolicyDeployRequest */
+        OperationalPolicyDeployRequest: {
+            /** Rollout Percent */
+            rollout_percent: number;
+        };
+        /** OperationalPolicyDeploymentResponse */
+        OperationalPolicyDeploymentResponse: {
+            /** Active Version */
+            active_version: string;
+            /**
+             * Domain
+             * @enum {string}
+             */
+            domain: "mail" | "card";
+            /** Previous Version */
+            previous_version: string | null;
+            /** Rollout Percent */
+            rollout_percent: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** OperationalPolicyStatusResponse */
+        OperationalPolicyStatusResponse: {
+            /** Active Version */
+            active_version: string | null;
+            /**
+             * Domain
+             * @enum {string}
+             */
+            domain: "mail" | "card";
+            /** Governance Configured */
+            governance_configured: boolean;
+            /** Previous Version */
+            previous_version: string | null;
+            /** Rollout Percent */
+            rollout_percent: number | null;
         };
         /** TaskCreate */
         TaskCreate: {
@@ -1347,6 +2197,130 @@ export interface components {
             type: string;
             /** User Id */
             user_id: string;
+        };
+        /** TaskTimelineCardAllocationResponse */
+        TaskTimelineCardAllocationResponse: {
+            /** Brand */
+            brand: string;
+            /** Card Masked */
+            card_masked: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Released At */
+            released_at: string | null;
+            /** Status */
+            status: string;
+        };
+        /** TaskTimelineEventResponse */
+        TaskTimelineEventResponse: {
+            /** Action */
+            action: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Entity Id */
+            entity_id: string | null;
+            /** Entity Type */
+            entity_type: string;
+            /** Event Type */
+            event_type: string;
+            /** Id */
+            id: string;
+            /** Phase */
+            phase?: string | null;
+            /** Phase Sequence */
+            phase_sequence?: number | null;
+            /** Policy Version */
+            policy_version: string | null;
+            /** Result */
+            result: string;
+            /** Trace Id */
+            trace_id: string;
+        };
+        /** TaskTimelineMailSessionResponse */
+        TaskTimelineMailSessionResponse: {
+            /** Consumed At */
+            consumed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email Masked */
+            email_masked: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+        };
+        /** TaskTimelineResponse */
+        TaskTimelineResponse: {
+            /** Card Allocations */
+            card_allocations: components["schemas"]["TaskTimelineCardAllocationResponse"][];
+            /** Events */
+            events: components["schemas"]["TaskTimelineEventResponse"][];
+            mail_session: components["schemas"]["TaskTimelineMailSessionResponse"] | null;
+            task: components["schemas"]["TaskResponse"];
+            /** Uploads */
+            uploads: components["schemas"]["TaskTimelineUploadResponse"][];
+            /**
+             * Workbench Step
+             * @enum {string}
+             */
+            workbench_step: "logged_in" | "card_allocated" | "waiting_code" | "code_received" | "uploading" | "completed";
+        };
+        /** TaskTimelineUploadResponse */
+        TaskTimelineUploadResponse: {
+            /** Business Name */
+            business_name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            /** External Ref */
+            external_ref: string | null;
+            /** Id */
+            id: string;
+            /** Phase */
+            phase: string;
+            /** Phase Sequence */
+            phase_sequence: number;
+            /**
+             * Phase Updated At
+             * Format: date-time
+             */
+            phase_updated_at: string;
+            /** Policy Version */
+            policy_version: string;
+            /** Status */
+            status: string;
+            /** Trace Id */
+            trace_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -1391,6 +2365,15 @@ export interface components {
             external_ref: string | null;
             /** Id */
             id: string;
+            /** Phase */
+            phase: string;
+            /** Phase Sequence */
+            phase_sequence: number;
+            /**
+             * Phase Updated At
+             * Format: date-time
+             */
+            phase_updated_at: string;
             /** Policy Version */
             policy_version: string;
             /** Status */
@@ -1500,19 +2483,6 @@ export interface components {
              */
             status: "succeeded" | "failed" | "unknown";
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -1525,12 +2495,16 @@ export interface operations {
     admin_list_audit_api_v1_admin_audit_get: {
         parameters: {
             query?: {
+                task_id?: string | null;
+                card_id?: string | null;
                 trace_id?: string | null;
                 actor_id?: string | null;
                 user_id?: string | null;
+                device_id?: string | null;
                 entity_type?: string | null;
                 entity_id?: string | null;
                 event_type?: string | null;
+                action?: string | null;
                 result?: string | null;
                 created_from?: string | null;
                 created_to?: string | null;
@@ -1551,13 +2525,22 @@ export interface operations {
                     "application/json": components["schemas"]["AdminAuditResponse"][];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1565,12 +2548,16 @@ export interface operations {
     admin_export_audit_api_v1_admin_audit_export_get: {
         parameters: {
             query?: {
+                task_id?: string | null;
+                card_id?: string | null;
                 trace_id?: string | null;
                 actor_id?: string | null;
                 user_id?: string | null;
+                device_id?: string | null;
                 entity_type?: string | null;
                 entity_id?: string | null;
                 event_type?: string | null;
+                action?: string | null;
                 result?: string | null;
                 created_from?: string | null;
                 created_to?: string | null;
@@ -1591,13 +2578,22 @@ export interface operations {
                     "text/csv": string;
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1618,6 +2614,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminCardResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1644,13 +2658,22 @@ export interface operations {
                     "application/json": components["schemas"]["AdminCardResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1679,13 +2702,196 @@ export interface operations {
                     "application/json": components["schemas"]["AdminCardResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_recycle_card_allocation_api_v1_admin_cards__card_id__allocations__allocation_id__recycle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+                allocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminCardRecycleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCardAllocationResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_quarantine_card_api_v1_admin_cards__card_id__quarantine_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminCardQuarantineRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCardResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_release_card_quarantine_api_v1_admin_cards__card_id__release_quarantine_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCardResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_get_card_timeline_api_v1_admin_cards__card_id__timeline_get: {
+        parameters: {
+            query?: {
+                allocations_cursor?: string | null;
+                events_cursor?: string | null;
+                allocation_limit?: number;
+                event_limit?: number;
+            };
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCardTimelineResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1706,6 +2912,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminDeviceResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1730,13 +2954,22 @@ export interface operations {
                     "application/json": components["schemas"]["AdminDeviceResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1763,13 +2996,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailboxStatusResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1798,13 +3040,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailboxStatusResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1833,13 +3084,502 @@ export interface operations {
                     "application/json": components["schemas"]["MailboxStatusResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_card_policy_status_api_v1_admin_policies_card_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalPolicyStatusResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_rollback_card_policy_api_v1_admin_policies_card_rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalPolicyDeploymentResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_list_card_policy_versions_api_v1_admin_policies_card_versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardPolicyVersionResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_register_card_policy_version_api_v1_admin_policies_card_versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardPolicyVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardPolicyVersionResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_approve_card_policy_version_api_v1_admin_policies_card_versions__policy_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardPolicyVersionResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_deploy_card_policy_version_api_v1_admin_policies_card_versions__policy_id__deploy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationalPolicyDeployRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalPolicyDeploymentResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_mail_policy_status_api_v1_admin_policies_mail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalPolicyStatusResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_rollback_mail_policy_api_v1_admin_policies_mail_rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalPolicyDeploymentResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_list_mail_policy_versions_api_v1_admin_policies_mail_versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailPolicyVersionResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_register_mail_policy_version_api_v1_admin_policies_mail_versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailPolicyVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailPolicyVersionResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_approve_mail_policy_version_api_v1_admin_policies_mail_versions__policy_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailPolicyVersionResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_deploy_mail_policy_version_api_v1_admin_policies_mail_versions__policy_id__deploy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationalPolicyDeployRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalPolicyDeploymentResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1862,6 +3602,24 @@ export interface operations {
                     "application/json": components["schemas"]["UploadPolicyStatusResponse"];
                 };
             };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
         };
     };
     admin_rollback_upload_policy_api_v1_admin_policies_upload_rollback_post: {
@@ -1882,6 +3640,24 @@ export interface operations {
                     "application/json": components["schemas"]["UploadPolicyDeploymentResponse"];
                 };
             };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
         };
     };
     admin_list_upload_policy_versions_api_v1_admin_policies_upload_versions_get: {
@@ -1900,6 +3676,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UploadPolicyVersionResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1926,13 +3720,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadPolicyVersionResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1957,13 +3760,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadPolicyVersionResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -1992,13 +3804,102 @@ export interface operations {
                     "application/json": components["schemas"]["UploadPolicyDeploymentResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_list_role_change_requests_api_v1_admin_role_change_requests_get: {
+        parameters: {
+            query?: {
+                status?: ("pending" | "applied" | "expired") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRoleChangeResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_approve_role_change_request_api_v1_admin_role_change_requests__role_change_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRoleChangeResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2021,6 +3922,24 @@ export interface operations {
                     "application/json": components["schemas"]["AdminUploadResponse"][];
                 };
             };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
         };
     };
     admin_list_users_api_v1_admin_users_get: {
@@ -2039,6 +3958,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminUserResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_batch_disable_users_api_v1_admin_users_batch_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserBatchDisable"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserResponse"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_register_device_api_v1_admin_users__user_id__devices_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminDeviceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminDeviceResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2063,13 +4086,110 @@ export interface operations {
                     "application/json": components["schemas"]["AdminUserResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_update_user_role_api_v1_admin_users__user_id__role_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserRoleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_request_user_role_change_api_v1_admin_users__user_id__role_change_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserRoleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRoleChangeResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2090,6 +4210,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthConfigResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2116,20 +4254,69 @@ export interface operations {
                     "application/json": components["schemas"]["TokenResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    logout_api_v1_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogoutResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
     };
     get_card_allocation_api_v1_card_allocations__allocation_id__get: {
         parameters: {
-            query?: never;
+            query: {
+                task_id: string;
+            };
             header?: never;
             path: {
                 allocation_id: string;
@@ -2147,13 +4334,22 @@ export interface operations {
                     "application/json": components["schemas"]["CardAllocationResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2178,13 +4374,22 @@ export interface operations {
                     "application/json": components["schemas"]["CardAllocationResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2213,13 +4418,22 @@ export interface operations {
                     "application/json": components["schemas"]["CardRevealResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2244,13 +4458,22 @@ export interface operations {
                     "application/json": components["schemas"]["CardRevealChallengeResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2279,13 +4502,22 @@ export interface operations {
                     "application/json": components["schemas"]["CardRevealGrantResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2306,6 +4538,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DashboardSummaryResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2330,13 +4580,22 @@ export interface operations {
                     "application/json": components["schemas"]["AdminDeviceResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2361,12 +4620,33 @@ export interface operations {
                     };
                 };
             };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
         };
     };
     get_mail_code_api_v1_mail_session__session_id__code_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque capability returned when the mail session is created or rotated */
+                "X-Mail-Session-Token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -2383,13 +4663,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailCodeResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2397,7 +4686,10 @@ export interface operations {
     mail_session_events_api_v1_mail_session__session_id__events_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque capability returned when the mail session is created or rotated */
+                "X-Mail-Session-Token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -2414,13 +4706,22 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2428,7 +4729,10 @@ export interface operations {
     revoke_mail_session_api_v1_mail_session__session_id__revoke_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque capability returned when the mail session is created or rotated */
+                "X-Mail-Session-Token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -2445,13 +4749,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailSessionResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2459,7 +4772,10 @@ export interface operations {
     get_mail_code_api_v1_mail_sessions__session_id__code_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque capability returned when the mail session is created or rotated */
+                "X-Mail-Session-Token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -2476,13 +4792,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailCodeResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2490,7 +4815,10 @@ export interface operations {
     mail_session_events_api_v1_mail_sessions__session_id__events_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque capability returned when the mail session is created or rotated */
+                "X-Mail-Session-Token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -2507,13 +4835,22 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2521,7 +4858,10 @@ export interface operations {
     revoke_mail_session_api_v1_mail_sessions__session_id__revoke_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque capability returned when the mail session is created or rotated */
+                "X-Mail-Session-Token"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -2538,13 +4878,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailSessionResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2567,6 +4916,24 @@ export interface operations {
                     "application/json": components["schemas"]["MailboxStatusResponse"][];
                 };
             };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
         };
     };
     me_api_v1_me_get: {
@@ -2587,12 +4954,33 @@ export interface operations {
                     "application/json": components["schemas"]["MeResponse"];
                 };
             };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
         };
     };
     list_tasks_api_v1_tasks_get: {
         parameters: {
             query?: {
                 limit?: number;
+                status?: string | null;
+                user_id?: string | null;
+                trace_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -2609,13 +4997,22 @@ export interface operations {
                     "application/json": components["schemas"]["TaskResponse"][];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2651,13 +5048,22 @@ export interface operations {
                     "application/json": components["schemas"]["TaskResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2682,13 +5088,22 @@ export interface operations {
                     "application/json": components["schemas"]["TaskResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2722,13 +5137,22 @@ export interface operations {
                     "application/json": components["schemas"]["CardAllocationResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2762,13 +5186,72 @@ export interface operations {
                     "application/json": components["schemas"]["CardAllocationResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_card_allocation_api_v1_tasks__task_id__card_allocations__allocation_id__replace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                allocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Idempotent replacement replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardAllocationResponse"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardAllocationResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2793,13 +5276,22 @@ export interface operations {
                     "application/json": components["schemas"]["TaskResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2813,7 +5305,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MailSessionCreateRequest"] | null;
+            };
+        };
         responses: {
             /** @description Existing session with a rotated token */
             200: {
@@ -2833,13 +5329,22 @@ export interface operations {
                     "application/json": components["schemas"]["MailSessionCreateResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2853,7 +5358,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MailSessionCreateRequest"] | null;
+            };
+        };
         responses: {
             /** @description Existing session with a rotated token */
             200: {
@@ -2873,13 +5382,62 @@ export interface operations {
                     "application/json": components["schemas"]["MailSessionCreateResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_task_timeline_api_v1_tasks__task_id__timeline_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskTimelineResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2917,13 +5475,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2948,13 +5515,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -2979,13 +5555,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -3014,13 +5599,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -3056,13 +5650,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -3087,18 +5690,27 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
     };
-    cancel_upload_job_api_v1_uploads__job_id__cancel_post: {
+    cancel_upload_job_legacy_api_v1_uploads__job_id__cancel_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3118,13 +5730,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -3153,13 +5774,22 @@ export interface operations {
                     "application/json": components["schemas"]["UploadJobResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
@@ -3182,6 +5812,24 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

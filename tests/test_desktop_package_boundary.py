@@ -19,10 +19,12 @@ class DesktopPackageBoundaryTests(unittest.TestCase):
     def test_archive_gate_rejects_legacy_modules_and_sidecar_settings(self) -> None:
         clean = {
             "app_version",
+            "platform_clipboard",
             "platform_client",
             "platform_desktop",
             "platform_login_dialog",
             "session_store",
+            "scripts.external_json",
             "update_client",
         }
         self.assertEqual(archive_boundary_errors(clean, ["app.exe.sha256"]), [])

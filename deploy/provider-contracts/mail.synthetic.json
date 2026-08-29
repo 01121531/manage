@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "contract_type": "mail",
+  "provider_reference": "synthetic-mail-contract",
+  "synthetic": true,
+  "review_reference": null,
+  "production_acceptance": false,
+  "transport": {
+    "https_required": true,
+    "redirect_policy": "forbid",
+    "auth_location": "request_json.mailbox",
+    "max_response_bytes": 65536
+  },
+  "capabilities": {
+    "watermark_at_task_start": true,
+    "watermark_boundary_field": "received_at_or_before",
+    "watermark_basis_field": "watermark_basis",
+    "watermark_basis": "task_created_at",
+    "empty_watermark_statuses": [
+      "empty",
+      "not_found"
+    ],
+    "cursor_field": "after_watermark",
+    "pagination": "single_response",
+    "rate_limit_strategy": "fixed_poll_interval",
+    "waiting_statuses": [
+      "waiting",
+      "empty",
+      "not_found"
+    ],
+    "code_fields": [
+      "code",
+      "verification_code"
+    ],
+    "message_id_fields": [
+      "message_id"
+    ],
+    "watermark_fields": [
+      "watermark"
+    ],
+    "sender_filter_field": "sender_filter",
+    "subject_filter_field": "subject_filter",
+    "sender_fields": [
+      "sender"
+    ],
+    "subject_fields": [
+      "subject"
+    ],
+    "received_at_field": "received_at",
+    "code_digits_min": 4,
+    "code_digits_max": 8
+  },
+  "field_shapes": {
+    "request_fields": [
+      "mailbox_id",
+      "mailbox",
+      "after_watermark",
+      "received_at_or_before",
+      "sender_filter",
+      "subject_filter"
+    ],
+    "response_fields": [
+      "status",
+      "code",
+      "verification_code",
+      "message_id",
+      "id",
+      "watermark",
+      "received_at_or_before",
+      "watermark_basis",
+      "sender",
+      "subject",
+      "received_at"
+    ]
+  },
+  "redaction": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_cardholder_data": false,
+    "contains_message_content": false,
+    "contains_verification_codes": false
+  }
+}

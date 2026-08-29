@@ -1,7 +1,17 @@
 # Render this template with a deployment-controlled PLATFORM_DOMAIN and mount
 # the certificate/key from a secret volume. Never commit private keys here.
 
+log_format platform_safe escape=json '{"method":"$request_method","uri":"$uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_response_time":"$upstream_response_time"}';
+access_log /dev/stdout platform_safe;
+error_log /dev/stderr emerg;
+
 limit_req_zone $binary_remote_addr zone=platform_api:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=platform_identity:10m rate=10r/s;
+limit_req_status 429;
+
+# This file defines the API/Web pair and their exact TLS names together.  The
+# rolling executor replaces it atomically and reloads this stable edge.
+include /etc/nginx/edge-routing/active-slot.conf;
 
 server {
     listen 8080 default_server;
@@ -47,8 +57,17 @@ server {
     client_max_body_size 2m;
 
     location /api/ {
+        error_page 413 = @api_request_too_large;
+        error_page 429 = @api_rate_limited;
         limit_req zone=platform_api burst=20 nodelay;
-        proxy_pass http://api:8000;
+        proxy_pass https://active_api;
+        proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $active_api_tls_name;
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_session_reuse on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -63,8 +82,36 @@ server {
         add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
     }
 
+    location @api_request_too_large {
+        default_type application/json;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+        return 413 '{"error":{"code":"request_too_large","message":"Request body too large","recovery_hint":"Reduce the request body to 2 MiB or less and retry."}}';
+    }
+
+    location @api_rate_limited {
+        default_type application/json;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+        add_header Retry-After "1" always;
+        return 429 '{"error":{"code":"rate_limited","message":"Too many requests","recovery_hint":"Retry after the number of seconds in Retry-After."}}';
+    }
+
     location = /healthz {
-        proxy_pass http://api:8000/healthz;
+        proxy_pass https://active_api/healthz;
+        proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $active_api_tls_name;
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_session_reuse on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -74,8 +121,53 @@ server {
         add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
     }
 
+    location = /readyz {
+        proxy_pass https://active_api/readyz;
+        proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $active_api_tls_name;
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_session_reuse on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        add_header Cache-Control "no-store" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+    }
+
+    location = /releasez {
+        proxy_pass https://active_api/releasez;
+        proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $active_api_tls_name;
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_session_reuse on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        add_header Cache-Control "no-store" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+    }
+
     location / {
-        proxy_pass http://web:8080;
+        proxy_pass https://active_web;
+        proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $active_web_tls_name;
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_session_reuse on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
@@ -104,8 +196,16 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     location / {
-        limit_req zone=platform_api burst=20 nodelay;
-        proxy_pass http://keycloak:8080;
+        error_page 429 = @identity_rate_limited;
+        limit_req zone=platform_identity burst=20 nodelay;
+        proxy_pass https://keycloak:8443;
+        proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name keycloak;
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_session_reuse on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -116,5 +216,16 @@ server {
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    }
+
+    location @identity_rate_limited {
+        default_type application/json;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+        add_header Retry-After "1" always;
+        return 429 '{"error":"rate_limited","error_description":"Too many requests; retry after 1 second."}';
     }
 }

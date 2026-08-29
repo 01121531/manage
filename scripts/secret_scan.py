@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import sys
+
+try:
+    from scripts.external_json import read_stable_bytes
+except ModuleNotFoundError:  # Direct script loading from scripts/.
+    from external_json import read_stable_bytes
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -22,6 +28,7 @@ EXCLUDED_DIRS = {
     "node_modules",
 }
 EXCLUDED_FILES = {".env.example", "package-lock.json"}
+MAX_SCANNED_FILE_BYTES = 16 * 1024 * 1024
 PATTERNS = {
     "openai-style-key": re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     "bearer-token": re.compile(r"Bearer\s+[A-Za-z0-9._-]{32,}", re.IGNORECASE),
@@ -30,29 +37,50 @@ PATTERNS = {
 }
 
 
+def _raise_walk_error(error: OSError) -> None:
+    raise error
+
+
 def iter_files() -> list[pathlib.Path]:
     files: list[pathlib.Path] = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file():
-            continue
-        parts = set(path.relative_to(ROOT).parts)
-        if parts & EXCLUDED_DIRS:
-            continue
-        if path.name in EXCLUDED_FILES:
-            continue
-        files.append(path)
+    for raw_directory, directories, names in os.walk(
+        ROOT,
+        topdown=True,
+        followlinks=False,
+        onerror=_raise_walk_error,
+    ):
+        directories[:] = [
+            name for name in directories if name not in EXCLUDED_DIRS
+        ]
+        directory = pathlib.Path(raw_directory)
+        for name in names:
+            path = directory / name
+            if name in EXCLUDED_FILES:
+                continue
+            files.append(path)
     return files
 
 
 def main() -> int:
     findings: list[str] = []
-    for path in iter_files():
+    try:
+        candidates = iter_files()
+    except OSError:
+        findings.append("repository traversal: cannot scan safely")
+        candidates = []
+    for path in candidates:
         try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+            raw = read_stable_bytes(
+                path,
+                max_bytes=MAX_SCANNED_FILE_BYTES,
+                allow_empty=True,
+            )
+        except OSError:
+            findings.append(f"{path.relative_to(ROOT)}: cannot scan safely")
             continue
-        except OSError as error:
-            findings.append(f"{path.relative_to(ROOT)}: cannot read: {error}")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
             continue
         for name, pattern in PATTERNS.items():
             if pattern.search(text):

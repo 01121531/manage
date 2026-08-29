@@ -10,10 +10,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import training_evidence  # noqa: E402
+from scripts.external_text import load_stable_text
 
 
 RUNBOOK = ROOT / "deploy" / "runbooks" / "role-training.md"
 SIGNOFF = ROOT / "deploy" / "production-signoff-template.md"
+MAX_TRAINING_ASSET_BYTES = 64 * 1024
 
 
 def training_asset_errors(runbook_text: str, signoff_text: str) -> list[str]:
@@ -24,6 +26,8 @@ def training_asset_errors(runbook_text: str, signoff_text: str) -> list[str]:
         "python -m scripts.training_evidence create",
         "python -m scripts.training_evidence verify",
         "independent reviewer",
+        "outside the repository",
+        "no-replace hard-link commit point",
     }
     required_signoff = {
         "Phase 6 role-training evidence file and payload SHA-256:",
@@ -33,6 +37,7 @@ def training_asset_errors(runbook_text: str, signoff_text: str) -> list[str]:
         "Security auditor trainee/reviewer:",
         "Platform administrator trainee/reviewer:",
         "Required tabletop scenarios and trace IDs:",
+        "Phase 6 rehearsal/training external write-once paths and pre-existing-target refusal evidence:",
     }
     errors = [
         f"role-training runbook is missing: {item}"
@@ -51,11 +56,19 @@ def training_asset_errors(runbook_text: str, signoff_text: str) -> list[str]:
 
 def main() -> int:
     try:
-        errors = training_asset_errors(
-            RUNBOOK.read_text(encoding="utf-8"),
-            SIGNOFF.read_text(encoding="utf-8"),
+        runbook_text = load_stable_text(
+            RUNBOOK,
+            max_bytes=MAX_TRAINING_ASSET_BYTES,
         )
-    except OSError:
+        signoff_text = load_stable_text(
+            SIGNOFF,
+            max_bytes=MAX_TRAINING_ASSET_BYTES,
+        )
+        errors = training_asset_errors(
+            runbook_text,
+            signoff_text,
+        )
+    except (OSError, UnicodeError):
         print("training-assets-error: required file cannot be read", file=sys.stderr)
         return 1
     if errors:

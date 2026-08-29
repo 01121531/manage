@@ -3,7 +3,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from scripts import create_container_release_manifest as container_release_manifest
 from scripts.create_container_release_manifest import build_manifest, load_manifest, verify_manifest
 
 
@@ -74,6 +76,31 @@ class ContainerReleaseManifestTests(unittest.TestCase):
             )
 
         self.assertEqual(loaded, manifest)
+
+    def test_loaded_manifest_digest_uses_the_same_stable_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            manifest = self.build_complete_manifest(directory)
+            path = directory / "container-release-manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            original = path.read_bytes()
+            stable_loader = container_release_manifest.load_unique_json_with_bytes
+
+            def replace_after_read(candidate: Path, *, max_bytes: int):
+                value, raw = stable_loader(candidate, max_bytes=max_bytes)
+                candidate.write_bytes(raw + b" ")
+                return value, raw
+
+            with mock.patch.object(
+                container_release_manifest,
+                "load_unique_json_with_bytes",
+                side_effect=replace_after_read,
+            ):
+                loaded, digest = load_manifest(path, _include_manifest_sha256=True)
+
+            self.assertEqual(loaded, manifest)
+            self.assertEqual(digest, hashlib.sha256(original).hexdigest())
+            self.assertNotEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
 
     def test_rejects_local_tag(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

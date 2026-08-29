@@ -3,6 +3,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.development.example
 build/
 dist/
 release/

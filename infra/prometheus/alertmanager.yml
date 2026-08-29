@@ -1,6 +1,6 @@
-# Safe development default: alerts are routed to a loopback discard port and
-# cannot leave the Alertmanager container. Production must mount an approved
-# receiver configuration through ALERTMANAGER_CONFIG_FILE.
+# Development/static-test placeholder only: alerts go to a loopback discard
+# port and cannot leave the Alertmanager container. Production Compose must
+# mount an external configuration and the production preflight rejects this file.
 global:
   resolve_timeout: 5m
 

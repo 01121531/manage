@@ -18,12 +18,16 @@ SPEC.loader.exec_module(release_manifest)
 
 
 def main() -> int:
-    manifest = release_manifest.load_manifest(MANIFEST)
-    errors = release_manifest.verify_manifest(manifest)
+    try:
+        manifest = release_manifest.load_manifest(MANIFEST)
+        errors = release_manifest.verify_manifest(manifest)
+    except (OSError, ValueError, RuntimeError, TypeError, RecursionError):
+        print("release-manifest-invalid", file=sys.stderr)
+        return 1
     if errors:
         print("Release manifest is stale: " + ", ".join(errors), file=sys.stderr)
         return 1
-    print("release-manifest-ok committed-lock-current")
+    print("release-manifest-ok committed-snapshot-current")
     return 0
 
 

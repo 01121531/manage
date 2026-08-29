@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "baseline_head": "0017_mail_token_hash_unique",
+  "reviewed_history": {
+    "0001_baseline.py": "9eac03d683fe06cc27ea2f90d5528d6e5444c95ef51208033b2e4888ea9253e7",
+    "0002_oidc_and_roles.py": "26e06c79182c2ccca50ceb923bdbc83d6d636c1e1b6b8cb65233d7f283b37794",
+    "0003_task_lifecycle.py": "2217c97abc03cafe5ec14ba958bdd5426d9f0a358a855e80fea78a29bc1fa20d",
+    "0004_trace_ids.py": "daf26ce36632df593cc5967478a42e5b71344fcd5e8bb8c893175646a2266796",
+    "0005_card_reveals.py": "6b974981be0352dfe1041e3ca904a8b52aa50817aba625fca4eb929fc4e78178",
+    "0006_mail_worker_delivery.py": "5a1cdc1f0dfab9840627fb188546c24ff3248c39fd18901fbf7ed4e6ea9816b9",
+    "0007_audit_append_only.py": "5dd58f007c7dc85976ba55f1e5e567bb8d98b86e78aca0a9ebd3d5300edd2a20",
+    "0008_upload_outbox.py": "7bc91205450bcbd82a73d4a1f1dd00dbf6c1bfa1bad4d28a20fcc5fe2016111c",
+    "0009_upload_policy_governance.py": "edd647e8ac6def7901f855faf65f42dbb7e906852611a293b0e428a41d4880ec",
+    "0010_card_reveal_step_up.py": "a397021ea0942d76a612fdcd972c28201114619f1b6624954fd8610e22ccd218",
+    "0011_mailbox_lease_and_code_ttl.py": "e258b2ea4b1c9b12cf4cf70fc7ce307b4505c551a26a92764301e4bdc926b42e",
+    "0012_mail_session_tokens.py": "4e9480ef02a674604b2fa7b43e619264482e28e3cd2aa1b2249ae3a4c3bf0b4c",
+    "0013_card_secret_ref_unique.py": "9a97aee1ba4677a6ea47cd79ebcf89836a2b121c3a2b716387e42abc6a6069e1",
+    "0014_audit_evidence_fields.py": "2a6b686b6dc18837668add254e5757f8ae16de6ba81703dda76ebc5dd022bef2",
+    "0015_mailbox_health.py": "169c409bb87a6f35c40ac1a4bb4bdb7d78ced81cb74faba0c0376e0fe476d734",
+    "0016_device_last_seen.py": "10efb56b8be34ecee9b6bd135b452eca524b26e878aa2182dde17eab7091247f",
+    "0017_mail_token_hash_unique.py": "e8ce7faea10f47687a1f4d3009a4d7e59494a9b59ae235c9b4d21edd1c168689"
+  },
+  "reviewed_expansions": {
+    "0018_access_token_revocations.py": "d510e01c07cf5558418e474e7e0f95ab4683691195db0904e2b570d2daa869bd",
+    "0019_admin_role_change_approval.py": "51bbda30e14f88afdeea1b6292fed854775ec09d51dad7bb8c869a2b9f833a85",
+    "0020_audit_event_subject_binding.py": "930f1838631a484546c1bb0c3d8891b31334a3c3779053f35a25e80fb8254f21",
+    "0021_audit_archive_index.py": "daa62faa6a22413ba994fe06d8c20af00b6d6f752db635d7df4bf88e74bfe540",
+    "0022_card_quarantine.py": "f5c89adfddd163cabd939477d8a10f4a4835e1409994acf84dbfd39115b95cd3",
+    "0023_card_events.py": "08efb4a2ff801969eb7bdefcc987b8197cb517b5504163728a95d3698a26f774",
+    "0024_schema_compatibility.py": "fdaf13fe2ec53675e8d1d81a923bfd08894457772cdf37b3a55d0dbbb967a1bb",
+    "0025_oidc_session_revocations.py": "1c6f6ec13778917c8dbb18f76a24a94b6caca68ddbc2bc29ba85221d53e16fe9",
+    "0026_mail_message_metadata.py": "21497d96cb399fecaa08017edf934cef11655da0fb4b1da21a6355f47ab81c74",
+    "0027_card_allocation_reason.py": "49ec46ca90991590ea10e6f971b51d3a08d3d054222d73cab57e5c95f0043aae",
+    "0028_operational_policy_governance.py": "81a1bc55522a3512b09dffea4549bb3e0aaad4cc1e0528473b1a8b0480bb0638",
+    "0029_card_replacement.py": "6333748895435193d94ea44cae674acdf9505bf92e31793479ef6ad450bbd047",
+    "0030_mailbox_task_routing.py": "ca47bc4c2add22e2c519c18092bcd54572c516cf0f2d69bced600cd2ca3bbdeb",
+    "0031_card_pool_routing.py": "cab4de46421452504ca2b3a3cd09665ef92ca751fa57586b2cdf1ea863248f75",
+    "0032_upload_phase_tracking.py": "24d5cbac43faae1b46479e163af7bb20a7ff2ba71beaefc08f718e25d5ce93d0"
+  }
+}

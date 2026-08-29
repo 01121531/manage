@@ -7,19 +7,73 @@ rule_files:
 
 alerting:
   alertmanagers:
-    - static_configs:
+    - scheme: https
+      tls_config:
+        ca_file: /run/secrets/internal-tls/ca.crt
+        server_name: alertmanager
+        insecure_skip_verify: false
+        min_version: TLS12
+      static_configs:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  - job_name: api
+  - job_name: prometheus
+    scheme: https
     metrics_path: /metrics
+    tls_config:
+      ca_file: /run/secrets/internal-tls/ca.crt
+      server_name: prometheus
+      insecure_skip_verify: false
+      min_version: TLS12
     static_configs:
-      - targets: ["api:8000"]
-  - job_name: worker-mail
+      - targets: ["prometheus:9090"]
+  - job_name: alertmanager
+    scheme: https
     metrics_path: /metrics
+    tls_config:
+      ca_file: /run/secrets/internal-tls/ca.crt
+      server_name: alertmanager
+      insecure_skip_verify: false
+      min_version: TLS12
+    static_configs:
+      - targets: ["alertmanager:9093"]
+  - job_name: api
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      ca_file: /run/secrets/internal-tls/ca.crt
+      server_name: api
+      insecure_skip_verify: false
+      min_version: TLS12
+    static_configs:
+      - targets: ["api:8443"]
+  - job_name: keycloak
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      ca_file: /run/secrets/internal-tls/ca.crt
+      server_name: keycloak
+      insecure_skip_verify: false
+      min_version: TLS12
+    static_configs:
+      - targets: ["keycloak:9000"]
+  - job_name: worker-mail
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      ca_file: /run/secrets/internal-tls/ca.crt
+      server_name: worker-mail
+      insecure_skip_verify: false
+      min_version: TLS12
     static_configs:
       - targets: ["worker-mail:9101"]
   - job_name: worker-sub2
+    scheme: https
     metrics_path: /metrics
+    tls_config:
+      ca_file: /run/secrets/internal-tls/ca.crt
+      server_name: worker-sub2
+      insecure_skip_verify: false
+      min_version: TLS12
     static_configs:
       - targets: ["worker-sub2:9102"]
