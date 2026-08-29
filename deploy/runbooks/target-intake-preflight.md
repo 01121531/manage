@@ -39,37 +39,46 @@ not production acceptance. Every generated manifest and successful command remai
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
 - Authoring proceeds through immutable generations while Phase 0–6 evidence is
-  collected. `init` publishes generation 000 and its closed schema-v4 genesis receipt;
+  collected. `init` publishes generation 000 and its closed schema-v5 genesis receipt;
   every later generation is a separate no-replace leaf accepted only when
   `register` has also published its write-once receipt. Never overwrite a prior
   generation or use the editable candidate, an unreceipted leaf, or a receipt
   selected for a different locator as an accepted manifest. Production
   sign-off uses a separately finalized leaf and caller-pinned canonical-payload
   and whole-file SHA-256 values.
-- Every schema-v4 generation receipt self-binds its case-preserving lexical
+- Every schema-v5 generation receipt self-binds its case-preserving lexical
   absolute `receipt_path`; copying identical receipt bytes to another locator
-  does not transfer acceptance. Schema-v1/v2/v3 generation receipts and mixed legacy/v4
+  does not transfer acceptance. Schema-v1/v2/v3/v4 generation receipts and mixed legacy/v5
   chains are incompatible and must be rebuilt under new external names rather
   than promoted or silently rewritten. Because schema-v2 snapshot and
   finalization receipts bind the old generation-receipt digests, rebuild those
   receipts and their result leaves after rebuilding the generation chain; do
-  not transplant an old acceptance receipt onto a schema-v4 lineage.
+  not transplant an old acceptance receipt onto a schema-v5 lineage.
 - Each generation receipt embeds the exact requirements registry, phase
-  acceptance matrix, canonical host-UTC evaluation instant, and closed v1
+  acceptance matrix, canonical host-UTC evaluation instant, and closed v2
   validator contract used for that
   generation. `verify-generation-lineage` replays every receipt/manifest pair
   from terminal to genesis with its own embedded context and recorded instant,
-  and requires every generation's ordered on-disk verifier source inventory and
-  raw whole-file SHA-256 values to equal the current local working-tree bytes.
+  and requires every generation's ordered 61-file on-disk verifier source
+  inventory and raw whole-file SHA-256 values to equal the current local
+  working-tree bytes. The inventory includes the statically reachable
+  `platform/` modules, package initializers, and shared backup permission helper
+  omitted by the former 30-file contract. It also requires an exact current
+  replay-runtime fingerprint: Python implementation/version/cache tag/ABI,
+  interpreter executable bytes, OS selection fields, and the version,
+  `METADATA`, `RECORD`, and top-level import-entrypoint bytes for the eleven
+  directly used Python distributions.
   A later policy edit therefore does not reinterpret a legitimate historical
   chain, while an artifact invalid at an ancestor's recorded instant fails
   closed. The embedded context and timestamp are receipt-bound local
   observations, not authenticated policy authority or trusted time. The source
   contract is not a Git blob, commit, package, or portable release identity;
-  line-ending and checkout-byte changes fail closed. Because Python imports the
-  verifier before the inventory is captured and the files are read sequentially,
-  the contract does not prove loaded runtime-code identity, Python/dependency/OS
-  identity, original execution, source authority, or an atomic multi-file snapshot.
+  line-ending and checkout-byte changes fail closed. Distribution metadata and
+  one import entrypoint do not hash every installed dependency file or loaded
+  shared library. Because Python imports the verifier before the inventory is
+  captured and the files are read sequentially, the contract does not prove
+  loaded runtime-code identity, the original authoring runtime identity,
+  original execution, source authority, or an atomic multi-file snapshot.
 - Before each of the seven standalone manifest-consumer `check` commands, review
   the current authoring manifest and retain both digest values printed by a
   successful progress
@@ -1128,21 +1137,24 @@ head. Generation receipts are unsigned local JSON. Self-binding rejects receipt
 copies at another locator, but does not distinguish deleting and recreating the
 same bytes at the same path. Rolling an older manifest, generation receipt and
 all four older pins back as one unit still passes local replay; sequence is not
-a global head. Schema-v4 recovery reruns the current verifier for every
+a global head. Schema-v5 recovery reruns the current verifier for every
 generation using that receipt's embedded requirements/matrix, recorded host UTC,
-and exact ordered on-disk source-byte inventory. This is deterministic local
-replay under receipt-bound inputs and current matching working-tree bytes; it
+exact ordered on-disk source-byte inventory, and matching replay-runtime
+fingerprint. This is deterministic local replay under receipt-bound inputs and
+current matching working-tree/runtime selection; it
 does not authenticate the validation context, make host time trusted, identify
 an authoritative Git commit or portable validator release, prove the loaded
-runtime code or Python/dependency/OS identity, prove that validation actually
-ran at authoring time, or prove that the sequentially read source files ever
+runtime code, hash all Python/dependency/OS runtime bytes, prove the original
+authoring runtime identity, prove that validation actually ran at authoring
+time, or prove that the sequentially read source files ever
 coexisted as one atomic snapshot. The authoring writer fsyncs the staging file but does not prove
 crash durability of the later hard-link directory entry, and a parent directory
 can still be replaced between path preparation and publication. Generation
 receipts therefore do not prove reviewer/pin/receipt authority, global
 latest-head selection, cross-host fork prevention or CAS/WORM, trusted time,
-validation-context authority, validator source authority, runtime identity,
-runtime, original execution, source-snapshot atomicity,
+validation-context authority, validator source authority, loaded runtime-code
+identity, original authoring runtime identity, complete runtime identity,
+original execution, source-snapshot atomicity,
 locator continuity, parent-directory race protection, publication crash
 durability, global rollback protection, or custody after the final recheck.
 Snapshot and finalization receipts

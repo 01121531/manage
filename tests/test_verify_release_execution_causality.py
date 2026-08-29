@@ -551,11 +551,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
 
         for old, new in (
             (
-                'RECEIPT_KIND = "target_intake_generation_receipt_v4"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v5"',
                 'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
             ),
             (
-                'document.get("schema_version") != 4',
+                'document.get("schema_version") != 5',
                 'document.get("schema_version") != 1',
             ),
             (
@@ -598,6 +598,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 "",
             ),
             (
+                '    "platform/api/v1/routes.py",\n',
+                "",
+            ),
+            (
+                '    ("cryptography", "cryptography"),\n',
+                "",
+            ),
+            (
                 '"authoring_entrypoint",\n',
                 '"ignored_authoring_entrypoint",\n',
             ),
@@ -612,6 +620,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             (
                 "if metadata.st_nlink != 1:",
                 "if metadata.st_nlink == 1:",
+            ),
+            (
+                '"runtime_environment": runtime_environment,',
+                '"runtime_environment": {},',
+            ),
+            (
+                "_distribution_fingerprint(name, import_name)",
+                "{'name': name, 'import_name': import_name}",
             ),
         ):
             with self.subTest(old=old):
@@ -848,7 +864,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "schema-v4 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            "schema-v5 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
             requirements,
         )
         self.assertIn(
@@ -856,7 +872,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "closed-v1 validator contract containing declarative authoring/replay entrypoints plus an exact ordered inventory",
+            "closed-v2 validator contract containing declarative authoring/replay entrypoints, an exact ordered 61-file local source inventory with raw whole-file SHA-256 values, and a replay-runtime fingerprint",
             requirements,
         )
         self.assertIn(
@@ -899,15 +915,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Schema-v4 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/mixed-chain rejection evidence:",
+            "Schema-v5 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/mixed-chain rejection evidence:",
             signoff,
         )
         self.assertIn(
-            "Generation validator-contract canonical SHA-256 plus closed-v1 authoring/replay entrypoints and exact ordered on-disk source inventory match:",
+            "Generation validator-contract canonical SHA-256 plus closed-v2 authoring/replay entrypoints, exact ordered 61-file on-disk source inventory, and Python/OS/distribution metadata-entrypoint replay-runtime fingerprint match:",
             signoff,
         )
         self.assertIn(
-            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source authority, loaded runtime-code identity, Python/dependency/OS runtime identity, original validator execution, multi-file source-snapshot atomicity, Git/portable release identity, receipt/pin/reviewer authority, and post-verification custody remain `unverified`:",
+            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source authority, loaded runtime-code identity, complete Python/dependency/OS runtime-code identity, original authoring runtime identity, original validator execution, multi-file source-snapshot atomicity, Git/portable release identity, receipt/pin/reviewer authority, and post-verification custody remain `unverified`:",
             signoff,
         )
         self.assertIn(

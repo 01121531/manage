@@ -3440,7 +3440,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "recovery=read-only-local-revalidation",
                 output.getvalue(),
             )
-            self.assertIn("generation-receipt-locator=self-bound-v4", output.getvalue())
+            self.assertIn("generation-receipt-locator=self-bound-v5", output.getvalue())
             self.assertIn("generation_validator_contract_sha256=", output.getvalue())
             self.assertIn("authoring-rollback-protection=unverified", output.getvalue())
             self.assertEqual(
@@ -4159,10 +4159,11 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "local schema-v2 receipts",
             "case-preserving lexical absolute `receipt_path`",
-            "Schema-v1/v2/v3 generation receipts and mixed legacy/v4",
+            "Schema-v1/v2/v3/v4 generation receipts and mixed legacy/v5",
             "replays every receipt/manifest pair",
-            "exact ordered on-disk source-byte inventory",
-            "loaded runtime-code identity, Python/dependency/OS",
+            "ordered 61-file on-disk verifier source",
+            "replay-runtime fingerprint: Python implementation/version",
+            "loaded runtime-code identity, the original authoring runtime identity",
             "Schema-v1 acceptance receipts are incompatible",
             "Rolling an older manifest, generation receipt and",
             "hard-link directory entry",

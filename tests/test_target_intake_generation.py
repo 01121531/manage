@@ -121,10 +121,10 @@ class TargetIntakeGenerationTests(unittest.TestCase):
 
             self.assertEqual(lineage.manifest, manifest)
             self.assertEqual(lineage.receipt["sequence"], 1)
-            self.assertEqual(lineage.receipt["schema_version"], 4)
+            self.assertEqual(lineage.receipt["schema_version"], 5)
             self.assertEqual(
                 lineage.receipt["kind"],
-                "target_intake_generation_receipt_v4",
+                "target_intake_generation_receipt_v5",
             )
             self.assertEqual(lineage.receipt["receipt_path"], str(receipt_path))
             self.assertEqual(len(lineage.snapshots), 4)
@@ -184,6 +184,15 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                     ),
                 ),
                 (
+                    "v4",
+                    lambda value: value.update(
+                        {
+                            "schema_version": 4,
+                            "kind": "target_intake_generation_receipt_v4",
+                        }
+                    ),
+                ),
+                (
                     "backdated",
                     lambda value: value["validation_context"].update(
                         {"evaluated_at": "2026-08-28T23:59:59.000000Z"}
@@ -235,6 +244,26 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                     for path in (manifest_path, receipt_path)
                 },
             )
+
+    def test_semantic_replay_rejects_re_pinned_runtime_contract_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path, receipt_path, lineage = self._genesis(root)
+            changed = copy.deepcopy(lineage.receipt)
+            changed["validation_context"]["validator_contract"][
+                "runtime_environment"
+            ]["python"]["version"] = "0.0.0"
+            changed_raw = receipt_bytes(changed)
+            receipt_path.write_bytes(changed_raw)
+            pins = self._pins(changed, changed_raw)
+            re_pinned = load_generation_lineage(
+                manifest_path,
+                receipt_path,
+                expected_receipt_payload_sha256=pins[0],
+                expected_receipt_file_sha256=pins[1],
+            )
+
+            self.assertTrue(_generation_semantic_replay_errors(re_pinned))
 
     def test_rejects_wrong_pin_detached_leaf_and_locator_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -356,6 +385,40 @@ class TargetIntakeGenerationTests(unittest.TestCase):
             )
 
             self.assertEqual(recovered.receipt["sequence"], 0)
+
+    def test_self_reported_host_time_remains_untrusted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = create_intake_manifest("staging", self.requirements)
+            manifest_path = root / "future.json"
+            manifest_raw = receipt_bytes(manifest)
+            manifest_path.write_bytes(manifest_raw)
+            receipt_path = root / "future.receipt.json"
+            receipt = create_genesis_receipt(
+                manifest_path,
+                receipt_path,
+                manifest,
+                manifest_raw,
+                evaluated_at="2099-12-31T23:59:59.000000Z",
+                requirements=self.requirements,
+                phase_acceptance_matrix=self.matrix,
+                validator_contract=self.validator_contract,
+            )
+            receipt_raw = receipt_bytes(receipt)
+            receipt_path.write_bytes(receipt_raw)
+            pins = self._pins(receipt, receipt_raw)
+            lineage = load_generation_lineage(
+                manifest_path,
+                receipt_path,
+                expected_receipt_payload_sha256=pins[0],
+                expected_receipt_file_sha256=pins[1],
+            )
+
+            self.assertEqual(
+                lineage.receipt["validation_context"]["evaluated_at"],
+                "2099-12-31T23:59:59.000000Z",
+            )
+            self.assertEqual(_generation_semantic_replay_errors(lineage), [])
 
 
 if __name__ == "__main__":

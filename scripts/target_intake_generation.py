@@ -32,7 +32,7 @@ from scripts.target_intake_validator_contract import validator_contract_shape_er
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECEIPT_KIND = "target_intake_generation_receipt_v4"
+RECEIPT_KIND = "target_intake_generation_receipt_v5"
 RECEIPT_KEYS = {
     "schema_version",
     "kind",
@@ -237,7 +237,7 @@ def receipt_errors(document: Any) -> list[str]:
         return ["generation receipt top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 4
+        document.get("schema_version") != 5
         or document.get("kind") != RECEIPT_KIND
         or document.get("production_acceptance") is not False
         or not _external_output_locator(document.get("receipt_path"))
@@ -331,7 +331,7 @@ def create_genesis_receipt(
     if any(item.get("status") != "missing" for item in manifest.get("items", [])):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 4,
+        "schema_version": 5,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
         "receipt_path": os.path.abspath(receipt_path),
@@ -372,7 +372,7 @@ def create_registration_receipt(
     ):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 4,
+        "schema_version": 5,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
         "receipt_path": os.path.abspath(receipt_path),
