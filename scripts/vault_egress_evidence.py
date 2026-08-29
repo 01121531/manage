@@ -506,7 +506,11 @@ def main(argv: list[str] | None = None) -> int:
         "vault-egress-evidence-index-bound production_acceptance=false "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "
-        "release-review-replay-protection=unverified"
+        "release-review-replay-protection=unverified "
+        "release-storage-provider-native=unverified "
+        "release-storage-retention=unverified "
+        "release-storage-delete-denial=unverified "
+        "release-storage-readback=unverified"
     )
     return 0
 

@@ -66,6 +66,19 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertNotEqual(mutated, self.binding)
         self.assertTrue(self.errors(binding=mutated))
 
+    def test_release_storage_reference_cannot_claim_worm_semantics(self) -> None:
+        for old, new in (
+            ("never WORM semantics", "proves WORM semantics"),
+            (
+                "_opaque_execution_reference(\n        selector.get(",
+                "_execution_reference(\n        selector.get(",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.binding.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.binding)
+                self.assertTrue(self.errors(binding=mutated))
+
     def test_consumer_order_and_forwarding_cannot_be_weakened(self) -> None:
         for old, new in (
             (
@@ -159,11 +172,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 self.assertIn("does not read the frozen phase 0 checkpoint", text)
                 self.assertIn("final strict intake", text)
 
-    def test_every_consumer_reports_the_unverified_review_claim_boundary(self) -> None:
+    def test_every_consumer_reports_the_unverified_release_boundaries(self) -> None:
         for marker in (
             "release-reviewer-authentication=unverified",
             "release-review-trusted-time=unverified",
             "release-review-replay-protection=unverified",
+            "release-storage-provider-native=unverified",
+            "release-storage-retention=unverified",
+            "release-storage-delete-denial=unverified",
+            "release-storage-readback=unverified",
         ):
             mutated = self.intake.replace(marker, marker.replace("unverified", "verified"), 1)
             with self.subTest(source="intake", marker=marker):
@@ -195,6 +212,9 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "trusted timestamp receipt",
             "nonce/sequence/ledger-head replay policy",
             "remain an opaque attribution claim",
+            "only a compatibility namespace for an opaque storage locator",
+            "provider-native enforcement, retention, delete denial, and readback all remain `unverified`",
+            "local no-replace write, or ledger digest cannot upgrade them",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, runbook)
@@ -213,11 +233,19 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "reviewer authentication, trusted time and replay protection remain explicitly unverified",
             requirements,
         )
+        self.assertIn(
+            "local no-replace publication and SHA-256 do not prove provider-native enforcement, retention, delete denial or post-denial readback",
+            requirements,
+        )
         signoff = Path("deploy/production-signoff-template.md").read_text(
             encoding="utf-8"
         )
         self.assertIn(
             "Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:",
+            signoff,
+        )
+        self.assertIn(
+            "Release-execution opaque storage locator plus provider-native enforcement, retention, delete-denial and post-denial readback `unverified` acknowledgement:",
             signoff,
         )
 

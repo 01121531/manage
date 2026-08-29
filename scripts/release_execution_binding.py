@@ -134,7 +134,9 @@ def _environment(value: Any) -> bool:
     )
 
 
-def _execution_reference(value: Any) -> bool:
+def _opaque_execution_reference(value: Any) -> bool:
+    """Validate only the compatibility locator syntax, never WORM semantics."""
+
     prefix = "worm-release-execution:"
     if (
         not isinstance(value, str)
@@ -211,7 +213,9 @@ def selector_errors(
     errors: list[str] = []
     if selector.get("ledger_type") not in LEDGER_TYPES:
         errors.append("release execution ledger type is invalid")
-    if not _execution_reference(selector.get("evidence_object_reference")):
+    if not _opaque_execution_reference(
+        selector.get("evidence_object_reference")
+    ):
         errors.append("release execution object reference is invalid")
     if not _digest(selector.get("evidence_sha256")):
         errors.append("release execution whole-file digest is invalid")

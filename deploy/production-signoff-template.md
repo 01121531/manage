@@ -134,7 +134,7 @@ Release manifest:
 - Phase 6 pilot-input sealed review/valid-until and maintenance-window validity result:
 - Phase 6 target pilot evidence index and canonical payload SHA-256:
 - Phase 6 pilot evidence release tag, commit and container-manifest SHA-256:
-- Phase 6 selected release-execution ledger type, WORM reference and whole-file SHA-256:
+- Phase 6 selected release-execution ledger type, opaque storage reference and whole-file SHA-256:
 - Phase 6 selected release-execution Phase 0 environment, manifest payload SHA-256, requirements SHA-256 and checkpoint phase:
 - Repository-external write-once Phase 0 checkpoint snapshot path, canonical manifest payload SHA-256 and retention reference:
 - Intake manifest/checkpoint 64 KiB limit, duplicate-key rejection and stable bounded-read result:
@@ -146,6 +146,7 @@ Release manifest:
 - Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:
 - Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:
 - Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:
+- Release-execution opaque storage locator plus provider-native enforcement, retention, delete-denial and post-denial readback `unverified` acknowledgement:
 - Phase 0 entry-authorization versus continuous-execution authorization decision, host-clock trust status and external approval authentication status:
 - Mail/Sub2 provider scope, external source version/SHA-256, capture/review/valid-until UTC and same-manifest review result:
 - Phase 1–5/Sub2/Vault execution-index sealed review/valid-until and same-manifest review result:

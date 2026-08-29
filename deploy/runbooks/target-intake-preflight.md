@@ -100,6 +100,19 @@ release-selection review. Until a dedicated external trust policy defines all
 of those controls, `reviewed_by` and `reviewed_at` remain an opaque attribution
 claim. Exact SHA-256 selection and local ordering reject byte substitution and
 predating, but do not authenticate the reviewer, time, or global replay state.
+Likewise, the legacy `worm-release-execution:` prefix is only a compatibility
+namespace for an opaque storage locator. The selector does not read or
+authenticate a provider configuration, immutable object/version identity,
+retention mode or deadline, legal hold, denied-delete response, post-denial
+readback, provider signer, trusted time, or replay head. The forward and rolling
+writers' repository-external no-replace publication and whole-file SHA-256 prove
+neither provider-native WORM enforcement nor continued retention. The existing
+private-secret WORM policy is `unconfigured` and its signing usages are scoped
+to the private-secret evidence domain, so its keys, receipts, policy, and
+observations must not be reused for this release locator. Until a dedicated
+release-storage trust policy and independently pinned provider receipts exist,
+provider-native enforcement, retention, delete denial, and readback all remain
+`unverified`.
 Recompute SHA-256 after every approved artifact change. Do not add inline
 artifact content, self-authored signature fields, or extra manifest fields; the
 schema is closed.
@@ -311,7 +324,9 @@ items, selected ledger and all consumers to prove the complete chain
 the frozen-window start replay. Every success output explicitly reports release
 reviewer authentication, trusted time and replay protection as `unverified`;
 those markers cannot be upgraded by supplying a SHA-256, host timestamp or
-opaque ticket reference.
+opaque ticket reference. The same outputs report provider-native storage,
+retention, delete denial and post-denial readback as `unverified`; the legacy
+locator prefix, local no-replace write, or ledger digest cannot upgrade them.
 
 ## Phase 1, 2, 3 and 5 typed target artifacts
 
@@ -353,7 +368,7 @@ and exact prerequisite item hashes. Seal the aggregate `review_reference`,
 `reviewed_at` and exclusive `valid_until`; review every execution index only
 after its window finishes. Strict intake requires its one evaluation instant to
 remain inside `[reviewed_at, valid_until)`. Every execution evidence index also selects
-the same successful schema-v3 release ledger by typed WORM reference, whole-file
+the same successful schema-v3 release ledger by typed opaque storage reference, whole-file
 SHA-256 and Phase 0 checkpoint identity. Its release tag, 40-hex commit and
 immutable container-manifest SHA-256 must match an independent parse of that
 ledger, and ledger `finished_at` must be no later than the index window's
@@ -466,7 +481,7 @@ the same intake manifest. Seal aggregate `review_reference`, post-window
 `reviewed_at` and exclusive `valid_until`; strict intake requires its single
 evaluation instant inside that half-open interval and the same review metadata
 in the manifest item. Select the same successful schema-v3 release ledger
-by typed WORM reference, whole-file digest and Phase 0 checkpoint identity; the
+by typed opaque storage reference, whole-file digest and Phase 0 checkpoint identity; the
 release triple must match the independently parsed ledger. Do not record Vault addresses or responses, supplier
 URLs or bodies, credentials, tokens, PAN/CVV, verification codes, or identities.
 
@@ -549,7 +564,8 @@ security-auditor subjects must match that reviewed pilot roster.
 Select exactly one successful schema-v3 release execution ledger: either a
 forward ledger with terminal `succeeded` or a Web/API rolling ledger with
 terminal `complete_source_retained`. Record only `forward`/`rolling`, its typed
-WORM object reference, whole-file SHA-256, and the ledger's four-field Phase 0
+opaque storage reference in the legacy `worm-release-execution:` compatibility
+namespace, whole-file SHA-256, and the ledger's four-field Phase 0
 `target_intake` identity. Do not record its filesystem path in the index. The
 release tag, commit, container-manifest SHA-256, environment and complete intake
 identity must match the independently parsed ledger. Schema-v1 ledgers and

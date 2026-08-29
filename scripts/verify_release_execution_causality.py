@@ -26,10 +26,14 @@ CONSUMERS = {
     )
 }
 MAX_SOURCE_BYTES = 128 * 1024
-REVIEW_BOUNDARY_MARKERS = (
+RELEASE_BOUNDARY_MARKERS = (
     "release-reviewer-authentication=unverified",
     "release-review-trusted-time=unverified",
     "release-review-replay-protection=unverified",
+    "release-storage-provider-native=unverified",
+    "release-storage-retention=unverified",
+    "release-storage-delete-denial=unverified",
+    "release-storage-readback=unverified",
 )
 
 
@@ -135,13 +139,16 @@ def _review_call_is_selector_bound(node: ast.AST | None) -> bool:
     )
 
 
-def _has_review_boundary_output(tree: ast.Module) -> bool:
+def _has_release_boundary_output(tree: ast.Module) -> bool:
     strings = [
         node.value
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     ]
-    return all(any(marker in value for value in strings) for marker in REVIEW_BOUNDARY_MARKERS)
+    return all(
+        any(marker in value for value in strings)
+        for marker in RELEASE_BOUNDARY_MARKERS
+    )
 
 
 def causality_errors(
@@ -157,6 +164,8 @@ def causality_errors(
         return ["release execution causality sources are not valid Python"]
 
     identity = _function(binding_tree, "release_execution_identity")
+    opaque_reference = _function(binding_tree, "_opaque_execution_reference")
+    selector_validation = _function(binding_tree, "selector_errors")
     reviewed_at = _function(binding_tree, "release_execution_reviewed_at")
     alignment = _function(
         binding_tree,
@@ -165,12 +174,27 @@ def causality_errors(
     path_alignment = _function(binding_tree, "release_execution_alignment_errors")
     if (
         identity is None
+        or opaque_reference is None
+        or selector_validation is None
         or reviewed_at is None
         or alignment is None
         or path_alignment is None
     ):
         errors.append("release execution identity alignment contract is missing")
     else:
+        opaque_doc = ast.get_docstring(opaque_reference) or ""
+        if (
+            "only" not in opaque_doc.casefold()
+            or "never worm semantics" not in opaque_doc.casefold()
+        ):
+            errors.append("release execution storage reference must remain explicitly opaque")
+        if not any(
+            isinstance(node, ast.Call)
+            and _call_name(node) == "_opaque_execution_reference"
+            and _contains_string(node, "evidence_object_reference")
+            for node in ast.walk(selector_validation)
+        ):
+            errors.append("release execution selector must use the opaque storage validator")
         if not any(
             isinstance(node, ast.Compare)
             and len(node.ops) == 1
@@ -233,8 +257,10 @@ def causality_errors(
     if artifact_errors is None or intake_errors is None:
         errors.append("strict intake causality contract is missing")
         return errors
-    if not _has_review_boundary_output(intake_tree):
-        errors.append("strict intake must report the release-review trust boundary")
+    if not _has_release_boundary_output(intake_tree):
+        errors.append(
+            "strict intake must report the release-review and storage trust boundaries"
+        )
     if not _has_compare(
         artifact_errors,
         "reviewed_at",
@@ -286,8 +312,10 @@ def causality_errors(
         except SyntaxError:
             errors.append(f"{name} is not valid Python")
             continue
-        if not _has_review_boundary_output(tree):
-            errors.append(f"{name} must report the release-review trust boundary")
+        if not _has_release_boundary_output(tree):
+            errors.append(
+                f"{name} must report the release-review and storage trust boundaries"
+            )
         calls = [
             node
             for node in ast.walk(tree)
@@ -329,6 +357,8 @@ def main() -> int:
         "start-replay=final-strict-intake review-consumer-order=locked "
         "release-review-claim=opaque authentication=unverified "
         "trusted-time=unverified replay-protection=unverified "
+        "release-storage-reference=opaque provider-native=unverified "
+        "retention=unverified delete-denial=unverified readback=unverified "
         "production_acceptance=false"
     )
     return 0
