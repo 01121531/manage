@@ -10,6 +10,7 @@ from unittest import mock
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
     release_execution_identity,
+    release_execution_reviewed_at,
     selector_errors,
 )
 from scripts.deploy_release_evidence import TERMINAL_PREFLIGHT_FAILED
@@ -30,6 +31,10 @@ TARGET_RELEASE = {
     "tag": "v1.2.3",
     "commit": "a" * 40,
     "container_manifest_sha256": "b" * 64,
+}
+ALIGNMENT_TIMES = {
+    "release_reviewed_at": "2099-08-26T08:30:00Z",
+    "consumer_started_at": "2099-08-26T08:30:01Z",
 }
 
 
@@ -141,6 +146,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     selector,
                     path,
                     **expected,
+                    release_reviewed_at="2026-08-26T08:30:00Z",
                     consumer_started_at="2026-08-26T08:30:00Z",
                 ),
                 [],
@@ -151,7 +157,18 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     selector,
                     path,
                     **expected,
+                    release_reviewed_at="2026-08-26T08:30:00Z",
                     consumer_started_at="2026-08-26T08:29:59Z",
+                ),
+            )
+            self.assertIn(
+                "release execution must be reviewed before its consuming evidence starts",
+                release_execution_alignment_errors(
+                    selector,
+                    path,
+                    **expected,
+                    release_reviewed_at="2026-08-26T08:30:01Z",
+                    consumer_started_at="2026-08-26T08:30:00Z",
                 ),
             )
 
@@ -183,6 +200,29 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
         reviewed["path"] = "D:/protected/release.json"
         self.assertTrue(selector_errors(reviewed, synthetic=False, environment="staging"))
 
+    def test_review_time_is_bound_to_the_exact_selected_ledger(self) -> None:
+        selector = {"evidence_sha256": "a" * 64}
+        manifest = {
+            "items": [
+                {
+                    "id": "release_execution_evidence",
+                    "status": "provided",
+                    "sha256": "a" * 64,
+                    "reviewed_at": "2026-08-26T08:30:00Z",
+                }
+            ]
+        }
+        self.assertEqual(
+            release_execution_reviewed_at(manifest, selector),
+            "2026-08-26T08:30:00Z",
+        )
+        wrong_digest = copy.deepcopy(manifest)
+        wrong_digest["items"][0]["sha256"] = "b" * 64
+        self.assertIsNone(release_execution_reviewed_at(wrong_digest, selector))
+        duplicate = copy.deepcopy(manifest)
+        duplicate["items"].append(copy.deepcopy(duplicate["items"][0]))
+        self.assertIsNone(release_execution_reviewed_at(duplicate, selector))
+
     def test_forward_success_is_parsed_and_bound_to_release_and_intake(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "forward.json"
@@ -200,6 +240,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     container_manifest_sha256=TARGET_RELEASE[
                         "container_manifest_sha256"
                     ],
+                    **ALIGNMENT_TIMES,
                 ),
                 [],
             )
@@ -214,6 +255,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     container_manifest_sha256=TARGET_RELEASE[
                         "container_manifest_sha256"
                     ],
+                    **ALIGNMENT_TIMES,
                 )
             )
 
@@ -235,6 +277,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     container_manifest_sha256=TARGET_RELEASE[
                         "container_manifest_sha256"
                     ],
+                    **ALIGNMENT_TIMES,
                 )
             )
             selector = _selector(path)
@@ -248,6 +291,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     container_manifest_sha256=TARGET_RELEASE[
                         "container_manifest_sha256"
                     ],
+                    **ALIGNMENT_TIMES,
                 )
             )
             failed_path = Path(temporary) / "failed-forward.json"
@@ -264,6 +308,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                 container_manifest_sha256=TARGET_RELEASE[
                     "container_manifest_sha256"
                 ],
+                **ALIGNMENT_TIMES,
             )
             self.assertIn(
                 "release execution terminal state is not successful",
@@ -285,6 +330,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     container_manifest_sha256=TARGET_RELEASE[
                         "container_manifest_sha256"
                     ],
+                    **ALIGNMENT_TIMES,
                 ),
                 [],
             )

@@ -123,6 +123,14 @@ python -m scripts.rolling_release_evidence `
   --expected-target-intake-requirements-sha256 REVIEWED_REQUIREMENTS_SHA256
 ```
 
+This standalone verifier proves the ledger's closed schema, integrity,
+successful terminal, source/target/intake identity and internal chronology
+only. It deliberately does not read the frozen Phase 0 checkpoint and therefore
+does not prove start-time authorization. That replay is established only by
+final strict intake with the exact repository-external
+`--phase0-checkpoint-manifest`; do not promote
+`rolling-release-evidence-ok` into a Phase 0 causality result.
+
 The ledger verifier performs one bounded stable-file read with a 64 KiB limit
 before parsing. Link/reparse paths, duplicate JSON keys, and any identity,
 link-count, size, or modification-state change fail closed without printing the

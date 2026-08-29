@@ -370,6 +370,13 @@ python -m scripts.deploy_release_evidence `
   --expected-prometheus-image <prometheus-digest-ref>
 ```
 
+This standalone verifier proves the ledger's closed schema, integrity,
+successful terminal, release/intake identity and internal chronology only. It
+deliberately does not read the frozen Phase 0 checkpoint and therefore does not
+prove start-time authorization. That replay is established only by final strict
+intake with the exact repository-external `--phase0-checkpoint-manifest`; do not
+promote `deploy-release-evidence-ok` into a Phase 0 causality result.
+
 The execution ledger and both independently approved projection files each use
 one bounded stable-file read with a 64 KiB limit before parsing. They reject
 link/reparse paths, duplicate JSON keys, and any identity, link-count, size, or

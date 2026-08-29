@@ -148,6 +148,27 @@ def _execution_reference(value: Any) -> bool:
     )
 
 
+def release_execution_reviewed_at(manifest: Any, selector: Any) -> Any:
+    """Return the review time only when the manifest selects this exact ledger."""
+
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(manifest.get("items"), list)
+        or not isinstance(selector, dict)
+        or not _digest(selector.get("evidence_sha256"))
+    ):
+        return None
+    matches = [
+        item
+        for item in manifest["items"]
+        if isinstance(item, dict)
+        and item.get("id") == "release_execution_evidence"
+        and item.get("status") == "provided"
+        and item.get("sha256") == selector["evidence_sha256"]
+    ]
+    return matches[0].get("reviewed_at") if len(matches) == 1 else None
+
+
 def selector_errors(
     selector: Any,
     *,
@@ -232,7 +253,8 @@ def release_execution_alignment_errors(
     release_tag: str,
     release_commit: str,
     container_manifest_sha256: str,
-    consumer_started_at: str | None = None,
+    release_reviewed_at: str,
+    consumer_started_at: str,
 ) -> list[str]:
     validation_errors = selector_errors(
         selector,
@@ -262,6 +284,7 @@ def release_execution_alignment_errors(
         release_tag=release_tag,
         release_commit=release_commit,
         container_manifest_sha256=container_manifest_sha256,
+        release_reviewed_at=release_reviewed_at,
         consumer_started_at=consumer_started_at,
     )
 
@@ -274,7 +297,8 @@ def release_execution_identity_alignment_errors(
     release_tag: str,
     release_commit: str,
     container_manifest_sha256: str,
-    consumer_started_at: str | None = None,
+    release_reviewed_at: str,
+    consumer_started_at: str,
 ) -> list[str]:
     errors = selector_errors(
         selector,
@@ -313,15 +337,31 @@ def release_execution_identity_alignment_errors(
         errors.append("release execution target release does not match its index")
     if identity["target_intake"] != selector["target_intake"]:
         errors.append("release execution target intake does not match its selector")
-    if consumer_started_at is not None:
-        finished_at = _timestamp(identity.get("finished_at"))
-        consumer_started = _timestamp(consumer_started_at)
-        if (
-            finished_at is None
-            or consumer_started is None
-            or consumer_started < finished_at
-        ):
-            errors.append(
-                "release execution must finish before its consuming evidence starts"
-            )
+    finished_at = _timestamp(identity.get("finished_at"))
+    reviewed_at = _timestamp(release_reviewed_at)
+    consumer_started = _timestamp(consumer_started_at)
+    if (
+        finished_at is None
+        or consumer_started is None
+        or consumer_started < finished_at
+    ):
+        errors.append(
+            "release execution must finish before its consuming evidence starts"
+        )
+    if (
+        finished_at is None
+        or reviewed_at is None
+        or reviewed_at < finished_at
+    ):
+        errors.append(
+            "release execution review must not predate ledger completion"
+        )
+    if (
+        reviewed_at is None
+        or consumer_started is None
+        or consumer_started < reviewed_at
+    ):
+        errors.append(
+            "release execution must be reviewed before its consuming evidence starts"
+        )
     return errors

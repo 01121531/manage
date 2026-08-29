@@ -163,6 +163,8 @@ class GeneratedEvidenceStableLoadingTests(unittest.TestCase):
                     container_manifest_sha256=TARGET_RELEASE[
                         "container_manifest_sha256"
                     ],
+                    release_reviewed_at="2099-08-26T08:30:00Z",
+                    consumer_started_at="2099-08-26T08:30:01Z",
                 )
             self.assertEqual(errors, ["release execution evidence cannot be read"])
             self.assertEqual(calls, 2)
@@ -218,6 +220,8 @@ class GeneratedEvidenceStableLoadingTests(unittest.TestCase):
                 container_manifest_sha256=TARGET_RELEASE[
                     "container_manifest_sha256"
                 ],
+                release_reviewed_at="2099-08-26T08:30:00Z",
+                consumer_started_at="2099-08-26T08:30:01Z",
             )
 
             self.assertEqual(errors, ["release execution evidence size is invalid"])

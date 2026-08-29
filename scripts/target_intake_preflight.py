@@ -52,6 +52,7 @@ from scripts.release_execution_binding import (
     ReleaseExecutionBindingError,
     release_execution_identity,
     release_execution_identity_alignment_errors,
+    release_execution_reviewed_at,
 )
 from scripts.sub2_execution_evidence import (
     index_errors as sub2_evidence_errors,
@@ -899,6 +900,10 @@ def intake_errors(
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
                     ),
+                    release_reviewed_at=release_execution_reviewed_at(
+                        document,
+                        artifact.get("release_execution"),
+                    ),
                     consumer_started_at=artifact.get("window", {}).get(
                         "started_at"
                     ),
@@ -927,6 +932,10 @@ def intake_errors(
                     release_commit=bindings.get("release_commit"),
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
+                    ),
+                    release_reviewed_at=release_execution_reviewed_at(
+                        document,
+                        sub2_evidence.get("release_execution"),
                     ),
                     consumer_started_at=sub2_evidence.get("window", {}).get(
                         "started_at"
@@ -958,6 +967,10 @@ def intake_errors(
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
                     ),
+                    release_reviewed_at=release_execution_reviewed_at(
+                        document,
+                        vault_egress_evidence.get("release_execution"),
+                    ),
                     consumer_started_at=vault_egress_evidence.get("window", {}).get(
                         "started_at"
                     ),
@@ -986,6 +999,10 @@ def intake_errors(
                     release_commit=bindings.get("release_commit"),
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
+                    ),
+                    release_reviewed_at=release_execution_reviewed_at(
+                        document,
+                        phase6_pilot_evidence.get("release_execution"),
                     ),
                     consumer_started_at=phase6_pilot_evidence.get("window", {}).get(
                         "started_at"
@@ -1019,6 +1036,10 @@ def intake_errors(
                     release_commit=bindings.get("release_commit"),
                     container_manifest_sha256=bindings.get(
                         "container_manifest_sha256"
+                    ),
+                    release_reviewed_at=release_execution_reviewed_at(
+                        document,
+                        phase6_operations_evidence.get("release_execution"),
                     ),
                     consumer_started_at=phase6_operations_evidence.get(
                         "window", {}

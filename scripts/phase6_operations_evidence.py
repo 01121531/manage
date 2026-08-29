@@ -28,6 +28,7 @@ from scripts.phase6_pilot_inputs import (
 from scripts.rollback_release_evidence import TERMINAL_SUCCEEDED
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
+    release_execution_reviewed_at,
     selector_errors as release_execution_selector_errors,
 )
 from scripts.training_evidence import (
@@ -694,6 +695,10 @@ def main(argv: list[str] | None = None) -> int:
         release_tag=bindings.get("release_tag"),
         release_commit=bindings.get("release_commit"),
         container_manifest_sha256=bindings.get("container_manifest_sha256"),
+        release_reviewed_at=release_execution_reviewed_at(
+            manifest,
+            document.get("release_execution"),
+        ),
         consumer_started_at=document.get("window", {}).get("started_at"),
     )
     if binding_errors:

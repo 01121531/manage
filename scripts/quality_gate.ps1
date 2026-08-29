@@ -77,6 +77,9 @@ try {
     python scripts/verify_rolling_release.py
     if ($LASTEXITCODE -ne 0) { throw "Web/API rolling-release verification failed." }
 
+    python scripts/verify_release_execution_causality.py
+    if ($LASTEXITCODE -ne 0) { throw "Release execution causality verification failed." }
+
     python scripts/verify_training_assets.py
     if ($LASTEXITCODE -ne 0) { throw "Role-training asset verification failed." }
 

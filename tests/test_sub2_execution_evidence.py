@@ -103,6 +103,12 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                     "sha256": bindings["target_platform_inventory_sha256"],
                 },
                 {
+                    "id": "release_execution_evidence",
+                    "status": "provided",
+                    "sha256": "f" * 64,
+                    "reviewed_at": "2026-08-26T08:30:00Z",
+                },
+                {
                     "id": "sub2_execution_evidence",
                     "status": "provided",
                     "reviewed_by": "sub2-independent-review-record-42",
@@ -271,7 +277,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             intake_binding_errors(reviewed, wrong_environment),
         )
         wrong_review = copy.deepcopy(manifest)
-        wrong_review["items"][2]["reviewed_by"] = "sub2-independent-review-record-99"
+        wrong_review["items"][3]["reviewed_by"] = "sub2-independent-review-record-99"
         self.assertIn(
             "Sub2 evidence review metadata does not match this intake manifest",
             intake_binding_errors(reviewed, wrong_review),
@@ -297,6 +303,9 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                 release_path.read_bytes()
             ).hexdigest()
             reviewed = self._reseal(reviewed)
+            manifest["items"][2]["sha256"] = reviewed["release_execution"][
+                "evidence_sha256"
+            ]
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             def args() -> list[str]:

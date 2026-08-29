@@ -167,6 +167,12 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                     "sha256": bindings["phase6_pilot_inputs_sha256"],
                 },
                 {
+                    "id": "release_execution_evidence",
+                    "status": "provided",
+                    "sha256": "f" * 64,
+                    "reviewed_at": "2026-08-26T08:30:00Z",
+                },
+                {
                     "id": "phase6_pilot_evidence",
                     "status": "provided",
                     "reviewed_by": "pilot-evidence-review:record-42",
@@ -369,6 +375,9 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                 release_path.read_bytes()
             ).hexdigest()
             reviewed = self._reseal(reviewed)
+            manifest["items"][3]["sha256"] = reviewed["release_execution"][
+                "evidence_sha256"
+            ]
             inputs_path.write_text(json.dumps(pilot_inputs), encoding="utf-8")
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             index_path.write_text(json.dumps(self.template), encoding="utf-8")

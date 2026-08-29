@@ -253,7 +253,7 @@
         4,
         6
       ],
-      "purpose": "Repository-external immutable historical schema-v3 forward or rolling release execution ledger selected by every Phase 1-5 execution index and by the Phase 6 pilot and operations indexes; the release entrypoint uses one host-UTC instant for both Phase 0 checkpoint validation and ledger started_at, strict replay requires that start inside the frozen Phase 0 validity intersection, ledger selection review cannot predate finished_at, and every consuming execution window starts no earlier than finished_at. The ledger itself has no invented expiry, and host-clock ordering is not trusted time or authenticated approval.",
+      "purpose": "Repository-external immutable historical schema-v3 forward or rolling release execution ledger selected by every Phase 1-5 execution index and by the Phase 6 pilot and operations indexes; the release entrypoint uses one host-UTC instant for both Phase 0 checkpoint validation and ledger started_at, strict replay requires that start inside the frozen Phase 0 validity intersection, and the complete selection chain is finished_at <= ledger reviewed_at <= every consuming execution window start. Standalone ledger verification remains checkpoint-independent and proves historical ledger integrity/identity rather than Phase 0 start authorization; that proof belongs to final strict intake. The ledger itself has no invented expiry, and host-clock ordering is not trusted time or authenticated approval.",
       "artifact_policy": "release_execution_ledger",
       "matrix_refs": [
         {

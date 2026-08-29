@@ -142,6 +142,7 @@ Release manifest:
 - Standalone artifact check/strict-intake bounded-reader and unique-key parse parity result:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:
 - Final strict current-to-checkpoint six-item equality and release-ledger-to-checkpoint identity result:
+- Standalone ledger integrity/identity result versus final-strict Phase 0 start-replay authority result:
 - Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:
 - Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:
 - Phase 0 entry-authorization versus continuous-execution authorization decision, host-clock trust status and external approval authentication status:

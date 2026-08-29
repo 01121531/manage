@@ -129,6 +129,7 @@ def main() -> int:
         "Phase 6 selected release-execution ledger type, WORM reference and whole-file SHA-256:",
         "Phase 6 selected release-execution Phase 0 environment, manifest payload SHA-256, requirements SHA-256 and checkpoint phase:",
         "Phase 6 selected schema-v3 ledger independent parse and successful-terminal result:",
+        "Standalone ledger integrity/identity result versus final-strict Phase 0 start-replay authority result:",
         "Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:",
         "Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:",
         "Phase 0 entry-authorization versus continuous-execution authorization decision, host-clock trust status and external approval authentication status:",

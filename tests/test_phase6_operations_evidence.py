@@ -237,6 +237,12 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
             ]
             + [
                 {
+                    "id": "release_execution_evidence",
+                    "status": "provided",
+                    "sha256": "f" * 64,
+                    "reviewed_at": "2026-08-26T08:30:00Z",
+                },
+                {
                     "id": "phase6_operations_evidence",
                     "status": "provided",
                     "reviewed_by": "operations-evidence-review:record-43",
@@ -485,6 +491,7 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
             ledger_digest = hashlib.sha256(release_path.read_bytes()).hexdigest()
             reviewed["release_execution"]["evidence_sha256"] = ledger_digest
             reviewed = self._reseal(reviewed)
+            manifest["items"][3]["sha256"] = ledger_digest
             pilot_evidence["release_execution"]["evidence_sha256"] = ledger_digest
             pilot_evidence = seal_pilot_evidence(
                 {

@@ -291,6 +291,13 @@ expiry was continuously authorized. Instead, the ledger must finish before its
 exact digest may be selected and reviewed, and every Phase 1–6 consuming
 execution window must start at or after ledger `finished_at`. Equality at that
 handoff is accepted. Historical ledgers do not expire merely because time passes.
+The forward and rolling standalone ledger verifiers remain checkpoint-independent
+historical-integrity checks: they do not read the frozen Phase 0 checkpoint and
+must not claim start-time authorization. Final strict intake is the sole
+repository verifier that combines the exact checkpoint, current six Phase 0
+items, selected ledger and all consumers to prove the complete chain
+`finished_at <= ledger reviewed_at <= consumer window.started_at` together with
+the frozen-window start replay.
 
 ## Phase 1, 2, 3 and 5 typed target artifacts
 
@@ -552,10 +559,10 @@ python scripts/phase6_pilot_evidence.py check `
 Exit code 1 means the sealed index, exact scenario contract, time window,
 release identity, references, independence, or redaction assertion is invalid.
 Exit code 2 means its roster, environment, or same-manifest bindings differ.
-The `check` command independently parses the supplied v2 ledger and compares
+The `check` command independently parses the supplied v3 ledger and compares
 its whole-file digest, successful terminal, target release and Phase 0 intake.
 The final strict intake preflight also reads the registered ledger once from
-the manifest, validates the same v2 success contract, and cross-checks its
+the manifest, validates the same v3 success contract, and cross-checks its
 identity against both sealed selectors.
 Success still does not verify the remaining external evidence content, target
 behavior, or production acceptance. Independently inspect the referenced
@@ -614,7 +621,7 @@ code 2 means the environment, roster, trace set, release identity, dependency,
 or same-manifest binding differs. Success validates metadata only and does not
 verify the external evidence content, delivery receiver, restored data, target
 Vault, rollback execution, training attendance, or production acceptance.
-It does independently parse the selected v2 release ledger and requires its
+It does independently parse the selected v3 release ledger and requires its
 selector to equal the pilot selector. Independently inspect every referenced
 write-once object and source artifact.
 

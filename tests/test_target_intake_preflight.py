@@ -1293,6 +1293,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 if item["id"] == "release_execution_evidence"
             )
             provide(release_item, phase0_digest)
+            release_item["reviewed_at"] = "2026-08-26T08:30:00Z"
             for item in manifest["items"]:
                 if item["id"] not in phase0_ids and item is not release_item:
                     provide(item, phase0_digest)
@@ -1364,6 +1365,17 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 ),
             )
             release_item["reviewed_at"] = "2026-08-26T12:00:00Z"
+            self.assertIn(
+                "release execution must be reviewed before its consuming evidence starts",
+                intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=True,
+                    phase0_checkpoint_manifest=checkpoint_path.resolve(),
+                ),
+            )
+            release_item["reviewed_at"] = "2026-08-26T08:30:00Z"
             for identifier in (
                 "phase1_platform_evidence",
                 "phase2_mail_evidence",
@@ -2583,6 +2595,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 if item["id"] == "release_execution_evidence"
             )
             provide(release_item, phase0_digest)
+            release_item["reviewed_at"] = "2026-08-26T08:30:00Z"
             for item in manifest["items"]:
                 if item["id"] not in phase0_ids and item is not release_item:
                     provide(item, phase0_digest)
@@ -2755,6 +2768,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "same value both to validate the frozen Phase 0 checkpoint",
             "[max(reviewed_at), min(valid_until))",
             "Phase 0 validity is an entry authorization",
+            "standalone ledger verifiers remain checkpoint-independent",
+            "finished_at <= ledger reviewed_at <= consumer window.started_at",
             "schema-v3 release ledger",
             "ledger `finished_at`",
         ):
