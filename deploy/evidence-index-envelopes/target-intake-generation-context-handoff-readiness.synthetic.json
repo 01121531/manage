@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "record_type": "target_intake_generation_context_handoff_readiness",
+  "synthetic": true,
+  "readiness_status": "pending",
+  "production_acceptance": false,
+  "not_committed_eligible": false,
+  "policy_artifact_sha256": "154351fb2f7354101d4c2e397141d787e6e7d89e780c304ea2faa2ce6b18dc87",
+  "generation_subject": null,
+  "context_signature": null,
+  "trusted_timestamp": null,
+  "provider_head": null,
+  "assertions": {
+    "policy_configured": false,
+    "context_signature_authenticated": false,
+    "signer_role_scope_authorized": false,
+    "anchor_window_valid": false,
+    "revocation_snapshot_current": false,
+    "timestamp_nonce_imprint_bound": false,
+    "provider_current_head_authenticated": false,
+    "provider_cas_precondition_ready": false,
+    "global_fork_absence_proven": false,
+    "global_rollback_protection_proven": false,
+    "no_generation_publication_performed": true
+  },
+  "integrity": {
+    "payload_sha256": "7bc65685f35691c41906f62dc48fe638b27208483e8a82d0baf6227d51a4ae03"
+  }
+}

@@ -662,6 +662,30 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             )
         )
 
+    def test_generation_external_handoff_boundaries_cannot_be_promoted(self) -> None:
+        for old, new in (
+            (
+                "authoring-validation-context-external-handoff=not-consumed",
+                "authoring-validation-context-external-handoff=consumed",
+            ),
+            (
+                "authoring-validation-context-signature=unverified",
+                "authoring-validation-context-signature=verified",
+            ),
+            (
+                "authoring-trusted-timestamp-receipt=unverified",
+                "authoring-trusted-timestamp-receipt=verified",
+            ),
+            (
+                "authoring-provider-head-cas=unverified",
+                "authoring-provider-head-cas=verified",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.intake.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+
     def test_final_intake_consumer_selector_comparison_cannot_be_removed(self) -> None:
         for old, new in (
             ("selector != baseline", "selector == baseline"),

@@ -80,6 +80,12 @@ try {
     python scripts/verify_release_execution_causality.py
     if ($LASTEXITCODE -ne 0) { throw "Release execution causality verification failed." }
 
+    python scripts/target_intake_generation_context_trust.py verify-repository
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake generation-context handoff contract verification failed." }
+
+    python scripts/verify_target_intake_generation_context_trust.py
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake generation-context handoff static verification failed." }
+
     python scripts/verify_training_assets.py
     if ($LASTEXITCODE -ne 0) { throw "Role-training asset verification failed." }
 

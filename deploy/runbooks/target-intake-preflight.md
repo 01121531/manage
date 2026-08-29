@@ -1163,6 +1163,58 @@ instant is not trusted time. The
 private-secret signing domains and their still-unconfigured trust
 anchors are scope-limited and must not be reused for this purpose.
 
+## Generation-context external handoff readiness
+
+The repository contains a generation-specific preparatory policy and pending
+readiness template. Validate both without creating a signature, consulting the
+host clock, contacting a provider, or advancing any head:
+
+```powershell
+python scripts/target_intake_generation_context_trust.py verify-repository
+```
+
+The closed v1 policy is intentionally `synthetic=true`,
+`policy_status=unconfigured`, `production_acceptance=false`, and
+`not_committed_eligible=false`; authoring and recovery integration are both
+disabled. Its only function is to freeze the future handoff requirements:
+
+- an exact generation subject binds the terminal manifest/receipt four digests,
+  sequence, validation-context and validator-contract digests, environment,
+  expected prior provider head, proposed provider sequence, and CAS request ID;
+- context authority, trusted-time authority, and provider-head authority use
+  three distinct generation-specific roles, signature domains, and
+  `*_v1_only` usage scopes; private-secret or TLS keys/scopes cannot cross into
+  this domain;
+- any future context anchor must carry externally governed key identity,
+  validity and revocation state; the current unconfigured policy rejects local
+  key material, claimed validity windows, or claimed revocation snapshots;
+- trusted time must bind a challenge nonce and the exact subject imprint; a
+  host UTC value or an old timestamp token is not a freshness/latest-head proof;
+- provider head semantics require caller-pinned prior head, sequence and
+  generation preconditions, immutable version identity, signed CAS outcome,
+  read-after-CAS current-head evidence, stale-write rejection, no automatic
+  retry, append-only history, retention, delete denial, and readback.
+
+The companion readiness template remains `pending`, contains no generation
+subject, signature, timestamp, or provider-head evidence, and asserts that no
+generation publication occurred. Attempts to change signer role/scope/domain,
+insert local key/expiry/revocation claims, disable timestamp nonce/imprint
+binding, weaken CAS preconditions, embed evidence, or promote an assertion fail
+closed. The verifier performs bounded stable single-link reads only; a static
+gate forbids network, subprocess, host-time, write, delete, repair, signing, and
+provider mutation capabilities.
+
+This policy is not consumed by `init`, `register`, or recovery. Their output
+therefore reports `authoring-validation-context-external-handoff=not-consumed`
+and keeps context signature, signer role/scope, anchor validity/revocation,
+trusted timestamp, provider head and provider CAS `unverified`. A future
+configured protocol requires an independently pinned, externally governed
+policy version/predecessor, real custody and revocation evidence, authenticated
+nonce-bound trusted time, and a provider-native immutable CAS/head receipt. One
+signed historical timestamp or one-hop head is not proof of a fresh global
+latest head, hidden-fork absence, cross-host linearizability, or rollback
+protection.
+
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and
 redaction assertions. It never proves that a provider contract is correct,
