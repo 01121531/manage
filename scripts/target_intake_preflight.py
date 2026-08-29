@@ -44,7 +44,10 @@ from scripts.phase6_operations_evidence import (
     intake_binding_errors as operations_evidence_binding_errors,
     phase6_alignment_errors as operations_alignment_errors,
 )
-from scripts.provider_contract_conformance import contract_errors
+from scripts.provider_contract_conformance import (
+    contract_errors,
+    runtime_conformance_errors,
+)
 from scripts.release_execution_binding import (
     ReleaseExecutionBindingError,
     release_execution_identity,
@@ -422,6 +425,8 @@ def _artifact_errors(
             errors.append(
                 f"{identifier} provider contract must be reviewed non-synthetic material"
             )
+        else:
+            validated_document = contract
     expected_decision_type = {
         "card_pci_boundary": "card_pci_boundary",
         "oidc_deployment_identity": "oidc_deployment_identity",
@@ -568,6 +573,7 @@ def intake_errors(
     phase0_approval: Any | None = None
     target_inventory: Any | None = None
     target_phase_artifacts: dict[str, Any] = {}
+    provider_contracts: dict[str, Any] = {}
     sub2_evidence: Any | None = None
     vault_egress_evidence: Any | None = None
     phase6_pilot_inputs: Any | None = None
@@ -602,6 +608,16 @@ def intake_errors(
                 repository_root=repository_root,
             )
             errors.extend(artifact_errors)
+            if (
+                identifier in {"mail_contract", "sub2_contract"}
+                and isinstance(validated_document, dict)
+                and not contract_errors(
+                    validated_document,
+                    expected_type=identifier.removesuffix("_contract"),
+                )
+                and validated_document.get("synthetic") is False
+            ):
+                provider_contracts[identifier] = validated_document
             if (
                 identifier == "phase0_boundary_approval"
                 and isinstance(validated_document, dict)
@@ -694,6 +710,14 @@ def intake_errors(
         )
     if sub2_evidence is not None:
         errors.extend(sub2_evidence_binding_errors(sub2_evidence, document))
+    phase4_runtime_required = require_complete and (
+        required_ids is None or "sub2_execution_evidence" in required_ids
+    )
+    if phase4_runtime_required and "sub2_contract" in provider_contracts:
+        if runtime_conformance_errors(provider_contracts["sub2_contract"]):
+            errors.append(
+                "sub2_contract runtime is not conformant with the reviewed provider contract"
+            )
     if vault_egress_evidence is not None:
         errors.extend(vault_egress_binding_errors(vault_egress_evidence, document))
     if phase6_pilot_inputs is not None:

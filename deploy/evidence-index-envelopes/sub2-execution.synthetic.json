@@ -19,10 +19,17 @@
     "finished_at": null
   },
   "scenarios": {
-    "successful_submission": null,
+    "balance_check": null,
+    "authorization_exchange": null,
+    "successful_create": null,
     "definitive_failure": null,
     "submission_timeout": null,
-    "status_idempotency_query": null,
+    "status_succeeded": null,
+    "status_failed": null,
+    "status_processing": null,
+    "status_not_found": null,
+    "status_unknown": null,
+    "duplicate_create_replay": null,
     "unknown_reconciliation": null
   },
   "prohibited_content": {
@@ -37,6 +44,6 @@
     "contains_token_values": false
   },
   "integrity": {
-    "payload_sha256": "3012bcdcd9cf7771f18603eb64f22dc4b317e9e80e2c30c4710c00b74b7e9500"
+    "payload_sha256": "3cec0f2f0e63d0a42cbe29a46c06bf99f444ac265b91a7686e62b81767840c92"
   }
 }

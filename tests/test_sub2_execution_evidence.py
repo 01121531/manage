@@ -61,7 +61,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                 "observation": observation,
                 "result": "passed",
                 "evidence_object_reference": f"worm-evidence-object-{index}",
-                "evidence_sha256": str(index) * 64,
+                "evidence_sha256": f"{index:064x}",
                 "redaction_confirmed": True,
             }
         document["scenarios"] = scenarios
@@ -101,20 +101,20 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             quality_gate,
         )
 
-    def test_reviewed_index_requires_all_five_exact_scenarios(self) -> None:
+    def test_reviewed_index_requires_all_exact_workflow_and_query_scenarios(self) -> None:
         reviewed = self._reviewed()
         self.assertEqual(index_errors(reviewed), [])
 
         missing = copy.deepcopy(reviewed)
-        missing["scenarios"].pop("submission_timeout")
+        missing["scenarios"].pop("authorization_exchange")
         missing = self._reseal(missing)
         wrong_observation = copy.deepcopy(reviewed)
-        wrong_observation["scenarios"]["unknown_reconciliation"]["observation"] = (
+        wrong_observation["scenarios"]["status_not_found"]["observation"] = (
             "submission_succeeded"
         )
         wrong_observation = self._reseal(wrong_observation)
         failed = copy.deepcopy(reviewed)
-        failed["scenarios"]["successful_submission"]["result"] = "failed"
+        failed["scenarios"]["successful_create"]["result"] = "failed"
         failed = self._reseal(failed)
 
         for document in (missing, wrong_observation, failed):
@@ -126,7 +126,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
         duplicate_object = copy.deepcopy(reviewed)
         duplicate_object["scenarios"]["definitive_failure"][
             "evidence_object_reference"
-        ] = duplicate_object["scenarios"]["successful_submission"][
+        ] = duplicate_object["scenarios"]["successful_create"][
             "evidence_object_reference"
         ]
         duplicate_object = self._reseal(duplicate_object)
@@ -138,7 +138,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
         ]
         same_actor_reviewer = self._reseal(same_actor_reviewer)
         not_redacted = copy.deepcopy(reviewed)
-        not_redacted["scenarios"]["status_idempotency_query"][
+        not_redacted["scenarios"]["status_processing"][
             "redaction_confirmed"
         ] = False
         not_redacted = self._reseal(not_redacted)
@@ -150,7 +150,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
     def test_scenarios_must_be_inside_a_canonical_utc_window(self) -> None:
         reviewed = self._reviewed()
         outside = copy.deepcopy(reviewed)
-        outside["scenarios"]["successful_submission"]["executed_at"] = (
+        outside["scenarios"]["successful_create"]["executed_at"] = (
             "2026-08-26T11:00:00Z"
         )
         outside = self._reseal(outside)
@@ -289,10 +289,13 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
         )
         for expected in (
             "sub2_execution_evidence.py check",
-            "successful submission",
+            "balance check",
+            "authorization exchange",
+            "successful create",
             "definitive failure",
             "submission timeout",
-            "status/idempotency query",
+            "five normalized status outcomes",
+            "same-provider-key duplicate replay",
             "unknown reconciliation",
             "index metadata only",
             "does not verify the external evidence content",

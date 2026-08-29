@@ -14,7 +14,7 @@
         "deployment-domain and control-plane ownership record"
       ],
       "missing_inputs": [
-        "redacted Sub2 request, response and authentication samples",
+        "redacted Sub2 authentication, four-stage workflow, request/response shape, idempotency scope/retention and status-consistency samples",
         "redacted mail-provider request, response, authentication and rate-limit samples",
         "card PAN/CVV field inventory and PCI scope decision",
         "Keycloak ACR-to-LoA mapping and production deployment identity"
@@ -68,11 +68,11 @@
       "repository_status": "generic_adapter_gate_passed",
       "production_acceptance": false,
       "target_evidence_required": [
-        "real Sub2 success, failure, timeout, idempotency-query and unknown-reconciliation evidence",
+        "real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five status outcomes, same-key replay and unknown-reconciliation evidence",
         "target Vault-path denial and domain egress-policy evidence"
       ],
       "missing_inputs": [
-        "real Sub2 interface, authentication, idempotency and status-query samples"
+        "real Sub2 balance-check, authorization-exchange, create and status-query mappings with idempotency scope/retention and consistency semantics"
       ]
     },
     {

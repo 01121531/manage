@@ -13,18 +13,18 @@
         0,
         4
       ],
-      "purpose": "Redacted Sub2 request, response, authentication, idempotency and status-query contract; never include live credentials.",
+      "purpose": "Redacted Sub2 authentication, balance-check, authorization-exchange, create and status-query contract with field shapes, phase mapping, idempotency scope/retention and consistency semantics; never include live credentials or provider URLs.",
       "artifact_policy": "redacted_contract",
       "matrix_refs": [
         {
           "phase": 0,
           "category": "missing_inputs",
-          "value": "redacted Sub2 request, response and authentication samples"
+          "value": "redacted Sub2 authentication, four-stage workflow, request/response shape, idempotency scope/retention and status-consistency samples"
         },
         {
           "phase": 4,
           "category": "missing_inputs",
-          "value": "real Sub2 interface, authentication, idempotency and status-query samples"
+          "value": "real Sub2 balance-check, authorization-exchange, create and status-query mappings with idempotency scope/retention and consistency semantics"
         }
       ]
     },
@@ -186,13 +186,13 @@
       "phases": [
         4
       ],
-      "purpose": "Repository-external evidence index for real Sub2 success, failure, timeout, idempotency-query and unknown-reconciliation runs.",
+      "purpose": "Repository-external evidence index for real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five normalized status outcomes, same-provider-key replay and unknown-reconciliation runs.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
           "phase": 4,
           "category": "target_evidence_required",
-          "value": "real Sub2 success, failure, timeout, idempotency-query and unknown-reconciliation evidence"
+          "value": "real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five status outcomes, same-key replay and unknown-reconciliation evidence"
         }
       ]
     },

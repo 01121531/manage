@@ -26,10 +26,17 @@ EVIDENCE_INDEX = (
 )
 
 REQUIRED_SCENARIO_OBSERVATIONS = {
-    "successful_submission": "submission_succeeded",
-    "definitive_failure": "definitive_rejection_failed",
-    "submission_timeout": "timeout_remained_unknown_without_automatic_retry",
-    "status_idempotency_query": "provider_query_correlated_by_status_or_idempotency",
+    "balance_check": "provider_submit_balance_check_observed",
+    "authorization_exchange": "provider_submit_authorization_exchange_observed",
+    "successful_create": "provider_submit_to_provider_result_succeeded",
+    "definitive_failure": "provider_submit_to_provider_result_definitive_failure",
+    "submission_timeout": "provider_submit_remained_unknown_without_automatic_retry",
+    "status_succeeded": "reconciliation_check_to_result_succeeded",
+    "status_failed": "reconciliation_check_to_result_failed",
+    "status_processing": "reconciliation_check_remained_unknown_processing",
+    "status_not_found": "reconciliation_check_remained_unknown_not_found",
+    "status_unknown": "reconciliation_check_remained_unknown_unclassified",
+    "duplicate_create_replay": "same_provider_key_returned_same_result_without_duplicate_create",
     "unknown_reconciliation": "unknown_reconciled_without_blind_retry",
 }
 _PAYLOAD_KEYS = {

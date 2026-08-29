@@ -73,6 +73,7 @@ _SUB2_CAPABILITY_KEYS = {
     "submit_method",
     "idempotency_location",
     "idempotency_name",
+    "provider_idempotency_value",
     "task_correlation_location",
     "task_correlation_name",
     "success_reference_field",
@@ -80,6 +81,7 @@ _SUB2_CAPABILITY_KEYS = {
     "rate_limit_strategy",
     "unknown_http_statuses",
     "status_query",
+    "workflow",
 }
 _STATUS_QUERY_KEYS = {
     "supported",
@@ -90,10 +92,51 @@ _STATUS_QUERY_KEYS = {
     "result_field",
     "outcomes",
 }
+_SUB2_WORKFLOW_KEYS = {
+    "operation_order",
+    "provider_mode",
+    "operations",
+    "idempotency",
+    "status_consistency",
+}
+_SUB2_OPERATION_KEYS = {
+    "provider_operation_reference",
+    "method",
+    "request_fields",
+    "response_fields",
+    "platform_phase",
+    "timeout_outcome",
+    "automatic_retry",
+}
+_SUB2_IDEMPOTENCY_KEYS = {
+    "scope",
+    "minimum_retention_seconds",
+    "same_key_same_payload",
+    "same_key_different_payload",
+}
+_SUB2_STATUS_CONSISTENCY_KEYS = {
+    "model",
+    "maximum_visibility_delay_seconds",
+    "minimum_retention_seconds",
+    "not_found_outcome",
+}
+_SUB2_OPERATION_ORDER = (
+    "balance_check",
+    "authorization_exchange",
+    "create",
+    "status_query",
+)
+_SUB2_OPERATION_PHASES = {
+    "balance_check": "provider_submit",
+    "authorization_exchange": "provider_submit",
+    "create": "provider_submit",
+    "status_query": "reconciliation_check",
+}
 _REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _FIELD_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 _PLACEHOLDERS = {"example", "placeholder", "tbd", "todo", "unknown"}
 _EXPECTED_SUB2_GAP = [
+    "sub2 provider workflow is unverified",
     "sub2 runtime does not implement status query",
     "sub2 runtime does not implement idempotency lookup",
 ]
@@ -129,7 +172,10 @@ def _status_codes(value: Any) -> bool:
 def _common_errors(document: dict[str, Any], expected_type: str | None) -> list[str]:
     errors: list[str] = []
     contract_type = document.get("contract_type")
-    if document.get("schema_version") != 1 or contract_type not in {"mail", "sub2"}:
+    expected_schema = {"mail": 1, "sub2": 2}.get(contract_type)
+    if contract_type not in {"mail", "sub2"} or document.get(
+        "schema_version"
+    ) != expected_schema:
         errors.append("provider contract identity is invalid")
     if expected_type is not None and contract_type != expected_type:
         errors.append("provider contract type does not match the expected intake item")
@@ -231,7 +277,96 @@ def _mail_errors(capabilities: Any) -> list[str]:
     return errors
 
 
-def _sub2_errors(capabilities: Any) -> list[str]:
+def _sub2_workflow_errors(workflow: Any, *, synthetic: bool) -> list[str]:
+    if not isinstance(workflow, dict) or set(workflow) != _SUB2_WORKFLOW_KEYS:
+        return ["Sub2 workflow schema is invalid"]
+    errors: list[str] = []
+    if workflow.get("operation_order") != list(_SUB2_OPERATION_ORDER):
+        errors.append("Sub2 workflow operation order is invalid")
+    operations = workflow.get("operations")
+    if not isinstance(operations, dict) or set(operations) != set(
+        _SUB2_OPERATION_ORDER
+    ):
+        errors.append("Sub2 workflow operation inventory is invalid")
+    else:
+        for operation in _SUB2_OPERATION_ORDER:
+            details = operations.get(operation)
+            if not isinstance(details, dict) or set(details) != _SUB2_OPERATION_KEYS:
+                errors.append(f"Sub2 workflow {operation} schema is invalid")
+                continue
+            if (
+                details.get("platform_phase") != _SUB2_OPERATION_PHASES[operation]
+                or details.get("timeout_outcome") != "unknown"
+                or details.get("automatic_retry") is not False
+            ):
+                errors.append(f"Sub2 workflow {operation} safety mapping is invalid")
+            if synthetic:
+                if (
+                    details.get("provider_operation_reference") is not None
+                    or details.get("method") is not None
+                    or details.get("request_fields") != []
+                    or details.get("response_fields") != []
+                ):
+                    errors.append(
+                        f"synthetic Sub2 workflow {operation} mapping must remain pending"
+                    )
+            elif (
+                not _safe_reference(details.get("provider_operation_reference"))
+                or details.get("method") not in {"GET", "POST", "PUT"}
+                or not _field_names(details.get("request_fields"))
+                or not _field_names(details.get("response_fields"))
+            ):
+                errors.append(f"reviewed Sub2 workflow {operation} mapping is invalid")
+
+    provider_mode = workflow.get("provider_mode")
+    idempotency = workflow.get("idempotency")
+    consistency = workflow.get("status_consistency")
+    if not isinstance(idempotency, dict) or set(idempotency) != _SUB2_IDEMPOTENCY_KEYS:
+        errors.append("Sub2 workflow idempotency schema is invalid")
+    if not isinstance(consistency, dict) or set(
+        consistency
+    ) != _SUB2_STATUS_CONSISTENCY_KEYS:
+        errors.append("Sub2 workflow status consistency schema is invalid")
+    if synthetic:
+        if provider_mode is not None:
+            errors.append("synthetic Sub2 provider mode must remain pending")
+        if isinstance(idempotency, dict) and any(
+            value is not None for value in idempotency.values()
+        ):
+            errors.append("synthetic Sub2 idempotency semantics must remain pending")
+        if isinstance(consistency, dict) and (
+            consistency.get("model") is not None
+            or consistency.get("maximum_visibility_delay_seconds") is not None
+            or consistency.get("minimum_retention_seconds") is not None
+            or consistency.get("not_found_outcome") != "unknown"
+        ):
+            errors.append("synthetic Sub2 status consistency must remain pending")
+        return errors
+
+    if provider_mode not in {"atomic_create", "ordered_multi_step"}:
+        errors.append("reviewed Sub2 provider mode is invalid")
+    if isinstance(idempotency, dict) and (
+        idempotency.get("scope")
+        not in {"global", "provider_account", "credential", "group"}
+        or type(idempotency.get("minimum_retention_seconds")) is not int
+        or not 1 <= idempotency["minimum_retention_seconds"] <= 31_536_000
+        or idempotency.get("same_key_same_payload") != "same_result"
+        or idempotency.get("same_key_different_payload") != "reject"
+    ):
+        errors.append("reviewed Sub2 idempotency semantics are invalid")
+    if isinstance(consistency, dict) and (
+        consistency.get("model") not in {"strong", "eventual"}
+        or type(consistency.get("maximum_visibility_delay_seconds")) is not int
+        or not 0 <= consistency["maximum_visibility_delay_seconds"] <= 86_400
+        or type(consistency.get("minimum_retention_seconds")) is not int
+        or not 1 <= consistency["minimum_retention_seconds"] <= 31_536_000
+        or consistency.get("not_found_outcome") != "unknown"
+    ):
+        errors.append("reviewed Sub2 status consistency is invalid")
+    return errors
+
+
+def _sub2_errors(capabilities: Any, *, synthetic: bool) -> list[str]:
     if not isinstance(capabilities, dict) or set(capabilities) != _SUB2_CAPABILITY_KEYS:
         return ["Sub2 contract capability schema is invalid"]
     errors: list[str] = []
@@ -248,6 +383,8 @@ def _sub2_errors(capabilities: Any) -> list[str]:
         value = capabilities.get(field_key)
         if not isinstance(value, str) or _FIELD_NAME.fullmatch(value) is None:
             errors.append(f"Sub2 contract {field_key} is invalid")
+    if capabilities.get("provider_idempotency_value") != "upload_job_id":
+        errors.append("Sub2 contract provider idempotency value is invalid")
     if capabilities.get("pagination") not in {"not_applicable", "cursor_pages"}:
         errors.append("Sub2 contract pagination mode is invalid")
     if capabilities.get("rate_limit_strategy") not in {
@@ -288,6 +425,9 @@ def _sub2_errors(capabilities: Any) -> list[str]:
             "unknown",
         }:
             errors.append("Sub2 status-query outcomes are incomplete")
+    errors.extend(
+        _sub2_workflow_errors(capabilities.get("workflow"), synthetic=synthetic)
+    )
     return errors
 
 
@@ -328,7 +468,33 @@ def contract_errors(document: Any, *, expected_type: str | None = None) -> list[
                     "mail contract watermark acknowledgement fields are incomplete"
                 )
     elif document.get("contract_type") == "sub2":
-        errors.extend(_sub2_errors(document.get("capabilities")))
+        capabilities = document.get("capabilities")
+        errors.extend(
+            _sub2_errors(
+                capabilities,
+                synthetic=document.get("synthetic") is True,
+            )
+        )
+        field_shapes = document.get("field_shapes")
+        if isinstance(capabilities, dict) and isinstance(field_shapes, dict):
+            request_fields = field_shapes.get("request_fields")
+            response_fields = field_shapes.get("response_fields")
+            if isinstance(request_fields, list) and not {
+                "job_id",
+                "task_id",
+                "business_name",
+                "card",
+                "policy",
+            }.issubset(request_fields):
+                errors.append("Sub2 contract request fields are incomplete")
+            status_query = capabilities.get("status_query")
+            required_response_fields = {capabilities.get("success_reference_field")}
+            if isinstance(status_query, dict):
+                required_response_fields.add(status_query.get("result_field"))
+            if isinstance(response_fields, list) and not required_response_fields.issubset(
+                response_fields
+            ):
+                errors.append("Sub2 contract response fields are incomplete")
     return errors
 
 
@@ -402,6 +568,8 @@ def runtime_conformance_errors(document: Any) -> list[str]:
         capabilities["idempotency_location"] != runtime["idempotency_location"]
         or capabilities["idempotency_name"].casefold()
         != str(runtime["idempotency_name"]).casefold()
+        or capabilities["provider_idempotency_value"]
+        != runtime["provider_idempotency_value"]
     ):
         errors.append("sub2 runtime idempotency placement is incompatible")
     if (
@@ -425,6 +593,10 @@ def runtime_conformance_errors(document: Any) -> list[str]:
         capabilities["status_query"]["outcomes"]
     ) != set(runtime["lookup_outcomes"]):
         errors.append("sub2 runtime lookup outcome protocol is incompatible")
+    if capabilities["workflow"]["provider_mode"] is None:
+        errors.append("sub2 provider workflow is unverified")
+    elif capabilities["workflow"]["provider_mode"] == "ordered_multi_step":
+        errors.append("sub2 runtime does not implement reviewed multi-step workflow")
     if not runtime["status_query_supported"]:
         errors.append("sub2 runtime does not implement status query")
     if not runtime["idempotency_lookup_supported"]:
@@ -471,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(
             "provider-contracts-ok mail=conformant "
-            "sub2=status-query-gap production_acceptance=false"
+            "sub2=workflow-and-query-gap production_acceptance=false"
         )
         return 0
     try:

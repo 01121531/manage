@@ -85,7 +85,24 @@ protected external intake directory, replace its capability mappings with the
 reviewed provider facts, set `synthetic=false`, and record opaque
 `provider_reference` and `review_reference` values. Synthetic contracts cannot
 satisfy strict intake, and the envelope must never contain example values,
-credentials, message content, verification codes, or cardholder data.
+credentials, message content, verification codes, provider URLs, request or
+response bodies, or cardholder data.
+
+The Sub2 schema-v2 workflow is deliberately pending in the repository template.
+Populate all four ordered operations (`balance_check`,
+`authorization_exchange`, `create`, and `status_query`) with opaque operation
+references, HTTP methods, and request/response field names only. Declare whether
+the provider exposes one atomic create operation or an ordered multi-step flow.
+Keep each operation mapped to the fixed platform phase in the template, with
+`timeout_outcome=unknown` and `automatic_retry=false`.
+
+The reviewed workflow must also state the provider-account idempotency scope,
+minimum retention, same-key replay behavior, different-payload collision
+behavior, query consistency model, maximum visibility delay, and query record
+retention. `not_found_outcome` must remain `unknown`. The provider idempotency
+value is the server-generated `upload_job_id`; the user-supplied API replay key
+is never sent as the provider lookup key. Do not change this value source without
+changing and revalidating both create and query implementations.
 
 Check the reviewed Mail envelope against the current generic connector:
 
@@ -101,10 +118,14 @@ python scripts/provider_contract_conformance.py check --input D:\email-platform-
 
 Exit code 1 means the content envelope itself is invalid. Exit code 2 means the
 reviewed envelope is structurally valid but the current runtime lacks one or
-more declared capabilities. The repository currently locks a Sub2 status-query
-gap: submit and idempotency headers exist, but supplier status query and
-idempotency lookup are not implemented. Do not enable a production Sub2
-Adapter until a real reviewed contract is present and this command exits 0.
+more declared capabilities. The repository currently locks a Sub2
+workflow/status-query gap: the generic create request and provider idempotency
+header exist, but the real balance/auth/create mapping, supplier status query,
+and idempotency lookup are not implemented. A Phase 0 checkpoint may preserve
+the reviewed contract while implementation is pending; a Phase 4-or-later
+checkpoint additionally runs runtime conformance and rejects this gap. Do not
+enable a production Sub2 Adapter until a real reviewed contract is present and
+this command exits 0.
 
 The worker has a provider-independent lookup protocol only. A supplier Adapter
 may normalize a reviewed query result to exactly `succeeded`, `failed`,
@@ -267,9 +288,14 @@ object before acceptance.
 The committed
 `deploy/evidence-index-envelopes/sub2-execution.synthetic.json` contains index
 metadata only and cannot satisfy strict intake. Create a reviewed external copy
-after executing all five target scenarios: successful submission, definitive
-failure, submission timeout, status/idempotency query, and unknown
-reconciliation without a blind retry.
+after executing every fixed target scenario: balance check, authorization
+exchange, successful create, definitive failure, submission timeout, each of
+the five normalized status outcomes (`succeeded`, `failed`, `processing`,
+`not_found`, and `unknown`), same-provider-key duplicate replay, and unknown
+reconciliation without a blind retry. The fixed observations bind those real
+provider actions to `provider_submit`, `provider_result`,
+`reconciliation_check`, and `reconciliation_result` without storing provider
+payloads.
 
 For each scenario record only opaque execution, executor, independent reviewer,
 trace, and immutable evidence-object references; canonical UTC execution time;

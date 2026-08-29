@@ -21,6 +21,43 @@ class ProviderContractConformanceTests(unittest.TestCase):
         self.mail = json.loads(MAIL_CONTRACT.read_text(encoding="utf-8"))
         self.sub2 = json.loads(SUB2_CONTRACT.read_text(encoding="utf-8"))
 
+    def _reviewed_sub2(self) -> dict[str, object]:
+        document = copy.deepcopy(self.sub2)
+        document.update(
+            {
+                "synthetic": False,
+                "provider_reference": "sub2-provider-contract-42",
+                "review_reference": "sub2-independent-review-42",
+            }
+        )
+        workflow = document["capabilities"]["workflow"]
+        workflow["provider_mode"] = "ordered_multi_step"
+        for operation, details in workflow["operations"].items():
+            details.update(
+                {
+                    "provider_operation_reference": f"sub2-operation-{operation}",
+                    "method": "GET" if operation == "status_query" else "POST",
+                    "request_fields": ["correlation_id"],
+                    "response_fields": ["result"],
+                }
+            )
+        workflow["idempotency"].update(
+            {
+                "scope": "provider_account",
+                "minimum_retention_seconds": 86400,
+                "same_key_same_payload": "same_result",
+                "same_key_different_payload": "reject",
+            }
+        )
+        workflow["status_consistency"].update(
+            {
+                "model": "eventual",
+                "maximum_visibility_delay_seconds": 30,
+                "minimum_retention_seconds": 86400,
+            }
+        )
+        return document
+
     def test_repository_synthetic_contracts_are_safe_and_closed(self) -> None:
         self.assertEqual(contract_errors(self.mail, expected_type="mail"), [])
         self.assertEqual(contract_errors(self.sub2, expected_type="sub2"), [])
@@ -41,6 +78,7 @@ class ProviderContractConformanceTests(unittest.TestCase):
         self.assertEqual(
             runtime_conformance_errors(self.sub2),
             [
+                "sub2 provider workflow is unverified",
                 "sub2 runtime does not implement status query",
                 "sub2 runtime does not implement idempotency lookup",
             ],
@@ -86,6 +124,7 @@ class ProviderContractConformanceTests(unittest.TestCase):
         )
         self.assertIn("received_at", self.mail["field_shapes"]["response_fields"])
         self.assertEqual(sub2["idempotency_name"], "Idempotency-Key")
+        self.assertEqual(sub2["provider_idempotency_value"], "upload_job_id")
         self.assertTrue(sub2["lookup_protocol_supported"])
         self.assertEqual(
             set(sub2["lookup_outcomes"]),
@@ -186,6 +225,64 @@ class ProviderContractConformanceTests(unittest.TestCase):
             with self.subTest(document=document["capabilities"]["status_query"]):
                 self.assertTrue(contract_errors(document, expected_type="sub2"))
 
+    def test_sub2_workflow_is_pending_in_repository_and_complete_when_reviewed(self) -> None:
+        workflow = self.sub2["capabilities"]["workflow"]
+        self.assertIsNone(workflow["provider_mode"])
+        self.assertEqual(
+            workflow["operation_order"],
+            ["balance_check", "authorization_exchange", "create", "status_query"],
+        )
+        self.assertTrue(
+            all(
+                operation["provider_operation_reference"] is None
+                for operation in workflow["operations"].values()
+            )
+        )
+        reviewed = self._reviewed_sub2()
+        self.assertEqual(contract_errors(reviewed, expected_type="sub2"), [])
+
+    def test_sub2_workflow_rejects_missing_phase_idempotency_and_query_semantics(self) -> None:
+        reviewed = self._reviewed_sub2()
+        mutations = []
+        wrong_order = copy.deepcopy(reviewed)
+        wrong_order["capabilities"]["workflow"]["operation_order"].reverse()
+        mutations.append(wrong_order)
+        wrong_phase = copy.deepcopy(reviewed)
+        wrong_phase["capabilities"]["workflow"]["operations"]["create"][
+            "platform_phase"
+        ] = "provider_result"
+        mutations.append(wrong_phase)
+        missing_retention = copy.deepcopy(reviewed)
+        missing_retention["capabilities"]["workflow"]["idempotency"][
+            "minimum_retention_seconds"
+        ] = None
+        mutations.append(missing_retention)
+        unsafe_not_found = copy.deepcopy(reviewed)
+        unsafe_not_found["capabilities"]["workflow"]["status_consistency"][
+            "not_found_outcome"
+        ] = "failed"
+        mutations.append(unsafe_not_found)
+
+        for document in mutations:
+            with self.subTest(document=document):
+                self.assertTrue(contract_errors(document, expected_type="sub2"))
+
+    def test_sub2_contract_field_shapes_cover_platform_and_result_mappings(self) -> None:
+        reviewed = self._reviewed_sub2()
+        missing_request = copy.deepcopy(reviewed)
+        missing_request["field_shapes"]["request_fields"].remove("policy")
+        missing_response = copy.deepcopy(reviewed)
+        missing_response["field_shapes"]["response_fields"].remove("status")
+
+        self.assertIn(
+            "Sub2 contract request fields are incomplete",
+            contract_errors(missing_request, expected_type="sub2"),
+        )
+        self.assertIn(
+            "Sub2 contract response fields are incomplete",
+            contract_errors(missing_response, expected_type="sub2"),
+        )
+
     def test_malformed_nested_values_fail_closed_without_type_errors(self) -> None:
         malformed_mail = copy.deepcopy(self.mail)
         malformed_mail["capabilities"]["code_fields"] = [{"field": "code"}]
@@ -223,6 +320,9 @@ class ProviderContractConformanceTests(unittest.TestCase):
             "--expected-type sub2",
             "synthetic contracts cannot satisfy strict intake",
             "status-query gap",
+            "balance_check",
+            "provider idempotency value is the server-generated `upload_job_id`",
+            "phase 4-or-later",
             "exit code 2",
             "not_found",
             "never authorizes an automatic retry",

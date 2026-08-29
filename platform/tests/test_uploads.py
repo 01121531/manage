@@ -2744,7 +2744,7 @@ class UploadJobTests(unittest.TestCase):
         command = adapter.commands[0]
         self.assertEqual(command.job_id, job_id)
         self.assertEqual(command.task_id, task_id)
-        self.assertEqual(command.idempotency_key, "lookup-success-upload")
+        self.assertEqual(command.provider_idempotency_key, job_id)
         self.assertNotIn("lookup-success-upload", repr(command))
         self.assertNotIn("vault://sub2/credential", repr(command))
         with self.app.state.session_factory() as db:

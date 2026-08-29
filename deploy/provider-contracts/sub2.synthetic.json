@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "contract_type": "sub2",
   "provider_reference": "synthetic-sub2-contract",
   "synthetic": true,
@@ -15,6 +15,7 @@
     "submit_method": "POST",
     "idempotency_location": "header",
     "idempotency_name": "Idempotency-Key",
+    "provider_idempotency_value": "upload_job_id",
     "task_correlation_location": "header",
     "task_correlation_name": "X-Platform-Task-ID",
     "success_reference_field": "external_ref",
@@ -44,6 +45,65 @@
         "not_found",
         "unknown"
       ]
+    },
+    "workflow": {
+      "operation_order": [
+        "balance_check",
+        "authorization_exchange",
+        "create",
+        "status_query"
+      ],
+      "provider_mode": null,
+      "operations": {
+        "balance_check": {
+          "provider_operation_reference": null,
+          "method": null,
+          "request_fields": [],
+          "response_fields": [],
+          "platform_phase": "provider_submit",
+          "timeout_outcome": "unknown",
+          "automatic_retry": false
+        },
+        "authorization_exchange": {
+          "provider_operation_reference": null,
+          "method": null,
+          "request_fields": [],
+          "response_fields": [],
+          "platform_phase": "provider_submit",
+          "timeout_outcome": "unknown",
+          "automatic_retry": false
+        },
+        "create": {
+          "provider_operation_reference": null,
+          "method": null,
+          "request_fields": [],
+          "response_fields": [],
+          "platform_phase": "provider_submit",
+          "timeout_outcome": "unknown",
+          "automatic_retry": false
+        },
+        "status_query": {
+          "provider_operation_reference": null,
+          "method": null,
+          "request_fields": [],
+          "response_fields": [],
+          "platform_phase": "reconciliation_check",
+          "timeout_outcome": "unknown",
+          "automatic_retry": false
+        }
+      },
+      "idempotency": {
+        "scope": null,
+        "minimum_retention_seconds": null,
+        "same_key_same_payload": null,
+        "same_key_different_payload": null
+      },
+      "status_consistency": {
+        "model": null,
+        "maximum_visibility_delay_seconds": null,
+        "minimum_retention_seconds": null,
+        "not_found_outcome": "unknown"
+      }
     }
   },
   "field_shapes": {

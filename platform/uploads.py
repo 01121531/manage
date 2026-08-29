@@ -332,7 +332,7 @@ class Sub2LookupCommand:
 
     job_id: str
     task_id: str
-    idempotency_key: str = field(repr=False)
+    provider_idempotency_key: str = field(repr=False)
     external_ref: str | None
     policy: Sub2Policy
 
@@ -365,6 +365,7 @@ _SUB2_AUTH_LOCATION = "authorization_header"
 _SUB2_SUBMIT_METHOD = "POST"
 _SUB2_IDEMPOTENCY_LOCATION = "header"
 _SUB2_IDEMPOTENCY_NAME = "Idempotency-Key"
+_SUB2_PROVIDER_IDEMPOTENCY_VALUE = "upload_job_id"
 _SUB2_TASK_CORRELATION_LOCATION = "header"
 _SUB2_TASK_CORRELATION_NAME = "X-Platform-Task-ID"
 _SUB2_SUCCESS_REFERENCE_FIELD = "external_ref"
@@ -414,6 +415,7 @@ def sub2_adapter_contract_capabilities() -> dict[str, object]:
         "submit_method": _SUB2_SUBMIT_METHOD,
         "idempotency_location": _SUB2_IDEMPOTENCY_LOCATION,
         "idempotency_name": _SUB2_IDEMPOTENCY_NAME,
+        "provider_idempotency_value": _SUB2_PROVIDER_IDEMPOTENCY_VALUE,
         "task_correlation_location": _SUB2_TASK_CORRELATION_LOCATION,
         "task_correlation_name": _SUB2_TASK_CORRELATION_NAME,
         "success_reference_field": _SUB2_SUCCESS_REFERENCE_FIELD,
@@ -1376,7 +1378,7 @@ def reconcile_unknown_upload_job(
             Sub2LookupCommand(
                 job_id=job.id,
                 task_id=job.task_id,
-                idempotency_key=job.idempotency_key,
+                provider_idempotency_key=job.id,
                 external_ref=job.external_ref,
                 policy=resolved_policy,
             )

@@ -77,6 +77,13 @@ class TargetIntakePreflightTests(unittest.TestCase):
     def setUp(self) -> None:
         self.matrix = json.loads(MATRIX.read_text(encoding="utf-8"))
         self.requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
+        runtime_patch = mock.patch.object(
+            target_intake,
+            "runtime_conformance_errors",
+            return_value=[],
+        )
+        runtime_patch.start()
+        self.addCleanup(runtime_patch.stop)
 
     @staticmethod
     def _artifact_document(
@@ -88,6 +95,32 @@ class TargetIntakePreflightTests(unittest.TestCase):
             document = json.loads(MAIL_CONTRACT.read_text(encoding="utf-8"))
         elif identifier == "sub2_contract":
             document = json.loads(SUB2_CONTRACT.read_text(encoding="utf-8"))
+            workflow = document["capabilities"]["workflow"]
+            workflow["provider_mode"] = "ordered_multi_step"
+            for operation, details in workflow["operations"].items():
+                details.update(
+                    {
+                        "provider_operation_reference": f"sub2-operation-{operation}",
+                        "method": "GET" if operation == "status_query" else "POST",
+                        "request_fields": ["correlation_id"],
+                        "response_fields": ["result"],
+                    }
+                )
+            workflow["idempotency"].update(
+                {
+                    "scope": "provider_account",
+                    "minimum_retention_seconds": 86400,
+                    "same_key_same_payload": "same_result",
+                    "same_key_different_payload": "reject",
+                }
+            )
+            workflow["status_consistency"].update(
+                {
+                    "model": "eventual",
+                    "maximum_visibility_delay_seconds": 30,
+                    "minimum_retention_seconds": 86400,
+                }
+            )
         elif identifier == "card_pci_boundary":
             document = json.loads(CARD_PCI_DECISION.read_text(encoding="utf-8"))
             document["pci_scope"].update(
@@ -351,7 +384,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "observation": observation,
                     "result": "passed",
                     "evidence_object_reference": f"worm-evidence-object-{index}",
-                    "evidence_sha256": str(index) * 64,
+                    "evidence_sha256": f"{index:064x}",
                     "redaction_confirmed": True,
                 }
                 for index, (scenario, observation) in enumerate(
@@ -1011,6 +1044,59 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 require_complete=False,
             ),
         )
+
+    def test_sub2_runtime_alignment_is_deferred_at_phase0_and_required_at_phase4(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            artifact = root / "sub2-contract.json"
+            manifest = create_intake_manifest("staging", self.requirements)
+            document = self._artifact_document("sub2_contract", manifest)
+            artifact.write_text(json.dumps(document), encoding="utf-8")
+            item = next(
+                entry for entry in manifest["items"] if entry["id"] == "sub2_contract"
+            )
+            item.update(
+                {
+                    "status": "provided",
+                    "artifact_path": str(artifact.resolve()),
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "reviewed_by": "security-review-ticket-42",
+                    "reviewed_at": "2026-08-26T12:00:00Z",
+                    "redaction_confirmed": True,
+                }
+            )
+            with mock.patch.object(
+                target_intake,
+                "runtime_conformance_errors",
+                return_value=["reviewed runtime gap"],
+            ):
+                phase0_errors = intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=True,
+                    required_ids=frozenset(
+                        phase_requirement_ids(self.requirements, 0)
+                    ),
+                )
+                phase4_errors = intake_errors(
+                    manifest,
+                    self.requirements,
+                    repository_root=repository,
+                    require_complete=True,
+                    required_ids=frozenset(
+                        phase_requirement_ids(self.requirements, 4)
+                    ),
+                )
+
+            runtime_error = (
+                "sub2_contract runtime is not conformant with the reviewed "
+                "provider contract"
+            )
+            self.assertNotIn(runtime_error, phase0_errors)
+            self.assertIn(runtime_error, phase4_errors)
 
     def test_complete_reviewed_external_artifacts_pass_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
