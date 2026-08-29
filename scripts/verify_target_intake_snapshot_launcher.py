@@ -45,7 +45,10 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
         'MANIFEST_FILENAME = "target-intake-validator-source-snapshot.json"',
         'SNAPSHOT_KIND = "target_intake_validator_source_snapshot_v1"',
         '"raise SystemExit(_child_main(sys.argv[1:]))"',
-        '"-I",\n            "-B",\n            "-S",\n            "-P",\n            "-c",',
+        '_DISCOVERY_BOOTSTRAP = _CHILD_BOOTSTRAP.replace(',
+        '"_child_main", "_discovery_child_main"',
+        '"-I",\n            "-B",\n            "-S",\n            "-P",\n            "-X",',
+        'f"pycache_prefix={pycache_prefix}"',
         "executable = Path(sys.executable).resolve(strict=True)",
         "env=_minimal_environment()",
         "stdin=subprocess.DEVNULL",
@@ -56,18 +59,28 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
         "_audit_loaded_local_modules(snapshot_root, document)",
         "document = snapshot.manifest",
         "recheck_source_snapshot(snapshot)",
-        "runtime_environment = _current_runtime_environment()",
-        "if _current_runtime_environment() != runtime_environment:",
+        "runtime_environment = _current_runtime_environment(",
+        "_current_runtime_environment(discovery_selection)",
+        "loaded_runtime_selection = _loaded_runtime_selection()",
+        "or _loaded_runtime_selection() != loaded_runtime_selection",
+        "if os.path.lexists(pycache_prefix):",
+        "not _pycache_prefix_matches(pycache_prefix)",
         "interpreter_sha256 = hashlib.sha256(executable_raw).hexdigest()",
         "expected_identity=executable_identity",
-        "with snapshot_execution_profile(\n            payload_sha256,\n            file_sha256,\n            interpreter_sha256,\n        ):",
+        "with snapshot_execution_profile(\n            payload_sha256,\n            file_sha256,\n            interpreter_sha256,\n            loaded_runtime_selection,\n        ):",
+        "discovery_completed = subprocess.run(",
+        "loaded-runtime-pre-post-recheck=matched",
+        "execution-mode=clean-isolated-external-snapshot-subprocess-v2",
+        "bytecode-cache-selection=missing-prefix-source-only",
         "recovery-snapshot-mutation=not-performed",
     )
     for marker in launcher_markers:
         if marker not in texts["launcher"]:
             errors.append(f"launcher contract marker is missing: {marker}")
-    if texts["launcher"].count("expected_identity=executable_identity") != 2:
-        errors.append("launcher interpreter identity must be rechecked in parent and child")
+    if texts["launcher"].count("expected_identity=executable_identity") != 3:
+        errors.append(
+            "launcher interpreter identity must be rechecked in discovery, child and parent"
+        )
 
     child = next(
         (
@@ -104,17 +117,30 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
             errors.append(f"source snapshot contract marker is missing: {marker}")
 
     contract_markers = (
-        'VALIDATOR_CONTRACT_KIND = "target_intake_generation_validator_contract_v4"',
+        'VALIDATOR_CONTRACT_KIND = "target_intake_generation_validator_contract_v5"',
         '"platform/api/__init__.py"',
         '"platform/api/v1/__init__.py"',
-        'RUNTIME_ENVIRONMENT_KIND = "target_intake_generation_replay_runtime_v2"',
+        'RUNTIME_ENVIRONMENT_KIND = "target_intake_generation_replay_runtime_v3"',
+        '    "distribution_closure",',
+        'DISTRIBUTION_CLOSURE_KIND =',
+        'EXECUTION_PROFILE_KIND = "target_intake_generation_execution_profile_v2"',
         '"stdlib_payload_tree_sha256"',
         '"native_payload_tree_sha256"',
         '"payload_tree_sha256"',
         '"record_unlisted_import_file_count"',
+        '"import_tree_record_completeness"',
+        '"metadata_closure_names"',
+        '"loaded_owner_names"',
+        '"loaded_origin_map_sha256"',
+        '"loaded_module_tree_sha256"',
+        '"loaded_native_tree_sha256"',
+        '    "loaded_runtime_pre_and_post_recheck_required",',
+        "def _loaded_distribution_selection()",
+        "def _loaded_runtime_selection()",
+        "def _loaded_native_paths()",
         '_active_snapshot_execution_profile["launcher_interpreter_sha256"]',
         '"execution_profile"',
-        'SNAPSHOT_EXECUTION_MODE = "clean_isolated_external_snapshot_subprocess_v1"',
+        'SNAPSHOT_EXECUTION_MODE = "clean_isolated_external_snapshot_subprocess_v2"',
         "flags.isolated != 1",
         "flags.ignore_environment != 1",
         "flags.no_site != 1",
@@ -147,15 +173,43 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
         "payload_tree_sha256",
         "record_hash_verified_file_count",
         "record_unlisted_import_file_count",
+        "import_tree_record_completeness",
     }.issubset(distribution_keys):
         errors.append("validator dependency payload schema is incomplete")
+    execution_profile_keys = next(
+        (
+            {
+                item.value
+                for item in node.value.elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            }
+            for node in contract_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "EXECUTION_PROFILE_KEYS"
+                for target in node.targets
+            )
+            and isinstance(node.value, (ast.Set, ast.Tuple, ast.List))
+        ),
+        set(),
+    )
+    if not {
+        "isolated_missing_pycache_prefix",
+        "sourceless_loaders_rejected",
+        "loaded_runtime_pre_and_post_recheck_required",
+        "loaded_owner_names",
+        "loaded_origin_map_sha256",
+        "loaded_module_tree_sha256",
+        "loaded_native_tree_sha256",
+    }.issubset(execution_profile_keys):
+        errors.append("validator execution profile runtime schema is incomplete")
 
     if texts["contract"].count('    "platform/') != 31:
         errors.append("validator platform source inventory must contain 31 files")
     if texts["contract"].count('    "scripts/') < 34:
         errors.append("validator script source inventory is incomplete")
-    if 'RECEIPT_KIND = "target_intake_generation_receipt_v7"' not in texts["generation"]:
-        errors.append("generation receipt must remain schema v7")
+    if 'RECEIPT_KIND = "target_intake_generation_receipt_v8"' not in texts["generation"]:
+        errors.append("generation receipt must remain schema v8")
     if (
         'if not argv or argv[0] != "verify-requirements":' not in texts["preflight"]
         or "target-intake-validator-snapshot-launcher-required" not in texts["preflight"]
@@ -173,10 +227,12 @@ def main() -> int:
         return 1
     print(
         "target-intake-snapshot-launcher-gate-ok "
-        "production_acceptance=false source-files=65 snapshot-members=91 "
-        "clean-child-flags=-I,-B,-S,-P direct-operational-entrypoint=blocked "
+        "production_acceptance=false source-files=65 snapshot-members=92 "
+        "clean-child-flags=-I,-B,-S,-P,-X-pycache-prefix "
+        "direct-operational-entrypoint=blocked "
         "source-authority=unverified snapshot-atomicity=unverified "
-        "loaded-bytecode-native-authority=unverified"
+        "loaded-module-and-native-backing-identity=pre-post-matched "
+        "transient-native-load-unload=unverified runtime-authority=unverified"
     )
     return 0
 

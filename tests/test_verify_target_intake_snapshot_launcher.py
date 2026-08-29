@@ -47,7 +47,7 @@ class VerifyTargetIntakeSnapshotLauncherTests(unittest.TestCase):
     def test_rejects_removed_interpreter_or_runtime_recheck(self) -> None:
         self.assertTrue(self._mutate(
             "scripts/target_intake_snapshot_launcher.py",
-            "if _current_runtime_environment() != runtime_environment:",
+            "_current_runtime_environment(discovery_selection)\n            != runtime_environment",
             "if False:",
         ))
         self.assertTrue(self._mutate(
@@ -60,6 +60,25 @@ class VerifyTargetIntakeSnapshotLauncherTests(unittest.TestCase):
         self.assertTrue(self._mutate(
             "scripts/target_intake_validator_contract.py",
             '    "payload_tree_sha256",\n',
+            "",
+        ))
+
+    def test_rejects_removed_transitive_or_loaded_runtime_binding(self) -> None:
+        self.assertTrue(self._mutate(
+            "scripts/target_intake_validator_contract.py",
+            '    "distribution_closure",\n',
+            "",
+        ))
+        self.assertTrue(self._mutate(
+            "scripts/target_intake_validator_contract.py",
+            '    "loaded_runtime_pre_and_post_recheck_required",\n',
+            "",
+        ))
+
+    def test_rejects_removed_missing_pycache_prefix_selection(self) -> None:
+        self.assertTrue(self._mutate(
+            "scripts/target_intake_snapshot_launcher.py",
+            '            "-X",\n',
             "",
         ))
 

@@ -19,6 +19,7 @@ MANIFEST_FILENAME = "target-intake-validator-source-snapshot.json"
 SNAPSHOT_KIND = "target_intake_validator_source_snapshot_v1"
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _MAX_INTERPRETER_BYTES = 64 * 1024 * 1024
+_MAX_DISCOVERY_BYTES = 64 * 1024
 _SHA256_LENGTH = 64
 _CHILD_TIMEOUT_SECONDS = 600
 _PREFLIGHT_COMMANDS = {
@@ -44,6 +45,18 @@ _CHILD_BOOTSTRAP = (
     "from scripts.target_intake_snapshot_launcher import _child_main;"
     "raise SystemExit(_child_main(sys.argv[1:]))"
 )
+_DISCOVERY_BOOTSTRAP = _CHILD_BOOTSTRAP.replace(
+    "_child_main", "_discovery_child_main"
+)
+_DISCOVERY_KIND = "target_intake_validator_loaded_distribution_discovery_v1"
+_DISCOVERY_KEYS = {
+    "schema_version",
+    "kind",
+    "owner_names",
+    "origin_file_count",
+    "origin_map_sha256",
+}
+_PYCACHE_DIRECTORY = ".target-intake-pycache-disabled"
 
 
 class SnapshotLaunchError(ValueError):
@@ -69,6 +82,41 @@ def _is_sha256(value: object) -> bool:
         and len(value) == _SHA256_LENGTH
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _pycache_prefix_matches(expected: Path) -> bool:
+    configured = sys.pycache_prefix
+    return (
+        isinstance(configured, str)
+        and os.path.isabs(configured)
+        and os.path.normcase(os.path.abspath(configured))
+        == os.path.normcase(os.path.abspath(expected))
+        and not os.path.lexists(expected)
+    )
+
+
+def _discovery_errors(document: Any) -> list[str]:
+    if (
+        not isinstance(document, dict)
+        or set(document) != _DISCOVERY_KEYS
+        or document.get("schema_version") != 1
+        or document.get("kind") != _DISCOVERY_KIND
+        or not isinstance(document.get("owner_names"), list)
+        or not document["owner_names"]
+        or document["owner_names"] != sorted(set(document["owner_names"]))
+        or any(
+            not isinstance(name, str)
+            or not name
+            or name != name.lower()
+            for name in document["owner_names"]
+        )
+        or not isinstance(document.get("origin_file_count"), int)
+        or isinstance(document.get("origin_file_count"), bool)
+        or document["origin_file_count"] < 1
+        or not _is_sha256(document.get("origin_map_sha256"))
+    ):
+        return ["target intake validator loaded distribution discovery is invalid"]
+    return []
 
 
 def _is_link_or_reparse(path: Path) -> bool:
@@ -307,19 +355,97 @@ def _audit_loaded_local_modules(snapshot_root: Path, document: dict[str, Any]) -
             raise _invalid()
 
 
+def _discovery_child_main(argv: Sequence[str]) -> int:
+    if len(argv) != 5:
+        print("target-intake-validator-snapshot-discovery-invalid", file=sys.stderr)
+        return 1
+    snapshot_root = Path(argv[0])
+    payload_sha256 = argv[1]
+    file_sha256 = argv[2]
+    interpreter_sha256 = argv[3]
+    pycache_prefix = Path(argv[4])
+    try:
+        if not _pycache_prefix_matches(pycache_prefix):
+            raise _invalid()
+        executable_raw, executable_identity = _read_stable_binary(
+            Path(sys.executable).absolute(),
+            max_bytes=_MAX_INTERPRETER_BYTES,
+        )
+        if not hmac.compare_digest(
+            hashlib.sha256(executable_raw).hexdigest(), interpreter_sha256
+        ):
+            raise _invalid()
+        from scripts.target_intake_source_snapshot import (
+            load_source_snapshot,
+            recheck_source_snapshot,
+        )
+
+        snapshot = load_source_snapshot(
+            snapshot_root,
+            expected_payload_sha256=payload_sha256,
+            expected_file_sha256=file_sha256,
+        )
+        document = snapshot.manifest
+        from scripts import target_intake_preflight
+        from scripts.target_intake_validator_contract import (
+            _current_runtime_environment,
+            _loaded_distribution_selection,
+        )
+
+        initial = _loaded_distribution_selection()
+        _current_runtime_environment(initial)
+        selection = _loaded_distribution_selection()
+        _audit_loaded_local_modules(snapshot_root, document)
+        recheck_source_snapshot(snapshot)
+        final_executable_raw, _ = _read_stable_binary(
+            Path(sys.executable).absolute(),
+            max_bytes=_MAX_INTERPRETER_BYTES,
+            expected_identity=executable_identity,
+        )
+        if (
+            target_intake_preflight.main.__module__
+            != "scripts.target_intake_preflight"
+            or not hmac.compare_digest(executable_raw, final_executable_raw)
+            or not _pycache_prefix_matches(pycache_prefix)
+        ):
+            raise _invalid()
+        output = {
+            "schema_version": 1,
+            "kind": _DISCOVERY_KIND,
+            **selection,
+        }
+        if _discovery_errors(output):
+            raise _invalid()
+    except (OSError, TypeError, ValueError):
+        print("target-intake-validator-snapshot-discovery-invalid", file=sys.stderr)
+        return 1
+    print(json.dumps(output, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def _child_main(argv: Sequence[str]) -> int:
-    if len(argv) < 6 or argv[4] != "--":
+    if len(argv) < 8 or argv[6] != "--":
         print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
         return 1
     snapshot_root = Path(argv[0])
     payload_sha256 = argv[1]
     file_sha256 = argv[2]
     interpreter_sha256 = argv[3]
-    preflight_argv = list(argv[5:])
+    pycache_prefix = Path(argv[4])
+    try:
+        discovery = json.loads(argv[5], object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, SnapshotLaunchError):
+        print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
+        return 1
+    preflight_argv = list(argv[7:])
     if not preflight_argv or preflight_argv[0] not in _PREFLIGHT_COMMANDS:
         print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
         return 1
     try:
+        if _discovery_errors(discovery) or not _pycache_prefix_matches(
+            pycache_prefix
+        ):
+            raise _invalid()
         executable_raw, executable_identity = _read_stable_binary(
             Path(sys.executable).absolute(),
             max_bytes=_MAX_INTERPRETER_BYTES,
@@ -341,9 +467,17 @@ def _child_main(argv: Sequence[str]) -> int:
         document = snapshot.manifest
         from scripts.target_intake_validator_contract import (
             _current_runtime_environment,
+            _loaded_runtime_selection,
             snapshot_execution_profile,
         )
-        runtime_environment = _current_runtime_environment()
+        discovery_selection = {
+            "owner_names": discovery["owner_names"],
+            "origin_file_count": discovery["origin_file_count"],
+            "origin_map_sha256": discovery["origin_map_sha256"],
+        }
+        runtime_environment = _current_runtime_environment(
+            discovery_selection
+        )
         from scripts import target_intake_preflight
 
         if (
@@ -355,14 +489,25 @@ def _child_main(argv: Sequence[str]) -> int:
             )
         ):
             raise _invalid()
+        loaded_runtime_selection = _loaded_runtime_selection()
+        if any(
+            loaded_runtime_selection[key] != discovery_selection[key]
+            for key in discovery_selection
+        ):
+            raise _invalid()
         _audit_loaded_local_modules(snapshot_root, document)
         with snapshot_execution_profile(
             payload_sha256,
             file_sha256,
             interpreter_sha256,
+            loaded_runtime_selection,
         ):
             result = target_intake_preflight.main(preflight_argv)
-        if _current_runtime_environment() != runtime_environment:
+        if (
+            _current_runtime_environment(discovery_selection)
+            != runtime_environment
+            or _loaded_runtime_selection() != loaded_runtime_selection
+        ):
             raise _invalid()
         _audit_loaded_local_modules(snapshot_root, document)
         recheck_source_snapshot(snapshot)
@@ -371,7 +516,10 @@ def _child_main(argv: Sequence[str]) -> int:
             max_bytes=_MAX_INTERPRETER_BYTES,
             expected_identity=executable_identity,
         )
-        if not hmac.compare_digest(executable_raw, final_executable_raw):
+        if (
+            not hmac.compare_digest(executable_raw, final_executable_raw)
+            or not _pycache_prefix_matches(pycache_prefix)
+        ):
             raise _invalid()
     except (OSError, TypeError, ValueError):
         print("target-intake-validator-snapshot-child-invalid", file=sys.stderr)
@@ -380,13 +528,16 @@ def _child_main(argv: Sequence[str]) -> int:
         print(
             "target-intake-validator-snapshot-child-ok "
             "production_acceptance=false "
-            "execution-mode=clean-isolated-external-snapshot-subprocess-v1 "
+            "execution-mode=clean-isolated-external-snapshot-subprocess-v2 "
             "current-loaded-local-source=snapshot-origin-sha256-rechecked "
             "snapshot-pre-post-recheck=matched "
             "runtime-pre-post-recheck=matched "
+            "loaded-runtime-pre-post-recheck=matched "
+            "bytecode-cache-selection=missing-prefix-source-only "
             "launcher-interpreter-pre-post-recheck=matched "
             "source-authority=unverified snapshot-atomicity=unverified "
-            "interpreter-native-runtime-identity=unverified"
+            "runtime-distribution-authority=unverified "
+            "transient-native-load-unload=unverified"
         )
     return result
 
@@ -444,18 +595,73 @@ def _run(
             max_bytes=_MAX_INTERPRETER_BYTES,
         )
         interpreter_sha256 = hashlib.sha256(executable_raw).hexdigest()
-        command = [
+        pycache_prefix = snapshot_root / _PYCACHE_DIRECTORY
+        if os.path.lexists(pycache_prefix):
+            raise _invalid()
+        common_prefix = [
             str(executable),
             "-I",
             "-B",
             "-S",
             "-P",
+            "-X",
+            f"pycache_prefix={pycache_prefix}",
+        ]
+        discovery_command = [
+            *common_prefix,
+            "-c",
+            _DISCOVERY_BOOTSTRAP,
+            str(snapshot_root),
+            payload_sha256,
+            file_sha256,
+            interpreter_sha256,
+            str(pycache_prefix),
+        ]
+        discovery_completed = subprocess.run(
+            discovery_command,
+            cwd=snapshot_root,
+            env=_minimal_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            shell=False,
+            timeout=_CHILD_TIMEOUT_SECONDS,
+            check=False,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            ),
+        )
+        if (
+            discovery_completed.returncode != 0
+            or len(discovery_completed.stdout.encode("utf-8")) > _MAX_DISCOVERY_BYTES
+            or os.path.lexists(pycache_prefix)
+        ):
+            raise _invalid()
+        try:
+            discovery = json.loads(
+                discovery_completed.stdout,
+                object_pairs_hook=_unique_object,
+            )
+        except (UnicodeError, json.JSONDecodeError, SnapshotLaunchError) as error:
+            raise _invalid() from error
+        if _discovery_errors(discovery):
+            raise _invalid()
+        discovery_json = json.dumps(
+            discovery,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        command = [
+            *common_prefix,
             "-c",
             _CHILD_BOOTSTRAP,
             str(snapshot_root),
             payload_sha256,
             file_sha256,
             interpreter_sha256,
+            str(pycache_prefix),
+            discovery_json,
             "--",
             *preflight_argv,
         ]
@@ -485,6 +691,7 @@ def _run(
         if (
             not hmac.compare_digest(raw, final_raw)
             or not hmac.compare_digest(executable_raw, final_executable_raw)
+            or os.path.lexists(pycache_prefix)
             or completed.returncode != 0
         ):
             raise _invalid()
@@ -501,8 +708,11 @@ def _run(
         f"snapshot_manifest_payload_sha256={payload_sha256} "
         f"snapshot_manifest_file_sha256={file_sha256} "
         f"launcher_interpreter_sha256={interpreter_sha256} "
+        f"loaded_distribution_owners={len(discovery['owner_names'])} "
+        "bytecode-cache-selection=missing-prefix-source-only "
         "recovery-snapshot-mutation=not-performed "
-        "source-authority=unverified snapshot-atomicity=unverified"
+        "source-authority=unverified snapshot-atomicity=unverified "
+        "runtime-distribution-authority=unverified"
     )
     return 0
 

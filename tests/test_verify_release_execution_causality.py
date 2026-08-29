@@ -551,11 +551,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
 
         for old, new in (
             (
-                'RECEIPT_KIND = "target_intake_generation_receipt_v7"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v8"',
                 'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
             ),
             (
-                'document.get("schema_version") != 7',
+                'document.get("schema_version") != 8',
                 'document.get("schema_version") != 1',
             ),
             (
@@ -618,23 +618,23 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 "raw, metadata = ignored_read_stable_bytes_with_metadata(",
             ),
             (
-                "if metadata.st_nlink != 1:",
-                "if metadata.st_nlink == 1:",
+                "(require_single_link and before.st_nlink != 1)",
+                "(require_single_link and before.st_nlink == 1)",
             ),
             (
                 '"runtime_environment": runtime_environment,',
                 '"runtime_environment": {},',
             ),
             (
-                "_distribution_fingerprint(name, import_name)",
-                "{'name': name, 'import_name': import_name}",
+                "_distribution_closure(\n        tuple(selected[\"owner_names\"]),",
+                "_ignored_distribution_closure(\n        tuple(selected[\"owner_names\"]),",
             ),
             (
                 '"payload_tree_sha256": payload_sha256,',
                 '"payload_tree_sha256": "0" * 64,',
             ),
             (
-                "if unlisted_import_files:",
+                "if audit_import_tree and unlisted_import_files:",
                 "if False:",
             ),
         ):
@@ -896,7 +896,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "schema-v7 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            "schema-v8 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
             requirements,
         )
         self.assertIn(
@@ -904,11 +904,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "closed-v4 validator contract containing declarative authoring/replay entrypoints, an exact ordered 65-file local source inventory with raw whole-file SHA-256 values",
+            "closed-v5 validator contract containing declarative authoring/replay entrypoints, an exact ordered 65-file local source inventory with raw whole-file SHA-256 values",
             requirements,
         )
         self.assertIn(
-            "a clean-snapshot execution profile binding the caller-retained snapshot manifest payload/file SHA-256 pins and exact isolated launch controls",
+            "a clean-snapshot execution-profile-v2 binding the caller-retained snapshot manifest payload/file SHA-256 pins and exact isolated launch controls",
             requirements,
         )
         self.assertIn(
@@ -951,15 +951,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Schema-v7 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/v5/v6/mixed-chain rejection evidence:",
+            "Schema-v8 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/v3/v4/v5/v6/v7/mixed-chain rejection evidence:",
             signoff,
         )
         self.assertIn(
-            "Generation validator-contract canonical SHA-256 plus closed-v4 authoring/replay entrypoints, exact ordered 65-file on-disk source inventory, Python/OS/non-cache-stdlib/core-native/eleven-distribution recorded-payload replay-runtime fingerprint, caller-pinned interpreter digest, and clean-snapshot execution-profile match:",
+            "Generation validator-contract canonical SHA-256 plus closed-v5 authoring/replay entrypoints, exact ordered 65-file on-disk source inventory, Python/OS/non-cache-stdlib/core-native/fixed-root metadata-closure and observed loaded-owner distribution payload replay-runtime fingerprint, caller-pinned interpreter digest, isolated missing-pycache-prefix selection, and clean-snapshot execution-profile match:",
             signoff,
         )
         self.assertIn(
-            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source/pin/launcher/interpreter authority, loaded-bytecode identity, in-window ABA exclusion, filesystem-atomic snapshot identity, transitive-distribution and bytecode-cache payload identity, downstream native-library/OS-loader runtime-code identity, original authoring runtime identity, original validator execution, Git/portable release identity, receipt/reviewer authority, and post-verification custody remain `unverified`:",
+            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, validator source/pin/launcher/interpreter authority, executed in-memory code and loader authority, transient load/unload, in-window ABA exclusion, filesystem-atomic snapshot identity, non-RECORD import-tree completeness for non-root transitive/loaded owners, post-observation bytecode/native mutation, original authoring runtime identity, original validator execution, Git/portable release identity, receipt/reviewer authority, and post-verification custody remain `unverified`:",
             signoff,
         )
         self.assertIn(

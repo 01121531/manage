@@ -42,6 +42,7 @@ EXPECTED_REPOSITORY_INPUT_FILES = (
     "infra/vault/policies/email-platform-sub2.hcl",
     "infra/vault/configure-approles.sh",
     "infra/vault/configure-audit.sh",
+    "platform/requirements.txt",
 )
 
 

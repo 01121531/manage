@@ -59,12 +59,12 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-acceptance=write-once-receipt",
-    "generation-receipt-locator=self-bound-v7",
+    "generation-receipt-locator=self-bound-v8",
     "generation-history-semantic-replay=every-generation",
     "generation-receipt-evaluation-time=recorded-host-utc",
-    "generation-validator-contract=closed-v4-local-source-payload-runtime-and-execution-profile",
+    "generation-validator-contract=closed-v5-local-source-payload-runtime-and-execution-profile",
     "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
-    "generation-validator-replay-runtime=python-os-stdlib-native-distribution-payload-fingerprint-matched",
+    "generation-validator-replay-runtime=python-os-stdlib-native-transitive-and-loaded-owner-payload-fingerprint-matched",
     "generation_validator_contract_sha256=",
     "generation-validator-execution-mode=",
     "generation-validator-snapshot-manifest-payload-sha256=",
@@ -1125,8 +1125,20 @@ def causality_errors(
     distribution_fingerprint = _function(
         validator_contract_tree, "_distribution_fingerprint"
     )
+    distribution_closure = _function(
+        validator_contract_tree, "_distribution_closure"
+    )
+    loaded_distribution_selection = _function(
+        validator_contract_tree, "_loaded_distribution_selection"
+    )
+    loaded_runtime_selection = _function(
+        validator_contract_tree, "_loaded_runtime_selection"
+    )
     payload_fingerprint = _function(
         validator_contract_tree, "_payload_fingerprint"
+    )
+    read_runtime_payload_bytes = _function(
+        validator_contract_tree, "_read_runtime_payload_bytes"
     )
     runtime_environment_shape = _function(
         validator_contract_tree, "_runtime_environment_shape_errors"
@@ -1161,7 +1173,11 @@ def causality_errors(
         or current_validator_contract is None
         or current_runtime_environment is None
         or distribution_fingerprint is None
+        or distribution_closure is None
+        or loaded_distribution_selection is None
+        or loaded_runtime_selection is None
         or payload_fingerprint is None
+        or read_runtime_payload_bytes is None
         or runtime_environment_shape is None
         or validator_contract_validation is None
         or validator_contract_shape is None
@@ -1176,10 +1192,10 @@ def causality_errors(
             and _contains_string(receipt_validation, "receipt_path")
             and _contains_string(genesis_creator, "receipt_path")
             and _contains_string(registration_creator, "receipt_path")
-            and "target_intake_generation_receipt_v7" in (generation_source or "")
-            and 'document.get("schema_version") != 7'
+            and "target_intake_generation_receipt_v8" in (generation_source or "")
+            and 'document.get("schema_version") != 8'
             in (generation_source or "")
-            and (generation_source or "").count('"schema_version": 7') == 2
+            and (generation_source or "").count('"schema_version": 8') == 2
             and _contains_string(receipt_validation, "validation_context")
             and _contains_string(receipt_validation, "evaluated_at")
             and _contains_string(receipt_validation, "requirements")
@@ -1200,7 +1216,7 @@ def causality_errors(
             and _contains_name(genesis_creator, "receipt_errors")
         ):
             errors.append(
-                "generation receipts must use closed schema-v7 self-bound validation contexts"
+                "generation receipts must use closed schema-v8 self-bound validation contexts"
             )
         semantic_calls = {
             _call_name(node)
@@ -1269,16 +1285,31 @@ def causality_errors(
             and _contains_name(current_validator_contract, "_current_runtime_environment")
             and '"runtime_environment": runtime_environment'
             in (validator_contract_source or "")
-            and _contains_name(current_runtime_environment, "DEPENDENCY_DISTRIBUTIONS")
-            and _contains_name(current_runtime_environment, "_distribution_fingerprint")
+            and _contains_name(current_runtime_environment, "_distribution_closure")
             and _contains_name(current_runtime_environment, "sys")
             and _contains_name(current_runtime_environment, "runtime_platform")
+            and _contains_name(distribution_closure, "DEPENDENCY_DISTRIBUTIONS")
+            and _contains_name(distribution_closure, "_distribution_fingerprint")
+            and _contains_name(distribution_closure, "_distribution_import_names")
+            and _contains_name(distribution_closure, "_MAX_RUNTIME_DISTRIBUTIONS")
+            and _contains_name(distribution_closure, "_MAX_RUNTIME_DISTRIBUTION_FILES")
+            and _contains_name(distribution_closure, "_MAX_RUNTIME_DISTRIBUTION_BYTES")
             and _contains_name(distribution_fingerprint, "distribution")
-            and any(
-                isinstance(node, ast.Call) and _call_name(node) == "find_spec"
-                for node in ast.walk(distribution_fingerprint)
-            )
             and _contains_name(distribution_fingerprint, "read_stable_bytes_with_metadata")
+            and _contains_name(loaded_distribution_selection, "sys")
+            and _contains_name(
+                loaded_distribution_selection, "_distribution_installation_index"
+            )
+            and "importlib.machinery.SourceFileLoader"
+            in (validator_contract_source or "")
+            and "importlib.machinery.ExtensionFileLoader"
+            in (validator_contract_source or "")
+            and _contains_string(loaded_distribution_selection, ".pyc")
+            and _contains_name(loaded_runtime_selection, "_loaded_native_paths")
+            and _contains_name(
+                loaded_runtime_selection, "_loaded_distribution_selection"
+            )
+            and _contains_name(loaded_runtime_selection, "_payload_fingerprint")
             and _contains_string(runtime_environment_shape, "executable_sha256")
             and _contains_string(runtime_environment_shape, "stdlib_payload_tree_sha256")
             and _contains_string(runtime_environment_shape, "native_payload_tree_sha256")
@@ -1286,6 +1317,15 @@ def causality_errors(
             and _contains_string(runtime_environment_shape, "record_sha256")
             and _contains_string(runtime_environment_shape, "entrypoint_sha256")
             and _contains_string(runtime_environment_shape, "payload_tree_sha256")
+            and _contains_string(runtime_environment_shape, "distribution_closure")
+            and _contains_string(runtime_environment_shape, "metadata_closure_names")
+            and _contains_string(runtime_environment_shape, "loaded_owner_names")
+            and _contains_string(runtime_environment_shape, "union_names")
+            and _contains_string(runtime_environment_shape, "dependency_edges")
+            and _contains_string(runtime_environment_shape, "import_names")
+            and _contains_string(
+                runtime_environment_shape, "import_tree_record_completeness"
+            )
             and _contains_string(
                 runtime_environment_shape, "record_unlisted_import_file_count"
             )
@@ -1293,19 +1333,14 @@ def causality_errors(
             and _contains_name(distribution_fingerprint, "_tree_files")
             and '"payload_tree_sha256": payload_sha256,'
             in (validator_contract_source or "")
-            and "if unlisted_import_files:"
+            and "if audit_import_tree and unlisted_import_files:"
             in (validator_contract_source or "")
-            and any(
-                isinstance(node, ast.Compare)
-                and isinstance(node.left, ast.Attribute)
-                and node.left.attr == "st_nlink"
-                and len(node.ops) == 1
-                and isinstance(node.ops[0], ast.NotEq)
-                and len(node.comparators) == 1
-                and isinstance(node.comparators[0], ast.Constant)
-                and node.comparators[0].value == 1
-                for node in ast.walk(payload_fingerprint)
-            )
+            and _contains_string(payload_fingerprint, "link_count")
+            and _contains_name(payload_fingerprint, "require_single_link")
+            and _contains_name(read_runtime_payload_bytes, "require_single_link")
+            and "(require_single_link and before.st_nlink != 1)"
+            in (validator_contract_source or "")
+            and "require_single_link=False" in (validator_contract_source or "")
             and _contains_name(validator_contract_validation, "expected")
             and "return [] if document == expected else ["
             in (validator_contract_source or "")
@@ -1636,12 +1671,12 @@ def causality_errors(
                 _contains_marker(verify_generation_branch, marker)
                 for marker in (
                     "production_acceptance=false",
-                    "generation-receipt-locator=self-bound-v7",
+                    "generation-receipt-locator=self-bound-v8",
                     "generation-history-semantic-replay=every-generation",
                     "generation-receipt-evaluation-time=recorded-host-utc",
-                    "generation-validator-contract=closed-v4-local-source-payload-runtime-and-execution-profile",
+                    "generation-validator-contract=closed-v5-local-source-payload-runtime-and-execution-profile",
                     "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
-                    "generation-validator-replay-runtime=python-os-stdlib-native-distribution-payload-fingerprint-matched",
+                    "generation-validator-replay-runtime=python-os-stdlib-native-transitive-and-loaded-owner-payload-fingerprint-matched",
                     "generation_validator_contract_sha256=",
                     "generation-validator-execution-mode=",
                     "generation-validator-snapshot-manifest-payload-sha256=",
@@ -2270,13 +2305,13 @@ def main() -> int:
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
         "authoring-publication=local-no-replace-readback "
-        "generation-receipt-locator=self-bound-v7 "
+        "generation-receipt-locator=self-bound-v8 "
         "generation-history-semantic-replay=every-generation "
         "generation-receipt-evaluation-time=recorded-host-utc "
-        "generation-validator-contract=closed-v4-local-source-payload-runtime-and-execution-profile "
+        "generation-validator-contract=closed-v5-local-source-payload-runtime-and-execution-profile "
         "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
         "generation-validator-replay-runtime="
-        "python-os-stdlib-native-distribution-payload-fingerprint-matched "
+        "python-os-stdlib-native-transitive-and-loaded-owner-payload-fingerprint-matched "
         "authoring-validation-context-external-handoff=not-consumed "
         "authoring-validation-context-signature=unverified "
         "authoring-validation-context-signer-role-scope=unverified "

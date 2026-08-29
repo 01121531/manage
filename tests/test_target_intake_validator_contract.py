@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import importlib.machinery
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -72,6 +73,11 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
             "stdlib_payload_tree_sha256"
         ] = "A" * 64
         mutations.append(stdlib_digest)
+        invalid_closure_name = copy.deepcopy(valid)
+        invalid_closure_name["runtime_environment"]["distribution_closure"][
+            "metadata_closure_names"
+        ][0] = "---"
+        mutations.append(invalid_closure_name)
         execution_mode = copy.deepcopy(valid)
         execution_mode["execution_profile"]["mode"] = (
             contract.SNAPSHOT_EXECUTION_MODE
@@ -149,6 +155,51 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
             Path(contract.runtime_platform.python_implementation.__code__.co_filename),
             stdlib_path,
         )
+
+    def test_runtime_binds_metadata_closure_and_selected_loaded_owner_union(self) -> None:
+        direct = contract._current_runtime_environment()
+        direct_closure = direct["distribution_closure"]
+        self.assertEqual(direct_closure["root_names"], list(contract.DEPENDENCY_ROOT_NAMES))
+        self.assertIn("annotated-types", direct_closure["metadata_closure_names"])
+        self.assertNotIn("brotli", direct_closure["union_names"])
+
+        selected = {
+            "owner_names": ["brotli"],
+            "origin_file_count": 1,
+            "origin_map_sha256": "a" * 64,
+        }
+        loaded = contract._current_runtime_environment(selected)
+        loaded_closure = loaded["distribution_closure"]
+        self.assertIn("brotli", loaded_closure["loaded_owner_names"])
+        self.assertIn("brotli", loaded_closure["union_names"])
+        self.assertIn("packaging", loaded_closure["union_names"])
+        self.assertEqual(
+            [item["name"] for item in loaded["distributions"]],
+            loaded_closure["union_names"],
+        )
+
+    def test_loaded_distribution_selection_rejects_sourceless_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin = root / "poison.pyc"
+            origin.write_bytes(b"pyc")
+            module = SimpleNamespace(
+                __spec__=SimpleNamespace(
+                    origin=str(origin),
+                    loader=importlib.machinery.SourcelessFileLoader(
+                        "poison", str(origin)
+                    ),
+                    submodule_search_locations=None,
+                ),
+                __file__=str(origin),
+            )
+            with (
+                mock.patch.object(contract, "_site_package_roots", return_value=(root,)),
+                mock.patch.object(contract, "_distribution_installation_index", return_value={}),
+                mock.patch.object(contract.sys, "modules", {"poison": module}),
+                self.assertRaises(contract.ValidatorContractError),
+            ):
+                contract._loaded_distribution_selection()
 
     def test_distribution_secondary_payload_drift_changes_tree_root(self) -> None:
         class Entry:

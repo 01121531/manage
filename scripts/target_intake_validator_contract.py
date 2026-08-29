@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import base64
 import hashlib
+import importlib.machinery
 import importlib.metadata
 import importlib.util
 import json
@@ -21,7 +22,7 @@ from scripts.external_json import StableFileError, read_stable_bytes_with_metada
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR_CONTRACT_KIND = "target_intake_generation_validator_contract_v4"
+VALIDATOR_CONTRACT_KIND = "target_intake_generation_validator_contract_v5"
 VALIDATOR_CONTRACT_KEYS = {
     "schema_version",
     "kind",
@@ -33,14 +34,40 @@ VALIDATOR_CONTRACT_KEYS = {
     "execution_profile",
 }
 SOURCE_FILE_KEYS = {"path", "sha256"}
-RUNTIME_ENVIRONMENT_KIND = "target_intake_generation_replay_runtime_v2"
+RUNTIME_ENVIRONMENT_KIND = "target_intake_generation_replay_runtime_v3"
 RUNTIME_ENVIRONMENT_KEYS = {
     "schema_version",
     "kind",
     "production_acceptance",
     "python",
     "operating_system",
+    "distribution_closure",
     "distributions",
+}
+DISTRIBUTION_CLOSURE_KIND = (
+    "fixed_roots_metadata_and_loaded_owner_distribution_closure_v1"
+)
+DISTRIBUTION_CLOSURE_KEYS = {
+    "kind",
+    "root_names",
+    "metadata_closure_names",
+    "loaded_owner_names",
+    "union_names",
+    "dependency_edges",
+    "loaded_origin_file_count",
+    "loaded_origin_map_sha256",
+}
+LOADED_DISTRIBUTION_SELECTION_KEYS = {
+    "owner_names",
+    "origin_file_count",
+    "origin_map_sha256",
+}
+LOADED_RUNTIME_SELECTION_KEYS = {
+    *LOADED_DISTRIBUTION_SELECTION_KEYS,
+    "module_file_count",
+    "module_tree_sha256",
+    "native_file_count",
+    "native_tree_sha256",
 }
 PYTHON_RUNTIME_KEYS = {
     "implementation",
@@ -65,7 +92,7 @@ OPERATING_SYSTEM_KEYS = {
 }
 DISTRIBUTION_KEYS = {
     "name",
-    "import_name",
+    "import_names",
     "version",
     "recorded_file_count",
     "metadata_sha256",
@@ -76,6 +103,7 @@ DISTRIBUTION_KEYS = {
     "payload_tree_sha256",
     "record_hash_verified_file_count",
     "record_unlisted_import_file_count",
+    "import_tree_record_completeness",
 }
 AUTHORING_ENTRYPOINT = "scripts.target_intake_preflight:intake_errors"
 REPLAY_ENTRYPOINT = (
@@ -161,12 +189,20 @@ DEPENDENCY_DISTRIBUTIONS = (
     ("SQLAlchemy", "sqlalchemy"),
     ("starlette", "starlette"),
 )
+DEPENDENCY_ROOT_NAMES = tuple(
+    re.sub(r"[-_.]+", "-", name).lower()
+    for name, _ in DEPENDENCY_DISTRIBUTIONS
+)
+BOOTSTRAP_DISTRIBUTIONS = (("packaging", "packaging"),)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_SOURCE_BYTES = 512 * 1024
 _MAX_RUNTIME_FILE_BYTES = 64 * 1024 * 1024
 _MAX_RUNTIME_PAYLOAD_FILES = 20_000
 _MAX_RUNTIME_PAYLOAD_BYTES = 512 * 1024 * 1024
-EXECUTION_PROFILE_KIND = "target_intake_generation_execution_profile_v1"
+_MAX_RUNTIME_DISTRIBUTIONS = 128
+_MAX_RUNTIME_DISTRIBUTION_FILES = 10_000
+_MAX_RUNTIME_DISTRIBUTION_BYTES = 256 * 1024 * 1024
+EXECUTION_PROFILE_KIND = "target_intake_generation_execution_profile_v2"
 EXECUTION_PROFILE_KEYS = {
     "kind",
     "mode",
@@ -179,12 +215,22 @@ EXECUTION_PROFILE_KEYS = {
     "no_site",
     "safe_path",
     "dont_write_bytecode",
+    "isolated_missing_pycache_prefix",
+    "sourceless_loaders_rejected",
     "local_module_origins_rechecked",
     "snapshot_pre_and_post_recheck_required",
     "runtime_pre_and_post_recheck_required",
+    "loaded_runtime_pre_and_post_recheck_required",
+    "loaded_owner_names",
+    "loaded_origin_file_count",
+    "loaded_origin_map_sha256",
+    "loaded_module_file_count",
+    "loaded_module_tree_sha256",
+    "loaded_native_file_count",
+    "loaded_native_tree_sha256",
 }
 DIRECT_EXECUTION_MODE = "direct_in_process_unverified_v1"
-SNAPSHOT_EXECUTION_MODE = "clean_isolated_external_snapshot_subprocess_v1"
+SNAPSHOT_EXECUTION_MODE = "clean_isolated_external_snapshot_subprocess_v2"
 _active_snapshot_execution_profile: dict[str, Any] | None = None
 
 
@@ -205,9 +251,19 @@ def _direct_execution_profile() -> dict[str, Any]:
         "no_site": False,
         "safe_path": False,
         "dont_write_bytecode": False,
+        "isolated_missing_pycache_prefix": False,
+        "sourceless_loaders_rejected": False,
         "local_module_origins_rechecked": False,
         "snapshot_pre_and_post_recheck_required": False,
         "runtime_pre_and_post_recheck_required": False,
+        "loaded_runtime_pre_and_post_recheck_required": False,
+        "loaded_owner_names": [],
+        "loaded_origin_file_count": None,
+        "loaded_origin_map_sha256": None,
+        "loaded_module_file_count": None,
+        "loaded_module_tree_sha256": None,
+        "loaded_native_file_count": None,
+        "loaded_native_tree_sha256": None,
     }
 
 
@@ -235,6 +291,35 @@ def _execution_profile_shape_errors(document: Any) -> list[str]:
         )
     ):
         return ["generation validator execution profile is invalid"]
+    if (
+        not isinstance(document.get("loaded_owner_names"), list)
+        or not document["loaded_owner_names"]
+        or document["loaded_owner_names"]
+        != sorted(set(document["loaded_owner_names"]))
+        or any(
+            not _is_canonical_distribution_name(name)
+            for name in document["loaded_owner_names"]
+        )
+        or any(
+            not isinstance(document.get(key), int)
+            or isinstance(document.get(key), bool)
+            or document[key] < 1
+            for key in (
+                "loaded_origin_file_count",
+                "loaded_module_file_count",
+                "loaded_native_file_count",
+            )
+        )
+        or any(
+            _SHA256.fullmatch(document.get(key, "")) is None
+            for key in (
+                "loaded_origin_map_sha256",
+                "loaded_module_tree_sha256",
+                "loaded_native_tree_sha256",
+            )
+        )
+    ):
+        return ["generation validator execution profile is invalid"]
     if any(
         document.get(key) is not True
         for key in (
@@ -243,9 +328,12 @@ def _execution_profile_shape_errors(document: Any) -> list[str]:
             "no_site",
             "safe_path",
             "dont_write_bytecode",
+            "isolated_missing_pycache_prefix",
+            "sourceless_loaders_rejected",
             "local_module_origins_rechecked",
             "snapshot_pre_and_post_recheck_required",
             "runtime_pre_and_post_recheck_required",
+            "loaded_runtime_pre_and_post_recheck_required",
         )
     ):
         return ["generation validator execution profile is invalid"]
@@ -257,6 +345,7 @@ def snapshot_execution_profile(
     manifest_payload_sha256: str,
     manifest_file_sha256: str,
     launcher_interpreter_sha256: str,
+    loaded_runtime_selection: dict[str, Any],
 ) -> Iterator[None]:
     """Bind one already-verified clean child to its caller-pinned snapshot."""
 
@@ -267,6 +356,7 @@ def snapshot_execution_profile(
         or _SHA256.fullmatch(manifest_payload_sha256) is None
         or _SHA256.fullmatch(manifest_file_sha256) is None
         or _SHA256.fullmatch(launcher_interpreter_sha256) is None
+        or _loaded_runtime_selection_errors(loaded_runtime_selection)
         or flags.isolated != 1
         or flags.ignore_environment != 1
         or flags.no_site != 1
@@ -289,9 +379,19 @@ def snapshot_execution_profile(
         "no_site": True,
         "safe_path": True,
         "dont_write_bytecode": True,
+        "isolated_missing_pycache_prefix": True,
+        "sourceless_loaders_rejected": True,
         "local_module_origins_rechecked": True,
         "snapshot_pre_and_post_recheck_required": True,
         "runtime_pre_and_post_recheck_required": True,
+        "loaded_runtime_pre_and_post_recheck_required": True,
+        "loaded_owner_names": list(loaded_runtime_selection["owner_names"]),
+        "loaded_origin_file_count": loaded_runtime_selection["origin_file_count"],
+        "loaded_origin_map_sha256": loaded_runtime_selection["origin_map_sha256"],
+        "loaded_module_file_count": loaded_runtime_selection["module_file_count"],
+        "loaded_module_tree_sha256": loaded_runtime_selection["module_tree_sha256"],
+        "loaded_native_file_count": loaded_runtime_selection["native_file_count"],
+        "loaded_native_tree_sha256": loaded_runtime_selection["native_tree_sha256"],
     }
     if _execution_profile_shape_errors(profile):
         raise ValidatorContractError(
@@ -310,6 +410,453 @@ def _is_link_or_reparse(path: Path) -> bool:
     return stat.S_ISLNK(metadata.st_mode) or bool(
         getattr(metadata, "st_file_attributes", 0) & reparse
     )
+
+
+def _canonical_distribution_name(name: str) -> str:
+    if not isinstance(name, str) or not name.strip():
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    canonical = re.sub(r"[-_.]+", "-", name.strip()).lower()
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", canonical) is None:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return canonical
+
+
+def _is_canonical_distribution_name(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return _canonical_distribution_name(value) == value
+    except ValidatorContractError:
+        return False
+
+
+def _site_package_roots() -> tuple[Path, ...]:
+    roots: dict[str, Path] = {}
+    for key in ("purelib", "platlib"):
+        value = sysconfig.get_path(key)
+        if not value:
+            continue
+        path = Path(value).absolute()
+        normalized = os.path.normcase(os.path.abspath(path))
+        roots[normalized] = path
+    if not roots:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return tuple(roots[key] for key in sorted(roots))
+
+
+def _relative_to_roots(path: Path, roots: tuple[Path, ...]) -> tuple[int, str] | None:
+    normalized_path = os.path.normcase(os.path.abspath(path))
+    for index, root in enumerate(roots):
+        normalized_root = os.path.normcase(os.path.abspath(root))
+        try:
+            relative = os.path.relpath(normalized_path, normalized_root)
+        except ValueError:
+            continue
+        if relative == "." or (
+            relative != ".." and not relative.startswith(f"..{os.sep}")
+        ):
+            return index, Path(relative).as_posix()
+    return None
+
+
+def _distribution_installation_index() -> dict[str, importlib.metadata.Distribution]:
+    roots = _site_package_roots()
+    index: dict[str, importlib.metadata.Distribution] = {}
+    try:
+        distributions = importlib.metadata.distributions(
+            path=[str(root) for root in roots]
+        )
+        for distribution in distributions:
+            raw_name = distribution.metadata.get("Name")
+            canonical = _canonical_distribution_name(raw_name)
+            if canonical in index:
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            index[canonical] = distribution
+    except (OSError, TypeError, ValueError) as error:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        ) from error
+    return index
+
+
+def _loaded_runtime_selection_errors(document: Any) -> list[str]:
+    if not isinstance(document, dict) or set(document) != LOADED_RUNTIME_SELECTION_KEYS:
+        return ["generation validator loaded runtime selection is invalid"]
+    owners = document.get("owner_names")
+    if (
+        not isinstance(owners, list)
+        or not owners
+        or owners != sorted(set(owners))
+        or any(
+            not _is_canonical_distribution_name(name)
+            for name in owners
+        )
+        or any(
+            not isinstance(document.get(key), int)
+            or isinstance(document.get(key), bool)
+            or document[key] < 1
+            for key in (
+                "origin_file_count",
+                "module_file_count",
+                "native_file_count",
+            )
+        )
+        or any(
+            _SHA256.fullmatch(document.get(key, "")) is None
+            for key in (
+                "origin_map_sha256",
+                "module_tree_sha256",
+                "native_tree_sha256",
+            )
+        )
+    ):
+        return ["generation validator loaded runtime selection is invalid"]
+    return []
+
+
+def _loaded_distribution_selection_errors(document: Any) -> list[str]:
+    if (
+        not isinstance(document, dict)
+        or set(document) != LOADED_DISTRIBUTION_SELECTION_KEYS
+    ):
+        return ["generation validator loaded distribution selection is invalid"]
+    owners = document.get("owner_names")
+    if (
+        not isinstance(owners, list)
+        or not owners
+        or owners != sorted(set(owners))
+        or any(
+            not _is_canonical_distribution_name(name)
+            for name in owners
+        )
+        or not isinstance(document.get("origin_file_count"), int)
+        or isinstance(document.get("origin_file_count"), bool)
+        or document["origin_file_count"] < 1
+        or _SHA256.fullmatch(document.get("origin_map_sha256", "")) is None
+    ):
+        return ["generation validator loaded distribution selection is invalid"]
+    return []
+
+
+def _loaded_distribution_selection() -> dict[str, Any]:
+    roots = _site_package_roots()
+    index = _distribution_installation_index()
+    path_owners: dict[str, set[str]] = {}
+    for canonical, distribution in index.items():
+        files = distribution.files
+        if not files:
+            continue
+        for entry in files:
+            path = Path(distribution.locate_file(entry)).absolute()
+            normalized = os.path.normcase(os.path.abspath(path))
+            path_owners.setdefault(normalized, set()).add(canonical)
+
+    records: list[dict[str, str]] = []
+    owners: set[str] = set()
+    for module_name, module in sorted(sys.modules.items()):
+        specification = getattr(module, "__spec__", None)
+        origin = getattr(specification, "origin", None)
+        loader = getattr(specification, "loader", None)
+        locations = getattr(specification, "submodule_search_locations", None)
+        synthetic_extension = False
+        if origin in {"built-in", "frozen"}:
+            continue
+        if origin is None:
+            if locations:
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            module_file = getattr(module, "__file__", None)
+            if module_file is None:
+                continue
+            if (
+                not isinstance(module_file, str)
+                or not os.path.isabs(module_file)
+                or Path(module_file).suffix.lower()
+                not in {".py", ".pyi", ".pyd", ".so", ".dylib"}
+            ):
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            origin = module_file
+            synthetic_extension = True
+        if (
+            not isinstance(origin, str)
+            or not os.path.isabs(origin)
+            or origin.lower().endswith((".pyc", ".pyo"))
+            or (
+                not synthetic_extension
+                and not isinstance(
+                loader,
+                (
+                    importlib.machinery.SourceFileLoader,
+                    importlib.machinery.ExtensionFileLoader,
+                ),
+                )
+            )
+        ):
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            )
+        path = Path(origin).absolute()
+        relative = _relative_to_roots(path, roots)
+        if relative is None:
+            continue
+        normalized = os.path.normcase(os.path.abspath(path))
+        candidates = path_owners.get(normalized, set())
+        if len(candidates) != 1:
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            )
+        owner = next(iter(candidates))
+        owners.add(owner)
+        records.append(
+            {
+                "module": module_name,
+                "origin": f"site/{relative[0]}/{relative[1]}",
+                "owner": owner,
+            }
+        )
+    if not records or not owners:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    digest = hashlib.sha256()
+    for record in sorted(records, key=lambda item: (item["module"], item["origin"], item["owner"])):
+        digest.update(
+            json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
+        digest.update(b"\n")
+    document = {
+        "owner_names": sorted(owners),
+        "origin_file_count": len(records),
+        "origin_map_sha256": digest.hexdigest(),
+    }
+    if _loaded_distribution_selection_errors(document):
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return document
+
+
+def _windows_loaded_native_paths() -> list[Path]:
+    import ctypes
+    import ctypes.wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = ctypes.wintypes.HANDLE
+    kernel32.K32EnumProcessModules.argtypes = [
+        ctypes.wintypes.HANDLE,
+        ctypes.POINTER(ctypes.wintypes.HMODULE),
+        ctypes.wintypes.DWORD,
+        ctypes.POINTER(ctypes.wintypes.DWORD),
+    ]
+    kernel32.K32EnumProcessModules.restype = ctypes.wintypes.BOOL
+    kernel32.K32GetModuleFileNameExW.argtypes = [
+        ctypes.wintypes.HANDLE,
+        ctypes.wintypes.HMODULE,
+        ctypes.wintypes.LPWSTR,
+        ctypes.wintypes.DWORD,
+    ]
+    kernel32.K32GetModuleFileNameExW.restype = ctypes.wintypes.DWORD
+
+    def capture() -> list[Path]:
+        modules = (ctypes.wintypes.HMODULE * 4096)()
+        needed = ctypes.wintypes.DWORD()
+        process = kernel32.GetCurrentProcess()
+        if not kernel32.K32EnumProcessModules(
+            process,
+            modules,
+            ctypes.sizeof(modules),
+            ctypes.byref(needed),
+        ) or needed.value > ctypes.sizeof(modules):
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            )
+        paths: dict[str, Path] = {}
+        count = needed.value // ctypes.sizeof(ctypes.wintypes.HMODULE)
+        for module in modules[:count]:
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = kernel32.K32GetModuleFileNameExW(
+                process, module, buffer, len(buffer)
+            )
+            if length < 1 or length >= len(buffer):
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            path = Path(buffer.value).resolve(strict=True)
+            paths[os.path.normcase(os.path.abspath(path))] = path
+        return [paths[key] for key in sorted(paths)]
+
+    first = capture()
+    second = capture()
+    if first != second:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return first
+
+
+def _linux_loaded_native_paths() -> list[Path]:
+    def capture() -> list[Path]:
+        try:
+            raw = Path("/proc/self/maps").read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            ) from error
+        paths: dict[str, Path] = {}
+        for line in raw.splitlines():
+            parts = line.split(maxsplit=5)
+            if len(parts) != 6 or "x" not in parts[1]:
+                continue
+            value = parts[5]
+            if not value.startswith("/"):
+                continue
+            if value.endswith(" (deleted)"):
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            path = Path(value).resolve(strict=True)
+            paths[os.path.normcase(os.path.abspath(path))] = path
+        return [paths[key] for key in sorted(paths)]
+
+    first = capture()
+    second = capture()
+    if not first or first != second:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return first
+
+
+def _darwin_loaded_native_paths() -> list[Path]:
+    import ctypes
+
+    process = ctypes.CDLL(None)
+    image_count = process._dyld_image_count
+    image_count.restype = ctypes.c_uint32
+    image_name = process._dyld_get_image_name
+    image_name.argtypes = [ctypes.c_uint32]
+    image_name.restype = ctypes.c_char_p
+
+    def capture() -> list[Path]:
+        paths: dict[str, Path] = {}
+        for index in range(image_count()):
+            raw = image_name(index)
+            if not raw:
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            path = Path(os.fsdecode(raw)).resolve(strict=True)
+            paths[os.path.normcase(os.path.abspath(path))] = path
+        return [paths[key] for key in sorted(paths)]
+
+    first = capture()
+    second = capture()
+    if not first or first != second:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return first
+
+
+def _loaded_native_paths() -> list[Path]:
+    if sys.platform == "win32":
+        return _windows_loaded_native_paths()
+    if sys.platform.startswith("linux"):
+        return _linux_loaded_native_paths()
+    if sys.platform == "darwin":
+        return _darwin_loaded_native_paths()
+    raise ValidatorContractError(
+        "target intake validator runtime identity is unavailable"
+    )
+
+
+def _loaded_runtime_selection() -> dict[str, Any]:
+    native_paths = _loaded_native_paths()
+    distribution = _loaded_distribution_selection()
+    module_files: dict[str, Path] = {}
+    for module_name, module in sorted(sys.modules.items()):
+        specification = getattr(module, "__spec__", None)
+        origin = getattr(specification, "origin", None)
+        loader = getattr(specification, "loader", None)
+        synthetic_extension = False
+        if origin in {"built-in", "frozen"}:
+            continue
+        if origin is None:
+            module_file = getattr(module, "__file__", None)
+            if module_file is None:
+                continue
+            if (
+                not isinstance(module_file, str)
+                or not os.path.isabs(module_file)
+                or Path(module_file).suffix.lower()
+                not in {".py", ".pyi", ".pyd", ".so", ".dylib"}
+            ):
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            origin = module_file
+            synthetic_extension = True
+        if (
+            not isinstance(origin, str)
+            or not os.path.isabs(origin)
+            or origin.lower().endswith((".pyc", ".pyo"))
+            or (
+                not synthetic_extension
+                and not isinstance(
+                loader,
+                (
+                    importlib.machinery.SourceFileLoader,
+                    importlib.machinery.ExtensionFileLoader,
+                ),
+                )
+            )
+        ):
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            )
+        path = Path(origin).resolve(strict=True)
+        locator = (
+            f"module/{module_name}/"
+            f"{os.path.normcase(os.path.abspath(path)).replace(chr(92), '/')}"
+        )
+        module_files[locator] = path
+    module_count, _, module_sha256, _ = _payload_fingerprint(
+        list(module_files.items())
+    )
+    native_files = [
+        (
+            f"native/{os.path.normcase(os.path.abspath(path)).replace(chr(92), '/')}",
+            path,
+        )
+        for path in native_paths
+    ]
+    native_count, _, native_sha256, _ = _payload_fingerprint(
+        native_files,
+        require_single_link=False,
+    )
+    document = {
+        **distribution,
+        "module_file_count": module_count,
+        "module_tree_sha256": module_sha256,
+        "native_file_count": native_count,
+        "native_tree_sha256": native_sha256,
+    }
+    if _loaded_runtime_selection_errors(document):
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return document
 
 
 def _tree_files(
@@ -362,6 +909,7 @@ def _payload_fingerprint(
     files: list[tuple[str, Path]],
     *,
     expected_sha256: dict[str, str] | None = None,
+    require_single_link: bool = True,
 ) -> tuple[int, int, str, int]:
     normalized: dict[str, Path] = {}
     for locator, path in files:
@@ -395,11 +943,10 @@ def _payload_fingerprint(
             validated_directories.add(
                 os.path.normcase(os.path.abspath(directory))
             )
-        raw, metadata = _read_runtime_payload_bytes(path)
-        if metadata.st_nlink != 1:
-            raise ValidatorContractError(
-                "target intake validator runtime identity is unavailable"
-            )
+        raw, metadata = _read_runtime_payload_bytes(
+            path,
+            require_single_link=require_single_link,
+        )
         total_size += len(raw)
         if total_size > _MAX_RUNTIME_PAYLOAD_BYTES:
             raise ValidatorContractError(
@@ -409,6 +956,7 @@ def _payload_fingerprint(
             "path": locator,
             "sha256": hashlib.sha256(raw).hexdigest(),
             "size": len(raw),
+            "link_count": metadata.st_nlink,
         }
         expected = (expected_sha256 or {}).get(locator)
         if expected is not None:
@@ -429,13 +977,18 @@ def _payload_fingerprint(
     return len(normalized), total_size, digest.hexdigest(), verified_hashes
 
 
-def _read_runtime_payload_bytes(path: Path) -> tuple[bytes, os.stat_result]:
+def _read_runtime_payload_bytes(
+    path: Path,
+    *,
+    require_single_link: bool = True,
+) -> tuple[bytes, os.stat_result]:
     try:
         before = path.lstat()
         if (
             not stat.S_ISREG(before.st_mode)
             or _is_link_or_reparse(path)
-            or before.st_nlink != 1
+            or before.st_nlink < 1
+            or (require_single_link and before.st_nlink != 1)
             or before.st_size < 0
             or before.st_size > _MAX_RUNTIME_FILE_BYTES
         ):
@@ -532,7 +1085,7 @@ def _runtime_environment_shape_errors(document: Any) -> list[str]:
     if not isinstance(document, dict) or set(document) != RUNTIME_ENVIRONMENT_KEYS:
         return ["generation replay runtime schema is invalid"]
     if (
-        document.get("schema_version") != 2
+        document.get("schema_version") != 3
         or document.get("kind") != RUNTIME_ENVIRONMENT_KIND
         or document.get("production_acceptance") is not False
     ):
@@ -579,22 +1132,76 @@ def _runtime_environment_shape_errors(document: Any) -> list[str]:
         )
     ):
         return ["generation replay operating-system selection is invalid"]
+    closure = document.get("distribution_closure")
+    if (
+        not isinstance(closure, dict)
+        or set(closure) != DISTRIBUTION_CLOSURE_KEYS
+        or closure.get("kind") != DISTRIBUTION_CLOSURE_KIND
+        or closure.get("root_names") != list(DEPENDENCY_ROOT_NAMES)
+        or not isinstance(closure.get("metadata_closure_names"), list)
+        or closure["metadata_closure_names"]
+        != sorted(set(closure["metadata_closure_names"]))
+        or not set(DEPENDENCY_ROOT_NAMES).issubset(
+            closure["metadata_closure_names"]
+        )
+        or not isinstance(closure.get("loaded_owner_names"), list)
+        or closure["loaded_owner_names"]
+        != sorted(set(closure["loaded_owner_names"]))
+        or not isinstance(closure.get("union_names"), list)
+        or closure["union_names"] != sorted(set(closure["union_names"]))
+        or set(closure["union_names"])
+        != set(closure["metadata_closure_names"])
+        | set(closure["loaded_owner_names"])
+        | {_canonical_distribution_name(BOOTSTRAP_DISTRIBUTIONS[0][0])}
+        or any(
+            not _is_canonical_distribution_name(name)
+            for key in (
+                "metadata_closure_names",
+                "loaded_owner_names",
+                "union_names",
+            )
+            for name in closure[key]
+        )
+        or not isinstance(closure.get("dependency_edges"), list)
+        or closure["dependency_edges"]
+        != sorted(set(closure["dependency_edges"]))
+        or any(
+            not isinstance(edge, str)
+            or re.fullmatch(r"[a-z0-9-]+->[a-z0-9-]+", edge) is None
+            or any(
+                endpoint not in closure["metadata_closure_names"]
+                for endpoint in edge.split("->")
+            )
+            for edge in closure["dependency_edges"]
+        )
+        or not isinstance(closure.get("loaded_origin_file_count"), int)
+        or isinstance(closure.get("loaded_origin_file_count"), bool)
+        or closure["loaded_origin_file_count"] < 0
+        or _SHA256.fullmatch(closure.get("loaded_origin_map_sha256", "")) is None
+    ):
+        return ["generation replay dependency closure is invalid"]
     distributions = document.get("distributions")
     if (
         not isinstance(distributions, list)
-        or len(distributions) != len(DEPENDENCY_DISTRIBUTIONS)
+        or len(distributions) != len(closure["union_names"])
         or [
             item.get("name") if isinstance(item, dict) else None
             for item in distributions
         ]
-        != [name for name, _ in DEPENDENCY_DISTRIBUTIONS]
+        != closure["union_names"]
         or any(
             not isinstance(item, dict)
             or set(item) != DISTRIBUTION_KEYS
+            or not _is_canonical_distribution_name(item.get("name"))
             or not isinstance(item.get("version"), str)
             or not item["version"]
-            or item.get("import_name")
-            != DEPENDENCY_DISTRIBUTIONS[index][1]
+            or not isinstance(item.get("import_names"), list)
+            or not item["import_names"]
+            or item["import_names"] != sorted(set(item["import_names"]))
+            or any(
+                not isinstance(import_name, str) or not import_name.isidentifier()
+                for import_name in item["import_names"]
+            )
             or not isinstance(item.get("recorded_file_count"), int)
             or isinstance(item.get("recorded_file_count"), bool)
             or item["recorded_file_count"] < 1
@@ -610,6 +1217,8 @@ def _runtime_environment_shape_errors(document: Any) -> list[str]:
                 )
             )
             or item.get("record_unlisted_import_file_count") != 0
+            or item.get("import_tree_record_completeness")
+            is not (item.get("name") in DEPENDENCY_ROOT_NAMES)
             or any(
                 _SHA256.fullmatch(item.get(key, "")) is None
                 for key in (
@@ -619,15 +1228,63 @@ def _runtime_environment_shape_errors(document: Any) -> list[str]:
                     "payload_tree_sha256",
                 )
             )
-            for index, item in enumerate(distributions)
+            for item in distributions
         )
     ):
         return ["generation replay dependency inventory is invalid"]
     return []
 
 
-def _distribution_fingerprint(name: str, import_name: str) -> dict[str, Any]:
-    distribution = importlib.metadata.distribution(name)
+def _distribution_import_names(
+    canonical_name: str,
+    *,
+    fallback: str | None = None,
+    import_name_index: dict[str, set[str]] | None = None,
+) -> tuple[str, ...]:
+    if import_name_index is None:
+        import_name_index = _distribution_import_name_index()
+    names = set(import_name_index.get(canonical_name, set()))
+    if fallback:
+        names.add(fallback)
+    if not names:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    return tuple(sorted(names))
+
+
+def _distribution_import_name_index() -> dict[str, set[str]]:
+    index: dict[str, set[str]] = {}
+    for import_name, distribution_names in importlib.metadata.packages_distributions().items():
+        if import_name == "__pycache__" or not import_name.isidentifier():
+            continue
+        for distribution_name in distribution_names:
+            canonical = _canonical_distribution_name(distribution_name)
+            index.setdefault(canonical, set()).add(import_name)
+    return index
+
+
+def _distribution_fingerprint(
+    name: str,
+    import_name: str | tuple[str, ...],
+    *,
+    distribution: importlib.metadata.Distribution | None = None,
+    audit_import_tree: bool = True,
+) -> dict[str, Any]:
+    canonical_name = _canonical_distribution_name(name)
+    if distribution is None:
+        distribution = importlib.metadata.distribution(name)
+    import_names = (
+        (import_name,) if isinstance(import_name, str) else tuple(import_name)
+    )
+    if (
+        not import_names
+        or list(import_names) != sorted(set(import_names))
+        or any(not value.isidentifier() for value in import_names)
+    ):
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
     files = distribution.files
     if not files:
         raise ValidatorContractError(
@@ -645,30 +1302,21 @@ def _distribution_fingerprint(name: str, import_name: str) -> dict[str, Any]:
         if Path(str(entry)).name == "RECORD"
         and Path(str(entry)).parent.name.endswith(".dist-info")
     ]
-    specification = importlib.util.find_spec(import_name)
     if (
         len(metadata_entries) != 1
         or len(record_entries) != 1
-        or specification is None
-        or not specification.origin
-        or specification.origin in {"built-in", "frozen"}
     ):
         raise ValidatorContractError(
             "target intake validator runtime identity is unavailable"
         )
     metadata_path = Path(distribution.locate_file(metadata_entries[0])).absolute()
     record_path = Path(distribution.locate_file(record_entries[0])).absolute()
-    entrypoint_path = Path(specification.origin).absolute()
     metadata_raw, _ = read_stable_bytes_with_metadata(
         metadata_path,
         max_bytes=_MAX_RUNTIME_FILE_BYTES,
     )
     record_raw, _ = read_stable_bytes_with_metadata(
         record_path,
-        max_bytes=_MAX_RUNTIME_FILE_BYTES,
-    )
-    entrypoint_raw, _ = read_stable_bytes_with_metadata(
-        entrypoint_path,
         max_bytes=_MAX_RUNTIME_FILE_BYTES,
     )
     payload_files: list[tuple[str, Path]] = []
@@ -706,23 +1354,80 @@ def _distribution_fingerprint(name: str, import_name: str) -> dict[str, Any]:
             expected_sha256[locator] = decoded.hex()
 
     import_files: list[tuple[str, Path]] = []
-    locations = specification.submodule_search_locations
-    if locations:
-        for index, location in enumerate(locations):
-            import_files.extend(
-                _tree_files(
-                    Path(location),
-                    prefix=f"import/{import_name}/{index}",
+    entrypoint_path: Path | None = None
+    for import_index, current_name in enumerate(import_names):
+        package_directories: dict[str, Path] = {}
+        module_files: dict[str, Path] = {}
+        for entry in files:
+            relative = Path(str(entry).replace("\\", "/"))
+            if not relative.parts:
+                continue
+            first = relative.parts[0]
+            if first == current_name and len(relative.parts) > 1:
+                path = Path(distribution.locate_file(entry)).absolute()
+                package = path
+                for _ in relative.parts[1:]:
+                    package = package.parent
+                package_directories[
+                    os.path.normcase(os.path.abspath(package))
+                ] = package
+            elif (
+                first == current_name
+                or first.startswith(f"{current_name}.")
+            ) and Path(first).suffix.lower() in {
+                ".py",
+                ".pyi",
+                ".pyd",
+                ".so",
+                ".dylib",
+            }:
+                path = Path(distribution.locate_file(entry)).absolute()
+                module_files[os.path.normcase(os.path.abspath(path))] = path
+        for location_index, path in enumerate(
+            package_directories[key] for key in sorted(package_directories)
+        ):
+            if audit_import_tree:
+                import_files.extend(
+                    _tree_files(
+                        path,
+                        prefix=f"import/{current_name}/{import_index}/{location_index}",
+                    )
                 )
+            else:
+                recorded_candidates = [
+                    candidate
+                    for candidate in payload_files
+                    if _relative_to_roots(candidate[1], (path,)) is not None
+                ]
+                import_files.extend(
+                    (
+                        f"import/{current_name}/{import_index}/{location_index}/record/{file_index}",
+                        candidate,
+                    )
+                    for file_index, (_, candidate) in enumerate(recorded_candidates)
+                )
+        for file_index, path in enumerate(
+            module_files[key] for key in sorted(module_files)
+        ):
+            import_files.append(
+                (f"import/{current_name}/{import_index}/file/{file_index}", path)
             )
-    else:
-        import_files.append((f"import/{import_name}", entrypoint_path))
+        candidates = [
+            path for _, path in import_files if entrypoint_path is None
+        ]
+        if candidates:
+            entrypoint_path = candidates[0]
+    if entrypoint_path is None or not import_files:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    entrypoint_raw, _ = _read_runtime_payload_bytes(entrypoint_path)
     unlisted_import_files = [
         (locator, path)
         for locator, path in import_files
         if os.path.normcase(os.path.abspath(path)) not in recorded_paths
     ]
-    if unlisted_import_files:
+    if audit_import_tree and unlisted_import_files:
         raise ValidatorContractError(
             "target intake validator runtime identity is unavailable"
         )
@@ -733,8 +1438,8 @@ def _distribution_fingerprint(name: str, import_name: str) -> dict[str, Any]:
         )
     )
     return {
-        "name": name,
-        "import_name": import_name,
+        "name": canonical_name,
+        "import_names": list(import_names),
         "version": distribution.version,
         "recorded_file_count": len(files),
         "metadata_sha256": hashlib.sha256(metadata_raw).hexdigest(),
@@ -745,10 +1450,142 @@ def _distribution_fingerprint(name: str, import_name: str) -> dict[str, Any]:
         "payload_tree_sha256": payload_sha256,
         "record_hash_verified_file_count": verified_hash_count,
         "record_unlisted_import_file_count": 0,
+        "import_tree_record_completeness": audit_import_tree,
     }
 
 
-def _current_runtime_environment() -> dict[str, Any]:
+def _distribution_closure(
+    loaded_owner_names: tuple[str, ...],
+    *,
+    loaded_origin_file_count: int = 0,
+    loaded_origin_map_sha256: str | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    index = _distribution_installation_index()
+    packaging_name = _canonical_distribution_name(BOOTSTRAP_DISTRIBUTIONS[0][0])
+    packaging_distribution = index.get(packaging_name)
+    if packaging_distribution is None:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    packaging_fingerprint = _distribution_fingerprint(
+        packaging_name,
+        BOOTSTRAP_DISTRIBUTIONS[0][1],
+        distribution=packaging_distribution,
+        audit_import_tree=False,
+    )
+    try:
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.version import InvalidVersion, Version
+    except ImportError as error:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        ) from error
+
+    root_names = list(DEPENDENCY_ROOT_NAMES)
+    metadata_names: set[str] = set(root_names)
+    edges: set[str] = set()
+    queue = list(root_names)
+    try:
+        while queue:
+            parent = queue.pop(0)
+            distribution = index.get(parent)
+            if distribution is None:
+                raise ValidatorContractError(
+                    "target intake validator runtime identity is unavailable"
+                )
+            for raw_requirement in distribution.requires or []:
+                requirement = Requirement(raw_requirement)
+                if requirement.marker is not None and not requirement.marker.evaluate(
+                    environment={"extra": ""}
+                ):
+                    continue
+                if requirement.url:
+                    raise ValidatorContractError(
+                        "target intake validator runtime identity is unavailable"
+                    )
+                child = _canonical_distribution_name(requirement.name)
+                child_distribution = index.get(child)
+                if child_distribution is None or (
+                    requirement.specifier
+                    and not requirement.specifier.contains(
+                        Version(child_distribution.version),
+                        prereleases=True,
+                    )
+                ):
+                    raise ValidatorContractError(
+                        "target intake validator runtime identity is unavailable"
+                    )
+                edges.add(f"{parent}->{child}")
+                if child not in metadata_names:
+                    metadata_names.add(child)
+                    queue.append(child)
+    except (InvalidRequirement, InvalidVersion, TypeError, ValueError) as error:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        ) from error
+
+    loaded_names = sorted(
+        {_canonical_distribution_name(name) for name in loaded_owner_names}
+    )
+    if any(name not in index for name in loaded_names):
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    union_names = sorted(metadata_names | set(loaded_names) | {packaging_name})
+    if len(union_names) > _MAX_RUNTIME_DISTRIBUTIONS:
+        raise ValidatorContractError(
+            "target intake validator runtime identity is unavailable"
+        )
+    root_import_names = {
+        _canonical_distribution_name(name): import_name
+        for name, import_name in DEPENDENCY_DISTRIBUTIONS
+    }
+    import_name_index = _distribution_import_name_index()
+    fingerprints: list[dict[str, Any]] = []
+    total_files = 0
+    total_bytes = 0
+    for canonical_name in union_names:
+        if canonical_name == packaging_name:
+            fingerprint = packaging_fingerprint
+        else:
+            fingerprint = _distribution_fingerprint(
+                canonical_name,
+                _distribution_import_names(
+                    canonical_name,
+                    fallback=root_import_names.get(canonical_name),
+                    import_name_index=import_name_index,
+                ),
+                distribution=index[canonical_name],
+                audit_import_tree=canonical_name in DEPENDENCY_ROOT_NAMES,
+            )
+        total_files += fingerprint["payload_file_count"]
+        total_bytes += fingerprint["payload_size_bytes"]
+        if (
+            total_files > _MAX_RUNTIME_DISTRIBUTION_FILES
+            or total_bytes > _MAX_RUNTIME_DISTRIBUTION_BYTES
+        ):
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            )
+        fingerprints.append(fingerprint)
+    closure = {
+        "kind": DISTRIBUTION_CLOSURE_KIND,
+        "root_names": root_names,
+        "metadata_closure_names": sorted(metadata_names),
+        "loaded_owner_names": loaded_names,
+        "union_names": union_names,
+        "dependency_edges": sorted(edges),
+        "loaded_origin_file_count": loaded_origin_file_count,
+        "loaded_origin_map_sha256": (
+            loaded_origin_map_sha256 or hashlib.sha256().hexdigest()
+        ),
+    }
+    return closure, fingerprints
+
+
+def _current_runtime_environment(
+    loaded_distribution_selection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     executable_raw, _ = read_stable_bytes_with_metadata(
         Path(sys.executable),
         max_bytes=_MAX_RUNTIME_FILE_BYTES,
@@ -768,8 +1605,35 @@ def _current_runtime_environment() -> dict[str, Any]:
         max_bytes=_MAX_RUNTIME_FILE_BYTES,
     )
     python_payload = _python_payload_fingerprints()
+    if loaded_distribution_selection is not None:
+        if _loaded_distribution_selection_errors(loaded_distribution_selection):
+            raise ValidatorContractError(
+                "target intake validator runtime identity is unavailable"
+            )
+        selected = loaded_distribution_selection
+    elif _active_snapshot_execution_profile is not None:
+        selected = {
+            "owner_names": _active_snapshot_execution_profile["loaded_owner_names"],
+            "origin_file_count": _active_snapshot_execution_profile[
+                "loaded_origin_file_count"
+            ],
+            "origin_map_sha256": _active_snapshot_execution_profile[
+                "loaded_origin_map_sha256"
+            ],
+        }
+    else:
+        selected = {
+            "owner_names": [],
+            "origin_file_count": 0,
+            "origin_map_sha256": hashlib.sha256().hexdigest(),
+        }
+    distribution_closure, distributions = _distribution_closure(
+        tuple(selected["owner_names"]),
+        loaded_origin_file_count=selected["origin_file_count"],
+        loaded_origin_map_sha256=selected["origin_map_sha256"],
+    )
     document = {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": RUNTIME_ENVIRONMENT_KIND,
         "production_acceptance": False,
         "python": {
@@ -788,10 +1652,8 @@ def _current_runtime_environment() -> dict[str, Any]:
             "machine": runtime_platform.machine(),
             "version": runtime_platform.version(),
         },
-        "distributions": [
-            _distribution_fingerprint(name, import_name)
-            for name, import_name in DEPENDENCY_DISTRIBUTIONS
-        ],
+        "distribution_closure": distribution_closure,
+        "distributions": distributions,
     }
     if _runtime_environment_shape_errors(document):
         raise ValidatorContractError(
@@ -804,7 +1666,7 @@ def validator_contract_shape_errors(document: Any) -> list[str]:
     if not isinstance(document, dict) or set(document) != VALIDATOR_CONTRACT_KEYS:
         return ["generation validator contract schema is invalid"]
     if (
-        document.get("schema_version") != 4
+        document.get("schema_version") != 5
         or document.get("kind") != VALIDATOR_CONTRACT_KIND
         or document.get("production_acceptance") is not False
         or document.get("authoring_entrypoint") != AUTHORING_ENTRYPOINT
@@ -866,7 +1728,7 @@ def current_validator_contract() -> dict[str, Any]:
             "target intake validator source identity is unavailable"
         ) from error
     document = {
-        "schema_version": 4,
+        "schema_version": 5,
         "kind": VALIDATOR_CONTRACT_KIND,
         "production_acceptance": False,
         "authoring_entrypoint": AUTHORING_ENTRYPOINT,

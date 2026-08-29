@@ -3440,7 +3440,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "recovery=read-only-local-revalidation",
                 output.getvalue(),
             )
-            self.assertIn("generation-receipt-locator=self-bound-v7", output.getvalue())
+            self.assertIn("generation-receipt-locator=self-bound-v8", output.getvalue())
             self.assertIn("generation_validator_contract_sha256=", output.getvalue())
             self.assertIn(
                 "generation-validator-launcher-interpreter-sha256=",
@@ -4130,8 +4130,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "@TargetIntakeLauncherArgs -- verify-generation-lineage",
             "@TargetIntakeLauncherArgs -- verify-receipt",
             "target_intake_snapshot_launcher.py prepare",
-            "exact `-I -B -S -P` flags",
-            "91-member set",
+            "exact `-I -B -S -P`",
+            "92-member set",
             "recovery snapshot mutation",
             "repository-external",
             "production_acceptance=false",
@@ -4167,7 +4167,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "local schema-v2 receipts",
             "case-preserving lexical absolute `receipt_path`",
-            "Schema-v1/v2/v3/v4/v5/v6 generation receipts and mixed legacy/v7",
+            "Schema-v1/v2/v3/v4/v5/v6/v7 generation receipts and mixed legacy/v8",
             "replays every receipt/manifest pair",
             "ordered 65-file verifier source",
             "replay-runtime fingerprint: Python implementation/version",
