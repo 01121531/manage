@@ -52,6 +52,8 @@ from scripts.release_execution_binding import (
     ReleaseExecutionBindingError,
     release_execution_identity,
     release_execution_identity_alignment_errors,
+    release_execution_review_subject,
+    release_execution_review_subject_errors,
     release_execution_reviewed_at,
 )
 from scripts.sub2_execution_evidence import (
@@ -123,6 +125,7 @@ _ITEM_KEYS = {
     "reviewed_at",
     "redaction_confirmed",
 }
+_RELEASE_ITEM_KEYS = _ITEM_KEYS | {"release_execution_review_subject"}
 _ALLOWED_POLICIES = {
     "redacted_contract",
     "reviewed_decision",
@@ -346,7 +349,7 @@ def requirements_errors(document: Any, matrix: Any) -> list[str]:
 def create_intake_manifest(environment: str, requirements: Any) -> dict[str, Any]:
     requirement_items = requirements.get("requirements", []) if isinstance(requirements, dict) else []
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "environment": environment,
         "production_acceptance": False,
         "requirements_sha256": requirements_sha256(requirements),
@@ -359,6 +362,11 @@ def create_intake_manifest(environment: str, requirements: Any) -> dict[str, Any
                 "reviewed_by": None,
                 "reviewed_at": None,
                 "redaction_confirmed": None,
+                **(
+                    {"release_execution_review_subject": None}
+                    if item.get("id") == "release_execution_evidence"
+                    else {}
+                ),
             }
             for item in requirement_items
             if isinstance(item, dict)
@@ -558,6 +566,26 @@ def _artifact_errors(
                 errors.append(
                     "release_execution_evidence terminal state is not successful"
                 )
+            review_subject = item.get("release_execution_review_subject")
+            review_subject_errors = release_execution_review_subject_errors(
+                review_subject
+            )
+            if review_subject_errors:
+                errors.append(
+                    "release_execution_evidence review subject is invalid"
+                )
+            else:
+                reviewed_selector = review_subject["selector"]
+                if (
+                    reviewed_selector["ledger_type"]
+                    != validated_document["ledger_type"]
+                    or reviewed_selector["evidence_sha256"] != supplied_sha
+                    or reviewed_selector["target_intake"]
+                    != validated_document["target_intake"]
+                ):
+                    errors.append(
+                        "release_execution_evidence review subject does not match its ledger"
+                    )
     if identifier == "phase6_pilot_evidence" and artifact_bytes is not None:
         validated_document = artifact_document
         if pilot_evidence_errors(validated_document, evaluated_at=evaluated_at):
@@ -598,8 +626,10 @@ def _artifact_errors(
 
 def _release_execution_consumer_selector_errors(
     documents: list[Any],
+    *,
+    review_subject: Any,
 ) -> list[str]:
-    """Require one exact selector claim within this intake, not global uniqueness."""
+    """Require one exact reviewed selector claim within this intake."""
 
     selectors = [
         document.get("release_execution")
@@ -612,6 +642,15 @@ def _release_execution_consumer_selector_errors(
         if any(selector != baseline for selector in selectors[1:]):
             return [
                 "release execution selector does not match the other consumers in this intake manifest"
+            ]
+    if selectors:
+        try:
+            expected_subject = release_execution_review_subject(selectors[0])
+        except ReleaseExecutionBindingError:
+            return ["release execution consumer selector is invalid"]
+        if review_subject != expected_subject:
+            return [
+                "release execution review subject does not match its consumers in this intake manifest"
             ]
     return []
 
@@ -638,7 +677,7 @@ def intake_errors(
         }
         if required_ids not in valid_checkpoints:
             errors.append("intake checkpoint requirement inventory is invalid")
-    if document.get("schema_version") != 1:
+    if document.get("schema_version") != 2:
         errors.append("intake manifest identity is invalid")
     environment = document.get("environment")
     if (
@@ -670,23 +709,35 @@ def intake_errors(
     phase6_pilot_evidence: Any | None = None
     phase6_operations_evidence: Any | None = None
     release_execution: Any | None = None
+    release_review_subject: Any | None = None
     phase0_ids = frozenset(phase_requirement_ids(requirements, 0))
     for item in items:
-        if not isinstance(item, dict) or set(item) != _ITEM_KEYS:
+        if not isinstance(item, dict):
             errors.append("intake manifest item schema is invalid")
             continue
         identifier = item.get("id")
+        expected_item_keys = (
+            _RELEASE_ITEM_KEYS
+            if identifier == "release_execution_evidence"
+            else _ITEM_KEYS
+        )
+        if set(item) != expected_item_keys:
+            errors.append("intake manifest item schema is invalid")
+            continue
         status_value = item.get("status")
         if status_value == "missing":
+            metadata_keys = [
+                "artifact_path",
+                "sha256",
+                "reviewed_by",
+                "reviewed_at",
+                "redaction_confirmed",
+            ]
+            if identifier == "release_execution_evidence":
+                metadata_keys.append("release_execution_review_subject")
             if any(
                 item.get(key) is not None
-                for key in (
-                    "artifact_path",
-                    "sha256",
-                    "reviewed_by",
-                    "reviewed_at",
-                    "redaction_confirmed",
-                )
+                for key in metadata_keys
             ):
                 errors.append(f"{identifier} missing item must not carry artifact metadata")
             if require_complete and (
@@ -785,6 +836,9 @@ def intake_errors(
                 and isinstance(validated_document, dict)
             ):
                 release_execution = validated_document
+                release_review_subject = item.get(
+                    "release_execution_review_subject"
+                )
             if (
                 identifier == "phase6_pilot_inputs"
                 and isinstance(validated_document, dict)
@@ -1084,6 +1138,7 @@ def intake_errors(
     errors.extend(
         _release_execution_consumer_selector_errors(
             release_execution_consumers,
+            review_subject=release_review_subject,
         )
     )
     lineage_required = require_complete and (
@@ -1423,6 +1478,7 @@ def main(argv: list[str] | None = None) -> int:
         f"environment={manifest['environment']} "
         f"manifest_payload_sha256={requirements_sha256(manifest)} "
         f"requirements_sha256={manifest['requirements_sha256']} "
+        "release-review-selector-subject=manifest-exact "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "
         "release-review-replay-protection=unverified "

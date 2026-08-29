@@ -146,7 +146,7 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
     @staticmethod
     def _manifest(bindings: dict[str, str]) -> dict[str, object]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "environment": "staging",
             "production_acceptance": False,
             "requirements_sha256": "a" * 64,
@@ -170,6 +170,20 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
                     "id": "release_execution_evidence",
                     "status": "provided",
                     "sha256": "f" * 64,
+                    "release_execution_review_subject": {
+                        "kind": "release_execution_selector_v1",
+                        "selector": {
+                            "ledger_type": "forward",
+                            "evidence_object_reference": "worm-release-execution:record-42a",
+                            "evidence_sha256": "f" * 64,
+                            "target_intake": {
+                                "environment": "staging",
+                                "manifest_payload_sha256": "9" * 64,
+                                "requirements_sha256": "a" * 64,
+                                "checkpoint_phase": 0,
+                            },
+                        },
+                    },
                     "reviewed_by": "release-selection-review-record-42",
                     "reviewed_at": "2026-08-26T08:30:00Z",
                 },
@@ -379,6 +393,9 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
             manifest["items"][3]["sha256"] = reviewed["release_execution"][
                 "evidence_sha256"
             ]
+            manifest["items"][3]["release_execution_review_subject"][
+                "selector"
+            ] = copy.deepcopy(reviewed["release_execution"])
             inputs_path.write_text(json.dumps(pilot_inputs), encoding="utf-8")
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             index_path.write_text(json.dumps(self.template), encoding="utf-8")

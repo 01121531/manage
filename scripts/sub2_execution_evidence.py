@@ -470,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         "sub2-execution-evidence-index-bound production_acceptance=false "
+        "release-review-selector-subject=manifest-exact "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "
         "release-review-replay-protection=unverified "

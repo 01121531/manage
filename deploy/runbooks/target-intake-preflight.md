@@ -52,8 +52,13 @@ python scripts/target_intake_preflight.py init `
 ```
 
 The generated manifest binds itself to the canonical requirements registry in
-`deploy/target-intake-requirements.json`. Every item starts with `status` set to
-`missing` and all artifact metadata set to `null`.
+`deploy/target-intake-requirements.json`. It uses target-intake schema v2.
+Every item starts with `status` set to `missing` and all artifact metadata set
+to `null`; only `release_execution_evidence` also carries
+`release_execution_review_subject=null`. Schema-v1 manifests are invalid under
+the current verifier and must be rebuilt with a new Phase 0 checkpoint and
+release execution. They are not silently reinterpreted as full-selector
+reviews.
 
 ## Register one reviewed artifact
 
@@ -72,6 +77,36 @@ above, change the matching item to this shape:
 }
 ```
 
+The provided `release_execution_evidence` item has one additional closed
+field. Copy the exact four-field selector from every consuming evidence index;
+do not reduce it to a digest-only review:
+
+```json
+{
+  "id": "release_execution_evidence",
+  "status": "provided",
+  "artifact_path": "D:\\email-platform-evidence\\release\\selected-v3-execution.json",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "release_execution_review_subject": {
+    "kind": "release_execution_selector_v1",
+    "selector": {
+      "ledger_type": "forward",
+      "evidence_object_reference": "worm-release-execution:record-42a",
+      "evidence_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "target_intake": {
+        "environment": "staging",
+        "manifest_payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "checkpoint_phase": 0
+      }
+    }
+  },
+  "reviewed_by": "release-selection-review-record-42",
+  "reviewed_at": "2026-08-26T12:00:00Z",
+  "redaction_confirmed": true
+}
+```
+
 Use an opaque ticket or approval reference for `reviewed_by`. For the sealed
 Mail/Sub2 provider contracts, every Phase 1–5 execution index, the Windows and
 Phase 6 pilot input inventories, the Sub2 and Vault/egress indexes, and the
@@ -85,10 +120,16 @@ and Phase 6 pilot inputs are usable only in the half-open interval
 preflight captures one UTC evaluation instant and passes it through the Phase 0
 checkpoint, provider-contract runtime conformance and every evidence validator;
 it never refreshes the clock between artifacts or dependency replays. For the
-release execution ledger, the manifest review time is the selection review of
-that exact whole-file SHA-256: it must be at or after ledger `finished_at` and
-not after the evaluation instant. For the remaining artifact policies without a
-sealed review time, the manifest timestamp must still be canonical UTC ending
+release execution ledger, `reviewed_by` and `reviewed_at` refer to the exact
+closed `release_execution_selector_v1` subject: ledger type, opaque locator,
+whole-file SHA-256, and frozen Phase 0 target-intake identity. The digest and
+target-intake fields must match the independently parsed ledger, and the full
+subject must exactly equal every release consumer in this manifest. Changing
+only the locator—or rebinding all consumers together—requires a new matching
+subject and a new review claim; it cannot inherit the old selector review. The
+review time must be at or after ledger `finished_at` and not after the
+evaluation instant. For the remaining artifact policies without a sealed
+review time, the manifest timestamp must still be canonical UTC ending
 in `Z`. An opaque reviewer reference and host-clock comparison are not an
 authenticated signature or trusted time. The repository does not define a
 release-review signer role, pinned public-key trust anchor, private-key custody/
@@ -98,8 +139,9 @@ existing private-secret Ed25519 policies have distinct, scope-limited signing
 domains and are unconfigured; their keys and receipts must not be reused for a
 release-selection review. Until a dedicated external trust policy defines all
 of those controls, `reviewed_by` and `reviewed_at` remain an opaque attribution
-claim. Exact SHA-256 selection and local ordering reject byte substitution and
-predating, but do not authenticate the reviewer, time, or global replay state.
+claim. The full-selector projection and local ordering reject subject drift,
+byte substitution and predating, but do not authenticate the reviewer, time,
+storage provider, locator authority or global replay state.
 Likewise, the legacy `worm-release-execution:` prefix is only a compatibility
 namespace for an opaque storage locator. The selector does not read or
 authenticate a provider configuration, immutable object/version identity,
@@ -335,10 +377,11 @@ must not claim start-time authorization. Final strict intake is the sole
 repository verifier that combines the exact checkpoint, current six Phase 0
 items, selected ledger and all consumers to prove the complete chain
 `finished_at <= ledger reviewed_at <= consumer window.started_at` together with
-the frozen-window start replay. Every success output explicitly reports release
-reviewer authentication, trusted time and replay protection as `unverified`;
-those markers cannot be upgraded by supplying a SHA-256, host timestamp or
-opaque ticket reference. The same outputs report provider-native storage,
+the frozen-window start replay. Every success output explicitly reports
+`release-review-selector-subject=manifest-exact`, while reviewer authentication,
+trusted time and replay protection remain `unverified`; those markers cannot be
+upgraded by supplying a SHA-256, host timestamp or opaque ticket reference. The
+same outputs report provider-native storage,
 retention, delete denial and post-denial readback as `unverified`; the legacy
 locator prefix, local no-replace write, or ledger digest cannot upgrade them.
 

@@ -52,6 +52,8 @@ IDENTITY_KEYS = {
     "finished_at",
 }
 TARGET_RELEASE_KEYS = {"tag", "commit", "container_manifest_sha256"}
+REVIEW_SUBJECT_KIND = "release_execution_selector_v1"
+REVIEW_SUBJECT_KEYS = {"kind", "selector"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -161,15 +163,15 @@ def _reviewer_reference(value: Any) -> bool:
 
 
 def release_execution_reviewed_at(manifest: Any, selector: Any) -> Any:
-    """Return an opaque review claim's time for one exact selected ledger."""
+    """Return an opaque review claim's time for one exact reviewed selector."""
 
     if (
         not isinstance(manifest, dict)
         or not isinstance(manifest.get("items"), list)
-        or not isinstance(selector, dict)
-        or not _digest(selector.get("evidence_sha256"))
+        or selector_errors(selector, synthetic=False)
     ):
         return None
+    expected_subject = release_execution_review_subject(selector)
     matches = [
         item
         for item in manifest["items"]
@@ -177,9 +179,37 @@ def release_execution_reviewed_at(manifest: Any, selector: Any) -> Any:
         and item.get("id") == "release_execution_evidence"
         and item.get("status") == "provided"
         and item.get("sha256") == selector["evidence_sha256"]
+        and item.get("release_execution_review_subject") == expected_subject
         and _reviewer_reference(item.get("reviewed_by"))
     ]
     return matches[0].get("reviewed_at") if len(matches) == 1 else None
+
+
+def release_execution_review_subject(selector: Any) -> dict[str, Any]:
+    """Project one valid full selector as the local review subject."""
+
+    errors = selector_errors(selector, synthetic=False)
+    if errors:
+        raise ReleaseExecutionBindingError("release execution review subject is invalid")
+    return {
+        "kind": REVIEW_SUBJECT_KIND,
+        "selector": {
+            "ledger_type": selector["ledger_type"],
+            "evidence_object_reference": selector["evidence_object_reference"],
+            "evidence_sha256": selector["evidence_sha256"],
+            "target_intake": dict(selector["target_intake"]),
+        },
+    }
+
+
+def release_execution_review_subject_errors(subject: Any) -> list[str]:
+    """Validate one closed manifest-local full-selector review projection."""
+
+    if not _exact_mapping(subject, REVIEW_SUBJECT_KEYS):
+        return ["release execution review subject schema is invalid"]
+    if subject.get("kind") != REVIEW_SUBJECT_KIND:
+        return ["release execution review subject kind is invalid"]
+    return selector_errors(subject.get("selector"), synthetic=False)
 
 
 def selector_errors(

@@ -36,6 +36,7 @@ from scripts.phase6_operations_evidence import (
     seal_index as seal_operations_evidence_index,
 )
 from scripts.provider_contract_conformance import MAIL_CONTRACT, SUB2_CONTRACT
+from scripts.release_execution_binding import release_execution_review_subject
 from scripts.sub2_execution_evidence import (
     EVIDENCE_INDEX,
     REQUIRED_SCENARIO_OBSERVATIONS,
@@ -85,6 +86,28 @@ class TargetIntakePreflightTests(unittest.TestCase):
         )
         runtime_patch.start()
         self.addCleanup(runtime_patch.stop)
+
+    @staticmethod
+    def _release_selector(
+        manifest: dict[str, object],
+        phase0_manifest_sha256: str,
+    ) -> dict[str, object]:
+        release_item = next(
+            item
+            for item in manifest["items"]
+            if item["id"] == "release_execution_evidence"
+        )
+        return {
+            "ledger_type": "forward",
+            "evidence_object_reference": "worm-release-execution:record-42a",
+            "evidence_sha256": release_item["sha256"],
+            "target_intake": {
+                "environment": manifest["environment"],
+                "manifest_payload_sha256": phase0_manifest_sha256,
+                "requirements_sha256": manifest["requirements_sha256"],
+                "checkpoint_phase": 0,
+            },
+        }
 
     @staticmethod
     def _artifact_document(
@@ -965,12 +988,26 @@ class TargetIntakePreflightTests(unittest.TestCase):
     def test_new_manifest_is_closed_incomplete_and_never_accepted(self) -> None:
         manifest = create_intake_manifest("staging", self.requirements)
 
+        self.assertEqual(manifest["schema_version"], 2)
         self.assertFalse(manifest["production_acceptance"])
         self.assertEqual(
             manifest["requirements_sha256"],
             requirements_sha256(self.requirements),
         )
         self.assertTrue(all(item["status"] == "missing" for item in manifest["items"]))
+        release_item = next(
+            item
+            for item in manifest["items"]
+            if item["id"] == "release_execution_evidence"
+        )
+        self.assertIsNone(release_item["release_execution_review_subject"])
+        self.assertTrue(
+            all(
+                "release_execution_review_subject" not in item
+                for item in manifest["items"]
+                if item["id"] != "release_execution_evidence"
+            )
+        )
         self.assertTrue(
             intake_errors(
                 manifest,
@@ -989,6 +1026,65 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 self.requirements,
                 repository_root=Path("repository-root-that-does-not-exist"),
                 require_complete=False,
+            ),
+        )
+        legacy = copy.deepcopy(manifest)
+        legacy["schema_version"] = 1
+        self.assertIn(
+            "intake manifest identity is invalid",
+            intake_errors(
+                legacy,
+                self.requirements,
+                repository_root=Path("repository-root-that-does-not-exist"),
+                require_complete=False,
+            ),
+        )
+        missing_subject = copy.deepcopy(manifest)
+        next(
+            item
+            for item in missing_subject["items"]
+            if item["id"] == "release_execution_evidence"
+        ).pop("release_execution_review_subject")
+        self.assertIn(
+            "intake manifest item schema is invalid",
+            intake_errors(
+                missing_subject,
+                self.requirements,
+                repository_root=Path("repository-root-that-does-not-exist"),
+                require_complete=False,
+            ),
+        )
+
+    def test_release_review_subject_must_follow_an_all_consumer_rebind(self) -> None:
+        selector = {
+            "ledger_type": "forward",
+            "evidence_object_reference": "worm-release-execution:record-42a",
+            "evidence_sha256": "a" * 64,
+            "target_intake": {
+                "environment": "staging",
+                "manifest_payload_sha256": "9" * 64,
+                "requirements_sha256": "b" * 64,
+                "checkpoint_phase": 0,
+            },
+        }
+        documents = [{"release_execution": copy.deepcopy(selector)} for _ in range(3)]
+        subject = release_execution_review_subject(selector)
+        self.assertEqual(
+            target_intake._release_execution_consumer_selector_errors(
+                documents,
+                review_subject=subject,
+            ),
+            [],
+        )
+        for document in documents:
+            document["release_execution"]["evidence_object_reference"] = (
+                "worm-release-execution:record-99b"
+            )
+        self.assertIn(
+            "release execution review subject does not match its consumers in this intake manifest",
+            target_intake._release_execution_consumer_selector_errors(
+                documents,
+                review_subject=subject,
             ),
         )
 
@@ -1090,7 +1186,6 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "redaction_confirmed": True,
                     }
                 )
-
             self.assertEqual(
                 intake_errors(
                     manifest,
@@ -1266,6 +1361,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "redaction_confirmed": True,
                     }
                 )
+                if item["id"] == "release_execution_evidence":
+                    item["release_execution_review_subject"] = (
+                        release_execution_review_subject(
+                            self._release_selector(manifest, phase0_digest)
+                        )
+                    )
 
             phase0_ids = frozenset(phase_requirement_ids(self.requirements, 0))
             for item in manifest["items"]:
@@ -2575,6 +2676,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "redaction_confirmed": True,
                     }
                 )
+                if item["id"] == "release_execution_evidence":
+                    item["release_execution_review_subject"] = (
+                        release_execution_review_subject(
+                            self._release_selector(manifest, phase0_digest)
+                        )
+                    )
 
             phase0_ids = frozenset(phase_requirement_ids(self.requirements, 0))
             for item in manifest["items"]:

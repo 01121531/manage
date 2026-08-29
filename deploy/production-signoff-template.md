@@ -145,6 +145,7 @@ Release manifest:
 - Standalone ledger integrity/identity result versus final-strict Phase 0 start-replay authority result:
 - Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:
 - Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:
+- Target-intake schema-v2 release review subject kind and exact full-selector projection result:
 - Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:
 - Release-execution opaque storage locator plus provider-native enforcement, retention, delete-denial and post-denial readback `unverified` acknowledgement:
 - Final-strict all-consumer exact release selector equality, including the opaque locator, result:

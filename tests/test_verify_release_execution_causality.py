@@ -57,6 +57,22 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertNotEqual(mutated, self.binding)
         self.assertTrue(self.errors(binding=mutated))
 
+    def test_review_must_bind_the_closed_full_selector_subject(self) -> None:
+        for old, new in (
+            (
+                'item.get("release_execution_review_subject") == expected_subject',
+                'item.get("release_execution_review_subject") != expected_subject',
+            ),
+            (
+                '            "evidence_object_reference": selector["evidence_object_reference"],\n',
+                "",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.binding.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.binding)
+                self.assertTrue(self.errors(binding=mutated))
+
     def test_review_time_requires_an_opaque_reviewer_reference(self) -> None:
         mutated = self.binding.replace(
             '        and _reviewer_reference(item.get("reviewed_by"))\n',
@@ -168,6 +184,27 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 self.assertNotEqual(mutated, self.intake)
                 self.assertTrue(self.errors(intake=mutated))
 
+    def test_intake_schema_v2_and_review_subject_projection_cannot_be_weakened(self) -> None:
+        for old, new in (
+            ('"schema_version": 2,', '"schema_version": 1,'),
+            (
+                "review_subject != expected_subject",
+                "review_subject == expected_subject",
+            ),
+            (
+                "review_subject=release_review_subject,",
+                "review_subject=None,",
+            ),
+            (
+                "release_execution_review_subject_errors(\n",
+                "ignored_release_execution_review_subject_errors(\n",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.intake.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+
     def test_each_standalone_consumer_must_pass_its_window_start(self) -> None:
         for name, source in self.consumers.items():
             mutated, count = re.subn(
@@ -229,6 +266,22 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                     consumers = {**self.consumers, name: mutated}
                     self.assertTrue(self.errors(consumers=consumers))
 
+    def test_every_consumer_reports_exact_manifest_review_subject_binding(self) -> None:
+        marker = "release-review-selector-subject=manifest-exact"
+        mutated = self.intake.replace(marker, marker.replace("exact", "digest-only"), 1)
+        self.assertNotEqual(mutated, self.intake)
+        self.assertTrue(self.errors(intake=mutated))
+        for name, source in self.consumers.items():
+            with self.subTest(source=name):
+                mutated = source.replace(
+                    marker,
+                    marker.replace("exact", "digest-only"),
+                    1,
+                )
+                self.assertNotEqual(mutated, source)
+                consumers = {**self.consumers, name: mutated}
+                self.assertTrue(self.errors(consumers=consumers))
+
     def test_release_review_trust_model_boundary_is_documented(self) -> None:
         runbook = " ".join(
             Path("deploy/runbooks/target-intake-preflight.md")
@@ -251,6 +304,10 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "it proves only equality of the claims presented in that intake",
             "namespace authority, version identity, and cross-manifest rebinding protection therefore remain `unverified`",
             "delete-then-recreate with identical bytes also remains indistinguishable from continuous retention",
+            "target-intake schema v2",
+            "release_execution_selector_v1",
+            "rebinding all consumers together",
+            "cannot inherit the old selector review",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, runbook)
@@ -277,6 +334,10 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "this same-manifest equality is not a provider namespace authority or immutable version identity and cannot detect later cross-manifest or cross-environment rebinding",
             requirements,
         )
+        self.assertIn(
+            "a locator-only or all-consumer rebind cannot inherit the prior review claim",
+            requirements,
+        )
         signoff = Path("deploy/production-signoff-template.md").read_text(
             encoding="utf-8"
         )
@@ -290,6 +351,10 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         )
         self.assertIn(
             "Final-strict all-consumer exact release selector equality, including the opaque locator, result:",
+            signoff,
+        )
+        self.assertIn(
+            "Target-intake schema-v2 release review subject kind and exact full-selector projection result:",
             signoff,
         )
         self.assertIn(

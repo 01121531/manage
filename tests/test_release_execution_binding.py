@@ -10,6 +10,8 @@ from unittest import mock
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
     release_execution_identity,
+    release_execution_review_subject,
+    release_execution_review_subject_errors,
     release_execution_reviewed_at,
     selector_errors,
 )
@@ -201,13 +203,22 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
         self.assertTrue(selector_errors(reviewed, synthetic=False, environment="staging"))
 
     def test_review_time_is_bound_to_the_exact_selected_ledger(self) -> None:
-        selector = {"evidence_sha256": "a" * 64}
+        selector = {
+            "ledger_type": "forward",
+            "evidence_object_reference": "worm-release-execution:record-42a",
+            "evidence_sha256": "a" * 64,
+            "target_intake": dict(TARGET_INTAKE),
+        }
         manifest = {
             "items": [
                 {
                     "id": "release_execution_evidence",
                     "status": "provided",
                     "sha256": "a" * 64,
+                    "release_execution_review_subject": {
+                        "kind": "release_execution_selector_v1",
+                        "selector": copy.deepcopy(selector),
+                    },
                     "reviewed_by": "release-review-ticket-42",
                     "reviewed_at": "2026-08-26T08:30:00Z",
                 }
@@ -220,6 +231,20 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
         wrong_digest = copy.deepcopy(manifest)
         wrong_digest["items"][0]["sha256"] = "b" * 64
         self.assertIsNone(release_execution_reviewed_at(wrong_digest, selector))
+        rebound_locator = copy.deepcopy(selector)
+        rebound_locator["evidence_object_reference"] = (
+            "worm-release-execution:record-99b"
+        )
+        self.assertIsNone(
+            release_execution_reviewed_at(manifest, rebound_locator)
+        )
+        missing_projection = copy.deepcopy(manifest)
+        missing_projection["items"][0].pop(
+            "release_execution_review_subject"
+        )
+        self.assertIsNone(
+            release_execution_reviewed_at(missing_projection, selector)
+        )
         duplicate = copy.deepcopy(manifest)
         duplicate["items"].append(copy.deepcopy(duplicate["items"][0]))
         self.assertIsNone(release_execution_reviewed_at(duplicate, selector))
@@ -228,6 +253,30 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                 invalid = copy.deepcopy(manifest)
                 invalid["items"][0]["reviewed_by"] = invalid_reviewer
                 self.assertIsNone(release_execution_reviewed_at(invalid, selector))
+
+    def test_review_subject_is_a_closed_full_selector_projection(self) -> None:
+        selector = {
+            "ledger_type": "forward",
+            "evidence_object_reference": "worm-release-execution:record-42a",
+            "evidence_sha256": "a" * 64,
+            "target_intake": dict(TARGET_INTAKE),
+        }
+        subject = release_execution_review_subject(selector)
+        self.assertEqual(
+            subject,
+            {
+                "kind": "release_execution_selector_v1",
+                "selector": selector,
+            },
+        )
+        self.assertEqual(release_execution_review_subject_errors(subject), [])
+        for mutation in (
+            {**subject, "digest_only": True},
+            {**subject, "kind": "release_execution_digest_v1"},
+            {**subject, "selector": None},
+        ):
+            with self.subTest(mutation=mutation):
+                self.assertTrue(release_execution_review_subject_errors(mutation))
 
     def test_forward_success_is_parsed_and_bound_to_release_and_intake(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

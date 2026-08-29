@@ -27,6 +27,7 @@ CONSUMERS = {
 }
 MAX_SOURCE_BYTES = 128 * 1024
 RELEASE_BOUNDARY_MARKERS = (
+    "release-review-selector-subject=manifest-exact",
     "release-reviewer-authentication=unverified",
     "release-review-trusted-time=unverified",
     "release-review-replay-protection=unverified",
@@ -110,6 +111,49 @@ def _has_compare(
     )
 
 
+def _has_item_get_compare(
+    function: ast.FunctionDef,
+    key: str,
+    operator: type[ast.cmpop],
+    right: str,
+) -> bool:
+    return any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Call)
+        and isinstance(node.left.func, ast.Attribute)
+        and isinstance(node.left.func.value, ast.Name)
+        and node.left.func.value.id == "item"
+        and node.left.func.attr == "get"
+        and len(node.left.args) == 1
+        and isinstance(node.left.args[0], ast.Constant)
+        and node.left.args[0].value == key
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], operator)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Name)
+        and node.comparators[0].id == right
+        for node in ast.walk(function)
+    )
+
+
+def _has_dict_constant(
+    function: ast.FunctionDef,
+    key: str,
+    value: object,
+) -> bool:
+    return any(
+        isinstance(node, ast.Dict)
+        and any(
+            isinstance(item_key, ast.Constant)
+            and item_key.value == key
+            and isinstance(item_value, ast.Constant)
+            and item_value.value == value
+            for item_key, item_value in zip(node.keys, node.values, strict=True)
+        )
+        for node in ast.walk(function)
+    )
+
+
 def _keyword_value(call: ast.Call, name: str) -> ast.AST | None:
     return next((item.value for item in call.keywords if item.arg == name), None)
 
@@ -177,6 +221,11 @@ def causality_errors(
     opaque_reference = _function(binding_tree, "_opaque_execution_reference")
     selector_validation = _function(binding_tree, "selector_errors")
     reviewed_at = _function(binding_tree, "release_execution_reviewed_at")
+    review_subject = _function(binding_tree, "release_execution_review_subject")
+    review_subject_validation = _function(
+        binding_tree,
+        "release_execution_review_subject_errors",
+    )
     alignment = _function(
         binding_tree,
         "release_execution_identity_alignment_errors",
@@ -187,6 +236,8 @@ def causality_errors(
         or opaque_reference is None
         or selector_validation is None
         or reviewed_at is None
+        or review_subject is None
+        or review_subject_validation is None
         or alignment is None
         or path_alignment is None
     ):
@@ -214,6 +265,40 @@ def causality_errors(
             for node in ast.walk(reviewed_at)
         ):
             errors.append("ledger review time must select the exact ledger digest")
+        if not (
+            any(
+                isinstance(node, ast.Call)
+                and _call_name(node) == "release_execution_review_subject"
+                and len(node.args) == 1
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "selector"
+                for node in ast.walk(reviewed_at)
+            )
+            and _has_item_get_compare(
+                reviewed_at,
+                "release_execution_review_subject",
+                ast.Eq,
+                "expected_subject",
+            )
+            and all(
+                _contains_string(review_subject, field)
+                for field in (
+                    "kind",
+                    "selector",
+                    "ledger_type",
+                    "evidence_object_reference",
+                    "evidence_sha256",
+                    "target_intake",
+                )
+            )
+            and any(
+                isinstance(node, ast.Call)
+                and _call_name(node) == "selector_errors"
+                and _contains_string(node, "selector")
+                for node in ast.walk(review_subject_validation)
+            )
+        ):
+            errors.append("ledger review must bind the exact full release selector")
         if not any(
             isinstance(node, ast.Call)
             and _call_name(node) == "_reviewer_reference"
@@ -263,6 +348,7 @@ def causality_errors(
             errors.append("path-based release alignment must require and forward ordering")
 
     artifact_errors = _function(intake_tree, "_artifact_errors")
+    create_manifest = _function(intake_tree, "create_intake_manifest")
     selector_alignment = _function(
         intake_tree,
         "_release_execution_consumer_selector_errors",
@@ -270,6 +356,7 @@ def causality_errors(
     intake_errors = _function(intake_tree, "intake_errors")
     if (
         artifact_errors is None
+        or create_manifest is None
         or selector_alignment is None
         or intake_errors is None
     ):
@@ -279,6 +366,19 @@ def causality_errors(
         errors.append(
             "strict intake must report the release-review and storage trust boundaries"
         )
+    if not (
+        _has_dict_constant(create_manifest, "schema_version", 2)
+        and _contains_string(create_manifest, "release_execution_review_subject")
+        and _contains_string(create_manifest, "release_execution_evidence")
+        and _contains_string(intake_errors, "schema_version")
+        and _contains_string(intake_errors, "release_execution_review_subject")
+        and any(
+            isinstance(node, ast.Call)
+            and _call_name(node) == "release_execution_review_subject_errors"
+            for node in ast.walk(artifact_errors)
+        )
+    ):
+        errors.append("strict intake schema v2 must carry one closed release review subject")
     if not _has_compare(
         artifact_errors,
         "reviewed_at",
@@ -294,6 +394,16 @@ def causality_errors(
 
     if not _has_compare(selector_alignment, "selector", ast.NotEq, "baseline"):
         errors.append("strict intake must reject conflicting release selector claims")
+    if not (
+        _requires_kwonly(selector_alignment, {"review_subject"})
+        and _has_compare(
+            selector_alignment,
+            "review_subject",
+            ast.NotEq,
+            "expected_subject",
+        )
+    ):
+        errors.append("strict intake must match the release review subject to consumers")
     selector_alignment_calls = [
         node
         for node in ast.walk(intake_errors)
@@ -305,6 +415,12 @@ def causality_errors(
         and len(selector_alignment_calls[0].args) == 1
         and isinstance(selector_alignment_calls[0].args[0], ast.Name)
         and selector_alignment_calls[0].args[0].id == "release_execution_consumers"
+        and isinstance(
+            _keyword_value(selector_alignment_calls[0], "review_subject"),
+            ast.Name,
+        )
+        and _keyword_value(selector_alignment_calls[0], "review_subject").id
+        == "release_review_subject"
     ):
         errors.append("strict intake must compare all release consumer selectors once")
     collector_assignments = [
@@ -425,6 +541,7 @@ def main() -> int:
     print(
         "release-execution-causality-ok "
         "start-replay=final-strict-intake review-consumer-order=locked "
+        "release-review-selector-subject=manifest-exact "
         "release-review-claim=opaque authentication=unverified "
         "trusted-time=unverified replay-protection=unverified "
         "release-storage-reference=opaque provider-native=unverified "
