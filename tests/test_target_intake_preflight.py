@@ -2618,7 +2618,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 errors,
             )
 
-    def test_cli_initializes_write_once_external_manifest_and_preflights_it(self) -> None:
+    def test_cli_initializes_snapshots_finalizes_and_pins_external_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifest_path = root / "target-intake.json"
@@ -2746,6 +2746,66 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            final_path = root / "final-target-intake.json"
+            self.assertEqual(
+                main(
+                    [
+                        "finalize",
+                        "--input",
+                        str(manifest_path),
+                        "--output",
+                        str(final_path),
+                        "--phase0-checkpoint-manifest",
+                        str(checkpoint_path),
+                    ]
+                ),
+                0,
+            )
+            final_bytes = final_path.read_bytes()
+            self.assertEqual(json.loads(final_bytes), manifest)
+            self.assertEqual(final_bytes, target_intake._final_manifest_bytes(manifest))
+            self.assertEqual(
+                main(
+                    [
+                        "finalize",
+                        "--input",
+                        str(manifest_path),
+                        "--output",
+                        str(final_path),
+                        "--phase0-checkpoint-manifest",
+                        str(checkpoint_path),
+                    ]
+                ),
+                1,
+            )
+            self.assertEqual(final_path.read_bytes(), final_bytes)
+            raced_path = root / "raced-final-target-intake.json"
+
+            def publish_race(_temporary: Path, output: Path) -> None:
+                output.write_bytes(b"winner")
+
+            with mock.patch.object(
+                target_intake,
+                "publish_write_once_file",
+                side_effect=publish_race,
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "finalize",
+                            "--input",
+                            str(manifest_path),
+                            "--output",
+                            str(raced_path),
+                            "--phase0-checkpoint-manifest",
+                            str(checkpoint_path),
+                        ]
+                    ),
+                    1,
+                )
+            self.assertEqual(raced_path.read_bytes(), b"winner")
+            payload_pin = requirements_sha256(manifest)
+            file_pin = hashlib.sha256(final_bytes).hexdigest()
             self.assertEqual(
                 main(["preflight", "--input", str(manifest_path)]),
                 1,
@@ -2755,13 +2815,84 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     [
                         "preflight",
                         "--input",
-                        str(manifest_path),
+                        str(final_path),
                         "--phase0-checkpoint-manifest",
                         str(checkpoint_path),
+                        "--expected-manifest-payload-sha256",
+                        payload_pin,
+                        "--expected-manifest-file-sha256",
+                        file_pin,
                     ]
                 ),
                 0,
             )
+            replaced = json.loads(final_bytes)
+            release_item = next(
+                item
+                for item in replaced["items"]
+                if item["id"] == "release_execution_evidence"
+            )
+            release_item["reviewed_by"] = "release-selection-review-record-99"
+            final_path.write_bytes(target_intake._final_manifest_bytes(replaced))
+            self.assertEqual(
+                main(
+                    [
+                        "preflight",
+                        "--input",
+                        str(final_path),
+                        "--phase0-checkpoint-manifest",
+                        str(checkpoint_path),
+                        "--expected-manifest-payload-sha256",
+                        payload_pin,
+                        "--expected-manifest-file-sha256",
+                        file_pin,
+                    ]
+                ),
+                1,
+            )
+
+    def test_cli_rejects_final_pins_on_nonfinal_progress_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest_path = Path(temporary) / "target-intake.json"
+            manifest_path.write_bytes(
+                target_intake._final_manifest_bytes(
+                    create_intake_manifest("staging", self.requirements)
+                )
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "preflight",
+                        "--input",
+                        str(manifest_path.resolve()),
+                        "--allow-incomplete",
+                        "--expected-manifest-payload-sha256",
+                        "a" * 64,
+                        "--expected-manifest-file-sha256",
+                        "b" * 64,
+                    ]
+                ),
+                1,
+            )
+            with mock.patch.object(
+                target_intake,
+                "intake_errors",
+                side_effect=AssertionError("artifact validation must not run"),
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "preflight",
+                            "--input",
+                            str(manifest_path.resolve()),
+                            "--expected-manifest-payload-sha256",
+                            "a" * 64,
+                            "--expected-manifest-file-sha256",
+                            "b" * 64,
+                        ]
+                    ),
+                    1,
+                )
 
     def test_cli_rejects_duplicate_manifest_keys_before_checkpoint_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2885,6 +3016,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "target_intake_preflight.py init",
             "target_intake_preflight.py preflight",
             "target_intake_preflight.py snapshot",
+            "target_intake_preflight.py finalize",
             "repository-external",
             "production_acceptance=false",
             "never copy live credentials",
@@ -2915,6 +3047,10 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "finished_at <= ledger reviewed_at <= consumer window.started_at",
             "schema-v3 release ledger",
             "ledger `finished_at`",
+            "--expected-manifest-payload-sha256",
+            "--expected-manifest-file-sha256",
+            "Pin authority, custody after publication, and",
+            "global rollback protection therefore remain `unverified`",
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, text)

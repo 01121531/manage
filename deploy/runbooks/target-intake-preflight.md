@@ -38,6 +38,10 @@ not production acceptance. Every generated manifest and successful command remai
   error contracts remain authoritative.
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
+- The authoring manifest is intentionally mutable while Phase 0–6 evidence is
+  collected. It is not a write-once artifact merely because `init` creates its
+  first leaf exclusively. Production sign-off uses a separately finalized
+  leaf and caller-pinned canonical-payload and whole-file SHA-256 values.
 
 ## Initialize an incomplete manifest
 
@@ -831,21 +835,54 @@ python scripts/target_intake_preflight.py preflight `
   --through-phase 6
 ```
 
-The final unqualified strict check remains equivalent to the full Phase 6
-checkpoint and is required before production sign-off:
+The unqualified strict check is the production-signoff check. First finalize
+the fully populated authoring manifest to a new repository-external leaf. The
+command repeats the complete strict validation against the frozen Phase 0
+checkpoint, writes deterministic JSON to an fsynced adjacent temporary file,
+publishes with no-replace semantics, performs a stable readback, and prints
+both the canonical payload SHA-256 and the exact finalized-file SHA-256:
 
 ```powershell
-python scripts/target_intake_preflight.py preflight `
+python scripts/target_intake_preflight.py finalize `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --output D:\email-platform-evidence\intake\staging-target-intake-final.json `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json
 ```
 
-The final check validates the frozen snapshot as a strict Phase 0 manifest,
-requires the current six Phase 0 item records to match it exactly, and requires
+The output leaf must not already exist and is never overwritten. Preserve both
+printed digests in the independent change-control or sign-off record before
+running the final check. Do not read the expected values back from the manifest
+inside the checking command and do not store them only beside the same writable
+file. Run the final strict preflight on the finalized leaf with those exact
+caller pins:
+
+```powershell
+python scripts/target_intake_preflight.py preflight `
+  --input D:\email-platform-evidence\intake\staging-target-intake-final.json `
+  --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
+  --expected-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+```
+
+The final check requires both pins and validates the frozen snapshot as a
+strict Phase 0 manifest, requires the current six Phase 0 item records to match
+it exactly, and requires
 the selected release ledger's canonical manifest digest, environment,
-requirements digest and checkpoint phase to identify that snapshot. Adding
-later evidence is allowed; silently replacing a deployed contract, decision,
-approval, inventory, reviewer reference, timestamp, path or digest is not.
+requirements digest and checkpoint phase to identify that snapshot. The
+authoring manifest may add evidence before finalization; the finalized leaf is
+not edited. Silently replacing a deployed contract, decision, approval,
+inventory, reviewer reference, timestamp, path or digest is not allowed.
+
+Finalization proves only that this process published and read back a new local
+leaf without replacing an existing name. The two caller pins detect a later
+byte rewrite, semantic replacement, or rollback when the caller retains the
+current values independently. They do not authenticate who supplied the pins,
+prevent deletion and recreation, prove provider-native immutability, or identify
+the globally latest manifest. Pin authority, custody after publication, and
+global rollback protection therefore remain `unverified`; a real guarantee
+requires an external signed change-control record or provider-native CAS/WORM
+head. The private-secret signing domains and their still-unconfigured trust
+anchors are scope-limited and must not be reused for this purpose.
 
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and

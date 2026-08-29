@@ -155,6 +155,34 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertNotEqual(mutated, self.intake)
         self.assertTrue(self.errors(intake=mutated))
 
+    def test_final_manifest_publication_and_caller_pins_cannot_be_weakened(self) -> None:
+        for old, new in (
+            (
+                "publish_write_once_file(temporary, output)",
+                "ignored_publish_write_once_file(temporary, output)",
+            ),
+            (
+                "expected_payload_sha256,\n            requirements_sha256(manifest),",
+                "requirements_sha256(manifest),\n            requirements_sha256(manifest),",
+            ),
+            (
+                "expected_file_sha256,\n            hashlib.sha256(manifest_raw).hexdigest(),",
+                "hashlib.sha256(manifest_raw).hexdigest(),\n            hashlib.sha256(manifest_raw).hexdigest(),",
+            ),
+            (
+                "final-manifest-custody=unverified",
+                "final-manifest-custody=verified",
+            ),
+            (
+                "final-manifest-rollback-protection=unverified",
+                "final-manifest-rollback-protection=verified",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.intake.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+
     def test_final_intake_consumer_selector_comparison_cannot_be_removed(self) -> None:
         for old, new in (
             ("selector != baseline", "selector == baseline"),
@@ -338,6 +366,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             "a locator-only or all-consumer rebind cannot inherit the prior review claim",
             requirements,
         )
+        self.assertIn(
+            "final strict preflight requires independent caller pins for both its canonical payload SHA-256 and whole-file SHA-256",
+            requirements,
+        )
+        self.assertIn(
+            "pin authority, post-publication custody and global rollback protection remain explicitly unverified",
+            requirements,
+        )
         signoff = Path("deploy/production-signoff-template.md").read_text(
             encoding="utf-8"
         )
@@ -359,6 +395,14 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         )
         self.assertIn(
             "Release-execution namespace authority, immutable version identity and cross-manifest rebinding protection `unverified` acknowledgement:",
+            signoff,
+        )
+        self.assertIn(
+            "Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result:",
+            signoff,
+        )
+        self.assertIn(
+            "Final strict caller-pinned payload/file SHA-256 match plus pin-authority, post-publication custody and global rollback-protection `unverified` acknowledgement:",
             signoff,
         )
 

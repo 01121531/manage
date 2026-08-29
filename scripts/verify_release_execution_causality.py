@@ -39,6 +39,12 @@ RELEASE_BOUNDARY_MARKERS = (
     "release-storage-version-identity=unverified",
     "release-storage-cross-manifest-rebinding=unverified",
 )
+FINAL_MANIFEST_BOUNDARY_MARKERS = (
+    "final-manifest-caller-pin=",
+    "final-manifest-custody=unverified",
+    "final-manifest-pin-authority=unverified",
+    "final-manifest-rollback-protection=unverified",
+)
 
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
@@ -205,6 +211,34 @@ def _has_release_boundary_output(tree: ast.Module) -> bool:
     )
 
 
+def _has_final_manifest_boundary_output(tree: ast.Module) -> bool:
+    strings = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    return all(
+        any(marker in value for value in strings)
+        for marker in FINAL_MANIFEST_BOUNDARY_MARKERS
+    )
+
+
+def _compare_digest_call(
+    function: ast.FunctionDef,
+    expected_name: str,
+    actual_name: str,
+) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and _call_name(node) == "compare_digest"
+        and len(node.args) == 2
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == expected_name
+        and _contains_name(node.args[1], actual_name)
+        for node in ast.walk(function)
+    )
+
+
 def causality_errors(
     binding_source: str,
     intake_source: str,
@@ -366,6 +400,38 @@ def causality_errors(
         errors.append(
             "strict intake must report the release-review and storage trust boundaries"
         )
+    main_function = _function(intake_tree, "main")
+    final_bytes = _function(intake_tree, "_final_manifest_bytes")
+    if main_function is None or final_bytes is None:
+        errors.append("final target-intake custody contract is missing")
+    else:
+        main_calls = {
+            _call_name(node)
+            for node in ast.walk(main_function)
+            if isinstance(node, ast.Call)
+        }
+        if not {
+            "prepare_write_once_file",
+            "write_fsynced_temporary_bytes",
+            "publish_write_once_file",
+            "_read_stable_bytes",
+        }.issubset(main_calls) or not _contains_string(main_function, "finalize"):
+            errors.append("final target-intake publication must be fsynced and no-replace")
+        if not (
+            _compare_digest_call(
+                main_function,
+                "expected_payload_sha256",
+                "manifest",
+            )
+            and _compare_digest_call(
+                main_function,
+                "expected_file_sha256",
+                "manifest_raw",
+            )
+        ):
+            errors.append("final strict intake must require both caller-pinned digests")
+        if not _has_final_manifest_boundary_output(intake_tree):
+            errors.append("final strict intake must report manifest custody boundaries")
     if not (
         _has_dict_constant(create_manifest, "schema_version", 2)
         and _contains_string(create_manifest, "release_execution_review_subject")
@@ -548,6 +614,10 @@ def main() -> int:
         "retention=unverified delete-denial=unverified readback=unverified "
         "namespace-authority=unverified version-identity=unverified "
         "cross-manifest-rebinding=unverified "
+        "final-manifest-publication=local-no-replace-readback "
+        "final-manifest-caller-pin=payload-and-file "
+        "final-manifest-custody=unverified pin-authority=unverified "
+        "rollback-protection=unverified "
         "production_acceptance=false"
     )
     return 0

@@ -7,6 +7,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 from pathlib import Path
 import re
@@ -19,6 +20,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.verify_phase_acceptance_matrix import matrix_errors
+from scripts.backup_output_policy import (
+    discard_claimed_temporary_file,
+    prepare_write_once_file,
+    publish_write_once_file,
+    write_fsynced_temporary_bytes,
+)
 from scripts.external_json import (
     MAX_EXTERNAL_JSON_BYTES as _MAX_ARTIFACT_BYTES,
     MAX_INTAKE_JSON_BYTES as _MAX_MANIFEST_BYTES,
@@ -1206,11 +1213,20 @@ def _parse_json_bytes(raw: bytes) -> Any:
 
 
 def _load_json(path: Path) -> Any:
+    _, document = _load_json_with_raw(path)
+    return document
+
+
+def _load_json_with_raw(path: Path) -> tuple[bytes, Any]:
     try:
         raw = _read_stable_bytes(path, max_bytes=_MAX_MANIFEST_BYTES)
     except _StableFileError as error:
         raise _IntakeJsonError("intake JSON file is invalid") from error
-    return _parse_json_bytes(raw)
+    return raw, _parse_json_bytes(raw)
+
+
+def _final_manifest_bytes(document: Any) -> bytes:
+    return _canonical_bytes(document) + b"\n"
 
 
 def _manifest_path_errors(path: Path, *, must_exist: bool) -> list[str]:
@@ -1354,9 +1370,15 @@ def _parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--input", required=True, type=Path)
     snapshot.add_argument("--output", required=True, type=Path)
     snapshot.add_argument("--environment", required=True)
+    finalize = commands.add_parser("finalize")
+    finalize.add_argument("--input", required=True, type=Path)
+    finalize.add_argument("--output", required=True, type=Path)
+    finalize.add_argument("--phase0-checkpoint-manifest", required=True, type=Path)
     preflight = commands.add_parser("preflight")
     preflight.add_argument("--input", required=True, type=Path)
     preflight.add_argument("--phase0-checkpoint-manifest", type=Path)
+    preflight.add_argument("--expected-manifest-payload-sha256")
+    preflight.add_argument("--expected-manifest-file-sha256")
     completeness = preflight.add_mutually_exclusive_group()
     completeness.add_argument("--allow-incomplete", action="store_true")
     completeness.add_argument(
@@ -1441,14 +1463,94 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    if arguments.command == "finalize":
+        output_errors = _manifest_path_errors(arguments.output, must_exist=False)
+        input_errors = _manifest_path_errors(arguments.input, must_exist=True)
+        if output_errors or input_errors:
+            print("; ".join(output_errors + input_errors), file=sys.stderr)
+            return 1
+        try:
+            _, manifest = _load_json_with_raw(arguments.input)
+        except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
+            print("target-intake-manifest-invalid", file=sys.stderr)
+            return 1
+        errors = intake_errors(
+            manifest,
+            requirements,
+            require_complete=True,
+            phase0_checkpoint_manifest=arguments.phase0_checkpoint_manifest,
+            evaluated_at=evaluated_at,
+        )
+        if errors:
+            print("; ".join(errors), file=sys.stderr)
+            return 1
+        final_bytes = _final_manifest_bytes(manifest)
+        if len(final_bytes) > _MAX_MANIFEST_BYTES:
+            print("target-intake-finalize-failed", file=sys.stderr)
+            return 1
+        temporary: Path | None = None
+        try:
+            output = prepare_write_once_file(arguments.output)
+            temporary = write_fsynced_temporary_bytes(output, final_bytes)
+            publish_write_once_file(temporary, output)
+            readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
+            if not hmac.compare_digest(readback, final_bytes):
+                raise OSError("final manifest publication readback mismatch")
+        except (OSError, ValueError, _StableFileError):
+            print("target-intake-finalize-failed", file=sys.stderr)
+            return 1
+        finally:
+            discard_claimed_temporary_file(temporary)
+        print(
+            "target-intake-finalized production_acceptance=false "
+            f"environment={manifest['environment']} "
+            f"manifest_payload_sha256={requirements_sha256(manifest)} "
+            f"manifest_file_sha256={hashlib.sha256(final_bytes).hexdigest()} "
+            "publication=local-no-replace-readback "
+            "custody=unverified rollback-protection=unverified"
+        )
+        return 0
+
     path_errors = _manifest_path_errors(arguments.input, must_exist=True)
     if path_errors:
         print("; ".join(path_errors), file=sys.stderr)
         return 1
     try:
-        manifest = _load_json(arguments.input)
+        manifest_raw, manifest = _load_json_with_raw(arguments.input)
     except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
         print("target-intake-manifest-invalid", file=sys.stderr)
+        return 1
+    final_strict = not arguments.allow_incomplete and arguments.through_phase is None
+    expected_payload_sha256 = arguments.expected_manifest_payload_sha256
+    expected_file_sha256 = arguments.expected_manifest_file_sha256
+    pin_errors: list[str] = []
+    if final_strict:
+        if (
+            not isinstance(expected_payload_sha256, str)
+            or _SHA256.fullmatch(expected_payload_sha256) is None
+        ):
+            pin_errors.append("final manifest payload SHA-256 caller pin is required")
+        elif not hmac.compare_digest(
+            expected_payload_sha256,
+            requirements_sha256(manifest),
+        ):
+            pin_errors.append("final manifest payload SHA-256 caller pin does not match")
+        if (
+            not isinstance(expected_file_sha256, str)
+            or _SHA256.fullmatch(expected_file_sha256) is None
+        ):
+            pin_errors.append("final manifest file SHA-256 caller pin is required")
+        elif not hmac.compare_digest(
+            expected_file_sha256,
+            hashlib.sha256(manifest_raw).hexdigest(),
+        ):
+            pin_errors.append("final manifest file SHA-256 caller pin does not match")
+    elif expected_payload_sha256 is not None or expected_file_sha256 is not None:
+        pin_errors.append(
+            "final manifest caller pins are only valid for final strict preflight"
+        )
+    if pin_errors:
+        print("; ".join(pin_errors), file=sys.stderr)
         return 1
     required_ids = None
     if arguments.through_phase is not None:
@@ -1478,6 +1580,10 @@ def main(argv: list[str] | None = None) -> int:
         f"environment={manifest['environment']} "
         f"manifest_payload_sha256={requirements_sha256(manifest)} "
         f"requirements_sha256={manifest['requirements_sha256']} "
+        f"final-manifest-caller-pin={'matched' if final_strict else 'not-applicable'} "
+        "final-manifest-custody=unverified "
+        "final-manifest-pin-authority=unverified "
+        "final-manifest-rollback-protection=unverified "
         "release-review-selector-subject=manifest-exact "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "
