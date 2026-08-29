@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # Direct script loading from scripts/.
 ROOT = Path(__file__).resolve().parents[1]
 BINDING = ROOT / "scripts" / "release_execution_binding.py"
 INTAKE = ROOT / "scripts" / "target_intake_preflight.py"
+GENERATION = ROOT / "scripts" / "target_intake_generation.py"
 INTAKE_MANIFEST = ROOT / "scripts" / "target_intake_manifest.py"
 EXTERNAL_JSON = ROOT / "scripts" / "external_json.py"
 CONSUMERS = {
@@ -55,10 +56,13 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
     "final-manifest-rollback-protection=unverified",
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
+    "generation-acceptance=write-once-receipt",
+    "selected-lineage=caller-pinned-local-receipt-chain-validated",
     "authoring-publication=local-no-replace-readback",
     "authoring-generation-fork-protection=unverified",
     "authoring-latest-head=unverified",
     "authoring-pin-authority=unverified",
+    "authoring-receipt-authority=unverified",
     "authoring-post-publication-custody=unverified",
 )
 INTAKE_CALLER_BOUNDARY_MARKERS = (
@@ -462,6 +466,7 @@ def causality_errors(
     intake_manifest_source: str | None = None,
     intake_only_sources: dict[str, str] | None = None,
     external_json_source: str | None = None,
+    generation_source: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     try:
@@ -469,6 +474,7 @@ def causality_errors(
         intake_tree = ast.parse(intake_source)
         manifest_tree = ast.parse(intake_manifest_source or "")
         external_json_tree = ast.parse(external_json_source or "")
+        generation_tree = ast.parse(generation_source or "")
     except SyntaxError:
         return ["release execution causality sources are not valid Python"]
 
@@ -772,12 +778,13 @@ def causality_errors(
     if main_function is None or final_bytes is None:
         errors.append("final target-intake custody contract is missing")
     else:
+        finalize_branch = _command_branch(main_function, "finalize")
         main_calls = {
             _call_name(node)
-            for node in ast.walk(main_function)
+            for node in ast.walk(finalize_branch)
             if isinstance(node, ast.Call)
         }
-        if not {
+        if finalize_branch is None or not {
             "prepare_write_once_file",
             "write_fsynced_temporary_bytes",
             "publish_write_once_file",
@@ -800,19 +807,33 @@ def causality_errors(
         if not _has_final_manifest_boundary_output(intake_tree):
             errors.append("final strict intake must report manifest custody boundaries")
     parser_function = _function(intake_tree, "_parser")
-    registration = _function(intake_tree, "manifest_registration_item_id")
+    registration = _function(generation_tree, "manifest_registration_item_id")
+    receipt_validation = _function(generation_tree, "receipt_errors")
+    lineage_loader = _function(generation_tree, "load_generation_lineage")
+    lineage_recheck = _function(generation_tree, "recheck_generation_lineage")
     register_branch = (
         _command_branch(main_function, "register") if main_function is not None else None
     )
-    if parser_function is None or registration is None or register_branch is None:
+    if (
+        parser_function is None
+        or registration is None
+        or receipt_validation is None
+        or lineage_loader is None
+        or lineage_recheck is None
+        or register_branch is None
+    ):
         errors.append("immutable authoring generation registration contract is missing")
     else:
         required_options = {
             "--input",
+            "--input-receipt",
             "--candidate",
             "--output",
+            "--receipt-output",
             "--expected-input-manifest-payload-sha256",
             "--expected-input-manifest-file-sha256",
+            "--expected-input-receipt-payload-sha256",
+            "--expected-input-receipt-file-sha256",
         }
         if not _contains_string(parser_function, "register") or not all(
             _required_parser_argument(parser_function, "register", option)
@@ -863,7 +884,7 @@ def causality_errors(
             and exact_change_guard
             and top_level_guard
             and missing_metadata_guard
-            and _contains_name(registration, "_REQUIRED_IDS")
+            and _contains_name(registration, "REQUIRED_IDS")
             and _contains_string(registration, "missing")
             and _contains_string(registration, "provided")
             and _contains_string(registration, "items")
@@ -922,9 +943,9 @@ def causality_errors(
             and node.args[0].id == "candidate"
         ]
         if not (
-            register_calls.count("_load_unique_json_with_bytes_and_metadata") >= 2
+            register_calls.count("load_generation_lineage") == 1
             and register_calls.count("intake_errors") >= 2
-            and register_calls.count("_read_stable_bytes_with_metadata") >= 1
+            and register_calls.count("_read_stable_bytes_with_metadata") >= 3
             and len(single_link_rechecks) >= 6
             and len(artifact_digest_checks) >= 1
             and len(output_claims) == 1
@@ -934,18 +955,10 @@ def causality_errors(
                 "prepare_write_once_file",
                 "write_fsynced_temporary_bytes",
                 "publish_write_once_file",
-                "_read_stable_bytes",
+                "create_registration_receipt",
+                "receipt_bytes",
+                "recheck_generation_lineage",
             }.issubset(register_calls)
-            and _compare_digest_call(
-                register_branch,
-                "expected_payload_sha256",
-                "base",
-            )
-            and _compare_digest_call(
-                register_branch,
-                "expected_file_sha256",
-                "base_raw",
-            )
         ):
             errors.append(
                 "authoring generation must pin, validate, recheck and publish without replace"
@@ -953,8 +966,105 @@ def causality_errors(
         if not all(
             _contains_marker(register_branch, marker)
             for marker in AUTHORING_GENERATION_BOUNDARY_MARKERS
-        ):
+        ) or sum(
+            1
+            for node in ast.walk(intake_tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "authoring-latest-head=unverified" in node.value
+        ) < 2:
             errors.append("authoring generation trust boundaries must remain unverified")
+        lineage_calls = [
+            node
+            for node in ast.walk(register_branch)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "load_generation_lineage"
+        ]
+        if not (
+            len(lineage_calls) == 1
+            and all(
+                isinstance(_keyword_value(lineage_calls[0], keyword), ast.Attribute)
+                for keyword in (
+                    "expected_receipt_payload_sha256",
+                    "expected_receipt_file_sha256",
+                    "expected_manifest_payload_sha256",
+                    "expected_manifest_file_sha256",
+                )
+            )
+            and _contains_marker(register_branch, "orphaned-unaccepted")
+            and _contains_marker(register_branch, "commit-state=unknown")
+            and all(
+                sum(
+                    1
+                    for node in ast.walk(intake_tree)
+                    if isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and marker in node.value
+                )
+                >= 2
+                for marker in ("orphaned-unaccepted", "commit-state=unknown")
+            )
+        ):
+            errors.append("authoring receipt must pin lineage and separate orphan/unknown states")
+        if not (
+            _contains_string(receipt_validation, "predecessor")
+            and _contains_string(receipt_validation, "registered_item")
+            and _contains_string(receipt_validation, "sequence")
+            and all(
+                any(
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "add"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == seen_name
+                    for node in ast.walk(lineage_loader)
+                )
+                for seen_name in ("seen_manifests", "seen_receipts")
+            )
+            and _contains_name(lineage_loader, "manifest_registration_item_id")
+            and _contains_name(lineage_loader, "recheck_generation_lineage")
+            and any(
+                isinstance(node, ast.Call)
+                and isinstance(
+                    _keyword_value(node, "require_single_link"), ast.Constant
+                )
+                and _keyword_value(node, "require_single_link").value is True
+                for node in ast.walk(lineage_recheck)
+            )
+        ):
+            errors.append("generation receipt lineage must be closed, replayed and rechecked")
+        downstream_required = {
+            "--input-receipt",
+            "--expected-input-receipt-payload-sha256",
+            "--expected-input-receipt-file-sha256",
+        }
+        if not all(
+            _required_parser_argument(parser_function, command, option)
+            for command in ("snapshot", "finalize")
+            for option in downstream_required
+        ) or not all(
+            _contains_string(parser_function, option)
+            for option in downstream_required
+        ):
+            errors.append("snapshot/finalize/progress must select a terminal receipt")
+        lineage_consumers = [
+            node
+            for node in ast.walk(main_function)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == "load_generation_lineage"
+        ]
+        if not (
+            len(lineage_consumers) == 4
+            and _contains_marker(
+                main_function,
+                "caller-pinned terminal generation receipt is required",
+            )
+            and _contains_marker(
+                main_function,
+                "selected-lineage=caller-pinned-local-receipt-chain-validated",
+            )
+        ):
+            errors.append("all non-final generation consumers must validate lineage")
     if not (
         _has_dict_constant(create_manifest, "schema_version", 2)
         and _contains_string(create_manifest, "release_execution_review_subject")
@@ -1123,6 +1233,9 @@ def main() -> int:
     try:
         binding_source = load_stable_text(BINDING, max_bytes=MAX_SOURCE_BYTES)
         intake_source = load_stable_text(INTAKE, max_bytes=MAX_SOURCE_BYTES)
+        generation_source = load_stable_text(
+            GENERATION, max_bytes=MAX_SOURCE_BYTES
+        )
         intake_manifest_source = load_stable_text(
             INTAKE_MANIFEST, max_bytes=MAX_SOURCE_BYTES
         )
@@ -1147,6 +1260,7 @@ def main() -> int:
         intake_manifest_source,
         intake_only_sources,
         external_json_source,
+        generation_source,
     )
     if errors:
         for error in errors:
@@ -1169,6 +1283,7 @@ def main() -> int:
         "authoring-publication=local-no-replace-readback "
         "authoring-generation-fork-protection=unverified "
         "authoring-latest-head=unverified authoring-pin-authority=unverified "
+        "authoring-receipt-authority=unverified "
         "authoring-post-publication-custody=unverified "
         "standalone-intake-manifest-consumers=seven "
         "standalone-intake-manifest-schema=closed-v2-inventory-exact "

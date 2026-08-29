@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -14,6 +14,11 @@ from unittest import mock
 
 import scripts.external_json as external_json
 import scripts.target_intake_preflight as target_intake
+from scripts.target_intake_generation import (
+    GenerationLineageError,
+    create_genesis_receipt,
+    receipt_bytes,
+)
 
 from scripts.decision_envelope_validation import (
     CARD_PCI_DECISION,
@@ -88,6 +93,23 @@ class TargetIntakePreflightTests(unittest.TestCase):
         )
         runtime_patch.start()
         self.addCleanup(runtime_patch.stop)
+
+    @staticmethod
+    def _genesis_receipt(
+        root: Path,
+        manifest_path: Path,
+        manifest: dict[str, object],
+    ) -> tuple[Path, str, str]:
+        manifest_raw = manifest_path.read_bytes()
+        receipt = create_genesis_receipt(manifest_path, manifest, manifest_raw)
+        receipt_path = root / f"{manifest_path.stem}.receipt.json"
+        raw = receipt_bytes(receipt)
+        receipt_path.write_bytes(raw)
+        return (
+            receipt_path,
+            requirements_sha256(receipt),
+            hashlib.sha256(raw).hexdigest(),
+        )
 
     @staticmethod
     def _release_selector(
@@ -1213,7 +1235,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "0",
                     ]
                 ),
-                0,
+                1,
             )
             self.assertEqual(
                 phase_checkpoint_errors(
@@ -2624,12 +2646,15 @@ class TargetIntakePreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifest_path = root / "target-intake.json"
+            genesis_receipt_path = root / "target-intake.receipt.json"
             self.assertEqual(
                 main(
                     [
                         "init",
                         "--output",
                         str(manifest_path),
+                        "--receipt-output",
+                        str(genesis_receipt_path),
                         "--environment",
                         "staging",
                     ]
@@ -2644,6 +2669,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "init",
                         "--output",
                         str(manifest_path),
+                        "--receipt-output",
+                        str(genesis_receipt_path),
                         "--environment",
                         "staging",
                     ]
@@ -2653,6 +2680,31 @@ class TargetIntakePreflightTests(unittest.TestCase):
             self.assertEqual(manifest_path.read_bytes(), original)
 
             manifest = json.loads(original)
+            genesis_receipt_raw = genesis_receipt_path.read_bytes()
+            genesis_receipt = json.loads(genesis_receipt_raw)
+            receipt_payload_pin = requirements_sha256(genesis_receipt)
+            receipt_file_pin = hashlib.sha256(genesis_receipt_raw).hexdigest()
+
+            def current_lineage(*_args, **_kwargs):
+                raw = manifest_path.read_bytes()
+                return SimpleNamespace(
+                    manifest=json.loads(raw),
+                    manifest_raw=raw,
+                )
+
+            lineage_patch = mock.patch.object(
+                target_intake,
+                "load_generation_lineage",
+                side_effect=current_lineage,
+            )
+            recheck_patch = mock.patch.object(
+                target_intake,
+                "recheck_generation_lineage",
+            )
+            lineage_patch.start()
+            recheck_patch.start()
+            self.addCleanup(lineage_patch.stop)
+            self.addCleanup(recheck_patch.stop)
 
             def provide(item: dict[str, object], phase0_digest: str = "8" * 64) -> None:
                 artifact = root / f"{item['id']}.md"
@@ -2711,6 +2763,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "snapshot",
                         "--input",
                         str(manifest_path),
+                        "--input-receipt",
+                        str(genesis_receipt_path),
+                        "--expected-input-receipt-payload-sha256",
+                        receipt_payload_pin,
+                        "--expected-input-receipt-file-sha256",
+                        receipt_file_pin,
                         "--output",
                         str(checkpoint_path),
                         "--environment",
@@ -2726,6 +2784,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "snapshot",
                         "--input",
                         str(manifest_path),
+                        "--input-receipt",
+                        str(genesis_receipt_path),
+                        "--expected-input-receipt-payload-sha256",
+                        receipt_payload_pin,
+                        "--expected-input-receipt-file-sha256",
+                        receipt_file_pin,
                         "--output",
                         str(checkpoint_path),
                         "--environment",
@@ -2756,6 +2820,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "finalize",
                         "--input",
                         str(manifest_path),
+                        "--input-receipt",
+                        str(genesis_receipt_path),
+                        "--expected-input-receipt-payload-sha256",
+                        receipt_payload_pin,
+                        "--expected-input-receipt-file-sha256",
+                        receipt_file_pin,
                         "--output",
                         str(final_path),
                         "--phase0-checkpoint-manifest",
@@ -2773,6 +2843,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "finalize",
                         "--input",
                         str(manifest_path),
+                        "--input-receipt",
+                        str(genesis_receipt_path),
+                        "--expected-input-receipt-payload-sha256",
+                        receipt_payload_pin,
+                        "--expected-input-receipt-file-sha256",
+                        receipt_file_pin,
                         "--output",
                         str(final_path),
                         "--phase0-checkpoint-manifest",
@@ -2798,6 +2874,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                             "finalize",
                             "--input",
                             str(manifest_path),
+                            "--input-receipt",
+                            str(genesis_receipt_path),
+                            "--expected-input-receipt-payload-sha256",
+                            receipt_payload_pin,
+                            "--expected-input-receipt-file-sha256",
+                            receipt_file_pin,
                             "--output",
                             str(raced_path),
                             "--phase0-checkpoint-manifest",
@@ -2854,6 +2936,67 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 1,
             )
 
+    def test_init_distinguishes_orphan_from_commit_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            orphan = root / "orphan-000.json"
+            absent_receipt = root / "orphan-000.receipt.json"
+            error = io.StringIO()
+            with mock.patch.object(
+                target_intake,
+                "create_genesis_receipt",
+                side_effect=GenerationLineageError(),
+            ), redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        [
+                            "init",
+                            "--output",
+                            str(orphan),
+                            "--receipt-output",
+                            str(absent_receipt),
+                            "--environment",
+                            "staging",
+                        ]
+                    ),
+                    1,
+                )
+            self.assertTrue(orphan.exists())
+            self.assertFalse(absent_receipt.exists())
+            self.assertIn("generation=orphaned-unaccepted", error.getvalue())
+
+            unknown = root / "unknown-000.json"
+            committed_receipt = root / "unknown-000.receipt.json"
+            real_reader = target_intake._read_stable_bytes
+
+            def mismatched_receipt(path: Path, **kwargs):
+                raw = real_reader(path, **kwargs)
+                return b"{}\n" if Path(path) == committed_receipt else raw
+
+            error = io.StringIO()
+            with mock.patch.object(
+                target_intake,
+                "_read_stable_bytes",
+                side_effect=mismatched_receipt,
+            ), redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        [
+                            "init",
+                            "--output",
+                            str(unknown),
+                            "--receipt-output",
+                            str(committed_receipt),
+                            "--environment",
+                            "staging",
+                        ]
+                    ),
+                    2,
+                )
+            self.assertTrue(unknown.exists())
+            self.assertTrue(committed_receipt.exists())
+            self.assertIn("commit-state=unknown", error.getvalue())
+
     def test_register_publishes_one_pinned_monotonic_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2861,6 +3004,9 @@ class TargetIntakePreflightTests(unittest.TestCase):
             base_path = root / "authoring-000.json"
             base_raw = target_intake._final_manifest_bytes(base)
             base_path.write_bytes(base_raw)
+            base_receipt, receipt_payload_pin, receipt_file_pin = (
+                self._genesis_receipt(root, base_path, base)
+            )
 
             artifact = root / "mail-contract.json"
             document = self._artifact_document("mail_contract")
@@ -2879,26 +3025,165 @@ class TargetIntakePreflightTests(unittest.TestCase):
             candidate_path = root / "candidate.json"
             candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
             output = root / "authoring-001.json"
+            output_receipt = root / "authoring-001.receipt.json"
 
             arguments = [
                 "register",
                 "--input",
                 str(base_path),
+                "--input-receipt",
+                str(base_receipt),
                 "--candidate",
                 str(candidate_path),
                 "--output",
                 str(output),
+                "--receipt-output",
+                str(output_receipt),
                 "--expected-input-manifest-payload-sha256",
                 requirements_sha256(base),
                 "--expected-input-manifest-file-sha256",
                 hashlib.sha256(base_raw).hexdigest(),
+                "--expected-input-receipt-payload-sha256",
+                receipt_payload_pin,
+                "--expected-input-receipt-file-sha256",
+                receipt_file_pin,
             ]
             self.assertEqual(main(arguments), 0)
             self.assertEqual(output.read_bytes(), target_intake._final_manifest_bytes(candidate))
+            self.assertTrue(output_receipt.exists())
+            registered_receipt_raw = output_receipt.read_bytes()
+            registered_receipt = json.loads(registered_receipt_raw)
+            registered_receipt_payload_pin = requirements_sha256(registered_receipt)
+            registered_receipt_file_pin = hashlib.sha256(
+                registered_receipt_raw
+            ).hexdigest()
+            progress_args = [
+                "preflight",
+                "--input",
+                str(output),
+                "--input-receipt",
+                str(output_receipt),
+                "--expected-input-receipt-payload-sha256",
+                registered_receipt_payload_pin,
+                "--expected-input-receipt-file-sha256",
+                registered_receipt_file_pin,
+                "--allow-incomplete",
+            ]
+            self.assertEqual(main(progress_args), 0)
+            detached_args = progress_args.copy()
+            detached_args[2] = str(candidate_path)
+            self.assertEqual(main(detached_args), 1)
             self.assertEqual(base_path.read_bytes(), base_raw)
             committed = output.read_bytes()
             self.assertEqual(main(arguments), 1)
             self.assertEqual(output.read_bytes(), committed)
+
+    def test_register_orphan_and_commit_unknown_are_not_reported_as_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = create_intake_manifest("staging", self.requirements)
+            base_path = root / "authoring-000.json"
+            base_raw = target_intake._final_manifest_bytes(base)
+            base_path.write_bytes(base_raw)
+            base_receipt, receipt_payload_pin, receipt_file_pin = (
+                self._genesis_receipt(root, base_path, base)
+            )
+            artifact = root / "mail-contract.json"
+            document = self._artifact_document("mail_contract")
+            artifact.write_text(json.dumps(document), encoding="utf-8")
+            candidate = copy.deepcopy(base)
+            candidate["items"][1].update(
+                {
+                    "status": "provided",
+                    "artifact_path": str(artifact),
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "reviewed_by": document["review_reference"],
+                    "reviewed_at": document["reviewed_at"],
+                    "redaction_confirmed": True,
+                }
+            )
+            candidate_path = root / "candidate.json"
+            candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
+
+            def registration_arguments(output: Path, receipt_output: Path) -> list[str]:
+                return [
+                    "register",
+                    "--input",
+                    str(base_path),
+                    "--input-receipt",
+                    str(base_receipt),
+                    "--candidate",
+                    str(candidate_path),
+                    "--output",
+                    str(output),
+                    "--receipt-output",
+                    str(receipt_output),
+                    "--expected-input-manifest-payload-sha256",
+                    requirements_sha256(base),
+                    "--expected-input-manifest-file-sha256",
+                    hashlib.sha256(base_raw).hexdigest(),
+                    "--expected-input-receipt-payload-sha256",
+                    receipt_payload_pin,
+                    "--expected-input-receipt-file-sha256",
+                    receipt_file_pin,
+                ]
+
+            orphan = root / "orphan.json"
+            absent_receipt = root / "orphan.receipt.json"
+            error = io.StringIO()
+            with mock.patch.object(
+                target_intake,
+                "create_registration_receipt",
+                side_effect=GenerationLineageError(),
+            ), redirect_stderr(error):
+                self.assertEqual(
+                    main(registration_arguments(orphan, absent_receipt)),
+                    1,
+                )
+            self.assertTrue(orphan.exists())
+            self.assertFalse(absent_receipt.exists())
+            self.assertIn("generation=orphaned-unaccepted", error.getvalue())
+            self.assertEqual(
+                main(
+                    [
+                        "preflight",
+                        "--input",
+                        str(orphan),
+                        "--input-receipt",
+                        str(base_receipt),
+                        "--expected-input-receipt-payload-sha256",
+                        receipt_payload_pin,
+                        "--expected-input-receipt-file-sha256",
+                        receipt_file_pin,
+                        "--allow-incomplete",
+                    ]
+                ),
+                1,
+            )
+
+            unknown = root / "unknown.json"
+            committed_receipt = root / "unknown.receipt.json"
+            real_reader = target_intake._read_stable_bytes_with_metadata
+
+            def mismatched_receipt_readback(path: Path, **kwargs):
+                raw, metadata = real_reader(path, **kwargs)
+                if Path(path) == committed_receipt:
+                    return b"{}\n", metadata
+                return raw, metadata
+
+            error = io.StringIO()
+            with mock.patch.object(
+                target_intake,
+                "_read_stable_bytes_with_metadata",
+                side_effect=mismatched_receipt_readback,
+            ), redirect_stderr(error):
+                self.assertEqual(
+                    main(registration_arguments(unknown, committed_receipt)),
+                    2,
+                )
+            self.assertTrue(unknown.exists())
+            self.assertTrue(committed_receipt.exists())
+            self.assertIn("commit-state=unknown", error.getvalue())
 
     def test_register_rejects_stale_pins_and_nonmonotonic_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2907,19 +3192,31 @@ class TargetIntakePreflightTests(unittest.TestCase):
             base_path = root / "authoring-000.json"
             base_raw = target_intake._final_manifest_bytes(base)
             base_path.write_bytes(base_raw)
+            base_receipt, receipt_payload_pin, receipt_file_pin = (
+                self._genesis_receipt(root, base_path, base)
+            )
             candidate_path = root / "candidate.json"
             candidate_path.write_bytes(target_intake._final_manifest_bytes(base))
             output = root / "authoring-001.json"
+            output_receipt = root / "authoring-001.receipt.json"
             common = [
                 "register",
                 "--input",
                 str(base_path),
+                "--input-receipt",
+                str(base_receipt),
                 "--candidate",
                 str(candidate_path),
                 "--output",
                 str(output),
+                "--receipt-output",
+                str(output_receipt),
                 "--expected-input-manifest-payload-sha256",
                 requirements_sha256(base),
+                "--expected-input-receipt-payload-sha256",
+                receipt_payload_pin,
+                "--expected-input-receipt-file-sha256",
+                receipt_file_pin,
                 "--expected-input-manifest-file-sha256",
             ]
 
@@ -2975,6 +3272,9 @@ class TargetIntakePreflightTests(unittest.TestCase):
             base_path = root / "authoring-000.json"
             base_raw = target_intake._final_manifest_bytes(base)
             base_path.write_bytes(base_raw)
+            base_receipt, receipt_payload_pin, receipt_file_pin = (
+                self._genesis_receipt(root, base_path, base)
+            )
             artifact = root / "mail-contract.json"
             document = self._artifact_document("mail_contract")
             artifact.write_text(json.dumps(document), encoding="utf-8")
@@ -2992,18 +3292,27 @@ class TargetIntakePreflightTests(unittest.TestCase):
             candidate_path = root / "candidate.json"
             candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
             output = root / "authoring-001.json"
+            output_receipt = root / "authoring-001.receipt.json"
             arguments = [
                 "register",
                 "--input",
                 str(base_path),
+                "--input-receipt",
+                str(base_receipt),
                 "--candidate",
                 str(candidate_path),
                 "--output",
                 str(output),
+                "--receipt-output",
+                str(output_receipt),
                 "--expected-input-manifest-payload-sha256",
                 requirements_sha256(base),
                 "--expected-input-manifest-file-sha256",
                 hashlib.sha256(base_raw).hexdigest(),
+                "--expected-input-receipt-payload-sha256",
+                receipt_payload_pin,
+                "--expected-input-receipt-file-sha256",
+                receipt_file_pin,
             ]
 
             real_intake_errors = target_intake.intake_errors
@@ -3049,6 +3358,9 @@ class TargetIntakePreflightTests(unittest.TestCase):
             base_path = root / "authoring-000.json"
             base_raw = target_intake._final_manifest_bytes(base)
             base_path.write_bytes(base_raw)
+            base_receipt, receipt_payload_pin, receipt_file_pin = (
+                self._genesis_receipt(root, base_path, base)
+            )
             outputs: list[Path] = []
             messages: list[str] = []
             for index, identifier in enumerate(("sub2_contract", "mail_contract")):
@@ -3069,6 +3381,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 candidate_path = root / f"candidate-{index}.json"
                 candidate_path.write_bytes(target_intake._final_manifest_bytes(candidate))
                 output = root / f"authoring-001-{index}.json"
+                output_receipt = root / f"authoring-001-{index}.receipt.json"
                 stdout = io.StringIO()
                 with redirect_stdout(stdout):
                     result = main(
@@ -3076,14 +3389,22 @@ class TargetIntakePreflightTests(unittest.TestCase):
                             "register",
                             "--input",
                             str(base_path),
+                            "--input-receipt",
+                            str(base_receipt),
                             "--candidate",
                             str(candidate_path),
                             "--output",
                             str(output),
+                            "--receipt-output",
+                            str(output_receipt),
                             "--expected-input-manifest-payload-sha256",
                             requirements_sha256(base),
                             "--expected-input-manifest-file-sha256",
                             hashlib.sha256(base_raw).hexdigest(),
+                            "--expected-input-receipt-payload-sha256",
+                            receipt_payload_pin,
+                            "--expected-input-receipt-file-sha256",
+                            receipt_file_pin,
                         ]
                     )
                 self.assertEqual(result, 0)
@@ -3180,6 +3501,12 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "snapshot",
                         "--input",
                         str(manifest_path.resolve()),
+                        "--input-receipt",
+                        str(manifest_path.resolve()),
+                        "--expected-input-receipt-payload-sha256",
+                        "a" * 64,
+                        "--expected-input-receipt-file-sha256",
+                        "b" * 64,
                         "--output",
                         str(checkpoint_path.resolve()),
                         "--environment",

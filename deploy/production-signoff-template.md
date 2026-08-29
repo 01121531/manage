@@ -136,14 +136,17 @@ Release manifest:
 - Phase 6 pilot evidence release tag, commit and container-manifest SHA-256:
 - Phase 6 selected release-execution ledger type, opaque storage reference and whole-file SHA-256:
 - Phase 6 selected release-execution Phase 0 environment, manifest payload SHA-256, requirements SHA-256 and checkpoint phase:
-- Repository-external write-once Phase 0 checkpoint snapshot path, canonical manifest payload SHA-256 and retention reference:
+- Repository-external write-once Phase 0 checkpoint snapshot path, canonical manifest payload SHA-256 and retention reference; separate snapshot receipt remains pending:
 - Intake manifest/checkpoint 64 KiB limit, duplicate-key rejection and stable bounded-read result:
-- Authoring immutable-generation chain, previous payload/file caller pins, exactly-one missing-to-provided transition, input/candidate/new-artifact pre/post stable single-link rechecks and fsynced local no-replace/readback result; fork protection, latest-head selection, pin authority, cross-host linearization and post-publication custody `unverified` acknowledgement:
+- Selected terminal authoring generation locator, generation-receipt locator, manifest payload/file SHA-256 pins and receipt payload/file SHA-256 pins:
+- Full genesis-to-terminal generation-receipt chain result, including exact predecessor manifest/receipt selectors, sequence, registered item/artifact digest, exactly-one missing-to-provided transition replay, final stable single-link recheck and receipt-as-acceptance-point acknowledgement:
+- Orphaned-unaccepted generation and commit-state-unknown inventory/disposition record (or explicit none), with no automatic deletion acknowledgement:
+- Authoring fsynced local no-replace/readback result; receipt authenticity/authority, reviewer authority, fork protection, latest-head selection, pin authority, cross-host linearization, trusted time and post-publication custody `unverified` acknowledgement:
 - Seventeen registered artifacts bounded stable-read, whole-file SHA-256 and sixteen ordinary JSON unique-key parse result:
 - Standalone artifact check/strict-intake bounded-reader and unique-key parse parity result:
 - Six generated execution-evidence readers stable 64 KiB unique-key parse and error-mapping result:
 - Final strict current-to-checkpoint six-item equality and release-ledger-to-checkpoint identity result:
-- Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result:
+- Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result; separate finalization receipt remains pending:
 - Final strict caller-pinned payload/file SHA-256 match plus pin-authority, post-publication custody and global rollback-protection `unverified` acknowledgement:
 - Seven standalone manifest-consumer checks' reviewed authoring-manifest payload/file SHA-256 pins, exact closed-v2/seventeen-item result, caller `--input` exact case-preserving normalized absolute match to the own `artifact_path`, manifest-locator stable read plus final same-identity/single-link/raw-byte recheck, and caller identity/review-time inode continuity/post-recheck custody/delete-recreate/parent-race/pin-authority/global rollback-protection `unverified` acknowledgement:
 - Standalone ledger integrity/identity result versus final-strict Phase 0 start-replay authority result:

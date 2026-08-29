@@ -8,6 +8,7 @@ from scripts.verify_release_execution_causality import (
     BINDING,
     CONSUMERS,
     EXTERNAL_JSON,
+    GENERATION,
     INTAKE,
     INTAKE_MANIFEST,
     INTAKE_ONLY_CONSUMERS,
@@ -21,6 +22,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.intake = INTAKE.read_text(encoding="utf-8")
         self.intake_manifest = INTAKE_MANIFEST.read_text(encoding="utf-8")
         self.external_json = EXTERNAL_JSON.read_text(encoding="utf-8")
+        self.generation = GENERATION.read_text(encoding="utf-8")
         self.consumers = {
             name: path.read_text(encoding="utf-8")
             for name, path in CONSUMERS.items()
@@ -39,6 +41,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         intake_manifest: str | None = None,
         intake_only_consumers: dict[str, str] | None = None,
         external_json: str | None = None,
+        generation: str | None = None,
     ) -> list[str]:
         return causality_errors(
             self.binding if binding is None else binding,
@@ -51,6 +54,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 else intake_only_consumers
             ),
             self.external_json if external_json is None else external_json,
+            self.generation if generation is None else generation,
         )
 
     def test_current_contract_passes_and_is_in_the_quality_gate(self) -> None:
@@ -300,11 +304,12 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertTrue(self.errors(intake=mutated))
 
     def test_final_manifest_publication_and_caller_pins_cannot_be_weakened(self) -> None:
+        old_publish = "publish_write_once_file(temporary, output)"
+        prefix, separator, suffix = self.intake.rpartition(old_publish)
+        self.assertEqual(separator, old_publish)
+        mutated = prefix + "ignored_publish_write_once_file(temporary, output)" + suffix
+        self.assertTrue(self.errors(intake=mutated))
         for old, new in (
-            (
-                "publish_write_once_file(temporary, output)",
-                "ignored_publish_write_once_file(temporary, output)",
-            ),
             (
                 "expected_payload_sha256,\n            requirements_sha256(manifest),",
                 "requirements_sha256(manifest),\n            requirements_sha256(manifest),",
@@ -341,28 +346,25 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 'register.add_argument("--input", required=True, type=Path)',
                 'register.add_argument("--ignored-input", required=True, type=Path)',
             ),
-            ("if len(changed) != 1:", "if len(changed) == 1:"),
-            ("if before != after", "if before == after"),
-            ("base[key] != candidate[key]", "base[key] == candidate[key]"),
             (
-                "before.get(key) is not None",
-                "before.get(key) is None",
+                '"--expected-input-receipt-payload-sha256",\n        required=True,',
+                '"--expected-input-receipt-payload-sha256",\n        required=False,',
             ),
             (
-                'before.get("status") != "missing"',
-                'before.get("status") != "provided"',
+                "lineage = load_generation_lineage(",
+                "lineage = ignored_load_generation_lineage(",
             ),
             (
-                "_load_unique_json_with_bytes_and_metadata(\n                arguments.input,",
-                "_load_unique_json_with_bytes(\n                arguments.input,",
+                "receipt = create_registration_receipt(",
+                "receipt = ignored_create_registration_receipt(",
             ),
             (
-                "expected_payload_sha256, requirements_sha256(base)",
-                "requirements_sha256(base), requirements_sha256(base)",
+                "generation=orphaned-unaccepted",
+                "generation=accepted",
             ),
             (
-                "expected_file_sha256,\n                hashlib.sha256(base_raw).hexdigest(),",
-                "hashlib.sha256(base_raw).hexdigest(),\n                hashlib.sha256(base_raw).hexdigest(),",
+                "commit-state=unknown",
+                "commit-state=known",
             ),
             (
                 "hashlib.sha256(artifact_raw).hexdigest(),\n                registered_item[\"sha256\"],",
@@ -371,10 +373,6 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             (
                 "require_single_link=True,",
                 "require_single_link=False,",
-            ),
-            (
-                "output = prepare_write_once_file(arguments.output)",
-                "output = prepare_write_once_file(arguments.input)",
             ),
             (
                 "errors = intake_errors(\n            candidate,",
@@ -397,6 +395,28 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 mutated = self.intake.replace(old, new, 1)
                 self.assertNotEqual(mutated, self.intake)
                 self.assertTrue(self.errors(intake=mutated))
+
+        for old, new in (
+            ("if len(changed) != 1:", "if len(changed) == 1:"),
+            ("if before != after", "if before == after"),
+            ("base[key] != candidate[key]", "base[key] == candidate[key]"),
+            ("before.get(key) is not None", "before.get(key) is None"),
+            (
+                'before.get("status") != "missing"',
+                'before.get("status") != "provided"',
+            ),
+            ("seen_manifests.add", "ignored_seen_manifests.add"),
+            ("seen_receipts.add", "ignored_seen_receipts.add"),
+            (
+                "item_id = manifest_registration_item_id(manifest, child_manifest)",
+                "item_id = None",
+            ),
+            ("require_single_link=True", "require_single_link=False"),
+        ):
+            with self.subTest(generation_old=old):
+                mutated = self.generation.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.generation)
+                self.assertTrue(self.errors(generation=mutated))
 
     def test_final_intake_consumer_selector_comparison_cannot_be_removed(self) -> None:
         for old, new in (
@@ -613,7 +633,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result:",
+            "Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result; separate finalization receipt remains pending:",
             signoff,
         )
         self.assertIn(

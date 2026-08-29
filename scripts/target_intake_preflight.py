@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -45,6 +46,15 @@ from scripts.target_intake_manifest import (
     REQUIRED_IDS as _REQUIRED_IDS,
     canonical_bytes as _canonical_bytes,
     canonical_payload_sha256,
+)
+from scripts.target_intake_generation import (
+    GenerationLineageError,
+    create_genesis_receipt,
+    create_registration_receipt,
+    load_generation_lineage,
+    manifest_registration_item_id,
+    receipt_bytes,
+    recheck_generation_lineage,
 )
 from scripts.decision_envelope_validation import decision_errors
 from scripts.phase0_boundary_approval import approval_errors, intake_binding_errors
@@ -348,61 +358,6 @@ def create_intake_manifest(environment: str, requirements: Any) -> dict[str, Any
             if isinstance(item, dict)
         ],
     }
-
-
-def manifest_registration_item_id(base: Any, candidate: Any) -> str | None:
-    """Return the one missing-to-provided item in an immutable generation step."""
-
-    if not isinstance(base, dict) or not isinstance(candidate, dict):
-        return None
-    if set(base) != _MANIFEST_KEYS or set(candidate) != _MANIFEST_KEYS:
-        return None
-    if any(base[key] != candidate[key] for key in _MANIFEST_KEYS - {"items"}):
-        return None
-    base_items = base.get("items")
-    candidate_items = candidate.get("items")
-    if not isinstance(base_items, list) or not isinstance(candidate_items, list):
-        return None
-    if len(base_items) != len(_REQUIRED_IDS) or len(candidate_items) != len(
-        base_items
-    ):
-        return None
-    if [item.get("id") if isinstance(item, dict) else None for item in base_items] != list(
-        _REQUIRED_IDS
-    ):
-        return None
-    if [
-        item.get("id") if isinstance(item, dict) else None
-        for item in candidate_items
-    ] != list(_REQUIRED_IDS):
-        return None
-    changed = [
-        (before, after)
-        for before, after in zip(base_items, candidate_items, strict=True)
-        if before != after
-    ]
-    if len(changed) != 1:
-        return None
-    before, after = changed[0]
-    if not isinstance(before, dict) or not isinstance(after, dict):
-        return None
-    identifier = before.get("id")
-    expected_keys = (
-        _RELEASE_ITEM_KEYS
-        if identifier == "release_execution_evidence"
-        else _ITEM_KEYS
-    )
-    metadata_keys = expected_keys - {"id", "status"}
-    if (
-        set(before) != expected_keys
-        or set(after) != expected_keys
-        or after.get("id") != identifier
-        or before.get("status") != "missing"
-        or after.get("status") != "provided"
-        or any(before.get(key) is not None for key in metadata_keys)
-    ):
-        return None
-    return identifier if isinstance(identifier, str) else None
 
 
 def _parse_utc(value: Any) -> datetime | None:
@@ -1389,15 +1344,25 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("verify-requirements")
     initialize = commands.add_parser("init")
     initialize.add_argument("--output", required=True, type=Path)
+    initialize.add_argument("--receipt-output", required=True, type=Path)
     initialize.add_argument("--environment", required=True)
     snapshot = commands.add_parser("snapshot")
     snapshot.add_argument("--input", required=True, type=Path)
+    snapshot.add_argument("--input-receipt", required=True, type=Path)
+    snapshot.add_argument(
+        "--expected-input-receipt-payload-sha256", required=True
+    )
+    snapshot.add_argument(
+        "--expected-input-receipt-file-sha256", required=True
+    )
     snapshot.add_argument("--output", required=True, type=Path)
     snapshot.add_argument("--environment", required=True)
     register = commands.add_parser("register")
     register.add_argument("--input", required=True, type=Path)
+    register.add_argument("--input-receipt", required=True, type=Path)
     register.add_argument("--candidate", required=True, type=Path)
     register.add_argument("--output", required=True, type=Path)
+    register.add_argument("--receipt-output", required=True, type=Path)
     register.add_argument(
         "--expected-input-manifest-payload-sha256",
         required=True,
@@ -1406,12 +1371,30 @@ def _parser() -> argparse.ArgumentParser:
         "--expected-input-manifest-file-sha256",
         required=True,
     )
+    register.add_argument(
+        "--expected-input-receipt-payload-sha256",
+        required=True,
+    )
+    register.add_argument(
+        "--expected-input-receipt-file-sha256",
+        required=True,
+    )
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--input", required=True, type=Path)
+    finalize.add_argument("--input-receipt", required=True, type=Path)
+    finalize.add_argument(
+        "--expected-input-receipt-payload-sha256", required=True
+    )
+    finalize.add_argument(
+        "--expected-input-receipt-file-sha256", required=True
+    )
     finalize.add_argument("--output", required=True, type=Path)
     finalize.add_argument("--phase0-checkpoint-manifest", required=True, type=Path)
     preflight = commands.add_parser("preflight")
     preflight.add_argument("--input", required=True, type=Path)
+    preflight.add_argument("--input-receipt", type=Path)
+    preflight.add_argument("--expected-input-receipt-payload-sha256")
+    preflight.add_argument("--expected-input-receipt-file-sha256")
     preflight.add_argument("--phase0-checkpoint-manifest", type=Path)
     preflight.add_argument("--expected-manifest-payload-sha256")
     preflight.add_argument("--expected-manifest-file-sha256")
@@ -1444,7 +1427,14 @@ def main(argv: list[str] | None = None) -> int:
         print("target-intake-requirements-ok phases=0-6 production_acceptance=false")
         return 0
     if arguments.command == "init":
-        path_errors = _manifest_path_errors(arguments.output, must_exist=False)
+        path_errors = (
+            _manifest_path_errors(arguments.output, must_exist=False)
+            + _manifest_path_errors(arguments.receipt_output, must_exist=False)
+        )
+        if os.path.abspath(arguments.output) == os.path.abspath(
+            arguments.receipt_output
+        ):
+            path_errors.append("manifest and receipt outputs must be distinct")
         manifest = create_intake_manifest(arguments.environment, requirements)
         errors = path_errors + intake_errors(
             manifest,
@@ -1455,45 +1445,107 @@ def main(argv: list[str] | None = None) -> int:
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
+        manifest_raw = _final_manifest_bytes(manifest)
+        temporary: Path | None = None
+        receipt_temporary: Path | None = None
+        generation_published = False
+        receipt_published = False
         try:
-            with arguments.output.open("x", encoding="utf-8", newline="\n") as handle:
-                json.dump(manifest, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-        except OSError:
-            print("target-intake-init-failed", file=sys.stderr)
+            output = prepare_write_once_file(arguments.output)
+            temporary = write_fsynced_temporary_bytes(output, manifest_raw)
+            publish_write_once_file(temporary, output)
+            generation_published = True
+            temporary = None
+            manifest_readback = _read_stable_bytes(
+                output, max_bytes=_MAX_MANIFEST_BYTES
+            )
+            if not hmac.compare_digest(manifest_readback, manifest_raw):
+                raise OSError("genesis manifest publication readback mismatch")
+            receipt = create_genesis_receipt(output, manifest, manifest_readback)
+            receipt_raw = receipt_bytes(receipt)
+            receipt_output = prepare_write_once_file(arguments.receipt_output)
+            receipt_temporary = write_fsynced_temporary_bytes(
+                receipt_output, receipt_raw
+            )
+            publish_write_once_file(receipt_temporary, receipt_output)
+            receipt_published = True
+            receipt_temporary = None
+            receipt_readback = _read_stable_bytes(
+                receipt_output, max_bytes=_MAX_MANIFEST_BYTES
+            )
+            if not hmac.compare_digest(receipt_readback, receipt_raw):
+                raise OSError("genesis receipt publication readback mismatch")
+        except (OSError, ValueError, GenerationLineageError, _StableFileError):
+            if receipt_published:
+                print(
+                    "target-intake-init-failed commit-state=unknown "
+                    "verify-receipt-required",
+                    file=sys.stderr,
+                )
+                return 2
+            if generation_published:
+                print(
+                    "target-intake-init-failed "
+                    "generation=orphaned-unaccepted receipt=absent-or-unverified",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "target-intake-init-failed commit=not-established",
+                    file=sys.stderr,
+                )
             return 1
-        print("target-intake-created production_acceptance=false status=incomplete")
+        finally:
+            discard_claimed_temporary_file(temporary)
+            discard_claimed_temporary_file(receipt_temporary)
+        print(
+            "target-intake-created production_acceptance=false status=incomplete "
+            f"manifest_payload_sha256={requirements_sha256(manifest)} "
+            f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
+            f"generation_receipt_payload_sha256={requirements_sha256(receipt)} "
+            f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
+            "generation-acceptance=write-once-receipt "
+            "authoring-latest-head=unverified authoring-pin-authority=unverified "
+            "authoring-receipt-authority=unverified"
+        )
         return 0
     if arguments.command == "register":
         path_errors = (
             _manifest_path_errors(arguments.input, must_exist=True)
+            + _manifest_path_errors(arguments.input_receipt, must_exist=True)
             + _manifest_path_errors(arguments.candidate, must_exist=True)
             + _manifest_path_errors(arguments.output, must_exist=False)
+            + _manifest_path_errors(arguments.receipt_output, must_exist=False)
         )
+        if os.path.abspath(arguments.output) == os.path.abspath(
+            arguments.receipt_output
+        ):
+            path_errors.append("manifest and receipt outputs must be distinct")
         if path_errors:
             print("; ".join(path_errors), file=sys.stderr)
             return 1
         try:
-            base, base_raw, base_metadata = _load_unique_json_with_bytes_and_metadata(
+            lineage = load_generation_lineage(
                 arguments.input,
-                max_bytes=_MAX_MANIFEST_BYTES,
+                arguments.input_receipt,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_input_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_input_receipt_file_sha256
+                ),
+                expected_manifest_payload_sha256=(
+                    arguments.expected_input_manifest_payload_sha256
+                ),
+                expected_manifest_file_sha256=(
+                    arguments.expected_input_manifest_file_sha256
+                ),
             )
-        except (OSError, UnicodeError, json.JSONDecodeError, _StableFileError):
-            print("target-intake-register-input-invalid", file=sys.stderr)
+        except GenerationLineageError:
+            print("target-intake-register-lineage-invalid", file=sys.stderr)
             return 1
-        expected_payload_sha256 = arguments.expected_input_manifest_payload_sha256
-        expected_file_sha256 = arguments.expected_input_manifest_file_sha256
-        if (
-            _SHA256.fullmatch(expected_payload_sha256) is None
-            or _SHA256.fullmatch(expected_file_sha256) is None
-            or not hmac.compare_digest(expected_payload_sha256, requirements_sha256(base))
-            or not hmac.compare_digest(
-                expected_file_sha256,
-                hashlib.sha256(base_raw).hexdigest(),
-            )
-        ):
-            print("target-intake-register-input-pin-mismatch", file=sys.stderr)
-            return 1
+        base = lineage.manifest
+        base_raw = lineage.manifest_raw
         errors = intake_errors(
             base,
             requirements,
@@ -1548,14 +1600,11 @@ def main(argv: list[str] | None = None) -> int:
             print("target-intake-register-failed", file=sys.stderr)
             return 1
         temporary: Path | None = None
+        receipt_temporary: Path | None = None
+        generation_published = False
+        receipt_published = False
         try:
-            _recheck_stable_bytes(
-                arguments.input,
-                base_raw,
-                base_metadata,
-                max_bytes=_MAX_MANIFEST_BYTES,
-                require_single_link=True,
-            )
+            recheck_generation_lineage(lineage)
             _recheck_stable_bytes(
                 arguments.candidate,
                 candidate_raw,
@@ -1573,16 +1622,14 @@ def main(argv: list[str] | None = None) -> int:
             output = prepare_write_once_file(arguments.output)
             temporary = write_fsynced_temporary_bytes(output, output_bytes)
             publish_write_once_file(temporary, output)
-            readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
+            generation_published = True
+            temporary = None
+            readback, output_metadata = _read_stable_bytes_with_metadata(
+                output, max_bytes=_MAX_MANIFEST_BYTES
+            )
             if not hmac.compare_digest(readback, output_bytes):
                 raise OSError("authoring generation publication readback mismatch")
-            _recheck_stable_bytes(
-                arguments.input,
-                base_raw,
-                base_metadata,
-                max_bytes=_MAX_MANIFEST_BYTES,
-                require_single_link=True,
-            )
+            recheck_generation_lineage(lineage)
             _recheck_stable_bytes(
                 arguments.candidate,
                 candidate_raw,
@@ -1597,26 +1644,106 @@ def main(argv: list[str] | None = None) -> int:
                 max_bytes=_MAX_ARTIFACT_BYTES,
                 require_single_link=True,
             )
-        except (OSError, ValueError, _StableFileError):
-            print("target-intake-register-failed", file=sys.stderr)
+            receipt = create_registration_receipt(
+                manifest_path=output,
+                manifest=candidate,
+                manifest_raw=readback,
+                predecessor=lineage,
+                predecessor_manifest_path=arguments.input,
+                predecessor_receipt_path=arguments.input_receipt,
+                registered_item_id=registered_item_id,
+                artifact_sha256=registered_item["sha256"],
+                candidate_raw=candidate_raw,
+            )
+            receipt_raw = receipt_bytes(receipt)
+            receipt_output = prepare_write_once_file(arguments.receipt_output)
+            receipt_temporary = write_fsynced_temporary_bytes(
+                receipt_output, receipt_raw
+            )
+            publish_write_once_file(receipt_temporary, receipt_output)
+            receipt_published = True
+            receipt_temporary = None
+            receipt_readback, receipt_metadata = _read_stable_bytes_with_metadata(
+                receipt_output, max_bytes=_MAX_MANIFEST_BYTES
+            )
+            if not hmac.compare_digest(receipt_readback, receipt_raw):
+                raise OSError("generation receipt publication readback mismatch")
+            recheck_generation_lineage(lineage)
+            _recheck_stable_bytes(
+                output,
+                readback,
+                output_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+            _recheck_stable_bytes(
+                receipt_output,
+                receipt_readback,
+                receipt_metadata,
+                max_bytes=_MAX_MANIFEST_BYTES,
+                require_single_link=True,
+            )
+        except (OSError, ValueError, GenerationLineageError, _StableFileError):
+            if receipt_published:
+                print(
+                    "target-intake-register-failed commit-state=unknown "
+                    "verify-receipt-required",
+                    file=sys.stderr,
+                )
+                return 2
+            if generation_published:
+                print(
+                    "target-intake-register-failed "
+                    "generation=orphaned-unaccepted receipt=absent-or-unverified",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "target-intake-register-failed commit=not-established",
+                    file=sys.stderr,
+                )
             return 1
         finally:
             discard_claimed_temporary_file(temporary)
+            discard_claimed_temporary_file(receipt_temporary)
         print(
             "target-intake-generation-registered production_acceptance=false "
             f"registered_item={registered_item_id} "
             f"manifest_payload_sha256={requirements_sha256(candidate)} "
             f"manifest_file_sha256={hashlib.sha256(output_bytes).hexdigest()} "
+            f"generation_receipt_payload_sha256={requirements_sha256(receipt)} "
+            f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
+            "selected-lineage=caller-pinned-local-receipt-chain-validated "
+            "generation-acceptance=write-once-receipt "
             "authoring-publication=local-no-replace-readback "
             "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "
+            "authoring-receipt-authority=unverified "
             "authoring-post-publication-custody=unverified"
         )
         return 0
     if arguments.command == "snapshot":
-        output_errors = _manifest_path_errors(arguments.output, must_exist=False)
-        if output_errors:
-            print("; ".join(output_errors), file=sys.stderr)
+        path_errors = (
+            _manifest_path_errors(arguments.input, must_exist=True)
+            + _manifest_path_errors(arguments.input_receipt, must_exist=True)
+            + _manifest_path_errors(arguments.output, must_exist=False)
+        )
+        if path_errors:
+            print("; ".join(path_errors), file=sys.stderr)
+            return 1
+        try:
+            lineage = load_generation_lineage(
+                arguments.input,
+                arguments.input_receipt,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_input_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_input_receipt_file_sha256
+                ),
+            )
+        except GenerationLineageError:
+            print("target-intake-snapshot-lineage-invalid", file=sys.stderr)
             return 1
         try:
             identity, manifest = _load_validated_phase_checkpoint(
@@ -1629,36 +1756,64 @@ def main(argv: list[str] | None = None) -> int:
             errors = list(error.errors)
         else:
             errors = []
-        if errors:
+        if errors or manifest != lineage.manifest:
+            if not errors:
+                errors = ["target intake snapshot lineage changed"]
             print("; ".join(errors), file=sys.stderr)
             return 1
+        snapshot_raw = _final_manifest_bytes(manifest)
+        temporary: Path | None = None
         try:
-            with arguments.output.open("x", encoding="utf-8", newline="\n") as handle:
-                json.dump(manifest, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-        except OSError:
+            recheck_generation_lineage(lineage)
+            output = prepare_write_once_file(arguments.output)
+            temporary = write_fsynced_temporary_bytes(output, snapshot_raw)
+            publish_write_once_file(temporary, output)
+            temporary = None
+            readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
+            if not hmac.compare_digest(readback, snapshot_raw):
+                raise OSError("snapshot publication readback mismatch")
+            recheck_generation_lineage(lineage)
+        except (OSError, ValueError, GenerationLineageError, _StableFileError):
             print("target-intake-snapshot-failed", file=sys.stderr)
             return 1
+        finally:
+            discard_claimed_temporary_file(temporary)
         print(
             "target-intake-snapshot-created "
             "production_acceptance=false checkpoint_phase=0 "
             f"environment={identity.environment} "
             f"manifest_payload_sha256={identity.manifest_payload_sha256} "
-            f"requirements_sha256={identity.requirements_sha256}"
+            f"manifest_file_sha256={hashlib.sha256(snapshot_raw).hexdigest()} "
+            f"requirements_sha256={identity.requirements_sha256} "
+            "selected-lineage=caller-pinned-local-receipt-chain-validated "
+            "publication=local-no-replace-readback"
         )
         return 0
 
     if arguments.command == "finalize":
         output_errors = _manifest_path_errors(arguments.output, must_exist=False)
-        input_errors = _manifest_path_errors(arguments.input, must_exist=True)
+        input_errors = (
+            _manifest_path_errors(arguments.input, must_exist=True)
+            + _manifest_path_errors(arguments.input_receipt, must_exist=True)
+        )
         if output_errors or input_errors:
             print("; ".join(output_errors + input_errors), file=sys.stderr)
             return 1
         try:
-            _, manifest = _load_json_with_raw(arguments.input)
-        except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
-            print("target-intake-manifest-invalid", file=sys.stderr)
+            lineage = load_generation_lineage(
+                arguments.input,
+                arguments.input_receipt,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_input_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_input_receipt_file_sha256
+                ),
+            )
+        except GenerationLineageError:
+            print("target-intake-finalize-lineage-invalid", file=sys.stderr)
             return 1
+        manifest = lineage.manifest
         errors = intake_errors(
             manifest,
             requirements,
@@ -1675,13 +1830,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         temporary: Path | None = None
         try:
+            recheck_generation_lineage(lineage)
             output = prepare_write_once_file(arguments.output)
             temporary = write_fsynced_temporary_bytes(output, final_bytes)
             publish_write_once_file(temporary, output)
             readback = _read_stable_bytes(output, max_bytes=_MAX_MANIFEST_BYTES)
             if not hmac.compare_digest(readback, final_bytes):
                 raise OSError("final manifest publication readback mismatch")
-        except (OSError, ValueError, _StableFileError):
+            recheck_generation_lineage(lineage)
+        except (OSError, ValueError, GenerationLineageError, _StableFileError):
             print("target-intake-finalize-failed", file=sys.stderr)
             return 1
         finally:
@@ -1691,21 +1848,62 @@ def main(argv: list[str] | None = None) -> int:
             f"environment={manifest['environment']} "
             f"manifest_payload_sha256={requirements_sha256(manifest)} "
             f"manifest_file_sha256={hashlib.sha256(final_bytes).hexdigest()} "
+            "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "publication=local-no-replace-readback "
             "custody=unverified rollback-protection=unverified"
         )
         return 0
 
+    final_strict = not arguments.allow_incomplete and arguments.through_phase is None
     path_errors = _manifest_path_errors(arguments.input, must_exist=True)
+    if not final_strict and arguments.input_receipt is not None:
+        path_errors += _manifest_path_errors(
+            arguments.input_receipt, must_exist=True
+        )
     if path_errors:
         print("; ".join(path_errors), file=sys.stderr)
         return 1
-    try:
-        manifest_raw, manifest = _load_json_with_raw(arguments.input)
-    except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
-        print("target-intake-manifest-invalid", file=sys.stderr)
-        return 1
-    final_strict = not arguments.allow_incomplete and arguments.through_phase is None
+    receipt_arguments = (
+        arguments.input_receipt,
+        arguments.expected_input_receipt_payload_sha256,
+        arguments.expected_input_receipt_file_sha256,
+    )
+    if final_strict:
+        if any(value is not None for value in receipt_arguments):
+            print(
+                "generation receipt pins are only valid for progress preflight",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            manifest_raw, manifest = _load_json_with_raw(arguments.input)
+        except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
+            print("target-intake-manifest-invalid", file=sys.stderr)
+            return 1
+        lineage = None
+    else:
+        if any(value is None for value in receipt_arguments):
+            print(
+                "caller-pinned terminal generation receipt is required",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            lineage = load_generation_lineage(
+                arguments.input,
+                arguments.input_receipt,
+                expected_receipt_payload_sha256=(
+                    arguments.expected_input_receipt_payload_sha256
+                ),
+                expected_receipt_file_sha256=(
+                    arguments.expected_input_receipt_file_sha256
+                ),
+            )
+        except GenerationLineageError:
+            print("target-intake-progress-lineage-invalid", file=sys.stderr)
+            return 1
+        manifest = lineage.manifest
+        manifest_raw = lineage.manifest_raw
     expected_payload_sha256 = arguments.expected_manifest_payload_sha256
     expected_file_sha256 = arguments.expected_manifest_file_sha256
     pin_errors: list[str] = []
@@ -1753,6 +1951,12 @@ def main(argv: list[str] | None = None) -> int:
     if errors:
         print("; ".join(errors), file=sys.stderr)
         return 1
+    if lineage is not None:
+        try:
+            recheck_generation_lineage(lineage)
+        except GenerationLineageError:
+            print("target-intake-progress-lineage-invalid", file=sys.stderr)
+            return 1
     if arguments.allow_incomplete:
         status_value = "structurally-valid"
     elif arguments.through_phase is not None:
@@ -1767,6 +1971,7 @@ def main(argv: list[str] | None = None) -> int:
         f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
         f"requirements_sha256={manifest['requirements_sha256']} "
         f"final-manifest-caller-pin={'matched' if final_strict else 'not-applicable'} "
+        f"selected-generation-lineage={'not-applicable' if final_strict else 'caller-pinned-local-receipt-chain-validated'} "
         "final-manifest-custody=unverified "
         "final-manifest-pin-authority=unverified "
         "final-manifest-rollback-protection=unverified "

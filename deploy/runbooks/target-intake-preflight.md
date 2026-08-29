@@ -39,9 +39,11 @@ not production acceptance. Every generated manifest and successful command remai
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
 - Authoring proceeds through immutable generations while Phase 0–6 evidence is
-  collected. `init` exclusively creates generation 000; every later generation
-  is a separate no-replace leaf produced by `register`. Never overwrite a prior
-  generation or use the editable candidate as an accepted manifest. Production
+  collected. `init` publishes generation 000 and its closed genesis receipt;
+  every later generation is a separate no-replace leaf accepted only when
+  `register` has also published its write-once receipt. Never overwrite a prior
+  generation or use the editable candidate, an unreceipted leaf, or a receipt
+  selected for a different locator as an accepted manifest. Production
   sign-off uses a separately finalized leaf and caller-pinned canonical-payload
   and whole-file SHA-256 values.
 - Before each of the seven standalone manifest-consumer `check` commands, review
@@ -81,6 +83,7 @@ creation and never overwrites a previous manifest.
 ```powershell
 python scripts/target_intake_preflight.py init `
   --output D:\email-platform-evidence\intake\staging-target-intake-000.json `
+  --receipt-output D:\email-platform-evidence\intake\staging-target-intake-000.receipt.json `
   --environment staging
 ```
 
@@ -120,18 +123,27 @@ new, previously absent output leaf:
 ```powershell
 python scripts/target_intake_preflight.py register `
   --input D:\email-platform-evidence\intake\staging-target-intake-000.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake-000.receipt.json `
   --candidate D:\email-platform-evidence\intake\staging-target-intake-candidate-001.json `
   --output D:\email-platform-evidence\intake\staging-target-intake-001.json `
+  --receipt-output D:\email-platform-evidence\intake\staging-target-intake-001.receipt.json `
   --expected-input-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
-  --expected-input-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  --expected-input-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 ```
 
-`register` checks both caller pins before reading the candidate, validates the
-complete candidate and the newly registered artifact, and rechecks the input,
-candidate and artifact identities, bytes and single-link state immediately
-before and after fsynced no-replace publication. Its printed payload/file
-digests identify the new generation and are the candidate pins for the next
-independently approved step. A concurrent writer to the same output cannot
+`register` first validates the complete caller-pinned receipt chain and both
+manifest pins, then validates the candidate and newly registered artifact. It
+rechecks the full lineage, candidate and artifact before and after generation
+publication. Only after those checks does it publish the new write-once receipt;
+that receipt, not the manifest hard link alone, is the generation acceptance
+point. Retain the printed manifest and receipt payload/file digests for the next
+independently approved step. A generation published without a receipt is
+`orphaned-unaccepted` and must never be consumed. A receipt published but not
+successfully read back is `commit-state=unknown`; preserve both files and use an
+independent exact-pin lineage verification before any recovery decision. Never
+delete either automatically. A concurrent writer to the same output cannot
 overwrite the winner. Writers can still choose different output names from the
 same base and create forks, so fork protection, latest-head selection, pin
 authority, cross-host linearization and post-publication custody remain
@@ -807,6 +819,9 @@ This mode accepts still-missing items only for intake tracking:
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --allow-incomplete
 ```
 
@@ -827,6 +842,9 @@ platform inventory, and the Phase 0 approval that binds all five inputs.
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --through-phase 0
 ```
 
@@ -844,6 +862,9 @@ snapshot:
 ```powershell
 python scripts/target_intake_preflight.py snapshot `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --output D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --environment staging
 ```
@@ -851,7 +872,8 @@ python scripts/target_intake_preflight.py snapshot `
 Use `staging-phase0-checkpoint.json`, not the subsequently evolving intake
 manifest, as `--target-intake-manifest` for the forward or rolling release.
 Retain the snapshot and every Phase 0 artifact it references under write-once
-controls. Continue adding Phase 1–6 items only to the original intake manifest;
+  controls. Continue adding Phase 1–6 items only by registering a new generation
+  from the selected terminal generation and receipt;
 never edit, replace, or regenerate the checkpoint for an already executed
 release. A newly approved Phase 0 contract requires a new checkpoint and a new
 release execution ledger. The same replacement rule applies when any Phase 0
@@ -868,16 +890,25 @@ PCI and OIDC decisions are already part of Phase 0):
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 1
 
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 2
 
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 3
 ```
@@ -889,6 +920,9 @@ and Phase 0 checkpoint already required since Phase 1:
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 4
 ```
@@ -904,6 +938,9 @@ instant is strictly before both artifacts' exclusive `valid_until` values:
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 5
 ```
@@ -915,6 +952,9 @@ operations evidence:
 ```powershell
 python scripts/target_intake_preflight.py preflight `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json `
   --through-phase 6
 ```
@@ -929,6 +969,9 @@ both the canonical payload SHA-256 and the exact finalized-file SHA-256:
 ```powershell
 python scripts/target_intake_preflight.py finalize `
   --input D:\email-platform-evidence\intake\staging-target-intake.json `
+  --input-receipt D:\email-platform-evidence\intake\staging-target-intake.receipt.json `
+  --expected-input-receipt-payload-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
+  --expected-input-receipt-file-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb `
   --output D:\email-platform-evidence\intake\staging-target-intake-final.json `
   --phase0-checkpoint-manifest D:\email-platform-evidence\intake\staging-phase0-checkpoint.json
 ```
@@ -957,15 +1000,21 @@ authoring manifest may add evidence before finalization; the finalized leaf is
 not edited. Silently replacing a deployed contract, decision, approval,
 inventory, reviewer reference, timestamp, path or digest is not allowed.
 
-Finalization proves only that this process published and read back a new local
-leaf without replacing an existing name. The two caller pins detect a later
+Finalization additionally proves that its source was selected by one complete,
+caller-pinned local generation-receipt chain at the command's final recheck.
+It still proves only that this process published and read back a new local leaf
+without replacing an existing name. The final-manifest caller pins detect a later
 byte rewrite, semantic replacement, or rollback when the caller retains the
 current values independently. They do not authenticate who supplied the pins,
 prevent deletion and recreation, prove provider-native immutability, or identify
 the globally latest manifest. Pin authority, custody after publication, and
 global rollback protection therefore remain `unverified`; a real guarantee
 requires an external signed change-control record or provider-native CAS/WORM
-head. The private-secret signing domains and their still-unconfigured trust
+head. Generation receipts are unsigned local JSON: they do not prove reviewer
+authority, global latest-head selection, cross-host fork prevention, trusted
+time, or custody after the final recheck. A separately accepted Phase 0
+snapshot receipt and finalization receipt are not yet implemented. The
+private-secret signing domains and their still-unconfigured trust
 anchors are scope-limited and must not be reused for this purpose.
 
 Checkpoint success proves only that the items required through that phase have
