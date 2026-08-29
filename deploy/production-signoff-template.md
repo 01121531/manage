@@ -333,6 +333,14 @@ Release manifest:
 The Phase 6 CI rehearsal is only a preflight artifact and must have
 `production_acceptance=false`. It cannot be used as the evidence for gate 9.
 
+### Runtime-attestation provider evidence boundary
+
+- T206 exact-byte Cosign/DSSE, RFC 3161, checkpoint, target-observer and provider-receipt fixture result:
+- Independent confirmation that trust-root currentness and revocation freshness are still unverified:
+- Independent confirmation that synthetic signed ETag/generation receipts do not prove provider-native CAS or custody:
+- Independent confirmation that caller-pinned CLI records do not prove original execution:
+- Required conclusion: fixture cryptography does not establish provider authority; runtime authority and `production_acceptance=false` remain unchanged.
+
 ## Final signoff
 
 - Approved for production:

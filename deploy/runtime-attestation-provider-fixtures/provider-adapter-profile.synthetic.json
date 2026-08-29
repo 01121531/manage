@@ -1,0 +1,19 @@
+{
+  "certificate_identity": "https://github.com/01121531/manage/.github/workflows/release.yml@refs/tags/v0.0.0-fixture",
+  "checkpoint_origin": "rekor.synthetic.runtime-attestation.t206",
+  "cosign_cli_version": "v3.0.6-fixture",
+  "github_cli_version": "gh-attestation-v2-fixture",
+  "oidc_issuer": "https://token.actions.githubusercontent.com",
+  "production_acceptance": false,
+  "release_tag": "v0.0.0-fixture",
+  "repository": "https://github.com/01121531/manage",
+  "repository_id": "205000001",
+  "repository_owner_id": "205000002",
+  "repository_visibility": "public",
+  "runner_environment": "github-hosted",
+  "schema_version": 1,
+  "source_commit": "b40f5bd59b4461737a7d8858206e8260f780072e",
+  "synthetic": true,
+  "verification_time": "2026-01-02T03:15:00Z",
+  "workflow_ref": "01121531/manage/.github/workflows/release.yml@refs/tags/v0.0.0-fixture"
+}

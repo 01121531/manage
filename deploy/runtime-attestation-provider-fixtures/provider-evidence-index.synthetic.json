@@ -1,0 +1,61 @@
+{
+  "assets": {
+    "cosign-bundle": {
+      "sha256": "0b25ea403188fab018d2cc021a9538164440758ce4175a35ab9a3e95bbeece99",
+      "size": 2681
+    },
+    "cosign-cli-result": {
+      "sha256": "970d50fbb5c8a4a0d0604258fbf049d8dc39b437e174f7eaa39491061fea66fd",
+      "size": 500
+    },
+    "cosign-payload": {
+      "sha256": "0c66d465768fdb51d32dc4e6f31f64998e642351682baef16c07d82b98da7fa1",
+      "size": 304
+    },
+    "cosign-timestamp": {
+      "sha256": "a072fa1702d4474c7c087296e16425da82a901ef3030a37d9782a36efcb1c928",
+      "size": 1021
+    },
+    "github-bundle": {
+      "sha256": "1442bf55ad2213455a7320f5ef26ce0a7959af3eda3528bcf89e84ee9c060006",
+      "size": 5102
+    },
+    "github-cli-result": {
+      "sha256": "afe99b3b0eeb6ce9dea82fa0261061401651d4e9c6425d89d5404efd5b43a004",
+      "size": 517
+    },
+    "github-timestamp": {
+      "sha256": "5a6ab23619a0b7b4c1f52fca24311f3b0190dfd32595ee5c2e8fd2af5956e923",
+      "size": 1021
+    },
+    "provider-read-receipt": {
+      "sha256": "104ca2950c67169ce434883440b5dc404b101dc15ac93e3875a0a1f998da91c1",
+      "size": 740
+    },
+    "provider-write-receipt": {
+      "sha256": "26ed08fd788ff5c565f9aa6c8730ddd55da04e570b1e8706244b0738309073d2",
+      "size": 917
+    },
+    "rekor-checkpoint": {
+      "sha256": "fcecc5b3dc7f034053d16e7b71c0cb7ed189cf5518a04b3e803239412700fa57",
+      "size": 227
+    },
+    "revocation-snapshot": {
+      "sha256": "a9bba9a6b31f8d60ccfbb92fb6a6c5bfe287a2cab4c62941cbf5b8e0edec6b4d",
+      "size": 413
+    },
+    "target-observer": {
+      "sha256": "0dd125d3d75fe7c9667311fe4eb50fd0dd32ecbe1553110117608747a7d98821",
+      "size": 1138
+    },
+    "trusted-root": {
+      "sha256": "8cb462c666f6fd4104af781f2eeb69581fa84d59c1f0e9a8abe12921d41217b7",
+      "size": 1441
+    }
+  },
+  "production_acceptance": false,
+  "runtime_subject_sha256": "5f5d42ed25b9d4c5ad62f53aa4368273642dcdace47c5eb61d2e3997abd6d4bf",
+  "schema_version": 1,
+  "synthetic": true,
+  "t205_evidence_sha256": "cb8d5466a5a9710b934df14da81cc769d8e36b79d46f386af683e2b556ee37f6"
+}

@@ -4,3 +4,4 @@ deploy/target-intake-runtime-attestation-policy.synthetic.json text eol=lf
 deploy/evidence-index-envelopes/target-intake-runtime-attestation-readiness.synthetic.json text eol=lf
 deploy/target-intake-runtime-attestation-profile.synthetic.json text eol=lf
 deploy/evidence-index-envelopes/target-intake-runtime-attestation-evidence.synthetic.json text eol=lf
+deploy/runtime-attestation-provider-fixtures/** text eol=lf

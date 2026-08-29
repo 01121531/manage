@@ -182,6 +182,7 @@ def validate_supply_chain(
         "Push scanned staging digest",
         "Keyless-sign image and attach Syft SBOM",
         "Attach GitHub build provenance",
+        "Capture raw provider evidence before promotion",
         "Verify keyless image signature and SBOM attestation",
         "Publish verified release tag",
         "Record immutable container evidence",
@@ -206,19 +207,30 @@ def validate_supply_chain(
     if "GITHUB_REF_NAME" in push_script:
         errors.append("release version tag must not be pushed before evidence verification")
     cosign_script = str(_step(container, "Keyless-sign image and attach Syft SBOM").get("run", ""))
-    for marker in ("cosign sign --yes", "cosign attest --yes --type spdxjson", '"${IMAGE}@${DIGEST}"'):
+    installer = _step(container, "Install Cosign")
+    if _mapping(installer.get("with")).get("cosign-release") != "v3.0.6":
+        errors.append("release Cosign version must be explicitly pinned")
+    for marker in ("cosign sign --yes", "--bundle", "--output-payload", "cosign attest --yes --type spdxjson", '"${IMAGE}@${DIGEST}"'):
         if marker not in cosign_script:
             errors.append(f"release Cosign step is missing: {marker}")
     provenance = _step(container, "Attach GitHub build provenance")
     provenance_with = _mapping(provenance.get("with"))
     if (
+        provenance.get("id") != "github_provenance"
+        or
         provenance_with.get("push-to-registry") is not True
         or provenance_with.get("create-storage-record") is not False
         or "subject-digest" not in provenance_with
     ):
         errors.append("release provenance must bind and attach the pushed OCI digest")
+    capture_script = str(_step(container, "Capture raw provider evidence before promotion").get("run", ""))
+    for marker in ("GITHUB_PROVENANCE_BUNDLE", "cp --", "github-provenance.bundle.jsonl", "sha256sum", "cosign version --json"):
+        if marker not in capture_script:
+            errors.append(f"release raw provider evidence capture is missing: {marker}")
+    if "jq" in capture_script:
+        errors.append("raw provider bundle capture must not parse or reserialize JSON")
     verify_script = str(_step(container, "Verify keyless image signature and SBOM attestation").get("run", ""))
-    for marker in ("cosign verify ", "cosign verify-attestation", "--certificate-identity", "--certificate-oidc-issuer"):
+    for marker in ("cosign verify --output json", "cosign verify-attestation --output json", "--certificate-identity", "--certificate-oidc-issuer", "cosign.verify.json", "cosign.verify-attestation.json"):
         if marker not in verify_script:
             errors.append(f"release must verify keyless evidence: {marker}")
 

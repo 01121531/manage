@@ -98,6 +98,12 @@ try {
     python scripts/verify_target_intake_runtime_attestation_intake.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake configured runtime-attestation intake static verification failed." }
 
+    python scripts/target_intake_runtime_attestation_provider_fixture.py
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake provider raw-evidence fixture verification failed." }
+
+    python scripts/verify_target_intake_runtime_attestation_provider_adapter.py
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake provider raw-evidence static verification failed." }
+
     python scripts/verify_target_intake_snapshot_launcher.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake clean source snapshot launch verification failed." }
 

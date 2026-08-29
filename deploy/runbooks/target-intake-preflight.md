@@ -1385,6 +1385,24 @@ currentness, target-observer authentication, trusted time, provider CAS/head,
 global fork/rollback protection, runtime authority, original execution and
 `production_acceptance` therefore remain `unverified`/false.
 
+## Raw provider evidence cryptographic fixture
+
+Run `python scripts/target_intake_runtime_attestation_provider_fixture.py` to
+verify the T206 synthetic raw-byte fixtures. The verifier checks the Cosign
+signature over the exact Simple Signing payload bytes, the GitHub signature
+over DSSE PAE built from the exact decoded Statement bytes, the synthetic
+certificate chains, two RFC 3161 CMS tokens, the two-leaf Rekor checkpoint,
+the independent target-observer signature, and signed ETag/generation
+write/read-after receipts. Provider JSON is never parse-reserialized to create
+a signature input.
+
+The fixture keys, roots, receipts and CLI records are synthetic and public.
+The trust root and revocation snapshot cannot prove currentness, the signed CAS
+receipt cannot prove provider-native enforcement or custody, and the CLI output
+cannot prove the original command ran. The required operator conclusion is:
+fixture cryptography does not establish provider authority. Runtime authority,
+original execution and `production_acceptance=false` therefore remain unchanged.
+
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and
 redaction assertions. It never proves that a provider contract is correct,

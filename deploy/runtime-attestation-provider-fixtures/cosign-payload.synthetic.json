@@ -1,0 +1,1 @@
+{"critical": {"identity": {"docker-reference": "ghcr.io/01121531/email-api"}, "image": {"docker-manifest-digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76"}, "type": "cosign container image signature"}, "optional": {"creator": "cosign v3.0.6-fixture", "synthetic": true}}
