@@ -16,6 +16,11 @@ from scripts.phase6_pilot_inputs import (
     repository_contract_errors,
     seal_inventory,
 )
+from tests.intake_manifest_support import (
+    bind_manifest_item_bytes,
+    closed_manifest,
+    manifest_pin_arguments,
+)
 
 
 EVALUATED_AT = datetime(2026, 8, 29, tzinfo=timezone.utc)
@@ -229,14 +234,33 @@ class Phase6PilotInputsTests(unittest.TestCase):
             root = Path(temporary)
             inventory_path = root / "pilot-inputs.json"
             manifest_path = root / "intake.json"
+            manifest = closed_manifest(manifest)
+            reviewed_raw = json.dumps(reviewed).encode("utf-8")
+            bind_manifest_item_bytes(manifest, "phase6_pilot_inputs", reviewed_raw)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            pin_arguments = manifest_pin_arguments(manifest_path)
             inventory_path.write_text(json.dumps(self.template), encoding="utf-8")
-            self.assertEqual(main(["check", "--input", str(inventory_path), "--intake-manifest", str(manifest_path)]), 1)
-            inventory_path.write_text(json.dumps(reviewed), encoding="utf-8")
-            self.assertEqual(main(["check", "--input", str(inventory_path), "--intake-manifest", str(manifest_path)]), 0)
-            manifest["items"][0]["sha256"] = "e" * 64
+            arguments = [
+                "check",
+                "--input",
+                str(inventory_path),
+                "--intake-manifest",
+                str(manifest_path),
+                *pin_arguments,
+            ]
+            self.assertEqual(main(arguments), 1)
+            inventory_path.write_bytes(reviewed_raw)
+            self.assertEqual(main(arguments), 0)
+            inventory_path.write_text(json.dumps(reviewed, indent=2), encoding="utf-8")
+            self.assertEqual(main(arguments), 2)
+            inventory_path.write_bytes(reviewed_raw)
+            next(
+                item
+                for item in manifest["items"]
+                if item["id"] == "target_platform_inventory"
+            )["sha256"] = "e" * 64
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-            self.assertEqual(main(["check", "--input", str(inventory_path), "--intake-manifest", str(manifest_path)]), 2)
+            self.assertEqual(main(arguments), 2)
 
     def test_runbook_documents_opaque_roster_and_input_only_limit(self) -> None:
         rendered = json.dumps(self.template, ensure_ascii=False).casefold()

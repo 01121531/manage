@@ -96,6 +96,33 @@ def canonical_payload_sha256(document: Any) -> str:
     return hashlib.sha256(canonical_bytes(document)).hexdigest()
 
 
+def manifest_artifact_sha256_matches(
+    manifest: Any,
+    identifier: str,
+    raw: bytes,
+) -> bool:
+    """Bind one consumer's stable input bytes to its unique provided item."""
+
+    if not isinstance(manifest, dict) or not isinstance(raw, bytes):
+        return False
+    items = manifest.get("items")
+    if not isinstance(items, list):
+        return False
+    matches = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("id") == identifier
+    ]
+    if len(matches) != 1 or matches[0].get("status") != "provided":
+        return False
+    expected = matches[0].get("sha256")
+    return (
+        isinstance(expected, str)
+        and _SHA256.fullmatch(expected) is not None
+        and hmac.compare_digest(hashlib.sha256(raw).hexdigest(), expected)
+    )
+
+
 def _reviewer_reference(value: Any) -> bool:
     return (
         isinstance(value, str)

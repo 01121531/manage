@@ -9,6 +9,7 @@ from scripts.verify_release_execution_causality import (
     CONSUMERS,
     INTAKE,
     INTAKE_MANIFEST,
+    INTAKE_ONLY_CONSUMERS,
     causality_errors,
 )
 
@@ -22,6 +23,10 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             name: path.read_text(encoding="utf-8")
             for name, path in CONSUMERS.items()
         }
+        self.intake_only_consumers = {
+            name: path.read_text(encoding="utf-8")
+            for name, path in INTAKE_ONLY_CONSUMERS.items()
+        }
 
     def errors(
         self,
@@ -30,12 +35,18 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         intake: str | None = None,
         consumers: dict[str, str] | None = None,
         intake_manifest: str | None = None,
+        intake_only_consumers: dict[str, str] | None = None,
     ) -> list[str]:
         return causality_errors(
             self.binding if binding is None else binding,
             self.intake if intake is None else intake,
             self.consumers if consumers is None else consumers,
             self.intake_manifest if intake_manifest is None else intake_manifest,
+            (
+                self.intake_only_consumers
+                if intake_only_consumers is None
+                else intake_only_consumers
+            ),
         )
 
     def test_current_contract_passes_and_is_in_the_quality_gate(self) -> None:
@@ -69,6 +80,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertNotEqual(mutated, self.intake_manifest)
         self.assertTrue(self.errors(intake_manifest=mutated))
 
+    def test_shared_artifact_binding_requires_raw_sha256_comparison(self) -> None:
+        mutated = self.intake_manifest.replace(
+            "and hmac.compare_digest(hashlib.sha256(raw).hexdigest(), expected)",
+            "and hashlib.sha256(raw).hexdigest() == expected",
+            1,
+        )
+        self.assertNotEqual(mutated, self.intake_manifest)
+        self.assertTrue(self.errors(intake_manifest=mutated))
+
     def test_each_consumer_requires_both_pins_and_reports_boundary(self) -> None:
         name = "sub2_execution_evidence.py"
         for removed in (
@@ -95,6 +115,34 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         mutated[name] = source.replace(old, new, 1)
         self.assertNotEqual(mutated[name], source)
         self.assertTrue(self.errors(consumers=mutated))
+
+    def test_non_release_consumers_use_the_same_closed_dual_pin_boundary(self) -> None:
+        for name in self.intake_only_consumers:
+            with self.subTest(name=name):
+                mutated = dict(self.intake_only_consumers)
+                mutated[name] = mutated[name].replace(
+                    '    check.add_argument("--expected-intake-manifest-file-sha256", required=True)\n',
+                    "",
+                    1,
+                )
+                self.assertNotEqual(mutated[name], self.intake_only_consumers[name])
+                self.assertTrue(self.errors(intake_only_consumers=mutated))
+
+    def test_all_standalone_consumers_bind_their_own_stable_input_bytes(self) -> None:
+        for sources_argument, sources in (
+            ("consumers", self.consumers),
+            ("intake_only_consumers", self.intake_only_consumers),
+        ):
+            for name, source in sources.items():
+                with self.subTest(name=name):
+                    mutated = dict(sources)
+                    mutated[name] = source.replace(
+                        "if not manifest_artifact_sha256_matches(",
+                        "if not manifest_artifact_sha256_ignored(",
+                        1,
+                    )
+                    self.assertNotEqual(mutated[name], source)
+                    self.assertTrue(self.errors(**{sources_argument: mutated}))
 
     def test_identity_cannot_replace_finish_with_start(self) -> None:
         mutated = self.binding.replace(

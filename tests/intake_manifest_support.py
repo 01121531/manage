@@ -76,6 +76,19 @@ def closed_manifest(partial: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def bind_manifest_item_bytes(
+    manifest: dict[str, Any],
+    identifier: str,
+    raw: bytes,
+) -> None:
+    """Set one provided item's digest to the exact bytes used by a CLI test."""
+
+    matches = [item for item in manifest["items"] if item.get("id") == identifier]
+    if len(matches) != 1 or matches[0].get("status") != "provided":
+        raise ValueError("manifest test item must be uniquely provided")
+    matches[0]["sha256"] = hashlib.sha256(raw).hexdigest()
+
+
 def manifest_pin_arguments(path: Path) -> list[str]:
     raw = path.read_bytes()
     document = json.loads(raw)

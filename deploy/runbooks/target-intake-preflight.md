@@ -42,14 +42,19 @@ not production acceptance. Every generated manifest and successful command remai
   collected. It is not a write-once artifact merely because `init` creates its
   first leaf exclusively. Production sign-off uses a separately finalized
   leaf and caller-pinned canonical-payload and whole-file SHA-256 values.
-- Before each standalone release-consumer `check`, review the current authoring
-  manifest and retain both digest values printed by a successful progress
+- Before each of the seven standalone manifest-consumer `check` commands, review
+  the current authoring manifest and retain both digest values printed by a
+  successful progress
   preflight. Pass those independently retained values as
   `--expected-intake-manifest-payload-sha256` and
   `--expected-intake-manifest-file-sha256`. Each consumer reads the manifest
   once before any other evidence, requires the exact schema-v2 top level and
   ordered seventeen-item closed inventory, and matches both semantic and byte
-  identities. Do not calculate either expected value inside the consumer or
+  identities. Each consumer also performs one stable read of its primary
+  `--input` and requires the raw whole-file SHA-256 to equal its own `provided`
+  manifest item; semantic-equivalent reformatting is therefore a replacement,
+  not the reviewed artifact. Do not calculate either expected value inside the
+  consumer or
   read it back from the manifest during the check. These pins bind one reviewed
   authoring snapshot only: caller identity, pin authority, later custody and
   global rollback/latest-head protection remain `unverified`, and coordinated
@@ -316,12 +321,16 @@ that manifest:
 ```powershell
 python scripts/phase0_boundary_approval.py check `
   --input D:\email-platform-evidence\intake\phase0-boundary-approval.json `
-  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json
+  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
 
 Exit code 1 means the closed approval, data classification, reviewer references,
 or binding hashes are invalid. Exit code 2 means the approval names a different
-artifact set or requirements digest than the supplied manifest. Success proves
+artifact set or requirements digest, the authoring-manifest pins do not match,
+or the approval's raw whole-file SHA-256 differs from its own supplied manifest
+item. Success proves
 only that one approved record binds the same intake manifest content set; it
 does not prove production acceptance, reviewer identity or authority, external
 approval authenticity, or that any target control operated.
@@ -611,12 +620,16 @@ digest, review validity and binding:
 ```powershell
 python scripts/phase6_pilot_inputs.py check `
   --input D:\email-platform-evidence\intake\phase6-pilot-inputs.json `
-  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json
+  --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
 
 Exit code 1 means the roster, ownership, release identity, window, review or
 sealed content is invalid. Exit code 2 means the environment or target platform
-inventory binding differs from the supplied manifest. Success proves only that
+inventory binding differs from the supplied manifest, either authoring-manifest
+pin is wrong, or the inventory's raw whole-file SHA-256 differs from its own
+manifest item. Success proves only that
 the approved inputs are complete and immutable. It does not prove that any
 pilot execution occurred, that an alert was delivered, or that the release is
 accepted for production.

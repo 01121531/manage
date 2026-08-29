@@ -19,7 +19,11 @@ from scripts.target_phase_artifacts import (
     repository_errors,
     seal_artifact,
 )
-from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
+from tests.intake_manifest_support import (
+    bind_manifest_item_bytes,
+    closed_manifest,
+    manifest_pin_arguments,
+)
 
 
 class TargetPhaseArtifactTests(unittest.TestCase):
@@ -460,9 +464,13 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                 ],
             }
             manifest_path = root / "intake.json"
-            manifest_path.write_text(
-                json.dumps(closed_manifest(manifest)), encoding="utf-8"
+            manifest = closed_manifest(manifest)
+            bind_manifest_item_bytes(
+                manifest,
+                "phase5_windows_evidence",
+                evidence_path.read_bytes(),
             )
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)
             arguments = [
                 "check",

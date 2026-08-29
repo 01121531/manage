@@ -306,13 +306,17 @@ class ExternalJsonLoadingTests(unittest.TestCase):
                         str(phase0_boundary_approval.APPROVAL),
                         "--intake-manifest",
                         str(manifest),
+                        "--expected-intake-manifest-payload-sha256",
+                        "0" * 64,
+                        "--expected-intake-manifest-file-sha256",
+                        "0" * 64,
                     ]
                 )
 
-            self.assertEqual(result, 1)
+            self.assertEqual(result, 2)
             self.assertEqual(
                 stderr.getvalue().strip(),
-                "phase0-boundary-approval-invalid",
+                "phase0-boundary-approval intake manifest caller binding is invalid",
             )
 
 

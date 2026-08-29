@@ -14,6 +14,11 @@ from scripts.phase0_boundary_approval import (
     intake_binding_errors,
     main,
 )
+from tests.intake_manifest_support import (
+    bind_manifest_item_bytes,
+    closed_manifest,
+    manifest_pin_arguments,
+)
 
 
 class Phase0BoundaryApprovalTests(unittest.TestCase):
@@ -231,7 +236,16 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
             approval_path = root / "approval.json"
             manifest_path = root / "manifest.json"
             approval_path.write_text(json.dumps(self.approval), encoding="utf-8")
-            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            manifest = closed_manifest(manifest)
+            reviewed_raw = json.dumps(reviewed).encode("utf-8")
+            bind_manifest_item_bytes(
+                manifest,
+                "phase0_boundary_approval",
+                reviewed_raw,
+            )
+            manifest_encoded = json.dumps(manifest)
+            manifest_path.write_text(manifest_encoded, encoding="utf-8")
+            pin_arguments = manifest_pin_arguments(manifest_path)
             self.assertEqual(
                 main(
                     [
@@ -240,12 +254,13 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                         str(approval_path),
                         "--intake-manifest",
                         str(manifest_path),
+                        *pin_arguments,
                     ]
                 ),
                 1,
             )
 
-            approval_path.write_text(json.dumps(reviewed), encoding="utf-8")
+            approval_path.write_bytes(reviewed_raw)
             self.assertEqual(
                 main(
                     [
@@ -254,10 +269,27 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                         str(approval_path),
                         "--intake-manifest",
                         str(manifest_path),
+                        *pin_arguments,
                     ]
                 ),
                 0,
             )
+
+            approval_path.write_text(json.dumps(reviewed, indent=2), encoding="utf-8")
+            self.assertEqual(
+                main(
+                    [
+                        "check",
+                        "--input",
+                        str(approval_path),
+                        "--intake-manifest",
+                        str(manifest_path),
+                        *pin_arguments,
+                    ]
+                ),
+                2,
+            )
+            approval_path.write_bytes(reviewed_raw)
 
             manifest["requirements_sha256"] = "a" * 64
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -269,11 +301,13 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                         str(approval_path),
                         "--intake-manifest",
                         str(manifest_path),
+                        *pin_arguments,
                     ]
                 ),
                 2,
             )
 
+            manifest_path.write_text(manifest_encoded, encoding="utf-8")
             approval_path.write_text('{"kind":"approval"}', encoding="utf-8")
             self.assertEqual(
                 main(
@@ -283,6 +317,7 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                         str(approval_path),
                         "--intake-manifest",
                         str(manifest_path),
+                        *pin_arguments,
                     ]
                 ),
                 1,

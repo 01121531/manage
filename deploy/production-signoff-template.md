@@ -144,7 +144,7 @@ Release manifest:
 - Final strict current-to-checkpoint six-item equality and release-ledger-to-checkpoint identity result:
 - Finalized target-intake repository-external path, canonical payload SHA-256, whole-file SHA-256 and local no-replace/readback result:
 - Final strict caller-pinned payload/file SHA-256 match plus pin-authority, post-publication custody and global rollback-protection `unverified` acknowledgement:
-- Five standalone release-consumer checks' reviewed authoring-manifest payload/file SHA-256 pins, exact closed-v2/seventeen-item result, and caller identity/pin-authority/later-custody/global rollback-protection `unverified` acknowledgement:
+- Seven standalone manifest-consumer checks' reviewed authoring-manifest payload/file SHA-256 pins, exact closed-v2/seventeen-item result, current primary-input raw whole-file SHA-256 match to its own manifest item, and caller identity/pin-authority/later-custody/global rollback-protection `unverified` acknowledgement:
 - Standalone ledger integrity/identity result versus final-strict Phase 0 start-replay authority result:
 - Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:
 - Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:

@@ -18,7 +18,11 @@ from scripts.sub2_execution_evidence import (
     seal_index,
 )
 from tests.test_deploy_release_evidence import _complete_success, _recorder
-from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
+from tests.intake_manifest_support import (
+    bind_manifest_item_bytes,
+    closed_manifest,
+    manifest_pin_arguments,
+)
 
 
 class Sub2ExecutionEvidenceTests(unittest.TestCase):
@@ -326,6 +330,12 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                 "selector"
             ] = copy.deepcopy(reviewed["release_execution"])
             manifest = closed_manifest(manifest)
+            reviewed_raw = json.dumps(reviewed).encode("utf-8")
+            bind_manifest_item_bytes(
+                manifest,
+                "sub2_execution_evidence",
+                reviewed_raw,
+            )
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)
 
@@ -343,13 +353,13 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
 
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
             self.assertEqual(main(args()), 1)
-            index_path.write_text(json.dumps(reviewed), encoding="utf-8")
+            index_path.write_bytes(reviewed_raw)
             self.assertEqual(main(args()), 0)
             wrong_release = copy.deepcopy(reviewed)
             wrong_release["bindings"]["release_tag"] = "v9.9.9"
             index_path.write_text(json.dumps(self._reseal(wrong_release)), encoding="utf-8")
             self.assertEqual(main(args()), 2)
-            index_path.write_text(json.dumps(reviewed), encoding="utf-8")
+            index_path.write_bytes(reviewed_raw)
             manifest["items"][0]["sha256"] = "f" * 64
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(main(args()), 2)

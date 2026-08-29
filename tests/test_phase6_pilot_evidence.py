@@ -25,7 +25,11 @@ from scripts.phase6_pilot_inputs import (
     seal_inventory,
 )
 from tests.test_deploy_release_evidence import _complete_success, _recorder
-from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
+from tests.intake_manifest_support import (
+    bind_manifest_item_bytes,
+    closed_manifest,
+    manifest_pin_arguments,
+)
 
 
 EVALUATED_AT = datetime(2026, 8, 29, tzinfo=timezone.utc)
@@ -399,12 +403,18 @@ class Phase6PilotEvidenceTests(unittest.TestCase):
             ] = copy.deepcopy(reviewed["release_execution"])
             inputs_path.write_text(json.dumps(pilot_inputs), encoding="utf-8")
             manifest = closed_manifest(manifest)
+            reviewed_raw = json.dumps(reviewed).encode("utf-8")
+            bind_manifest_item_bytes(
+                manifest,
+                "phase6_pilot_evidence",
+                reviewed_raw,
+            )
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
             args = ["check", "--input", str(index_path), "--pilot-inputs", str(inputs_path), "--intake-manifest", str(manifest_path), *pin_arguments, "--release-execution-evidence", str(release_path)]
             self.assertEqual(main(args), 1)
-            index_path.write_text(json.dumps(reviewed), encoding="utf-8")
+            index_path.write_bytes(reviewed_raw)
             self.assertEqual(main(args), 0)
             replaced = copy.deepcopy(pilot_inputs)
             replaced["pilot_roles"]["operator"]["participant_reference"] = "pilot-subject-ref:replacement-9a"

@@ -28,6 +28,7 @@ from scripts.release_execution_binding import (
 from scripts.target_intake_manifest import (
     PinnedIntakeManifestError,
     load_pinned_intake_manifest,
+    manifest_artifact_sha256_matches,
 )
 
 
@@ -666,7 +667,7 @@ def main(argv: list[str] | None = None) -> int:
         print("target-phase-artifact intake manifest caller binding is invalid", file=sys.stderr)
         return 2
     try:
-        document = load_unique_json(arguments.input)
+        document, document_raw = load_unique_json_with_bytes(arguments.input)
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("target-phase-artifact-invalid", file=sys.stderr)
         return 1
@@ -686,6 +687,14 @@ def main(argv: list[str] | None = None) -> int:
         manifest,
         expected_type=arguments.expected_type,
     )
+    if not manifest_artifact_sha256_matches(
+        manifest,
+        arguments.expected_type,
+        document_raw,
+    ):
+        binding_errors.append(
+            "target phase artifact whole-file SHA-256 does not match its intake item"
+        )
     if arguments.expected_type != "windows_pilot_inputs":
         if arguments.release_execution_evidence is None:
             binding_errors.append("target evidence requires release execution evidence")
@@ -744,6 +753,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "target-phase-artifact-bound production_acceptance=false "
         "intake-manifest-caller-pin=payload-and-file-matched "
+        "intake-artifact-whole-file-binding=matched "
         "intake-manifest-schema=closed-v2-inventory-exact "
         "intake-manifest-custody=unverified "
         "intake-manifest-pin-authority=unverified "

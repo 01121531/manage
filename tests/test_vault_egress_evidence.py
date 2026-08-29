@@ -17,7 +17,11 @@ from scripts.vault_egress_evidence import (
     repository_control_errors,
     seal_index,
 )
-from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
+from tests.intake_manifest_support import (
+    bind_manifest_item_bytes,
+    closed_manifest,
+    manifest_pin_arguments,
+)
 
 
 class VaultEgressEvidenceTests(unittest.TestCase):
@@ -237,11 +241,17 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                 str(release_path),
             ]
             manifest = closed_manifest(manifest)
+            reviewed_raw = json.dumps(reviewed).encode("utf-8")
+            bind_manifest_item_bytes(
+                manifest,
+                "vault_egress_evidence",
+                reviewed_raw,
+            )
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             pin_arguments = manifest_pin_arguments(manifest_path)
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
             self.assertEqual(main(["check", "--input", str(index_path), "--intake-manifest", str(manifest_path), *pin_arguments]), 1)
-            index_path.write_text(json.dumps(reviewed), encoding="utf-8")
+            index_path.write_bytes(reviewed_raw)
             with mock.patch(
                 "scripts.vault_egress_evidence.release_execution_alignment_errors",
                 return_value=[],

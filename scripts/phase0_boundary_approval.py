@@ -16,7 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.external_json import MAX_INTAKE_JSON_BYTES, load_unique_json
+from scripts.external_json import load_unique_json, load_unique_json_with_bytes
+from scripts.target_intake_manifest import (
+    PinnedIntakeManifestError,
+    load_pinned_intake_manifest,
+    manifest_artifact_sha256_matches,
+)
 
 APPROVAL = (
     ROOT
@@ -326,6 +331,10 @@ def _parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check")
     check.add_argument("--input", required=True, type=Path)
     check.add_argument("--intake-manifest", required=True, type=Path)
+    check.add_argument(
+        "--expected-intake-manifest-payload-sha256", required=True
+    )
+    check.add_argument("--expected-intake-manifest-file-sha256", required=True)
     return parser
 
 
@@ -345,11 +354,19 @@ def main(argv: list[str] | None = None) -> int:
         print("phase0-boundary-approval-ok status=pending production_acceptance=false")
         return 0
     try:
-        document = _load(arguments.input)
-        manifest = _load(
+        manifest = load_pinned_intake_manifest(
             arguments.intake_manifest,
-            max_bytes=MAX_INTAKE_JSON_BYTES,
+            expected_payload_sha256=arguments.expected_intake_manifest_payload_sha256,
+            expected_file_sha256=arguments.expected_intake_manifest_file_sha256,
         )
+    except PinnedIntakeManifestError:
+        print(
+            "phase0-boundary-approval intake manifest caller binding is invalid",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        document, document_raw = load_unique_json_with_bytes(arguments.input)
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("phase0-boundary-approval-invalid", file=sys.stderr)
         return 1
@@ -360,10 +377,26 @@ def main(argv: list[str] | None = None) -> int:
         print("; ".join(errors), file=sys.stderr)
         return 1
     binding_errors = intake_binding_errors(document, manifest)
+    if not manifest_artifact_sha256_matches(
+        manifest,
+        "phase0_boundary_approval",
+        document_raw,
+    ):
+        binding_errors.append(
+            "phase0 approval whole-file SHA-256 does not match its intake item"
+        )
     if binding_errors:
         print("; ".join(binding_errors), file=sys.stderr)
         return 2
-    print("phase0-boundary-approval-bound production_acceptance=false")
+    print(
+        "phase0-boundary-approval-bound production_acceptance=false "
+        "intake-manifest-caller-pin=payload-and-file-matched "
+        "intake-artifact-whole-file-binding=matched "
+        "intake-manifest-schema=closed-v2-inventory-exact "
+        "intake-manifest-custody=unverified "
+        "intake-manifest-pin-authority=unverified "
+        "intake-manifest-rollback-protection=unverified"
+    )
     return 0
 
 

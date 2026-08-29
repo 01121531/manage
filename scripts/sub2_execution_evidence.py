@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.external_json import load_unique_json
+from scripts.external_json import load_unique_json, load_unique_json_with_bytes
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
     release_execution_reviewed_at,
@@ -25,6 +25,7 @@ from scripts.release_execution_binding import (
 from scripts.target_intake_manifest import (
     PinnedIntakeManifestError,
     load_pinned_intake_manifest,
+    manifest_artifact_sha256_matches,
 )
 
 EVIDENCE_INDEX = (
@@ -453,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         print("sub2-execution-evidence intake manifest caller binding is invalid", file=sys.stderr)
         return 2
     try:
-        document = _load(arguments.input)
+        document, document_raw = load_unique_json_with_bytes(arguments.input)
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("sub2-execution-evidence-index-invalid", file=sys.stderr)
         return 1
@@ -464,6 +465,14 @@ def main(argv: list[str] | None = None) -> int:
         print("; ".join(errors), file=sys.stderr)
         return 1
     binding_errors = intake_binding_errors(document, manifest)
+    if not manifest_artifact_sha256_matches(
+        manifest,
+        "sub2_execution_evidence",
+        document_raw,
+    ):
+        binding_errors.append(
+            "Sub2 evidence whole-file SHA-256 does not match its intake item"
+        )
     bindings = document.get("bindings", {})
     binding_errors += release_execution_alignment_errors(
         document.get("release_execution"),
@@ -484,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "sub2-execution-evidence-index-bound production_acceptance=false "
         "intake-manifest-caller-pin=payload-and-file-matched "
+        "intake-artifact-whole-file-binding=matched "
         "intake-manifest-schema=closed-v2-inventory-exact "
         "intake-manifest-custody=unverified "
         "intake-manifest-pin-authority=unverified "

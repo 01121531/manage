@@ -7,11 +7,14 @@ import tempfile
 import unittest
 from unittest import mock
 
+from scripts.phase0_boundary_approval import main as phase0_main
+from scripts.phase6_pilot_inputs import main as pilot_inputs_main
 from scripts.sub2_execution_evidence import main as sub2_main
 from scripts.target_intake_manifest import (
     PinnedIntakeManifestError,
     canonical_payload_sha256,
     load_pinned_intake_manifest,
+    manifest_artifact_sha256_matches,
     manifest_shape_errors,
 )
 from tests.intake_manifest_support import closed_manifest
@@ -104,11 +107,40 @@ class TargetIntakeManifestTests(unittest.TestCase):
                     expected_file_sha256=file_pin,
                 )
 
+    def test_artifact_binding_uses_exact_stable_bytes(self) -> None:
+        raw = b'{"reviewed":true}'
+        manifest = closed_manifest(
+            {
+                "items": [
+                    {
+                        "id": "phase0_boundary_approval",
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                    }
+                ]
+            }
+        )
+        self.assertTrue(
+            manifest_artifact_sha256_matches(
+                manifest,
+                "phase0_boundary_approval",
+                raw,
+            )
+        )
+        self.assertFalse(
+            manifest_artifact_sha256_matches(
+                manifest,
+                "phase0_boundary_approval",
+                b'{"reviewed": true}',
+            )
+        )
+
     def test_bad_pin_fails_before_consumer_reads_other_evidence(self) -> None:
         manifest = closed_manifest({"items": []})
         with tempfile.TemporaryDirectory() as temporary:
             path = self._write(Path(temporary), manifest)
-            with mock.patch("scripts.sub2_execution_evidence._load") as evidence_load:
+            with mock.patch(
+                "scripts.sub2_execution_evidence.load_unique_json_with_bytes"
+            ) as evidence_load:
                 self.assertEqual(
                     sub2_main(
                         [
@@ -128,6 +160,50 @@ class TargetIntakeManifestTests(unittest.TestCase):
                     2,
                 )
                 evidence_load.assert_not_called()
+
+    def test_non_release_consumers_reject_partial_manifest_before_input_read(self) -> None:
+        partial = {
+            "schema_version": 2,
+            "environment": "staging",
+            "production_acceptance": False,
+            "requirements_sha256": "a" * 64,
+            "items": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._write(Path(temporary), partial)
+            pins = [
+                "--expected-intake-manifest-payload-sha256",
+                canonical_payload_sha256(partial),
+                "--expected-intake-manifest-file-sha256",
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            ]
+            for main, patch_target in (
+                (
+                    phase0_main,
+                    "scripts.phase0_boundary_approval.load_unique_json_with_bytes",
+                ),
+                (
+                    pilot_inputs_main,
+                    "scripts.phase6_pilot_inputs.load_unique_json_with_bytes",
+                ),
+            ):
+                with self.subTest(main=main.__module__), mock.patch(
+                    patch_target
+                ) as input_load:
+                    self.assertEqual(
+                        main(
+                            [
+                                "check",
+                                "--input",
+                                str(path.parent / "input.json"),
+                                "--intake-manifest",
+                                str(path),
+                                *pins,
+                            ]
+                        ),
+                        2,
+                    )
+                    input_load.assert_not_called()
 
 
 if __name__ == "__main__":
