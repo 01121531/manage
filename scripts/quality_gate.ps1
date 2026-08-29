@@ -86,6 +86,12 @@ try {
     python scripts/verify_target_intake_generation_context_trust.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake generation-context handoff static verification failed." }
 
+    python scripts/target_intake_runtime_attestation_trust.py verify-repository
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation handoff contract verification failed." }
+
+    python scripts/verify_target_intake_runtime_attestation_trust.py
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation handoff static verification failed." }
+
     python scripts/verify_target_intake_snapshot_launcher.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake clean source snapshot launch verification failed." }
 

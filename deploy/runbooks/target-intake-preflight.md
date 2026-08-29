@@ -1275,6 +1275,72 @@ signed historical timestamp or one-hop head is not proof of a fresh global
 latest head, hidden-fork absence, cross-host linearizability, or rollback
 protection.
 
+## Runtime bundle/image external attestation readiness
+
+The generation-context handoff above authorizes a validation context; it does
+not authenticate the interpreter, runtime bundle, container image, deployment
+selection, or code observed in a target process. Those claims use a separate
+runtime-attestation domain. Validate the repository-side preparatory artifacts
+without signing, contacting a provider, mutating a target, or advancing a head:
+
+```powershell
+python scripts/target_intake_runtime_attestation_trust.py verify-repository
+```
+
+The closed v1 policy and readiness record are intentionally
+`synthetic=true`, `unconfigured` and `pending`. Authoring, recovery, deployment,
+and runtime-acceptance integration are disabled; `production_acceptance=false`
+and `not_committed_eligible=false`. The contract freezes these future external
+requirements:
+
+- the runtime subject binds the terminal generation four digests, sequence,
+  validation context, validator contract, replay runtime and execution profile,
+  then binds an exact
+  `sha256` runtime artifact, provenance subject, deployment-selected digest,
+  target-observed digest, target process identity, loaded module/native evidence,
+  expected prior provider head, proposed sequence and CAS request ID;
+- the artifact must be either a digest-pinned hermetic runtime bundle or an OCI
+  image selected by immutable digest. A tag-only locator, a manifest string, or
+  a local SHA-256 claim is not publisher authentication;
+- publisher, provenance verifier, target runtime observer, trusted-time
+  authority and provider-head authority use five distinct runtime-specific
+  roles, signature domains and `*_v1_only` scopes. They cannot reuse any
+  generation-context, private-secret or TLS role/domain/scope or key;
+- publisher evidence requires an authenticated trust-anchor chain, validity
+  window, current revocation snapshot and transparency inclusion. Provenance
+  must authenticate the exact artifact subject plus builder, source, materials,
+  parameters and hermetic-build claim; a string such as
+  `github-build-provenance` is only metadata;
+- deployment evidence must select the exact authenticated digest. The target
+  observer must independently bind the target environment/account/host,
+  container image ID or executable digest, process identity and loaded
+  module/native evidence after deployment. Comparing only Docker
+  `.Config.Image` does not prove actual image or process content;
+- trusted time binds a fresh challenge nonce and the exact subject imprint.
+  Provider custody requires caller-pinned prior head, artifact/sequence
+  preconditions, immutable version, signed CAS outcome, read-after-CAS current
+  head, append-only history, stale rejection, no automatic retry, retention,
+  delete denial and readback.
+
+The pending readiness record contains no runtime subject, signature,
+provenance, target observation, timestamp or provider-head evidence. Its only
+positive assertions are that the repository generated no signature, performed
+no provider mutation and claimed no target observation. Inserting local key or
+certificate material, issuer/builder claims, host timestamps, a container tag,
+`.Config.Image`, ordinary manifest hashes, or synthetic CAS/head data cannot
+promote readiness even if the JSON is resealed.
+
+This contract is not consumed by authoring, recovery or deployment. Until a
+real publisher, provenance verifier, independent target observer, trusted-time
+authority and provider-native head provide externally pinned evidence,
+runtime publisher authentication, anchor validity/revocation freshness,
+provenance, immutable artifact version, deployment digest selection, target
+runtime/process/loaded evidence, trusted time, provider CAS/head, global fork
+and rollback protection all remain `unverified`. Even a complete future runtime
+attestation proves only the selected artifact and observed deployment chain; it
+does not retroactively prove the original authoring runtime or historical
+validator execution.
+
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and
 redaction assertions. It never proves that a provider contract is correct,

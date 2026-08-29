@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "record_type": "target_intake_runtime_attestation_readiness",
+  "synthetic": true,
+  "readiness_status": "pending",
+  "production_acceptance": false,
+  "not_committed_eligible": false,
+  "policy_artifact_sha256": "b56cd792f52b5b5984f69ea8b562e2e07068049e342e04b76eeb97d0333991b0",
+  "runtime_subject": null,
+  "publisher_signature": null,
+  "provenance_attestation": null,
+  "target_runtime_observation": null,
+  "trusted_timestamp": null,
+  "provider_head": null,
+  "assertions": {
+    "policy_configured": false,
+    "publisher_signature_authenticated": false,
+    "publisher_role_scope_authorized": false,
+    "publisher_anchor_window_valid": false,
+    "publisher_revocation_snapshot_current": false,
+    "provenance_attestation_authenticated": false,
+    "provenance_subject_digest_matched": false,
+    "immutable_artifact_version_authenticated": false,
+    "deployment_digest_selection_matched": false,
+    "target_observation_authenticated": false,
+    "target_digest_matched": false,
+    "target_process_identity_bound": false,
+    "target_loaded_evidence_bound": false,
+    "timestamp_nonce_imprint_bound": false,
+    "provider_current_head_authenticated": false,
+    "provider_cas_precondition_ready": false,
+    "global_fork_absence_proven": false,
+    "global_rollback_protection_proven": false,
+    "no_repository_signature_generated": true,
+    "no_provider_mutation_performed": true,
+    "no_target_observation_claimed": true
+  },
+  "integrity": {
+    "payload_sha256": "199893e99db1efce24196c9d380d6061710a104945fb8414b90b8f529b52e88d"
+  }
+}
