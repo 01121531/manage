@@ -16,11 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.external_json import MAX_INTAKE_JSON_BYTES, load_unique_json
+from scripts.external_json import load_unique_json
 from scripts.release_execution_binding import (
     release_execution_alignment_errors,
     release_execution_reviewed_at,
     selector_errors as release_execution_selector_errors,
+)
+from scripts.target_intake_manifest import (
+    PinnedIntakeManifestError,
+    load_pinned_intake_manifest,
 )
 
 EVIDENCE_INDEX = (
@@ -416,6 +420,10 @@ def _parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check")
     check.add_argument("--input", required=True, type=Path)
     check.add_argument("--intake-manifest", required=True, type=Path)
+    check.add_argument(
+        "--expected-intake-manifest-payload-sha256", required=True
+    )
+    check.add_argument("--expected-intake-manifest-file-sha256", required=True)
     check.add_argument("--release-execution-evidence", required=True, type=Path)
     return parser
 
@@ -436,11 +444,16 @@ def main(argv: list[str] | None = None) -> int:
         print("sub2-execution-evidence-index-ok status=pending production_acceptance=false")
         return 0
     try:
-        document = _load(arguments.input)
-        manifest = _load(
+        manifest = load_pinned_intake_manifest(
             arguments.intake_manifest,
-            max_bytes=MAX_INTAKE_JSON_BYTES,
+            expected_payload_sha256=arguments.expected_intake_manifest_payload_sha256,
+            expected_file_sha256=arguments.expected_intake_manifest_file_sha256,
         )
+    except PinnedIntakeManifestError:
+        print("sub2-execution-evidence intake manifest caller binding is invalid", file=sys.stderr)
+        return 2
+    try:
+        document = _load(arguments.input)
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("sub2-execution-evidence-index-invalid", file=sys.stderr)
         return 1
@@ -470,6 +483,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         "sub2-execution-evidence-index-bound production_acceptance=false "
+        "intake-manifest-caller-pin=payload-and-file-matched "
+        "intake-manifest-schema=closed-v2-inventory-exact "
+        "intake-manifest-custody=unverified "
+        "intake-manifest-pin-authority=unverified "
+        "intake-manifest-rollback-protection=unverified "
         "release-review-selector-subject=manifest-exact "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "

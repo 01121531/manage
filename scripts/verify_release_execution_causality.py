@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # Direct script loading from scripts/.
 ROOT = Path(__file__).resolve().parents[1]
 BINDING = ROOT / "scripts" / "release_execution_binding.py"
 INTAKE = ROOT / "scripts" / "target_intake_preflight.py"
+INTAKE_MANIFEST = ROOT / "scripts" / "target_intake_manifest.py"
 CONSUMERS = {
     name: ROOT / "scripts" / name
     for name in (
@@ -45,6 +46,32 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
     "final-manifest-pin-authority=unverified",
     "final-manifest-rollback-protection=unverified",
 )
+INTAKE_CALLER_BOUNDARY_MARKERS = (
+    "intake-manifest-caller-pin=payload-and-file-matched",
+    "intake-manifest-schema=closed-v2-inventory-exact",
+    "intake-manifest-custody=unverified",
+    "intake-manifest-pin-authority=unverified",
+    "intake-manifest-rollback-protection=unverified",
+)
+EXPECTED_INTAKE_IDS = (
+    "sub2_contract",
+    "mail_contract",
+    "card_pci_boundary",
+    "oidc_deployment_identity",
+    "phase0_boundary_approval",
+    "target_platform_inventory",
+    "phase1_platform_evidence",
+    "phase2_mail_evidence",
+    "phase3_card_evidence",
+    "sub2_execution_evidence",
+    "vault_egress_evidence",
+    "windows_pilot_inputs",
+    "phase5_windows_evidence",
+    "release_execution_evidence",
+    "phase6_pilot_inputs",
+    "phase6_pilot_evidence",
+    "phase6_operations_evidence",
+)
 
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
@@ -56,6 +83,21 @@ def _function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
         ),
         None,
     )
+
+
+def _literal_assignment(tree: ast.Module, name: str) -> object | None:
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ):
+            try:
+                return ast.literal_eval(node.value)
+            except (ValueError, TypeError):
+                return None
+    return None
 
 
 def _call_name(node: ast.AST | None) -> str | None:
@@ -243,13 +285,73 @@ def causality_errors(
     binding_source: str,
     intake_source: str,
     consumer_sources: dict[str, str] | None = None,
+    intake_manifest_source: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     try:
         binding_tree = ast.parse(binding_source)
         intake_tree = ast.parse(intake_source)
+        manifest_tree = ast.parse(intake_manifest_source or "")
     except SyntaxError:
         return ["release execution causality sources are not valid Python"]
+
+    manifest_loader = _function(manifest_tree, "load_pinned_intake_manifest")
+    manifest_shape = _function(manifest_tree, "manifest_shape_errors")
+    manifest_canonical = _function(manifest_tree, "canonical_payload_sha256")
+    if manifest_loader is None or manifest_shape is None or manifest_canonical is None:
+        errors.append("shared closed intake manifest caller binding is missing")
+    else:
+        loader_calls = [_call_name(node) for node in ast.walk(manifest_loader)]
+        stable_reads = [name for name in loader_calls if name == "load_unique_json_with_bytes"]
+        digest_compares = [
+            node
+            for node in ast.walk(manifest_loader)
+            if isinstance(node, ast.Call) and _call_name(node) == "compare_digest"
+        ]
+        if not (
+            len(stable_reads) == 1
+            and len(digest_compares) == 2
+            and any(
+                _contains_name(node, "expected_payload_sha256")
+                for node in digest_compares
+            )
+            and any(
+                _contains_name(node, "expected_file_sha256")
+                for node in digest_compares
+            )
+            and "canonical_payload_sha256" in loader_calls
+            and "manifest_shape_errors" in loader_calls
+            and _contains_name(manifest_loader, "expected_payload_sha256")
+            and _contains_name(manifest_loader, "expected_file_sha256")
+        ):
+            errors.append("shared intake loader must bind one stable read to both caller pins")
+        if _literal_assignment(manifest_tree, "REQUIRED_IDS") != EXPECTED_INTAKE_IDS:
+            errors.append("shared intake loader must lock the ordered 17-item inventory")
+        if not all(
+            value in (intake_manifest_source or "")
+            for value in (
+                '"schema_version"',
+                '"production_acceptance"',
+                '"requirements_sha256"',
+                '"release_execution_evidence"',
+                "identifiers != list(REQUIRED_IDS)",
+                "set(item) != expected_keys",
+            )
+        ):
+            errors.append("shared intake loader must enforce the closed v2 inventory")
+
+    if not all(
+        value in intake_source
+        for value in (
+            "REQUIRED_IDS as _REQUIRED_IDS",
+            "MANIFEST_KEYS as _MANIFEST_KEYS",
+            "ITEM_KEYS as _ITEM_KEYS",
+            "RELEASE_ITEM_KEYS as _RELEASE_ITEM_KEYS",
+            "canonical_payload_sha256",
+            "manifest_file_sha256=",
+        )
+    ):
+        errors.append("strict intake must share schema constants and emit both manifest digests")
 
     identity = _function(binding_tree, "release_execution_identity")
     opaque_reference = _function(binding_tree, "_opaque_execution_reference")
@@ -568,6 +670,43 @@ def causality_errors(
             errors.append(
                 f"{name} must report the release-review and storage trust boundaries"
             )
+        if not all(marker in source for marker in INTAKE_CALLER_BOUNDARY_MARKERS):
+            errors.append(f"{name} must report the intake caller-pin trust boundary")
+        main_function = _function(tree, "main")
+        pinned_calls = [
+            node
+            for node in ast.walk(main_function) if main_function is not None
+            and isinstance(node, ast.Call)
+            and _call_name(node) == "load_pinned_intake_manifest"
+        ]
+        if not (
+            "--expected-intake-manifest-payload-sha256" in source
+            and "--expected-intake-manifest-file-sha256" in source
+            and len(pinned_calls) == 1
+            and _contains_name(
+                _keyword_value(pinned_calls[0], "expected_payload_sha256"),
+                "arguments",
+            )
+            and _contains_name(
+                _keyword_value(pinned_calls[0], "expected_file_sha256"),
+                "arguments",
+            )
+        ):
+            errors.append(f"{name} must require both external intake manifest pins")
+        if main_function is not None and pinned_calls:
+            other_reads = [
+                node
+                for node in ast.walk(main_function)
+                if isinstance(node, ast.Call)
+                and _call_name(node) in {
+                    "_load",
+                    "load_unique_json",
+                    "load_unique_json_with_bytes",
+                }
+                and _contains_name(node, "arguments")
+            ]
+            if any(node.lineno < pinned_calls[0].lineno for node in other_reads):
+                errors.append(f"{name} must validate intake pins before other evidence reads")
         calls = [
             node
             for node in ast.walk(tree)
@@ -592,6 +731,9 @@ def main() -> int:
     try:
         binding_source = load_stable_text(BINDING, max_bytes=MAX_SOURCE_BYTES)
         intake_source = load_stable_text(INTAKE, max_bytes=MAX_SOURCE_BYTES)
+        intake_manifest_source = load_stable_text(
+            INTAKE_MANIFEST, max_bytes=MAX_SOURCE_BYTES
+        )
         consumer_sources = {
             name: load_stable_text(path, max_bytes=MAX_SOURCE_BYTES)
             for name, path in CONSUMERS.items()
@@ -599,7 +741,12 @@ def main() -> int:
     except (OSError, UnicodeError, ValueError):
         print("release execution causality assets cannot be read", file=sys.stderr)
         return 1
-    errors = causality_errors(binding_source, intake_source, consumer_sources)
+    errors = causality_errors(
+        binding_source,
+        intake_source,
+        consumer_sources,
+        intake_manifest_source,
+    )
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -618,6 +765,11 @@ def main() -> int:
         "final-manifest-caller-pin=payload-and-file "
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
+        "standalone-intake-manifest-schema=closed-v2-inventory-exact "
+        "standalone-intake-manifest-caller-pin=payload-and-file "
+        "standalone-intake-manifest-custody=unverified "
+        "standalone-intake-manifest-pin-authority=unverified "
+        "standalone-intake-manifest-rollback-protection=unverified "
         "production_acceptance=false"
     )
     return 0

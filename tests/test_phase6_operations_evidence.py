@@ -30,6 +30,7 @@ from scripts.phase6_pilot_inputs import (
     REQUIRED_ROLE_RESPONSIBILITIES,
     seal_inventory,
 )
+from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
 from tests.test_deploy_release_evidence import _complete_success, _recorder
 
 
@@ -520,13 +521,16 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
             )
             inputs_path.write_text(json.dumps(pilot_inputs), encoding="utf-8")
             pilot_path.write_text(json.dumps(pilot_evidence), encoding="utf-8")
+            manifest = closed_manifest(manifest)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            pin_arguments = manifest_pin_arguments(manifest_path)
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
             args = [
                 "check", "--input", str(index_path),
                 "--pilot-inputs", str(inputs_path),
                 "--pilot-evidence", str(pilot_path),
                 "--intake-manifest", str(manifest_path),
+                *pin_arguments,
                 "--release-execution-evidence", str(release_path),
             ]
             self.assertEqual(main(args), 1)

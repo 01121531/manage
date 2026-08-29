@@ -8,6 +8,7 @@ from scripts.verify_release_execution_causality import (
     BINDING,
     CONSUMERS,
     INTAKE,
+    INTAKE_MANIFEST,
     causality_errors,
 )
 
@@ -16,6 +17,7 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.binding = BINDING.read_text(encoding="utf-8")
         self.intake = INTAKE.read_text(encoding="utf-8")
+        self.intake_manifest = INTAKE_MANIFEST.read_text(encoding="utf-8")
         self.consumers = {
             name: path.read_text(encoding="utf-8")
             for name, path in CONSUMERS.items()
@@ -27,17 +29,72 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         binding: str | None = None,
         intake: str | None = None,
         consumers: dict[str, str] | None = None,
+        intake_manifest: str | None = None,
     ) -> list[str]:
         return causality_errors(
             self.binding if binding is None else binding,
             self.intake if intake is None else intake,
             self.consumers if consumers is None else consumers,
+            self.intake_manifest if intake_manifest is None else intake_manifest,
         )
 
     def test_current_contract_passes_and_is_in_the_quality_gate(self) -> None:
         self.assertEqual(self.errors(), [])
         gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
         self.assertIn("python scripts/verify_release_execution_causality.py", gate)
+
+    def test_shared_intake_manifest_requires_one_stable_dual_pin_read(self) -> None:
+        for old, new in (
+            ("load_unique_json_with_bytes(", "load_unique_json("),
+            (
+                "not hmac.compare_digest(actual_file_sha256, expected_file_sha256)\n",
+                "actual_file_sha256 != expected_file_sha256\n",
+            ),
+            (
+                "not hmac.compare_digest(actual_payload_sha256, expected_payload_sha256)\n",
+                "actual_payload_sha256 != expected_payload_sha256\n",
+            ),
+        ):
+            with self.subTest(old=old):
+                mutated = self.intake_manifest.replace(old, new, 1)
+                self.assertNotEqual(mutated, self.intake_manifest)
+                self.assertTrue(self.errors(intake_manifest=mutated))
+
+    def test_shared_intake_manifest_inventory_is_exact_and_ordered(self) -> None:
+        mutated = self.intake_manifest.replace(
+            '    "mail_contract",\n',
+            "",
+            1,
+        )
+        self.assertNotEqual(mutated, self.intake_manifest)
+        self.assertTrue(self.errors(intake_manifest=mutated))
+
+    def test_each_consumer_requires_both_pins_and_reports_boundary(self) -> None:
+        name = "sub2_execution_evidence.py"
+        for removed in (
+            '        "--expected-intake-manifest-payload-sha256", required=True\n',
+            '        "intake-manifest-caller-pin=payload-and-file-matched "\n',
+        ):
+            with self.subTest(removed=removed):
+                mutated = dict(self.consumers)
+                mutated[name] = mutated[name].replace(removed, "", 1)
+                self.assertNotEqual(mutated[name], self.consumers[name])
+                self.assertTrue(self.errors(consumers=mutated))
+
+    def test_consumer_must_pin_manifest_before_other_evidence_reads(self) -> None:
+        name = "sub2_execution_evidence.py"
+        source = self.consumers[name]
+        old = """    try:
+        manifest = load_pinned_intake_manifest(
+"""
+        new = """    document = _load(arguments.input)
+    try:
+        manifest = load_pinned_intake_manifest(
+"""
+        mutated = dict(self.consumers)
+        mutated[name] = source.replace(old, new, 1)
+        self.assertNotEqual(mutated[name], source)
+        self.assertTrue(self.errors(consumers=mutated))
 
     def test_identity_cannot_replace_finish_with_start(self) -> None:
         mutated = self.binding.replace(

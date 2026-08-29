@@ -17,7 +17,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.external_json import (
-    MAX_INTAKE_JSON_BYTES,
     load_unique_json,
     load_unique_json_with_bytes,
 )
@@ -25,6 +24,10 @@ from scripts.release_execution_binding import (
     release_execution_alignment_errors,
     release_execution_reviewed_at,
     selector_errors as release_execution_selector_errors,
+)
+from scripts.target_intake_manifest import (
+    PinnedIntakeManifestError,
+    load_pinned_intake_manifest,
 )
 
 
@@ -635,6 +638,10 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--input", required=True, type=Path)
     check.add_argument("--expected-type", required=True, choices=tuple(ARTIFACT_PATHS))
     check.add_argument("--intake-manifest", required=True, type=Path)
+    check.add_argument(
+        "--expected-intake-manifest-payload-sha256", required=True
+    )
+    check.add_argument("--expected-intake-manifest-file-sha256", required=True)
     check.add_argument("--release-execution-evidence", type=Path)
     check.add_argument("--windows-pilot-inputs", type=Path)
     return parser
@@ -650,11 +657,16 @@ def main(argv: list[str] | None = None) -> int:
         print("target-phase-artifacts-ok status=pending production_acceptance=false")
         return 0
     try:
-        document = load_unique_json(arguments.input)
-        manifest = load_unique_json(
+        manifest = load_pinned_intake_manifest(
             arguments.intake_manifest,
-            max_bytes=MAX_INTAKE_JSON_BYTES,
+            expected_payload_sha256=arguments.expected_intake_manifest_payload_sha256,
+            expected_file_sha256=arguments.expected_intake_manifest_file_sha256,
         )
+    except PinnedIntakeManifestError:
+        print("target-phase-artifact intake manifest caller binding is invalid", file=sys.stderr)
+        return 2
+    try:
+        document = load_unique_json(arguments.input)
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("target-phase-artifact-invalid", file=sys.stderr)
         return 1
@@ -731,6 +743,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         "target-phase-artifact-bound production_acceptance=false "
+        "intake-manifest-caller-pin=payload-and-file-matched "
+        "intake-manifest-schema=closed-v2-inventory-exact "
+        "intake-manifest-custody=unverified "
+        "intake-manifest-pin-authority=unverified "
+        "intake-manifest-rollback-protection=unverified "
         "release-review-selector-subject=manifest-exact "
         "release-reviewer-authentication=unverified "
         "release-review-trusted-time=unverified "

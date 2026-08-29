@@ -35,6 +35,14 @@ from scripts.external_json import (
     parse_unique_json_bytes,
     read_stable_bytes as _read_stable_bytes,
 )
+from scripts.target_intake_manifest import (
+    ITEM_KEYS as _ITEM_KEYS,
+    MANIFEST_KEYS as _MANIFEST_KEYS,
+    RELEASE_ITEM_KEYS as _RELEASE_ITEM_KEYS,
+    REQUIRED_IDS as _REQUIRED_IDS,
+    canonical_bytes as _canonical_bytes,
+    canonical_payload_sha256,
+)
 from scripts.decision_envelope_validation import decision_errors
 from scripts.phase0_boundary_approval import approval_errors, intake_binding_errors
 from scripts.phase6_pilot_inputs import (
@@ -82,25 +90,6 @@ from scripts.vault_egress_evidence import (
 MATRIX = ROOT / "deploy" / "phase-acceptance-matrix.json"
 REQUIREMENTS = ROOT / "deploy" / "target-intake-requirements.json"
 
-_REQUIRED_IDS = (
-    "sub2_contract",
-    "mail_contract",
-    "card_pci_boundary",
-    "oidc_deployment_identity",
-    "phase0_boundary_approval",
-    "target_platform_inventory",
-    "phase1_platform_evidence",
-    "phase2_mail_evidence",
-    "phase3_card_evidence",
-    "sub2_execution_evidence",
-    "vault_egress_evidence",
-    "windows_pilot_inputs",
-    "phase5_windows_evidence",
-    "release_execution_evidence",
-    "phase6_pilot_inputs",
-    "phase6_pilot_evidence",
-    "phase6_operations_evidence",
-)
 _TOP_LEVEL_KEYS = {
     "schema_version",
     "plan_chapters",
@@ -116,23 +105,6 @@ _REQUIREMENT_KEYS = {
     "matrix_refs",
 }
 _REFERENCE_KEYS = {"phase", "category", "value"}
-_MANIFEST_KEYS = {
-    "schema_version",
-    "environment",
-    "production_acceptance",
-    "requirements_sha256",
-    "items",
-}
-_ITEM_KEYS = {
-    "id",
-    "status",
-    "artifact_path",
-    "sha256",
-    "reviewed_by",
-    "reviewed_at",
-    "redaction_confirmed",
-}
-_RELEASE_ITEM_KEYS = _ITEM_KEYS | {"release_execution_review_subject"}
 _ALLOWED_POLICIES = {
     "redacted_contract",
     "reviewed_decision",
@@ -212,17 +184,8 @@ class _IntakeJsonError(ValueError):
     """One intake JSON file could not be read without ambiguity."""
 
 
-def _canonical_bytes(document: Any) -> bytes:
-    return json.dumps(
-        document,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
 def requirements_sha256(document: Any) -> str:
-    return hashlib.sha256(_canonical_bytes(document)).hexdigest()
+    return canonical_payload_sha256(document)
 
 
 def phase_requirement_ids(requirements: Any, through_phase: int) -> tuple[str, ...]:
@@ -1579,6 +1542,7 @@ def main(argv: list[str] | None = None) -> int:
         f"status={status_value} production_acceptance=false "
         f"environment={manifest['environment']} "
         f"manifest_payload_sha256={requirements_sha256(manifest)} "
+        f"manifest_file_sha256={hashlib.sha256(manifest_raw).hexdigest()} "
         f"requirements_sha256={manifest['requirements_sha256']} "
         f"final-manifest-caller-pin={'matched' if final_strict else 'not-applicable'} "
         "final-manifest-custody=unverified "

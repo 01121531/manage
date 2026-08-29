@@ -42,6 +42,20 @@ not production acceptance. Every generated manifest and successful command remai
   collected. It is not a write-once artifact merely because `init` creates its
   first leaf exclusively. Production sign-off uses a separately finalized
   leaf and caller-pinned canonical-payload and whole-file SHA-256 values.
+- Before each standalone release-consumer `check`, review the current authoring
+  manifest and retain both digest values printed by a successful progress
+  preflight. Pass those independently retained values as
+  `--expected-intake-manifest-payload-sha256` and
+  `--expected-intake-manifest-file-sha256`. Each consumer reads the manifest
+  once before any other evidence, requires the exact schema-v2 top level and
+  ordered seventeen-item closed inventory, and matches both semantic and byte
+  identities. Do not calculate either expected value inside the consumer or
+  read it back from the manifest during the check. These pins bind one reviewed
+  authoring snapshot only: caller identity, pin authority, later custody and
+  global rollback/latest-head protection remain `unverified`, and coordinated
+  replacement of both manifest and externally retained pins is outside this
+  repository's proof. No digest is embedded in a consumer, so no self-hash
+  cycle is created.
 
 ## Initialize an incomplete manifest
 
@@ -446,6 +460,8 @@ python scripts/target_phase_artifacts.py check `
   --input D:\email-platform-evidence\intake\phase2-mail-evidence-index.json `
   --expected-type phase2_mail_evidence `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
@@ -458,6 +474,8 @@ python scripts/target_phase_artifacts.py check `
   --input D:\email-platform-evidence\intake\phase5-windows-evidence-index.json `
   --expected-type phase5_windows_evidence `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json `
   --windows-pilot-inputs D:\email-platform-evidence\intake\windows-pilot-inputs.json
 ```
@@ -506,6 +524,8 @@ Verify the sealed index and its same-manifest bindings:
 python scripts/sub2_execution_evidence.py check `
   --input D:\email-platform-evidence\intake\sub2-execution-evidence-index.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
@@ -550,6 +570,8 @@ URLs or bodies, credentials, tokens, PAN/CVV, verification codes, or identities.
 python scripts/vault_egress_evidence.py check `
   --input D:\email-platform-evidence\intake\vault-egress-evidence-index.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
@@ -644,6 +666,8 @@ python scripts/phase6_pilot_evidence.py check `
   --input D:\email-platform-evidence\intake\phase6-pilot-evidence-index.json `
   --pilot-inputs D:\email-platform-evidence\intake\phase6-pilot-inputs.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 
@@ -703,6 +727,8 @@ python scripts/phase6_operations_evidence.py check `
   --pilot-inputs D:\email-platform-evidence\intake\phase6-pilot-inputs.json `
   --pilot-evidence D:\email-platform-evidence\intake\phase6-pilot-evidence-index.json `
   --intake-manifest D:\email-platform-evidence\intake\staging-target-intake.json `
+  --expected-intake-manifest-payload-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef `
+  --expected-intake-manifest-file-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 `
   --release-execution-evidence D:\email-platform-evidence\release\selected-v3-execution.json
 ```
 

@@ -17,6 +17,7 @@ from scripts.vault_egress_evidence import (
     repository_control_errors,
     seal_index,
 )
+from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
 
 
 class VaultEgressEvidenceTests(unittest.TestCase):
@@ -235,9 +236,11 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                 "--release-execution-evidence",
                 str(release_path),
             ]
+            manifest = closed_manifest(manifest)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            pin_arguments = manifest_pin_arguments(manifest_path)
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
-            self.assertEqual(main(["check", "--input", str(index_path), "--intake-manifest", str(manifest_path)]), 1)
+            self.assertEqual(main(["check", "--input", str(index_path), "--intake-manifest", str(manifest_path), *pin_arguments]), 1)
             index_path.write_text(json.dumps(reviewed), encoding="utf-8")
             with mock.patch(
                 "scripts.vault_egress_evidence.release_execution_alignment_errors",
@@ -251,6 +254,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                             str(index_path),
                             "--intake-manifest",
                             str(manifest_path),
+                            *pin_arguments,
                             *bound_args,
                         ]
                     ),
@@ -268,12 +272,17 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                             str(index_path),
                             "--intake-manifest",
                             str(manifest_path),
+                            *pin_arguments,
                             *bound_args,
                         ]
                     ),
                     3,
                 )
-            manifest["items"][1]["sha256"] = "f" * 64
+            next(
+                item
+                for item in manifest["items"]
+                if item["id"] == "target_platform_inventory"
+            )["sha256"] = "f" * 64
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(
                 main(
@@ -283,6 +292,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                         str(index_path),
                         "--intake-manifest",
                         str(manifest_path),
+                        *pin_arguments,
                         *bound_args,
                     ]
                 ),

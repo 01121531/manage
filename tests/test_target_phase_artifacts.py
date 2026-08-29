@@ -19,6 +19,7 @@ from scripts.target_phase_artifacts import (
     repository_errors,
     seal_artifact,
 )
+from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
 
 
 class TargetPhaseArtifactTests(unittest.TestCase):
@@ -363,9 +364,10 @@ class TargetPhaseArtifactTests(unittest.TestCase):
             root = Path(temporary)
             manifest = root / "intake.json"
             manifest.write_text(
-                json.dumps({"environment": "staging", "items": []}),
+                json.dumps(closed_manifest({"environment": "staging", "items": []})),
                 encoding="utf-8",
             )
+            pin_arguments = manifest_pin_arguments(manifest)
             synthetic = ARTIFACT_PATHS["phase1_platform_evidence"]
             self.assertEqual(
                 main(
@@ -377,6 +379,7 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                         "phase1_platform_evidence",
                         "--intake-manifest",
                         str(manifest),
+                        *pin_arguments,
                     ]
                 ),
                 1,
@@ -401,6 +404,7 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                         "phase1_platform_evidence",
                         "--intake-manifest",
                         str(manifest),
+                        *pin_arguments,
                     ]
                 ),
                 1,
@@ -456,7 +460,10 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                 ],
             }
             manifest_path = root / "intake.json"
-            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(closed_manifest(manifest)), encoding="utf-8"
+            )
+            pin_arguments = manifest_pin_arguments(manifest_path)
             arguments = [
                 "check",
                 "--input",
@@ -467,6 +474,7 @@ class TargetPhaseArtifactTests(unittest.TestCase):
                 str(manifest_path),
                 "--release-execution-evidence",
                 str(root / "release.json"),
+                *pin_arguments,
             ]
             with mock.patch(
                 "scripts.target_phase_artifacts.release_execution_alignment_errors",

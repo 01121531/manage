@@ -18,6 +18,7 @@ from scripts.sub2_execution_evidence import (
     seal_index,
 )
 from tests.test_deploy_release_evidence import _complete_success, _recorder
+from tests.intake_manifest_support import closed_manifest, manifest_pin_arguments
 
 
 class Sub2ExecutionEvidenceTests(unittest.TestCase):
@@ -324,7 +325,9 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
             manifest["items"][2]["release_execution_review_subject"][
                 "selector"
             ] = copy.deepcopy(reviewed["release_execution"])
+            manifest = closed_manifest(manifest)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            pin_arguments = manifest_pin_arguments(manifest_path)
 
             def args() -> list[str]:
                 return [
@@ -335,6 +338,7 @@ class Sub2ExecutionEvidenceTests(unittest.TestCase):
                     str(manifest_path),
                     "--release-execution-evidence",
                     str(release_path),
+                    *pin_arguments,
                 ]
 
             index_path.write_text(json.dumps(self.template), encoding="utf-8")
