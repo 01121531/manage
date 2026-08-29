@@ -57,6 +57,15 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
         self.assertNotEqual(mutated, self.binding)
         self.assertTrue(self.errors(binding=mutated))
 
+    def test_review_time_requires_an_opaque_reviewer_reference(self) -> None:
+        mutated = self.binding.replace(
+            '        and _reviewer_reference(item.get("reviewed_by"))\n',
+            "",
+            1,
+        )
+        self.assertNotEqual(mutated, self.binding)
+        self.assertTrue(self.errors(binding=mutated))
+
     def test_consumer_order_and_forwarding_cannot_be_weakened(self) -> None:
         for old, new in (
             (
@@ -149,6 +158,68 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
                 text = " ".join(path.read_text(encoding="utf-8").casefold().split())
                 self.assertIn("does not read the frozen phase 0 checkpoint", text)
                 self.assertIn("final strict intake", text)
+
+    def test_every_consumer_reports_the_unverified_review_claim_boundary(self) -> None:
+        for marker in (
+            "release-reviewer-authentication=unverified",
+            "release-review-trusted-time=unverified",
+            "release-review-replay-protection=unverified",
+        ):
+            mutated = self.intake.replace(marker, marker.replace("unverified", "verified"), 1)
+            with self.subTest(source="intake", marker=marker):
+                self.assertNotEqual(mutated, self.intake)
+                self.assertTrue(self.errors(intake=mutated))
+            for name, source in self.consumers.items():
+                with self.subTest(source=name, marker=marker):
+                    mutated = source.replace(
+                        marker,
+                        marker.replace("unverified", "verified"),
+                        1,
+                    )
+                    self.assertNotEqual(mutated, source)
+                    consumers = {**self.consumers, name: mutated}
+                    self.assertTrue(self.errors(consumers=consumers))
+
+    def test_release_review_trust_model_boundary_is_documented(self) -> None:
+        runbook = " ".join(
+            Path("deploy/runbooks/target-intake-preflight.md")
+            .read_text(encoding="utf-8")
+            .casefold()
+            .split()
+        )
+        for required in (
+            "release-review signer role",
+            "pinned public-key trust anchor",
+            "private-key custody/ rotation/revocation policy",
+            "signature domain and canonical signed payload",
+            "trusted timestamp receipt",
+            "nonce/sequence/ledger-head replay policy",
+            "remain an opaque attribution claim",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, runbook)
+        for path in (
+            Path("deploy/private-secret-target-provenance-policy.json"),
+            Path("deploy/private-secret-worm-collection-policy.synthetic.json"),
+        ):
+            with self.subTest(path=path):
+                policy = path.read_text(encoding="utf-8").casefold()
+                self.assertIn("v1_only", policy)
+                self.assertIn("unconfigured", policy)
+        requirements = Path("deploy/target-intake-requirements.json").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "reviewer authentication, trusted time and replay protection remain explicitly unverified",
+            requirements,
+        )
+        signoff = Path("deploy/production-signoff-template.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:",
+            signoff,
+        )
 
 
 if __name__ == "__main__":

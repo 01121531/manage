@@ -1382,7 +1382,10 @@ def main(argv: list[str] | None = None) -> int:
         f"status={status_value} production_acceptance=false "
         f"environment={manifest['environment']} "
         f"manifest_payload_sha256={requirements_sha256(manifest)} "
-        f"requirements_sha256={manifest['requirements_sha256']}"
+        f"requirements_sha256={manifest['requirements_sha256']} "
+        "release-reviewer-authentication=unverified "
+        "release-review-trusted-time=unverified "
+        "release-review-replay-protection=unverified"
     )
     return 0
 

@@ -208,6 +208,7 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
                     "id": "release_execution_evidence",
                     "status": "provided",
                     "sha256": "a" * 64,
+                    "reviewed_by": "release-review-ticket-42",
                     "reviewed_at": "2026-08-26T08:30:00Z",
                 }
             ]
@@ -222,6 +223,11 @@ class ReleaseExecutionBindingTests(unittest.TestCase):
         duplicate = copy.deepcopy(manifest)
         duplicate["items"].append(copy.deepcopy(duplicate["items"][0]))
         self.assertIsNone(release_execution_reviewed_at(duplicate, selector))
+        for invalid_reviewer in (None, "tbd", " release-review-ticket-42"):
+            with self.subTest(invalid_reviewer=invalid_reviewer):
+                invalid = copy.deepcopy(manifest)
+                invalid["items"][0]["reviewed_by"] = invalid_reviewer
+                self.assertIsNone(release_execution_reviewed_at(invalid, selector))
 
     def test_forward_success_is_parsed_and_bound_to_release_and_intake(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

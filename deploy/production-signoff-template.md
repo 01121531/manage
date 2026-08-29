@@ -145,6 +145,7 @@ Release manifest:
 - Standalone ledger integrity/identity result versus final-strict Phase 0 start-replay authority result:
 - Release entry Phase 0 evaluation equals ledger started_at and frozen six-item validity-intersection replay result:
 - Release finished_at to exact-ledger selection review and every consuming execution-window start ordering result:
+- Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:
 - Phase 0 entry-authorization versus continuous-execution authorization decision, host-clock trust status and external approval authentication status:
 - Mail/Sub2 provider scope, external source version/SHA-256, capture/review/valid-until UTC and same-manifest review result:
 - Phase 1–5/Sub2/Vault execution-index sealed review/valid-until and same-manifest review result:

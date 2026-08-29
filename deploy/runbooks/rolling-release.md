@@ -108,6 +108,10 @@ has no expiry of its own. Final strict intake reconstructs the frozen Phase 0
 validity intersection and requires `started_at` inside it, while selection
 review and every consuming execution window must follow `finished_at`. This does
 not claim continuous authorization or an automatic mid-run expiry rollback.
+The manifest's reviewer reference and UTC value are an opaque claim only;
+digest/order checks do not authenticate the reviewer, establish trusted time or
+provide global replay protection, and private-secret signing keys are not valid
+for this release-review domain.
 
 ```powershell
 python -m scripts.rolling_release_evidence `

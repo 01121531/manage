@@ -240,6 +240,7 @@ class Phase6OperationsEvidenceTests(unittest.TestCase):
                     "id": "release_execution_evidence",
                     "status": "provided",
                     "sha256": "f" * 64,
+                    "reviewed_by": "release-selection-review-record-42",
                     "reviewed_at": "2026-08-26T08:30:00Z",
                 },
                 {

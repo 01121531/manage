@@ -148,8 +148,18 @@ def _execution_reference(value: Any) -> bool:
     )
 
 
+def _reviewer_reference(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 3 <= len(value) <= 128
+        and value.strip() == value
+        and value.casefold() not in _PLACEHOLDERS
+        and all(character.isprintable() for character in value)
+    )
+
+
 def release_execution_reviewed_at(manifest: Any, selector: Any) -> Any:
-    """Return the review time only when the manifest selects this exact ledger."""
+    """Return an opaque review claim's time for one exact selected ledger."""
 
     if (
         not isinstance(manifest, dict)
@@ -165,6 +175,7 @@ def release_execution_reviewed_at(manifest: Any, selector: Any) -> Any:
         and item.get("id") == "release_execution_evidence"
         and item.get("status") == "provided"
         and item.get("sha256") == selector["evidence_sha256"]
+        and _reviewer_reference(item.get("reviewed_by"))
     ]
     return matches[0].get("reviewed_at") if len(matches) == 1 else None
 

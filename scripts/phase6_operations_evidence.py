@@ -704,7 +704,12 @@ def main(argv: list[str] | None = None) -> int:
     if binding_errors:
         print("; ".join(binding_errors), file=sys.stderr)
         return 2
-    print("phase6-operations-evidence-index-bound production_acceptance=false")
+    print(
+        "phase6-operations-evidence-index-bound production_acceptance=false "
+        "release-reviewer-authentication=unverified "
+        "release-review-trusted-time=unverified "
+        "release-review-replay-protection=unverified"
+    )
     return 0
 
 

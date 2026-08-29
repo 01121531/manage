@@ -90,8 +90,19 @@ that exact whole-file SHA-256: it must be at or after ledger `finished_at` and
 not after the evaluation instant. For the remaining artifact policies without a
 sealed review time, the manifest timestamp must still be canonical UTC ending
 in `Z`. An opaque reviewer reference and host-clock comparison are not an
-authenticated signature or trusted time. Recompute SHA-256 after every approved artifact change. Do not add
-inline artifact content or extra manifest fields; the schema is closed.
+authenticated signature or trusted time. The repository does not define a
+release-review signer role, pinned public-key trust anchor, private-key custody/
+rotation/revocation policy, signature domain and canonical signed payload,
+trusted timestamp receipt, or nonce/sequence/ledger-head replay policy. The
+existing private-secret Ed25519 policies have distinct, scope-limited signing
+domains and are unconfigured; their keys and receipts must not be reused for a
+release-selection review. Until a dedicated external trust policy defines all
+of those controls, `reviewed_by` and `reviewed_at` remain an opaque attribution
+claim. Exact SHA-256 selection and local ordering reject byte substitution and
+predating, but do not authenticate the reviewer, time, or global replay state.
+Recompute SHA-256 after every approved artifact change. Do not add inline
+artifact content, self-authored signature fields, or extra manifest fields; the
+schema is closed.
 
 ## Provider contract envelopes
 
@@ -297,7 +308,10 @@ must not claim start-time authorization. Final strict intake is the sole
 repository verifier that combines the exact checkpoint, current six Phase 0
 items, selected ledger and all consumers to prove the complete chain
 `finished_at <= ledger reviewed_at <= consumer window.started_at` together with
-the frozen-window start replay.
+the frozen-window start replay. Every success output explicitly reports release
+reviewer authentication, trusted time and replay protection as `unverified`;
+those markers cannot be upgraded by supplying a SHA-256, host timestamp or
+opaque ticket reference.
 
 ## Phase 1, 2, 3 and 5 typed target artifacts
 

@@ -64,6 +64,7 @@ def main() -> int:
         "Phase 0 approval review reference/time/deadline, five exact input bindings and no-predated-input result:",
         "Strict-intake single UTC evaluation instant and trusted-time/non-authentication limitation acknowledgement:",
         "Release-execution immutable-history/no-invented-expiry acknowledgement and current Phase 0/evidence-index reuse result:",
+        "Release-selection opaque reviewer reference/time plus reviewer-authentication, trusted-time and replay-protection `unverified` acknowledgement:",
         "Forward deployment terminal state, fixed error code, ordered phase UTC values and final Edge state:",
         "Forward deployment Cosign, SPDX attestation and provenance verification:",
         "Forward deployment preflight-before-edge-stop and edge-closed failure evidence:",

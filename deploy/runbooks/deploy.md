@@ -341,7 +341,11 @@ ledger remains immutable history and has no expiry of its own. Final strict
 intake reconstructs the frozen Phase 0 review-validity intersection and requires
 `started_at` inside it; it does not invent continuous authorization, renewal or
 mid-run expiry rollback. Ledger selection review and every consuming execution
-window must follow ledger `finished_at`.
+window must follow ledger `finished_at`. The manifest's `reviewed_by` and
+`reviewed_at` remain an opaque review claim: exact digest binding and ordering
+do not authenticate its reviewer, establish trusted time, or provide global
+replay protection. Do not reuse the scope-limited private-secret signer keys or
+receipts for this release-review domain.
 If publication fails after Edge was opened, the executor closes Edge again and
 never reports success. An unconfirmed closure has priority over the original
 execution or publication error.

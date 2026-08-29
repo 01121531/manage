@@ -26,6 +26,11 @@ CONSUMERS = {
     )
 }
 MAX_SOURCE_BYTES = 128 * 1024
+REVIEW_BOUNDARY_MARKERS = (
+    "release-reviewer-authentication=unverified",
+    "release-review-trusted-time=unverified",
+    "release-review-replay-protection=unverified",
+)
 
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
@@ -130,6 +135,15 @@ def _review_call_is_selector_bound(node: ast.AST | None) -> bool:
     )
 
 
+def _has_review_boundary_output(tree: ast.Module) -> bool:
+    strings = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    return all(any(marker in value for value in strings) for marker in REVIEW_BOUNDARY_MARKERS)
+
+
 def causality_errors(
     binding_source: str,
     intake_source: str,
@@ -166,6 +180,13 @@ def causality_errors(
             for node in ast.walk(reviewed_at)
         ):
             errors.append("ledger review time must select the exact ledger digest")
+        if not any(
+            isinstance(node, ast.Call)
+            and _call_name(node) == "_reviewer_reference"
+            and _contains_string(node, "reviewed_by")
+            for node in ast.walk(reviewed_at)
+        ):
+            errors.append("ledger review time must carry an opaque reviewer reference")
         projection = _dict_projection(identity)
         if not all(
             _is_evidence_field(projection.get(field), field)
@@ -212,6 +233,8 @@ def causality_errors(
     if artifact_errors is None or intake_errors is None:
         errors.append("strict intake causality contract is missing")
         return errors
+    if not _has_review_boundary_output(intake_tree):
+        errors.append("strict intake must report the release-review trust boundary")
     if not _has_compare(
         artifact_errors,
         "reviewed_at",
@@ -263,6 +286,8 @@ def causality_errors(
         except SyntaxError:
             errors.append(f"{name} is not valid Python")
             continue
+        if not _has_review_boundary_output(tree):
+            errors.append(f"{name} must report the release-review trust boundary")
         calls = [
             node
             for node in ast.walk(tree)
@@ -302,6 +327,8 @@ def main() -> int:
     print(
         "release-execution-causality-ok "
         "start-replay=final-strict-intake review-consumer-order=locked "
+        "release-review-claim=opaque authentication=unverified "
+        "trusted-time=unverified replay-protection=unverified "
         "production_acceptance=false"
     )
     return 0
