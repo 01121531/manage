@@ -39,18 +39,27 @@ not production acceptance. Every generated manifest and successful command remai
 - `redaction_confirmed=true` is a human review assertion, not an automated
   secret scan. The reviewer remains responsible for the actual material.
 - Authoring proceeds through immutable generations while Phase 0–6 evidence is
-  collected. `init` publishes generation 000 and its closed schema-v2 genesis receipt;
+  collected. `init` publishes generation 000 and its closed schema-v3 genesis receipt;
   every later generation is a separate no-replace leaf accepted only when
   `register` has also published its write-once receipt. Never overwrite a prior
   generation or use the editable candidate, an unreceipted leaf, or a receipt
   selected for a different locator as an accepted manifest. Production
   sign-off uses a separately finalized leaf and caller-pinned canonical-payload
   and whole-file SHA-256 values.
-- Every schema-v2 generation receipt self-binds its case-preserving lexical
+- Every schema-v3 generation receipt self-binds its case-preserving lexical
   absolute `receipt_path`; copying identical receipt bytes to another locator
-  does not transfer acceptance. Schema-v1 generation receipts and mixed v1/v2
+  does not transfer acceptance. Schema-v1/v2 generation receipts and mixed legacy/v3
   chains are incompatible and must be rebuilt under new external names rather
   than promoted or silently rewritten.
+- Each generation receipt embeds the exact requirements registry, phase
+  acceptance matrix, and canonical host-UTC evaluation instant used for that
+  generation. `verify-generation-lineage` replays every receipt/manifest pair
+  from terminal to genesis with its own embedded context and recorded instant.
+  A later policy edit therefore does not reinterpret a legitimate historical
+  chain, while an artifact invalid at an ancestor's recorded instant fails
+  closed. The embedded context and timestamp are receipt-bound local
+  observations, not authenticated policy authority or trusted time; replay by
+  the current verifier does not prove which source/version ran when authored.
 - Before each of the seven standalone manifest-consumer `check` commands, review
   the current authoring manifest and retain both digest values printed by a
   successful progress
@@ -1108,11 +1117,17 @@ head. Generation receipts are unsigned local JSON. Self-binding rejects receipt
 copies at another locator, but does not distinguish deleting and recreating the
 same bytes at the same path. Rolling an older manifest, generation receipt and
 all four older pins back as one unit still passes local replay; sequence is not
-a global head. The authoring writer fsyncs the staging file but does not prove
+a global head. Schema-v3 recovery reruns the current verifier for every
+generation using that receipt's embedded requirements/matrix and recorded host
+UTC. This is deterministic local replay under receipt-bound inputs; it does not
+authenticate the validation context, make host time trusted, prove the original
+validator source/version, or prove that validation actually ran at authoring
+time. The authoring writer fsyncs the staging file but does not prove
 crash durability of the later hard-link directory entry, and a parent directory
 can still be replaced between path preparation and publication. Generation
 receipts therefore do not prove reviewer/pin/receipt authority, global
 latest-head selection, cross-host fork prevention or CAS/WORM, trusted time,
+validation-context authority, historical validator identity,
 locator continuity, parent-directory race protection, publication crash
 durability, global rollback protection, or custody after the final recheck.
 Snapshot and finalization receipts

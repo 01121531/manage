@@ -33,6 +33,9 @@ class TargetIntakeAcceptanceTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
+        self.matrix = json.loads(
+            Path("deploy/phase-acceptance-matrix.json").read_text(encoding="utf-8")
+        )
 
     @staticmethod
     def _pins(document: dict, raw: bytes) -> tuple[str, str]:
@@ -49,6 +52,9 @@ class TargetIntakeAcceptanceTests(unittest.TestCase):
             receipt_path,
             manifest,
             manifest_raw,
+            evaluated_at="2026-08-29T00:00:00.000000Z",
+            requirements=self.requirements,
+            phase_acceptance_matrix=self.matrix,
         )
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)

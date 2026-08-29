@@ -1239,12 +1239,69 @@ def _manifest_path_errors(path: Path, *, must_exist: bool) -> list[str]:
     return []
 
 
+def _generation_semantic_replay_errors(lineage: Any) -> list[str]:
+    """Replay every generation under its receipt-bound context and host time."""
+
+    try:
+        snapshots = lineage.snapshots
+        if not snapshots or len(snapshots) % 2:
+            raise ValueError("invalid snapshot pairs")
+        for index in range(0, len(snapshots), 2):
+            receipt = parse_unique_json_bytes(snapshots[index].raw)
+            manifest = parse_unique_json_bytes(snapshots[index + 1].raw)
+            context = receipt["validation_context"]
+            evaluated_at = _parse_utc(context["evaluated_at"])
+            requirements = context["requirements"]
+            matrix = context["phase_acceptance_matrix"]
+            if (
+                evaluated_at is None
+                or requirements_errors(requirements, matrix)
+                or not hmac.compare_digest(
+                    requirements_sha256(requirements),
+                    manifest["requirements_sha256"],
+                )
+                or intake_errors(
+                    manifest,
+                    requirements,
+                    require_complete=False,
+                    evaluated_at=evaluated_at,
+                )
+            ):
+                raise ValueError("semantic replay failed")
+    except (
+        AttributeError,
+        IndexError,
+        KeyError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        return ["target intake generation historical semantic replay is invalid"]
+    return []
+
+
+def _generation_terminal_context(lineage: Any) -> tuple[Any, Any, datetime] | None:
+    try:
+        context = lineage.receipt["validation_context"]
+        evaluated_at = _parse_utc(context["evaluated_at"])
+        requirements = context["requirements"]
+        matrix = context["phase_acceptance_matrix"]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if evaluated_at is None or requirements_errors(requirements, matrix):
+        return None
+    return requirements, matrix, evaluated_at
+
+
 def _load_validated_phase_checkpoint(
     manifest_path: Path,
     *,
     environment: str,
     through_phase: int,
     evaluated_at: datetime | None = None,
+    validation_requirements: Any | None = None,
+    validation_matrix: Any | None = None,
 ) -> tuple[PhaseCheckpointIdentity, dict[str, Any]]:
     """Read once, validate and identify one repository-external checkpoint."""
 
@@ -1261,8 +1318,16 @@ def _load_validated_phase_checkpoint(
     if errors:
         raise PhaseCheckpointError(errors)
     try:
-        matrix = _load_json(MATRIX)
-        requirements = _load_json(REQUIREMENTS)
+        matrix = (
+            _load_json(MATRIX)
+            if validation_matrix is None
+            else validation_matrix
+        )
+        requirements = (
+            _load_json(REQUIREMENTS)
+            if validation_requirements is None
+            else validation_requirements
+        )
         manifest = _load_json(manifest_path)
     except (OSError, UnicodeError, json.JSONDecodeError, _IntakeJsonError):
         raise PhaseCheckpointError(["target intake checkpoint material is invalid"])
@@ -1330,6 +1395,11 @@ def load_phase_checkpoint(
 def _snapshot_acceptance_identity_errors(acceptance: Any) -> list[str]:
     """Recompute the Phase 0 window recorded by one snapshot receipt."""
 
+    lineage_errors = _generation_semantic_replay_errors(acceptance.source_lineage)
+    context = _generation_terminal_context(acceptance.source_lineage)
+    if lineage_errors or context is None:
+        return ["snapshot receipt source generation semantics are invalid"]
+    requirements, matrix, _ = context
     receipt = acceptance.receipt
     evaluated_at = _parse_utc(receipt.get("evaluated_at"))
     if evaluated_at is None:
@@ -1341,6 +1411,8 @@ def _snapshot_acceptance_identity_errors(acceptance: Any) -> list[str]:
             environment=acceptance.checkpoint["environment"],
             through_phase=0,
             evaluated_at=evaluated_at,
+            validation_requirements=requirements,
+            validation_matrix=matrix,
         )
     except (KeyError, TypeError, PhaseCheckpointError):
         return ["snapshot receipt Phase 0 evaluation is invalid"]
@@ -1360,6 +1432,11 @@ def _finalization_acceptance_identity_errors(
 ) -> list[str]:
     """Replay complete intake at the finalization receipt's recorded instant."""
 
+    lineage_errors = _generation_semantic_replay_errors(acceptance.source_lineage)
+    context = _generation_terminal_context(acceptance.source_lineage)
+    if lineage_errors or context is None:
+        return ["finalization receipt source generation semantics are invalid"]
+    historical_requirements, _, _ = context
     try:
         evaluated_at = _parse_utc(acceptance.receipt.get("evaluated_at"))
         checkpoint_path = Path(
@@ -1369,7 +1446,7 @@ def _finalization_acceptance_identity_errors(
         return ["finalization receipt evaluation is invalid"]
     if evaluated_at is None or intake_errors(
         acceptance.finalized_manifest,
-        requirements,
+        historical_requirements,
         require_complete=True,
         phase0_checkpoint_manifest=checkpoint_path,
         evaluated_at=evaluated_at,
@@ -1576,6 +1653,8 @@ def main(argv: list[str] | None = None) -> int:
                     arguments.expected_manifest_file_sha256
                 ),
             )
+            if _generation_semantic_replay_errors(lineage):
+                raise GenerationLineageError()
             recheck_generation_lineage(lineage)
         except GenerationLineageError:
             print("target-intake-generation-lineage-invalid", file=sys.stderr)
@@ -1587,8 +1666,14 @@ def main(argv: list[str] | None = None) -> int:
             f"manifest_file_sha256={hashlib.sha256(lineage.manifest_raw).hexdigest()} "
             f"receipt_payload_sha256={requirements_sha256(lineage.receipt)} "
             f"receipt_file_sha256={hashlib.sha256(lineage.receipt_raw).hexdigest()} "
-            "generation-receipt-locator=self-bound-v2 "
+            "generation-receipt-locator=self-bound-v3 "
+            "generation-history-semantic-replay=every-generation "
+            "generation-receipt-evaluation-time=recorded-host-utc "
+            "generation-validation-context=receipt-embedded-requirements-and-matrix "
             "recovery=read-only-local-revalidation "
+            "authoring-validation-context-authority=unverified "
+            "authoring-trusted-time=unverified "
+            "authoring-validator-version=unverified "
             "authoring-receipt-authority=unverified "
             "authoring-pin-authority=unverified "
             "authoring-latest-head=unverified "
@@ -1750,6 +1835,9 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.receipt_output,
                 manifest,
                 manifest_readback,
+                evaluated_at=_utc_timestamp(evaluated_at),
+                requirements=requirements,
+                phase_acceptance_matrix=matrix,
             )
             receipt_raw = receipt_bytes(receipt)
             receipt_output = prepare_write_once_file(arguments.receipt_output)
@@ -1812,7 +1900,12 @@ def main(argv: list[str] | None = None) -> int:
             f"generation_receipt_payload_sha256={requirements_sha256(receipt)} "
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "generation-acceptance=write-once-receipt "
-            "generation-receipt-locator=self-bound-v2 "
+            "generation-receipt-locator=self-bound-v3 "
+            "generation-history-semantic-replay=every-generation "
+            "generation-receipt-evaluation-time=recorded-host-utc "
+            "authoring-validation-context-authority=unverified "
+            "authoring-trusted-time=unverified "
+            "authoring-validator-version=unverified "
             "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "
             "authoring-receipt-authority=unverified "
@@ -1858,11 +1951,17 @@ def main(argv: list[str] | None = None) -> int:
         except GenerationLineageError:
             print("target-intake-register-lineage-invalid", file=sys.stderr)
             return 1
+        lineage_errors = _generation_semantic_replay_errors(lineage)
+        context = _generation_terminal_context(lineage)
+        if lineage_errors or context is None:
+            print("target-intake-register-lineage-invalid", file=sys.stderr)
+            return 1
+        historical_requirements, historical_matrix, _ = context
         base = lineage.manifest
         base_raw = lineage.manifest_raw
         errors = intake_errors(
             base,
-            requirements,
+            historical_requirements,
             require_complete=False,
             evaluated_at=evaluated_at,
         )
@@ -1885,7 +1984,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         errors = intake_errors(
             candidate,
-            requirements,
+            historical_requirements,
             require_complete=False,
             evaluated_at=evaluated_at,
         )
@@ -1969,6 +2068,9 @@ def main(argv: list[str] | None = None) -> int:
                 registered_item_id=registered_item_id,
                 artifact_sha256=registered_item["sha256"],
                 candidate_raw=candidate_raw,
+                evaluated_at=_utc_timestamp(evaluated_at),
+                requirements=historical_requirements,
+                phase_acceptance_matrix=historical_matrix,
             )
             receipt_raw = receipt_bytes(receipt)
             receipt_output = prepare_write_once_file(arguments.receipt_output)
@@ -2034,7 +2136,12 @@ def main(argv: list[str] | None = None) -> int:
             f"generation_receipt_file_sha256={hashlib.sha256(receipt_raw).hexdigest()} "
             "selected-lineage=caller-pinned-local-receipt-chain-validated "
             "generation-acceptance=write-once-receipt "
-            "generation-receipt-locator=self-bound-v2 "
+            "generation-receipt-locator=self-bound-v3 "
+            "generation-history-semantic-replay=every-generation "
+            "generation-receipt-evaluation-time=recorded-host-utc "
+            "authoring-validation-context-authority=unverified "
+            "authoring-trusted-time=unverified "
+            "authoring-validator-version=unverified "
             "authoring-publication=local-no-replace-readback "
             "authoring-generation-fork-protection=unverified "
             "authoring-latest-head=unverified authoring-pin-authority=unverified "
@@ -2072,6 +2179,9 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
         except GenerationLineageError:
+            print("target-intake-snapshot-lineage-invalid", file=sys.stderr)
+            return 1
+        if _generation_semantic_replay_errors(lineage):
             print("target-intake-snapshot-lineage-invalid", file=sys.stderr)
             return 1
         try:
@@ -2227,6 +2337,9 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
         except GenerationLineageError:
+            print("target-intake-finalize-lineage-invalid", file=sys.stderr)
+            return 1
+        if _generation_semantic_replay_errors(lineage):
             print("target-intake-finalize-lineage-invalid", file=sys.stderr)
             return 1
         try:
@@ -2512,6 +2625,9 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
         except GenerationLineageError:
+            print("target-intake-progress-lineage-invalid", file=sys.stderr)
+            return 1
+        if _generation_semantic_replay_errors(lineage):
             print("target-intake-progress-lineage-invalid", file=sys.stderr)
             return 1
         manifest = lineage.manifest

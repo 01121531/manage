@@ -528,11 +528,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
 
         for old, new in (
             (
-                'RECEIPT_KIND = "target_intake_generation_receipt_v2"',
+                'RECEIPT_KIND = "target_intake_generation_receipt_v3"',
                 'RECEIPT_KIND = "target_intake_generation_receipt_v1"',
             ),
             (
-                'document.get("schema_version") != 2',
+                'document.get("schema_version") != 3',
                 'document.get("schema_version") != 1',
             ),
             (
@@ -770,7 +770,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             requirements,
         )
         self.assertIn(
-            "schema-v2 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            "schema-v3 local receipt whose case-preserving lexical absolute receipt_path equals every terminal and predecessor receipt locator",
+            requirements,
+        )
+        self.assertIn(
+            "Recovery replays every receipt/manifest pair to genesis with its own embedded validation context and recorded time",
             requirements,
         )
         self.assertIn(
@@ -813,7 +817,11 @@ class ReleaseExecutionCausalityStaticGateTests(unittest.TestCase):
             signoff,
         )
         self.assertIn(
-            "Schema-v2 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/mixed-chain rejection evidence:",
+            "Schema-v3 generation receipt self-bound locator, exact terminal and predecessor-hop result, and schema-v1/v2/mixed-chain rejection evidence:",
+            signoff,
+        )
+        self.assertIn(
+            "Historical generation replay acknowledgement: embedded validation-context authority, host trusted time, original validator execution/version identity, receipt/pin/reviewer authority, and post-verification custody remain `unverified`:",
             signoff,
         )
         self.assertIn(

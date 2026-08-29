@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -30,7 +31,7 @@ from scripts.target_intake_manifest import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECEIPT_KIND = "target_intake_generation_receipt_v2"
+RECEIPT_KIND = "target_intake_generation_receipt_v3"
 RECEIPT_KEYS = {
     "schema_version",
     "kind",
@@ -40,6 +41,12 @@ RECEIPT_KEYS = {
     "manifest",
     "predecessor",
     "registered_item",
+    "validation_context",
+}
+VALIDATION_CONTEXT_KEYS = {
+    "evaluated_at",
+    "requirements",
+    "phase_acceptance_matrix",
 }
 MANIFEST_SELECTOR_KEYS = {
     "path",
@@ -52,6 +59,9 @@ RECEIPT_SELECTOR_KEYS = {"path", "payload_sha256", "file_sha256"}
 PREDECESSOR_KEYS = {"manifest", "receipt"}
 REGISTERED_ITEM_KEYS = {"id", "artifact_sha256", "candidate_file_sha256"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_UTC_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$"
+)
 
 
 class GenerationLineageError(ValueError):
@@ -85,6 +95,35 @@ def receipt_bytes(document: Any) -> bytes:
 
 def _digest(value: Any) -> bool:
     return isinstance(value, str) and _SHA256.fullmatch(value) is not None
+
+
+def _parse_recorded_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
+
+
+def _validation_context(
+    evaluated_at: str,
+    requirements: Any,
+    phase_acceptance_matrix: Any,
+) -> dict[str, Any]:
+    context = {
+        "evaluated_at": evaluated_at,
+        "requirements": requirements,
+        "phase_acceptance_matrix": phase_acceptance_matrix,
+    }
+    if (
+        _parse_recorded_utc(evaluated_at) is None
+        or not isinstance(requirements, dict)
+        or not isinstance(phase_acceptance_matrix, dict)
+    ):
+        raise GenerationLineageError()
+    return context
 
 
 def _external_locator(value: Any) -> bool:
@@ -193,12 +232,21 @@ def receipt_errors(document: Any) -> list[str]:
         return ["generation receipt top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 2
+        document.get("schema_version") != 3
         or document.get("kind") != RECEIPT_KIND
         or document.get("production_acceptance") is not False
         or not _external_output_locator(document.get("receipt_path"))
     ):
         errors.append("generation receipt identity is invalid")
+    context = document.get("validation_context")
+    if (
+        not isinstance(context, dict)
+        or set(context) != VALIDATION_CONTEXT_KEYS
+        or _parse_recorded_utc(context.get("evaluated_at")) is None
+        or not isinstance(context.get("requirements"), dict)
+        or not isinstance(context.get("phase_acceptance_matrix"), dict)
+    ):
+        errors.append("generation receipt validation context is invalid")
     sequence = document.get("sequence")
     if (
         not isinstance(sequence, int)
@@ -217,6 +265,12 @@ def receipt_errors(document: Any) -> list[str]:
         and _digest(manifest.get("file_sha256"))
     ):
         errors.append("generation receipt manifest selector is invalid")
+    elif isinstance(context, dict) and isinstance(context.get("requirements"), dict):
+        if not hmac.compare_digest(
+            canonical_payload_sha256(context["requirements"]),
+            manifest["requirements_sha256"],
+        ):
+            errors.append("generation receipt validation context does not match manifest")
     predecessor = document.get("predecessor")
     registered = document.get("registered_item")
     if sequence == 0:
@@ -262,11 +316,15 @@ def create_genesis_receipt(
     receipt_path: Path,
     manifest: dict[str, Any],
     manifest_raw: bytes,
+    *,
+    evaluated_at: str,
+    requirements: dict[str, Any],
+    phase_acceptance_matrix: dict[str, Any],
 ) -> dict[str, Any]:
     if any(item.get("status") != "missing" for item in manifest.get("items", [])):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
         "receipt_path": os.path.abspath(receipt_path),
@@ -274,6 +332,9 @@ def create_genesis_receipt(
         "manifest": _manifest_selector(manifest_path, manifest, manifest_raw),
         "predecessor": None,
         "registered_item": None,
+        "validation_context": _validation_context(
+            evaluated_at, requirements, phase_acceptance_matrix
+        ),
     }
     if receipt_errors(receipt):
         raise GenerationLineageError()
@@ -292,6 +353,9 @@ def create_registration_receipt(
     registered_item_id: str,
     artifact_sha256: str,
     candidate_raw: bytes,
+    evaluated_at: str,
+    requirements: dict[str, Any],
+    phase_acceptance_matrix: dict[str, Any],
 ) -> dict[str, Any]:
     if (
         manifest_registration_item_id(predecessor.manifest, manifest)
@@ -300,7 +364,7 @@ def create_registration_receipt(
     ):
         raise GenerationLineageError()
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": RECEIPT_KIND,
         "production_acceptance": False,
         "receipt_path": os.path.abspath(receipt_path),
@@ -323,6 +387,9 @@ def create_registration_receipt(
             "artifact_sha256": artifact_sha256,
             "candidate_file_sha256": hashlib.sha256(candidate_raw).hexdigest(),
         },
+        "validation_context": _validation_context(
+            evaluated_at, requirements, phase_acceptance_matrix
+        ),
     }
     if receipt_errors(receipt):
         raise GenerationLineageError()
@@ -525,6 +592,12 @@ def load_generation_lineage(
                 child_item = next(
                     item for item in child_manifest["items"] if item["id"] == item_id
                 ) if item_id is not None else None
+                child_time = _parse_recorded_utc(
+                    child_receipt["validation_context"]["evaluated_at"]
+                )
+                predecessor_time = _parse_recorded_utc(
+                    receipt["validation_context"]["evaluated_at"]
+                )
                 if not (
                     child_receipt["sequence"] == receipt["sequence"] + 1
                     and item_id == registered["id"]
@@ -545,6 +618,9 @@ def load_generation_lineage(
                         receipt,
                         receipt_raw,
                     )
+                    and child_time is not None
+                    and predecessor_time is not None
+                    and child_time >= predecessor_time
                 ):
                     raise GenerationLineageError()
             if receipt["sequence"] == 0:

@@ -58,7 +58,12 @@ FINAL_MANIFEST_BOUNDARY_MARKERS = (
 )
 AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-acceptance=write-once-receipt",
-    "generation-receipt-locator=self-bound-v2",
+    "generation-receipt-locator=self-bound-v3",
+    "generation-history-semantic-replay=every-generation",
+    "generation-receipt-evaluation-time=recorded-host-utc",
+    "authoring-validation-context-authority=unverified",
+    "authoring-trusted-time=unverified",
+    "authoring-validator-version=unverified",
     "selected-lineage=caller-pinned-local-receipt-chain-validated",
     "authoring-publication=local-no-replace-readback",
     "authoring-generation-fork-protection=unverified",
@@ -880,6 +885,9 @@ def causality_errors(
     )
     lineage_loader = _function(generation_tree, "load_generation_lineage")
     lineage_recheck = _function(generation_tree, "recheck_generation_lineage")
+    generation_semantic_replay = _function(
+        intake_tree, "_generation_semantic_replay_errors"
+    )
     init_branch = (
         _command_branch(main_function, "init") if main_function is not None else None
     )
@@ -900,6 +908,7 @@ def causality_errors(
         or registration_creator is None
         or lineage_loader is None
         or lineage_recheck is None
+        or generation_semantic_replay is None
         or init_branch is None
         or register_branch is None
         or verify_generation_branch is None
@@ -911,10 +920,14 @@ def causality_errors(
             and _contains_string(receipt_validation, "receipt_path")
             and _contains_string(genesis_creator, "receipt_path")
             and _contains_string(registration_creator, "receipt_path")
-            and "target_intake_generation_receipt_v2" in (generation_source or "")
-            and 'document.get("schema_version") != 2'
+            and "target_intake_generation_receipt_v3" in (generation_source or "")
+            and 'document.get("schema_version") != 3'
             in (generation_source or "")
-            and (generation_source or "").count('"schema_version": 2') == 2
+            and (generation_source or "").count('"schema_version": 3') == 2
+            and _contains_string(receipt_validation, "validation_context")
+            and _contains_string(receipt_validation, "evaluated_at")
+            and _contains_string(receipt_validation, "requirements")
+            and _contains_string(receipt_validation, "phase_acceptance_matrix")
             and (generation_source or "").count(
                 '"receipt_path": os.path.abspath(receipt_path)'
             )
@@ -930,7 +943,24 @@ def causality_errors(
             and _contains_name(genesis_creator, "receipt_errors")
         ):
             errors.append(
-                "generation receipts must use closed schema-v2 self-bound locators"
+                "generation receipts must use closed schema-v3 self-bound validation contexts"
+            )
+        semantic_calls = {
+            _call_name(node)
+            for node in ast.walk(generation_semantic_replay)
+            if isinstance(node, ast.Call)
+        }
+        if not (
+            "parse_unique_json_bytes" in semantic_calls
+            and "requirements_errors" in semantic_calls
+            and "intake_errors" in semantic_calls
+            and "compare_digest" in semantic_calls
+            and _contains_string(generation_semantic_replay, "evaluated_at")
+            and _contains_string(generation_semantic_replay, "validation_context")
+            and _contains_name(generation_semantic_replay, "snapshots")
+        ):
+            errors.append(
+                "generation history must replay every receipt-bound semantic context"
             )
         required_options = {
             "--input",
@@ -1222,6 +1252,7 @@ def causality_errors(
                 )
             )
             and "recheck_generation_lineage" in verify_generation_calls
+            and "_generation_semantic_replay_errors" in verify_generation_calls
             and not {
                 "prepare_write_once_file",
                 "write_fsynced_temporary_bytes",
@@ -1234,7 +1265,12 @@ def causality_errors(
                 _contains_marker(verify_generation_branch, marker)
                 for marker in (
                     "production_acceptance=false",
-                    "generation-receipt-locator=self-bound-v2",
+                    "generation-receipt-locator=self-bound-v3",
+                    "generation-history-semantic-replay=every-generation",
+                    "generation-receipt-evaluation-time=recorded-host-utc",
+                    "authoring-validation-context-authority=unverified",
+                    "authoring-trusted-time=unverified",
+                    "authoring-validator-version=unverified",
                     "recovery=read-only-local-revalidation",
                     "authoring-receipt-authority=unverified",
                     "authoring-pin-authority=unverified",
@@ -1834,7 +1870,12 @@ def main() -> int:
         "final-manifest-custody=unverified pin-authority=unverified "
         "rollback-protection=unverified "
         "authoring-publication=local-no-replace-readback "
-        "generation-receipt-locator=self-bound-v2 "
+        "generation-receipt-locator=self-bound-v3 "
+        "generation-history-semantic-replay=every-generation "
+        "generation-receipt-evaluation-time=recorded-host-utc "
+        "authoring-validation-context-authority=unverified "
+        "authoring-trusted-time=unverified "
+        "authoring-validator-version=unverified "
         "authoring-generation-fork-protection=unverified "
         "authoring-latest-head=unverified authoring-pin-authority=unverified "
         "authoring-receipt-authority=unverified "

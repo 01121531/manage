@@ -94,8 +94,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
         runtime_patch.start()
         self.addCleanup(runtime_patch.stop)
 
-    @staticmethod
     def _genesis_receipt(
+        self,
         root: Path,
         manifest_path: Path,
         manifest: dict[str, object],
@@ -107,6 +107,9 @@ class TargetIntakePreflightTests(unittest.TestCase):
             receipt_path,
             manifest,
             manifest_raw,
+            evaluated_at="2026-08-29T00:00:00.000000Z",
+            requirements=self.requirements,
+            phase_acceptance_matrix=self.matrix,
         )
         raw = receipt_bytes(receipt)
         receipt_path.write_bytes(raw)
@@ -2706,10 +2709,17 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 target_intake,
                 "recheck_generation_lineage",
             )
+            semantic_patch = mock.patch.object(
+                target_intake,
+                "_generation_semantic_replay_errors",
+                return_value=[],
+            )
             lineage_patch.start()
             recheck_patch.start()
+            semantic_patch.start()
             self.addCleanup(lineage_patch.stop)
             self.addCleanup(recheck_patch.stop)
+            self.addCleanup(semantic_patch.stop)
 
             snapshot_receipt_document = {
                 "schema_version": 2,
@@ -3427,7 +3437,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 "recovery=read-only-local-revalidation",
                 output.getvalue(),
             )
-            self.assertIn("generation-receipt-locator=self-bound-v2", output.getvalue())
+            self.assertIn("generation-receipt-locator=self-bound-v3", output.getvalue())
             self.assertIn("authoring-rollback-protection=unverified", output.getvalue())
             self.assertEqual(
                 before,
@@ -4145,7 +4155,10 @@ class TargetIntakePreflightTests(unittest.TestCase):
             "--expected-manifest-file-sha256",
             "local schema-v2 receipts",
             "case-preserving lexical absolute `receipt_path`",
-            "Schema-v1 generation receipts and mixed v1/v2",
+            "Schema-v1/v2 generation receipts and mixed legacy/v3",
+            "replays every receipt/manifest pair",
+            "embedded requirements/matrix and recorded host",
+            "historical validator identity",
             "Schema-v1 acceptance receipts are incompatible",
             "Rolling an older manifest, generation receipt and",
             "hard-link directory entry",

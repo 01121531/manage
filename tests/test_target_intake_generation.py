@@ -15,13 +15,19 @@ from scripts.target_intake_generation import (
     receipt_bytes,
 )
 from scripts.target_intake_manifest import canonical_payload_sha256
-from scripts.target_intake_preflight import create_intake_manifest
+from scripts.target_intake_preflight import (
+    _generation_semantic_replay_errors,
+    create_intake_manifest,
+)
 
 
 class TargetIntakeGenerationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.requirements = json.loads(
             Path("deploy/target-intake-requirements.json").read_text(encoding="utf-8")
+        )
+        self.matrix = json.loads(
+            Path("deploy/phase-acceptance-matrix.json").read_text(encoding="utf-8")
         )
 
     @staticmethod
@@ -39,6 +45,9 @@ class TargetIntakeGenerationTests(unittest.TestCase):
             receipt_path,
             manifest,
             manifest_raw,
+            evaluated_at="2026-08-29T00:00:00.000000Z",
+            requirements=self.requirements,
+            phase_acceptance_matrix=self.matrix,
         )
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)
@@ -82,6 +91,9 @@ class TargetIntakeGenerationTests(unittest.TestCase):
             registered_item_id=item["id"],
             artifact_sha256=item["sha256"],
             candidate_raw=candidate_raw,
+            evaluated_at="2026-08-29T01:00:00.000000Z",
+            requirements=self.requirements,
+            phase_acceptance_matrix=self.matrix,
         )
         receipt_raw = receipt_bytes(receipt)
         receipt_path.write_bytes(receipt_raw)
@@ -105,13 +117,79 @@ class TargetIntakeGenerationTests(unittest.TestCase):
 
             self.assertEqual(lineage.manifest, manifest)
             self.assertEqual(lineage.receipt["sequence"], 1)
-            self.assertEqual(lineage.receipt["schema_version"], 2)
+            self.assertEqual(lineage.receipt["schema_version"], 3)
             self.assertEqual(
                 lineage.receipt["kind"],
-                "target_intake_generation_receipt_v2",
+                "target_intake_generation_receipt_v3",
             )
             self.assertEqual(lineage.receipt["receipt_path"], str(receipt_path))
             self.assertEqual(len(lineage.snapshots), 4)
+            self.assertNotEqual(_generation_semantic_replay_errors(lineage), [])
+
+    def test_genesis_replays_embedded_historical_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            historical = copy.deepcopy(self.requirements)
+            historical["requirements"][0]["purpose"] += " (historical snapshot)"
+            manifest = create_intake_manifest("staging", historical)
+            manifest_path = root / "historical.json"
+            manifest_raw = receipt_bytes(manifest)
+            manifest_path.write_bytes(manifest_raw)
+            receipt_path = root / "historical.receipt.json"
+            receipt = create_genesis_receipt(
+                manifest_path,
+                receipt_path,
+                manifest,
+                manifest_raw,
+                evaluated_at="2026-08-29T00:00:00.000000Z",
+                requirements=historical,
+                phase_acceptance_matrix=self.matrix,
+            )
+            receipt_raw = receipt_bytes(receipt)
+            receipt_path.write_bytes(receipt_raw)
+            pins = self._pins(receipt, receipt_raw)
+
+            lineage = load_generation_lineage(
+                manifest_path,
+                receipt_path,
+                expected_receipt_payload_sha256=pins[0],
+                expected_receipt_file_sha256=pins[1],
+            )
+
+            self.assertNotEqual(
+                manifest["requirements_sha256"],
+                canonical_payload_sha256(self.requirements),
+            )
+            self.assertEqual(_generation_semantic_replay_errors(lineage), [])
+
+    def test_rejects_v2_and_non_monotonic_receipt_time(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, _, predecessor = self._genesis(root)
+            _, manifest_path, receipt, receipt_path, _ = self._child(root, predecessor)
+            for name, mutation in (
+                ("v2", lambda value: value.update({"schema_version": 2})),
+                (
+                    "backdated",
+                    lambda value: value["validation_context"].update(
+                        {"evaluated_at": "2026-08-28T23:59:59.000000Z"}
+                    ),
+                ),
+            ):
+                invalid = copy.deepcopy(receipt)
+                invalid_path = root / f"{name}.receipt.json"
+                invalid["receipt_path"] = str(invalid_path)
+                mutation(invalid)
+                invalid_raw = receipt_bytes(invalid)
+                invalid_path.write_bytes(invalid_raw)
+                pins = self._pins(invalid, invalid_raw)
+                with self.assertRaises(GenerationLineageError):
+                    load_generation_lineage(
+                        manifest_path,
+                        invalid_path,
+                        expected_receipt_payload_sha256=pins[0],
+                        expected_receipt_file_sha256=pins[1],
+                    )
 
     def test_rejects_wrong_pin_detached_leaf_and_locator_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -163,6 +241,9 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                     registered_item_id=receipt["registered_item"]["id"],
                     artifact_sha256=receipt["registered_item"]["artifact_sha256"],
                     candidate_raw=receipt_bytes(manifest),
+                    evaluated_at="2026-08-29T01:00:00.000000Z",
+                    requirements=self.requirements,
+                    phase_acceptance_matrix=self.matrix,
                 )
 
     def test_rejects_broken_predecessor_selector_and_registered_item_lie(self) -> None:
