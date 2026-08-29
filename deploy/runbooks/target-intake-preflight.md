@@ -1341,6 +1341,50 @@ attestation proves only the selected artifact and observed deployment chain; it
 does not retroactively prove the original authoring runtime or historical
 validator execution.
 
+## Configured offline runtime-attestation fixture intake
+
+Validate the T205 provider-specific protocol fixture with no provider call,
+target access, host-clock read, subprocess, signing or key generation:
+
+```powershell
+python scripts/target_intake_runtime_attestation_intake.py verify-repository-fixture
+```
+
+The configured profile is intentionally limited to synthetic offline fixtures.
+It consumes the exact T204 policy bytes plus independent policy, profile and
+runtime-subject pins. The pure bytes core then derives protocol bindings only;
+it does not accept caller-authored success assertions. Repository JSON must use
+the one canonical encoding and duplicate keys are rejected.
+
+The closed profile freezes a Sigstore bundle v0.3 message-signature projection
+for Cosign and a GitHub in-toto Statement v1 / SLSA provenance v1 projection.
+The single OCI subject digest must match the immutable `ghcr.io/...@sha256:...`
+reference, Cosign subject, GitHub provenance subject, deployment selection,
+target RepoDigest and target-observed digest. GitHub provenance additionally
+binds the repository, tag ref, release workflow, source commit, builder,
+external parameters and resolved dependency. The current workflow is not
+enforced as hermetic, so the fixture requires `hermetic_build_claim=false` and
+cannot satisfy the T204 production hermetic-build requirement.
+
+The remaining evidence DAG binds a separately pinned trust-root/revocation/
+transparency-checkpoint projection, exact publisher and provenance records,
+deployment environment/account/host, container image object ID and RepoDigest,
+process/executable/loaded evidence, post-deployment readback, nonce/imprint
+timestamp, and prior-head/sequence/CAS/read-after-head record. Comparing only
+Docker `.Config.Image` is rejected.
+
+Every provider record in this repository has
+`verification_state=synthetic_fixture_unverified`. The core validates its
+closed shape and cross-record digests but does not authenticate the original provider bytes,
+DSSE/signature, certificate chain, revocation freshness,
+checkpoint signature, independent observer, TSA token or provider-native CAS.
+It also does not contact or mutate any provider or target. The profile/evidence
+remain disconnected from authoring, recovery, deployment and runtime
+acceptance; publisher/provenance authentication, trust-root and revocation
+currentness, target-observer authentication, trusted time, provider CAS/head,
+global fork/rollback protection, runtime authority, original execution and
+`production_acceptance` therefore remain `unverified`/false.
+
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and
 redaction assertions. It never proves that a provider contract is correct,

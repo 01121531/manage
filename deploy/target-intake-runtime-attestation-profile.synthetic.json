@@ -1,0 +1,102 @@
+{
+  "bytes_core": {
+    "caller_policy_pin_required": true,
+    "caller_profile_pin_required": true,
+    "canonical_json_required": true,
+    "duplicate_keys_rejected": true,
+    "filesystem_access": false,
+    "host_time_access": false,
+    "input_kind": "exact-caller-supplied-bytes",
+    "network_access": false,
+    "production_authentication": false,
+    "signing_or_key_generation": false,
+    "subprocess_access": false
+  },
+  "integrity": {
+    "payload_sha256": "4756d65165e83297270f0eda3193aa136475bbfa20ad59ee4faa9412ed6ef216"
+  },
+  "not_committed_eligible": false,
+  "policy_artifact_sha256": "b56cd792f52b5b5984f69ea8b562e2e07068049e342e04b76eeb97d0333991b0",
+  "production_acceptance": false,
+  "profile_kind": "target_intake_runtime_attestation_verification_profile_v1",
+  "profile_status": "configured_offline_fixture_only",
+  "provider_profiles": {
+    "deployment_selection": {
+      "immutable_digest_reference_required": true,
+      "provenance_record_pin_required": true,
+      "publisher_record_pin_required": true,
+      "target_identity_required": true
+    },
+    "github_provenance": {
+      "builder_binding": "exact-id",
+      "bundle_format": "github-attestation-jsonl-with-sigstore-bundle",
+      "certificate_extensions_binding": "closed-profile",
+      "cryptographic_verification_required": true,
+      "external_parameters_binding": "closed-profile",
+      "offline_verifier": "gh-attestation-verify",
+      "predicate_type": "https://slsa.dev/provenance/v1",
+      "profile": "github_artifact_attestation_slsa_v1_offline_v1",
+      "repository": "01121531/manage",
+      "repository_identity_binding": "name-id-owner-id-visibility",
+      "resolved_dependencies_binding": "closed-profile",
+      "runner_environment": "github-hosted",
+      "source_commit_binding": "resolved-dependency-gitCommit",
+      "statement_type": "https://in-toto.io/Statement/v1",
+      "subject_digest_algorithm": "sha256",
+      "trusted_root_binding": "raw-artifact-sha256",
+      "workflow": "01121531/manage/.github/workflows/release.yml",
+      "workflow_ref_binding": "exact"
+    },
+    "provider_head": {
+      "append_only_required": true,
+      "artifact_precondition_required": true,
+      "automatic_retry_forbidden": true,
+      "caller_prior_head_required": true,
+      "provider_native_cas_required": true,
+      "read_after_head_required": true,
+      "retention_delete_denial_readback_required": true,
+      "sequence_precondition_required": true,
+      "signed_outcome_required": true,
+      "stale_rejection_required": true
+    },
+    "sigstore_cosign": {
+      "bundle_media_type": "application/vnd.dev.sigstore.bundle.v0.3+json",
+      "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+      "content_kind": "messageSignature",
+      "cryptographic_verification_required": true,
+      "identity_binding": "exact-workflow-ref",
+      "offline_verifier": "cosign",
+      "profile": "sigstore_cosign_bundle_v0_3_offline_v1",
+      "subject_digest_algorithm": "sha256",
+      "transparency_binding": "log-id-entry-set-proof-checkpoint",
+      "trusted_root_binding": "raw-artifact-sha256"
+    },
+    "target_observation": {
+      "container_image_id_required": true,
+      "executable_digest_required": true,
+      "independent_observer_required": true,
+      "loaded_evidence_required": true,
+      "post_deployment_readback_required": true,
+      "process_identity_required": true,
+      "repo_digests_required": true
+    },
+    "trust_state": {
+      "ctlog_keys_required": true,
+      "freshness_must_be_externally_authenticated": true,
+      "fulcio_roots_required": true,
+      "rekor_keys_required": true,
+      "revocation_snapshot_required": true,
+      "transparency_checkpoint_required": true,
+      "trusted_root_artifact_required": true
+    },
+    "trusted_timestamp": {
+      "currentness_must_be_externally_authenticated": true,
+      "evidence_imprint_required": true,
+      "independent_authority_required": true,
+      "nonce_required": true
+    }
+  },
+  "schema_version": 1,
+  "subject_domain": "email-platform/target-intake-runtime-attestation-handoff/v1",
+  "synthetic": true
+}

@@ -1,0 +1,192 @@
+{
+  "deployment_selection": {
+    "provenance_record_sha256": "ab0ad053eb0b79535842572e468adda56d856adffc8a2f3260db5b3e7f8a739a",
+    "publisher_record_sha256": "b86d6a26112a36a14f90c7812e694c0d76d8140287db04d8a6802c19ed86420e",
+    "release_commit": "b40f5bd59b4461737a7d8858206e8260f780072e",
+    "release_tag": "v0.0.0-fixture",
+    "runtime_subject_sha256": "5f5d42ed25b9d4c5ad62f53aa4368273642dcdace47c5eb61d2e3997abd6d4bf",
+    "selected_artifact_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "selected_at": "2026-01-02T03:10:00Z",
+    "selected_immutable_reference": "ghcr.io/01121531/email-api@sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "target_account": "fixture-account-205",
+    "target_cluster_or_host": "fixture-cluster-205",
+    "target_environment": "fixture-staging-205",
+    "verification_state": "synthetic_fixture_unverified"
+  },
+  "evidence_status": "protocol_verified_fixture_only",
+  "github_provenance": {
+    "offline_verifier_sha256": "1466962b9e4ede22da03412270f7b1f9e68450cbcada5e1cb0c34788fff40c33",
+    "profile": "github_artifact_attestation_slsa_v1_offline_v1",
+    "raw_bundle_sha256": "3dbc7d32c9e49987c70a86469c9d913a497ace5bc5e82f5cb9caf4632067fbe4",
+    "raw_statement_sha256": "7979daa5ad9f6f44fa74f6ce3a10906769542aa3b09c2c5fa3bba72e156fd2c9",
+    "repository_id": "205000001",
+    "repository_owner_id": "205000002",
+    "repository_visibility": "public",
+    "runner_environment": "github-hosted",
+    "source_commit": "b40f5bd59b4461737a7d8858206e8260f780072e",
+    "statement": {
+      "_type": "https://in-toto.io/Statement/v1",
+      "predicate": {
+        "buildDefinition": {
+          "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+          "externalParameters": {
+            "ref": "refs/tags/v0.0.0-fixture",
+            "repository": "https://github.com/01121531/manage",
+            "workflow": ".github/workflows/release.yml"
+          },
+          "internalParameters": {
+            "github_event_name": "push",
+            "hermetic_build_claim": false
+          },
+          "resolvedDependencies": [
+            {
+              "digest": {
+                "gitCommit": "b40f5bd59b4461737a7d8858206e8260f780072e"
+              },
+              "uri": "git+https://github.com/01121531/manage@refs/tags/v0.0.0-fixture"
+            }
+          ]
+        },
+        "runDetails": {
+          "builder": {
+            "id": "https://github.com/actions/runner/github-hosted"
+          },
+          "metadata": {
+            "finishedOn": "2026-01-02T03:05:00Z",
+            "invocationId": "https://github.com/01121531/manage/actions/runs/20500000001/attempts/1",
+            "startedOn": "2026-01-02T03:04:00Z"
+          }
+        }
+      },
+      "predicateType": "https://slsa.dev/provenance/v1",
+      "subject": [
+        {
+          "digest": {
+            "sha256": "9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76"
+          },
+          "name": "ghcr.io/01121531/email-api"
+        }
+      ]
+    },
+    "trusted_root_sha256": "6fa150209d0a35c32124f55f16ad80bab4049c290cb16a4cf480217164496931",
+    "verification_state": "synthetic_fixture_unverified",
+    "workflow_ref": "01121531/manage/.github/workflows/release.yml@refs/tags/v0.0.0-fixture"
+  },
+  "integrity": {
+    "payload_sha256": "333aee78bfd16fa5b3ac3247cb8f6dac1cbdb3c888c0cf80f675307ef6f604a2"
+  },
+  "not_committed_eligible": false,
+  "policy_artifact_sha256": "b56cd792f52b5b5984f69ea8b562e2e07068049e342e04b76eeb97d0333991b0",
+  "production_acceptance": false,
+  "profile_payload_sha256": "4756d65165e83297270f0eda3193aa136475bbfa20ad59ee4faa9412ed6ef216",
+  "provider_head": {
+    "append_only_claimed": true,
+    "automatic_retry_performed": false,
+    "cas_outcome_sha256": "cdbf72b3aec3dfa2f4ba846802d198b29f58ae57e5af19bcafcf20034be7af78",
+    "cas_request_id": "runtime-cas-fixture-00000001",
+    "delete_denial_claimed": true,
+    "expected_prior_head": "6b3c56761c1e8f0b01cf20ca944a15465557894ab59713e4fd060cf77a016545",
+    "immutable_version": "fixture-version-00000009",
+    "ledger_id": "fixture-runtime-ledger-205",
+    "namespace": "fixture-runtime-attestation-205",
+    "proposed_entry_sha256": "cbc749a1d1c177b1c2e5a46b8209681d0bb1da91b1f74c17f3023acd793fc5e9",
+    "proposed_sequence": 9,
+    "provider_account_fingerprint_sha256": "91a4145c708c34c61a222bcd5765a36d1db480064b3bb48c1ceb0d542e51bdb4",
+    "read_after_current_head": "cbc749a1d1c177b1c2e5a46b8209681d0bb1da91b1f74c17f3023acd793fc5e9",
+    "readback_sha256": "1c2d8c03b7bd5e17b9df2451fb7f76ba8b842c9fb8b47fb3b90066ff88688e5d",
+    "retention_claimed": true,
+    "runtime_subject_sha256": "5f5d42ed25b9d4c5ad62f53aa4368273642dcdace47c5eb61d2e3997abd6d4bf",
+    "stale_write_rejected_claimed": true,
+    "timestamp_record_sha256": "c7dea5c69ae3139d4c5df12f8c46538361cc176ddcc95a2f9061cbed7d5ffeb2",
+    "verification_state": "synthetic_fixture_unverified"
+  },
+  "record_type": "target_intake_runtime_attestation_evidence_v1",
+  "runtime_subject": {
+    "cas_request_id": "runtime-cas-fixture-00000001",
+    "deploy_selected_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "execution_profile_sha256": "3091b0d43229e733ddc3d41b3076cae325e7db59b574fba33dbdd4e6a53d4d7b",
+    "expected_prior_provider_head": "6b3c56761c1e8f0b01cf20ca944a15465557894ab59713e4fd060cf77a016545",
+    "generation_sequence": 8,
+    "proposed_provider_sequence": 9,
+    "provenance_subject_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "replay_runtime_sha256": "b1c936314478e67d9f8187e2d32d99cf8f4197f35096ca79781c1fc9a4c50c92",
+    "runtime_artifact_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "runtime_artifact_immutable_reference": "ghcr.io/01121531/email-api@sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "runtime_artifact_kind": "oci_container_image",
+    "target_loaded_evidence_sha256": "87ec556d1af56b5dfce9f11db3a30277dea5819363a4e22e0f1ec9460bff25d0",
+    "target_observed_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "target_process_identity_sha256": "6e5670caab739ecbd4130858c114740c80f37b628a763eaddd8f8128fb857fa1",
+    "terminal_manifest_file_sha256": "5d0fe2bbe7f6d07d58a3b33871779fca86afa906028b978cb466593f44feed22",
+    "terminal_manifest_payload_sha256": "7d35950de62dbd2c844979d69290484e4091e4a2c2a0f8ec324857b939005624",
+    "terminal_receipt_file_sha256": "b1f99a2fbc68f98c9497f113ecd99a07c9aa0179e781fc9065b94dd540ef7cc1",
+    "terminal_receipt_payload_sha256": "81d5ceb93bd5ff63dc068e57cea54b8729f1c1be44d4104fea57aeaa72ab15af",
+    "validation_context_sha256": "3b2673f8bca46fc23e3a1c690bc9ddd0151d3a42d90107d389f0abb22a91f413",
+    "validator_contract_sha256": "3716d6fc13ff0dc66ab8c4b04386dc88cc1c3235d99b8a6d89386e846732ab50"
+  },
+  "schema_version": 1,
+  "sigstore_cosign": {
+    "artifact_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "certificate_der_sha256": "c73d1e2af72908c258401dd8765ce71cdffe43fc074f235f9c39333fc8c385e3",
+    "certificate_identity": "https://github.com/01121531/manage/.github/workflows/release.yml@refs/tags/v0.0.0-fixture",
+    "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+    "checkpoint_sha256": "71a9ecc3de8458203defa6cdd8f1b2eaa24081d9b9340c88c1d89bfa75fa1e77",
+    "content_kind": "messageSignature",
+    "inclusion_promise_sha256": "a100cd93a959badff3e53fb074d8734806247c7c8f766cd4e8bd0d049406ed8e",
+    "inclusion_proof_sha256": "8aaa6ffc6731113c5f511ec830cb28d974b6f5705eaba204d8a4ba095ddb48d0",
+    "media_type": "application/vnd.dev.sigstore.bundle.v0.3+json",
+    "offline_verifier_sha256": "182444a4492cbee650baaa9f5a4929a529ada106874e4f196f7cf3f1cbeeb10c",
+    "profile": "sigstore_cosign_bundle_v0_3_offline_v1",
+    "raw_bundle_sha256": "a80f3f56544bba5acd53dfdf263c03bd8cc94c8e789b68ca828bdaa79ae67541",
+    "rfc3161_timestamp_sha256": "f070a58cee2a05b7d76c184650b5fcf5662ad70be4d8203afcab73469281020c",
+    "tlog_entry_sha256": "77c34e622155da1dd4fdaa988dd568f482ee497ef2a968048689b40bc71612de",
+    "tlog_log_id": "rekor-fixture-log",
+    "trusted_root_sha256": "6fa150209d0a35c32124f55f16ad80bab4049c290cb16a4cf480217164496931",
+    "verification_state": "synthetic_fixture_unverified"
+  },
+  "synthetic": true,
+  "target_observation": {
+    "config_image": "ghcr.io/01121531/email-api@sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "container_id_sha256": "e4ecdbee3bc2ce07a3873da0e19e137a2f3bdc4f399f3a7e7853ad903991da20",
+    "deployment_selection_sha256": "1e611556529f40dcc2f22c1b85d372fbc41a311dbc5369e25fcff6d4e7709c59",
+    "executable_digest": "sha256:2cda88a50fb89b0a36115fc6f9c2e9350a2ce22cff72e7c9cc48ca265f80923a",
+    "image_object_id": "sha256:bd36c6766af1aa69aef53c33c177dcb85968271d5d2763cc8197065d3eaa7d0b",
+    "loaded_evidence_sha256": "87ec556d1af56b5dfce9f11db3a30277dea5819363a4e22e0f1ec9460bff25d0",
+    "observed_artifact_digest": "sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76",
+    "observed_at": "2026-01-02T03:12:00Z",
+    "observer_signature_artifact_sha256": "25ce3eae67a62b75bdfcf4cee249e7012ac0830a4f4bb7a96099f78942a7dcc8",
+    "process_identity_sha256": "6e5670caab739ecbd4130858c114740c80f37b628a763eaddd8f8128fb857fa1",
+    "readback_artifact_sha256": "f4ee463830317be1c564b8eab840ca7007941119a8ed6ec07734ac5c413bdb22",
+    "repo_digests": [
+      "ghcr.io/01121531/email-api@sha256:9262a8f1a3ee7d1dfaaed3fac4b8bbdb346249574d3e8f2bc8cf806118882f76"
+    ],
+    "runtime_subject_sha256": "5f5d42ed25b9d4c5ad62f53aa4368273642dcdace47c5eb61d2e3997abd6d4bf",
+    "target_account": "fixture-account-205",
+    "target_cluster_or_host": "fixture-cluster-205",
+    "target_environment": "fixture-staging-205",
+    "verification_state": "synthetic_fixture_unverified"
+  },
+  "trust_state": {
+    "acquired_at": "2026-01-02T03:00:00Z",
+    "ctlog_keys_sha256": "89ab79ea093ae799dea4f6cbaefb0fb1a2305791c3e6bbf7913c0f95d544e979",
+    "freshness_reference": "fixture-trust-review-205",
+    "fulcio_roots_sha256": "4e69447a1d79c80d1a70c9a4d64d31d6b41a85d23944c6d108a12da3850aaea4",
+    "rekor_keys_sha256": "44969b2732a39b8882af08a91079ef8dd2c52245c94727601ee7dbd7c1edbb46",
+    "revocation_snapshot_sha256": "bac9aa87da4ae34c8ede06d45837e70ebb3f09d5c5d01e3b649eb7f411578c30",
+    "transparency_checkpoint_sha256": "71a9ecc3de8458203defa6cdd8f1b2eaa24081d9b9340c88c1d89bfa75fa1e77",
+    "trusted_root_sha256": "6fa150209d0a35c32124f55f16ad80bab4049c290cb16a4cf480217164496931",
+    "valid_from": "2026-01-02T02:59:00Z",
+    "valid_until": "2026-01-02T04:00:00Z",
+    "verification_state": "synthetic_fixture_unverified"
+  },
+  "trusted_timestamp": {
+    "authority_identity_fingerprint_sha256": "34d334314c2d314c4a3d80b13f5c03b26c4c01cfed231b24bf577b83294c1800",
+    "evidence_imprint_sha256": "1f5bc4e36f23cf69613df21b8ef9b46c46041dfe5743a36a3ab964b7ce05188e",
+    "generated_at": "2026-01-02T03:13:00Z",
+    "nonce": "4e740b82817af9da65ea94b195a376d4542341372fb088ee2f4f4e70aa6306fb",
+    "policy_oid": "1.3.6.1.4.1.57264.1.205",
+    "runtime_subject_sha256": "5f5d42ed25b9d4c5ad62f53aa4368273642dcdace47c5eb61d2e3997abd6d4bf",
+    "token_sha256": "c782eab1f90cce325dd8c63bcae50bc826f7e92c9531ba0e78eaf0d8d94bd4e7",
+    "trust_root_sha256": "5270512fde4883f088ba4cf6261841354d43679bb26024b60cc1b8869eaa2b5e",
+    "verification_state": "synthetic_fixture_unverified"
+  }
+}
