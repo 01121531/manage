@@ -55,7 +55,7 @@
         0,
         3
       ],
-      "purpose": "Approved PAN and CVV field inventory, Card Vault boundary and PCI scope decision; never include cardholder data.",
+      "purpose": "Approved PAN and CVV field inventory, Card Vault boundary and PCI scope decision with a canonical review time and exclusive validity deadline projected into the same intake manifest; never include cardholder data.",
       "artifact_policy": "reviewed_decision",
       "matrix_refs": [
         {
@@ -76,7 +76,7 @@
         0,
         3
       ],
-      "purpose": "Approved Keycloak ACR-to-LoA mapping, Web and Desktop claim examples, production issuer identity and device-id ownership decision; tokens must be synthetic or irreversibly redacted.",
+      "purpose": "Approved Keycloak ACR-to-LoA mapping, Web and Desktop claim examples, production issuer identity and device-id ownership decision with a canonical review time and exclusive validity deadline projected into the same intake manifest; tokens must be synthetic or irreversibly redacted.",
       "artifact_policy": "reviewed_decision",
       "matrix_refs": [
         {
@@ -96,7 +96,7 @@
       "phases": [
         0
       ],
-      "purpose": "Approved data classification, compliance boundary and immutable-decision record with reviewer references.",
+      "purpose": "Approved data classification and compliance-boundary record with canonical review time, exclusive validity deadline, same-manifest review projection, and exact bindings to both provider contracts, both decision envelopes, the target-platform inventory and the current requirements digest.",
       "artifact_policy": "reviewed_decision",
       "matrix_refs": [
         {
@@ -111,7 +111,7 @@
       "phases": [
         0
       ],
-      "purpose": "Target domain, internal DNS and certificate ownership, Keycloak and Vault control-plane owners, repository-external runtime-secret paths and evidence-root inventory; record paths and owners only, never secret values.",
+      "purpose": "Target domain, internal DNS and certificate ownership, Keycloak and Vault control-plane owners, repository-external runtime-secret paths and evidence-root inventory with a canonical review time and exclusive validity deadline projected into the same intake manifest; record paths and owners only, never secret values.",
       "artifact_policy": "reviewed_inventory",
       "matrix_refs": [
         {
@@ -253,7 +253,7 @@
         4,
         6
       ],
-      "purpose": "Repository-external successful schema-v2 forward or rolling release execution ledger selected by every Phase 1-5 execution index and by the Phase 6 pilot and operations indexes.",
+      "purpose": "Repository-external immutable historical schema-v2 forward or rolling release execution ledger selected by every Phase 1-5 execution index and by the Phase 6 pilot and operations indexes; the ledger itself has no invented expiry, while every strict reuse revalidates the current Phase 0 checkpoint chain and the consuming evidence index at one evaluation instant.",
       "artifact_policy": "release_execution_ledger",
       "matrix_refs": [
         {

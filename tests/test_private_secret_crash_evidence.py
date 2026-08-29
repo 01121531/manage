@@ -62,6 +62,8 @@ def _reviewed_target_inventory() -> dict[str, object]:
             "synthetic": False,
             "inventory_status": "reviewed",
             "review_reference": "target-platform-review-record-140",
+            "reviewed_at": "2026-08-27T00:00:00Z",
+            "valid_until": "2099-08-27T00:00:00Z",
             "environment": "staging",
         }
     )

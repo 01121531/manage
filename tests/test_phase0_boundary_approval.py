@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -16,6 +17,8 @@ from scripts.phase0_boundary_approval import (
 
 
 class Phase0BoundaryApprovalTests(unittest.TestCase):
+    EVALUATED_AT = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
+
     def setUp(self) -> None:
         self.approval = json.loads(APPROVAL.read_text(encoding="utf-8"))
 
@@ -37,6 +40,8 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                 "synthetic": False,
                 "approval_status": "approved",
                 "review_reference": "phase0-independent-review-42",
+                "reviewed_at": "2026-08-27T12:00:00Z",
+                "valid_until": "2099-08-27T12:00:00Z",
             }
         )
         document["reviewers"] = {
@@ -49,6 +54,7 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
             "sub2_contract": "2" * 64,
             "card_pci_boundary": "3" * 64,
             "oidc_deployment_identity": "4" * 64,
+            "target_platform_inventory": "6" * 64,
             "target_intake_requirements_sha256": "5" * 64,
         }
         return document
@@ -75,7 +81,19 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
                     "mail_contract",
                     "card_pci_boundary",
                     "oidc_deployment_identity",
+                    "target_platform_inventory",
                 )
+            ]
+            + [
+                {
+                    "id": "phase0_boundary_approval",
+                    "status": "provided",
+                    "artifact_path": "D:\\external\\phase0-boundary-approval.json",
+                    "sha256": "7" * 64,
+                    "reviewed_by": "phase0-independent-review-42",
+                    "reviewed_at": "2026-08-27T12:00:00Z",
+                    "redaction_confirmed": True,
+                }
             ],
         }
 
@@ -138,6 +156,29 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
             with self.subTest(document=document):
                 self.assertTrue(approval_errors(document))
 
+    def test_reviewed_approval_validity_is_canonical_current_and_exclusive(self) -> None:
+        reviewed = self._reviewed()
+        reviewed["valid_until"] = "2026-08-28T12:00:00Z"
+        self.assertEqual(
+            approval_errors(reviewed, evaluated_at=self.EVALUATED_AT),
+            [],
+        )
+
+        expired = copy.deepcopy(reviewed)
+        expired["valid_until"] = "2026-08-27T12:00:00Z"
+        future = copy.deepcopy(reviewed)
+        future["reviewed_at"] = "2026-08-27T12:00:01Z"
+        noncanonical = copy.deepcopy(reviewed)
+        noncanonical["reviewed_at"] = "2026-08-27T20:00:00+08:00"
+        reversed_window = copy.deepcopy(reviewed)
+        reversed_window["valid_until"] = reviewed["reviewed_at"]
+
+        for document in (expired, future, noncanonical, reversed_window):
+            with self.subTest(document=document):
+                self.assertTrue(
+                    approval_errors(document, evaluated_at=self.EVALUATED_AT)
+                )
+
     def test_binding_must_match_the_same_intake_manifest(self) -> None:
         reviewed = self._reviewed()
         bindings = reviewed["bindings"]
@@ -156,6 +197,29 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
         self.assertIn(
             "phase0 approval sub2_contract binding target is not provided",
             intake_binding_errors(reviewed, missing),
+        )
+
+        future_dependency = copy.deepcopy(manifest)
+        future_dependency["items"][0]["reviewed_at"] = "2026-08-27T12:00:01Z"
+        self.assertIn(
+            "phase0 approval predates the reviewed sub2_contract input",
+            intake_binding_errors(reviewed, future_dependency),
+        )
+
+        invalid_dependency_time = copy.deepcopy(manifest)
+        invalid_dependency_time["items"][0]["reviewed_at"] = (
+            "2026-08-26T20:00:00+08:00"
+        )
+        self.assertIn(
+            "phase0 approval sub2_contract review time is invalid",
+            intake_binding_errors(reviewed, invalid_dependency_time),
+        )
+
+        projected = copy.deepcopy(manifest)
+        projected["items"][-1]["reviewed_by"] = "different-review-record"
+        self.assertIn(
+            "phase0 approval review metadata does not match this intake manifest",
+            intake_binding_errors(reviewed, projected),
         )
 
     def test_cli_distinguishes_invalid_content_from_binding_mismatch(self) -> None:
@@ -247,6 +311,9 @@ class Phase0BoundaryApprovalTests(unittest.TestCase):
             "phase0_boundary_approval.py check",
             "same intake manifest",
             "requirements_sha256",
+            "target platform inventory",
+            "approval review time must not predate",
+            "does not prove production acceptance, reviewer identity or authority",
             "synthetic phase 0 approval cannot satisfy strict intake",
             "does not prove production acceptance",
             "exit code 2",

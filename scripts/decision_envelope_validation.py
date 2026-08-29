@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -39,6 +40,8 @@ _COMMON_KEYS = {
     "synthetic",
     "decision_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "prohibited_content",
 }
@@ -83,6 +86,10 @@ _CLIENT_KEYS = {
     "device_flow",
 }
 _REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
+_UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z$"
+)
 _PLACEHOLDERS = {"example", "placeholder", "tbd", "todo", "unknown"}
 
 
@@ -94,10 +101,29 @@ def _safe_reference(value: Any) -> bool:
     )
 
 
-def _common_errors(document: dict[str, Any], expected_type: str | None) -> list[str]:
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _common_errors(
+    document: dict[str, Any],
+    expected_type: str | None,
+    *,
+    evaluated_at: datetime,
+) -> list[str]:
     errors: list[str] = []
     decision_type = document.get("decision_type")
-    if document.get("schema_version") != 1 or decision_type not in {
+    if document.get("schema_version") != 2 or decision_type not in {
         "card_pci_boundary",
         "oidc_deployment_identity",
     }:
@@ -110,6 +136,8 @@ def _common_errors(document: dict[str, Any], expected_type: str | None) -> list[
     synthetic = document.get("synthetic")
     reference = document.get("decision_reference")
     review_reference = document.get("review_reference")
+    reviewed_at = document.get("reviewed_at")
+    valid_until = document.get("valid_until")
     status = document.get("decision_status")
     if not isinstance(synthetic, bool) or not _safe_reference(reference):
         errors.append("decision envelope reference is invalid")
@@ -118,15 +146,26 @@ def _common_errors(document: dict[str, Any], expected_type: str | None) -> list[
             not reference.startswith("synthetic-")
             or status != "pending"
             or review_reference is not None
+            or reviewed_at is not None
+            or valid_until is not None
         ):
             errors.append("synthetic decision envelope metadata is invalid")
-    elif (
-        reference.startswith("synthetic-")
-        or status != "approved"
-        or not _safe_reference(review_reference)
-        or reference == review_reference
-    ):
-        errors.append("reviewed decision envelope approval metadata is invalid")
+    else:
+        reviewed = _parse_utc(reviewed_at)
+        expires = _parse_utc(valid_until)
+        if (
+            reference.startswith("synthetic-")
+            or status != "approved"
+            or not _safe_reference(review_reference)
+            or reference == review_reference
+        ):
+            errors.append("reviewed decision envelope approval metadata is invalid")
+        if reviewed is None or expires is None or reviewed >= expires:
+            errors.append("reviewed decision envelope validity window is invalid")
+        elif reviewed > evaluated_at:
+            errors.append("reviewed decision envelope timestamp is in the future")
+        elif expires <= evaluated_at:
+            errors.append("reviewed decision envelope is expired")
 
     prohibited = document.get("prohibited_content")
     if (
@@ -273,7 +312,13 @@ def _oidc_errors(document: dict[str, Any]) -> list[str]:
     return errors
 
 
-def decision_errors(document: Any, *, expected_type: str | None = None) -> list[str]:
+def decision_errors(
+    document: Any,
+    *,
+    expected_type: str | None = None,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    evaluation_time = evaluated_at or _utc_now()
     if not isinstance(document, dict):
         return ["decision envelope top-level schema is invalid"]
     decision_type = document.get("decision_type")
@@ -283,7 +328,11 @@ def decision_errors(document: Any, *, expected_type: str | None = None) -> list[
     }.get(decision_type)
     if expected_keys is None or set(document) != expected_keys:
         return ["decision envelope top-level schema is invalid"]
-    errors = _common_errors(document, expected_type)
+    errors = _common_errors(
+        document,
+        expected_type,
+        evaluated_at=evaluation_time,
+    )
     if decision_type == "card_pci_boundary":
         errors.extend(_card_errors(document))
     else:
@@ -291,8 +340,13 @@ def decision_errors(document: Any, *, expected_type: str | None = None) -> list[
     return errors
 
 
-def runtime_alignment_errors(document: Any) -> list[str]:
-    if decision_errors(document):
+def runtime_alignment_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    evaluation_time = evaluated_at or _utc_now()
+    if decision_errors(document, evaluated_at=evaluation_time):
         return ["decision envelope must be valid before runtime alignment"]
     if document["decision_type"] == "card_pci_boundary":
         card_columns = set(Base.metadata.tables["cards"].columns.keys())
@@ -401,6 +455,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluation_time = _utc_now()
     if arguments.command == "verify-repository":
         try:
             documents = (
@@ -414,8 +469,15 @@ def main(argv: list[str] | None = None) -> int:
             error
             for document, decision_type in documents
             for error in (
-                decision_errors(document, expected_type=decision_type)
-                + runtime_alignment_errors(document)
+                decision_errors(
+                    document,
+                    expected_type=decision_type,
+                    evaluated_at=evaluation_time,
+                )
+                + runtime_alignment_errors(
+                    document,
+                    evaluated_at=evaluation_time,
+                )
             )
         ]
         if errors:
@@ -431,11 +493,15 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("decision-envelope-invalid", file=sys.stderr)
         return 1
-    errors = decision_errors(document, expected_type=arguments.expected_type)
+    errors = decision_errors(
+        document,
+        expected_type=arguments.expected_type,
+        evaluated_at=evaluation_time,
+    )
     if errors:
         print("; ".join(errors), file=sys.stderr)
         return 1
-    alignment = runtime_alignment_errors(document)
+    alignment = runtime_alignment_errors(document, evaluated_at=evaluation_time)
     if alignment:
         print("; ".join(alignment), file=sys.stderr)
         return 2

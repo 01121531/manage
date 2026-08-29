@@ -155,6 +155,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "sub2_contract",
                     "card_pci_boundary",
                     "oidc_deployment_identity",
+                    "target_platform_inventory",
                 }
             }
             document.update(
@@ -163,6 +164,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "approval_status": "approved",
                     "review_reference": "phase0-independent-review-42",
+                    "reviewed_at": "2026-08-26T13:00:00Z",
+                    "valid_until": "2099-08-26T13:00:00Z",
                 }
             )
             document["reviewers"] = {
@@ -187,6 +190,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "synthetic": False,
                     "inventory_status": "reviewed",
                     "review_reference": "target-platform-review-record-42",
+                    "reviewed_at": "2026-08-26T12:00:00Z",
+                    "valid_until": "2099-08-26T12:00:00Z",
                     "environment": manifest["environment"],
                 }
             )
@@ -776,6 +781,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
         else:
             document["decision_reference"] = f"{identifier}-decision-record-42"
             document["decision_status"] = "approved"
+            document["reviewed_at"] = "2026-08-26T12:00:00Z"
+            document["valid_until"] = "2099-08-26T12:00:00Z"
         document["review_reference"] = "security-review-ticket-42"
         return document
 
@@ -1254,8 +1261,18 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             phase0_ids = frozenset(phase_requirement_ids(self.requirements, 0))
             for item in manifest["items"]:
-                if item["id"] in phase0_ids:
+                if (
+                    item["id"] in phase0_ids
+                    and item["id"] != "phase0_boundary_approval"
+                ):
                     provide(item)
+            provide(
+                next(
+                    item
+                    for item in manifest["items"]
+                    if item["id"] == "phase0_boundary_approval"
+                )
+            )
             checkpoint_manifest = copy.deepcopy(manifest)
             checkpoint_path = root / "phase0-checkpoint.json"
             checkpoint_path.write_text(
@@ -1387,7 +1404,7 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertIn(
-                "release execution intake does not match the Phase 0 checkpoint snapshot",
+                "card_pci_boundary review metadata does not match this intake manifest",
                 intake_errors(
                     matching_current,
                     self.requirements,
@@ -1802,6 +1819,70 @@ class TargetIntakePreflightTests(unittest.TestCase):
                 errors,
             )
 
+    def test_preflight_uses_one_clock_and_projects_phase0_review_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            manifest = create_intake_manifest("staging", self.requirements)
+            evaluated_at = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
+
+            for identifier in (
+                "card_pci_boundary",
+                "target_platform_inventory",
+            ):
+                document = self._artifact_document(identifier, manifest)
+                document["valid_until"] = "2026-08-27T12:00:00Z"
+                artifact = root / f"{identifier}.json"
+                artifact.write_text(json.dumps(document), encoding="utf-8")
+                item = next(
+                    entry for entry in manifest["items"]
+                    if entry["id"] == identifier
+                )
+                item.update(
+                    {
+                        "status": "provided",
+                        "artifact_path": str(artifact.resolve()),
+                        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                        "reviewed_by": document["review_reference"],
+                        "reviewed_at": document["reviewed_at"],
+                        "redaction_confirmed": True,
+                    }
+                )
+
+            errors = intake_errors(
+                manifest,
+                self.requirements,
+                repository_root=repository,
+                require_complete=False,
+                evaluated_at=evaluated_at,
+            )
+            self.assertIn("card_pci_boundary decision envelope is invalid", errors)
+            self.assertIn("target_platform_inventory envelope is invalid", errors)
+
+            card_item = next(
+                item
+                for item in manifest["items"]
+                if item["id"] == "card_pci_boundary"
+            )
+            card_document = self._artifact_document("card_pci_boundary", manifest)
+            card_artifact = Path(card_item["artifact_path"])
+            card_artifact.write_text(json.dumps(card_document), encoding="utf-8")
+            card_item["sha256"] = hashlib.sha256(card_artifact.read_bytes()).hexdigest()
+            card_item["reviewed_by"] = "different-review-reference"
+
+            errors = intake_errors(
+                manifest,
+                self.requirements,
+                repository_root=repository,
+                require_complete=False,
+                evaluated_at=evaluated_at,
+            )
+            self.assertIn(
+                "card_pci_boundary review metadata does not match this intake manifest",
+                errors,
+            )
+
     def test_preflight_rejects_invalid_synthetic_or_mismatched_phase0_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1809,10 +1890,18 @@ class TargetIntakePreflightTests(unittest.TestCase):
             repository.mkdir()
             manifest = create_intake_manifest("staging", self.requirements)
 
-            for item in manifest["items"][:4]:
+            phase0_inputs = list(manifest["items"][:4]) + [
+                next(
+                    item
+                    for item in manifest["items"]
+                    if item["id"] == "target_platform_inventory"
+                )
+            ]
+            for item in phase0_inputs:
                 artifact = root / f"{item['id']}.json"
+                document = self._artifact_document(item["id"], manifest)
                 artifact.write_text(
-                    json.dumps(self._artifact_document(item["id"], manifest)),
+                    json.dumps(document),
                     encoding="utf-8",
                 )
                 item.update(
@@ -1820,8 +1909,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                         "status": "provided",
                         "artifact_path": str(artifact.resolve()),
                         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                        "reviewed_by": "security-review-ticket-42",
-                        "reviewed_at": "2026-08-26T12:00:00Z",
+                        "reviewed_by": document["review_reference"],
+                        "reviewed_at": document["reviewed_at"],
                         "redaction_confirmed": True,
                     }
                 )
@@ -1836,8 +1925,8 @@ class TargetIntakePreflightTests(unittest.TestCase):
                     "status": "provided",
                     "artifact_path": str(artifact.resolve()),
                     "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                    "reviewed_by": "security-review-ticket-42",
-                    "reviewed_at": "2026-08-26T12:00:00Z",
+                    "reviewed_by": approval["review_reference"],
+                    "reviewed_at": approval["reviewed_at"],
                     "redaction_confirmed": True,
                 }
             )
@@ -2376,8 +2465,18 @@ class TargetIntakePreflightTests(unittest.TestCase):
 
             phase0_ids = frozenset(phase_requirement_ids(self.requirements, 0))
             for item in manifest["items"]:
-                if item["id"] in phase0_ids:
+                if (
+                    item["id"] in phase0_ids
+                    and item["id"] != "phase0_boundary_approval"
+                ):
                     provide(item)
+            provide(
+                next(
+                    item
+                    for item in manifest["items"]
+                    if item["id"] == "phase0_boundary_approval"
+                )
+            )
             manifest_path.write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",

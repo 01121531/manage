@@ -163,8 +163,11 @@ decision envelopes cannot satisfy strict intake. Copy the applicable shape to
 the protected external directory, set `synthetic=false` and
 `decision_status=approved`, then add distinct opaque decision, independent
 review, assessment/mapping, issuer, and ownership references as required by the
-shape. Do not add reviewer names, email addresses, PAN/CVV values, token samples,
-client secrets, or other credentials.
+shape. Seal canonical UTC `reviewed_at` and an exclusive `valid_until`; the
+decision is usable only inside `[reviewed_at, valid_until)`. The same manifest
+item must repeat the sealed `review_reference` and `reviewed_at` exactly. Do not
+add reviewer names, email addresses, PAN/CVV values, token samples, client
+secrets, or other credentials.
 
 Check the reviewed PCI/CVV decision and its current runtime alignment:
 
@@ -186,6 +189,8 @@ authorize CVV storage, API reveal, or Sub2 egress. Its runtime check proves thos
 three repository controls only; it does not claim that an upstream secret
 provider can never return CVV to process memory. A stronger ingress-rejection
 decision requires an explicit runtime change and new tests before acceptance.
+The command captures one UTC comparison instant for content and runtime checks;
+the host clock is not evidence of a trusted external time source.
 
 ## Phase 0 boundary approval
 
@@ -194,12 +199,16 @@ classification shape, but a synthetic Phase 0 approval cannot satisfy strict
 intake. A reviewed copy must set `synthetic=false` and
 `approval_status=approved`, use distinct opaque approval, independent-review,
 security, privacy, and platform-owner references, and contain no sensitive
-values.
+values. Seal canonical UTC `reviewed_at` and exclusive `valid_until`; the
+approval is usable only inside `[reviewed_at, valid_until)`.
 
-Populate its five `bindings` only after the two provider contracts and two
-decision envelopes are registered. Their values must be the exact SHA-256
-values from the same intake manifest; `target_intake_requirements_sha256` must
-equal that manifest's `requirements_sha256`. Then check the approval against
+Populate its six `bindings` only after the two provider contracts, two decision
+envelopes, and target platform inventory are registered. Their values must be
+the exact SHA-256 values from the same intake manifest;
+`target_intake_requirements_sha256` must equal that manifest's
+`requirements_sha256`. The approval review time must not predate any of those
+five reviewed inputs, and its own manifest item must repeat the approval's
+`review_reference` and `reviewed_at` exactly. Then check the approval against
 that manifest:
 
 ```powershell
@@ -212,7 +221,8 @@ Exit code 1 means the closed approval, data classification, reviewer references,
 or binding hashes are invalid. Exit code 2 means the approval names a different
 artifact set or requirements digest than the supplied manifest. Success proves
 only that one approved record binds the same intake manifest content set; it
-does not prove production acceptance or that any target control operated.
+does not prove production acceptance, reviewer identity or authority, external
+approval authenticity, or that any target control operated.
 
 ## Target platform inventory
 
@@ -221,6 +231,9 @@ closed pending shape. A synthetic target platform inventory cannot satisfy
 strict intake. Copy it to the protected external intake directory, set
 `synthetic=false`, `inventory_status=reviewed`, and set `environment` to the
 exact environment in the same intake manifest.
+Seal canonical UTC `reviewed_at` and exclusive `valid_until`; the inventory is
+usable only inside `[reviewed_at, valid_until)`, and its manifest item must
+repeat its `review_reference` and `reviewed_at` exactly.
 
 Record paths and owner references only. The inventory accepts the public HTTPS
 origin and Keycloak issuer, opaque DNS/TLS/Keycloak/Vault owner references, the
@@ -246,6 +259,20 @@ syntax and the review assertion only; it does not prove that the target paths
 exist, are outside the deployed source tree, have correct ACLs, or contain the
 intended material. Verify those facts, DNS resolution, certificate chains and
 TLS handshakes on the target host and retain external evidence.
+
+Strict intake captures one UTC evaluation instant and passes it through both
+decisions, the target inventory, the Phase 0 approval, provider contracts and
+checkpoint replay. A future review time, an expiry equal to that instant, or a
+non-canonical timestamp fails closed. This comparison does not make the local
+clock trusted time and does not authenticate any opaque approval/reference.
+
+The successful forward/rolling release execution ledger remains an immutable
+historical account of one completed execution. Do not add an arbitrary
+`valid_until` to that ledger. Reuse is instead constrained by its exact
+whole-file digest and Phase 0 checkpoint identity, by revalidation of the
+current Phase 0 contracts/decisions/inventory/approval at the same evaluation
+instant, and by the consuming Phase 1–6 evidence index's own exclusive review
+deadline.
 
 ## Phase 1, 2, 3 and 5 typed target artifacts
 
@@ -593,8 +620,8 @@ seven strict checkpoints; every provided item is still fully validated even
 when a later-phase item is not yet required.
 
 Before creating a target deployment or Kubernetes overlay, require the six
-Phase 0 items: the Mail and Sub2 contracts, PCI and OIDC decisions, the bound
-Phase 0 approval, and the target platform inventory.
+Phase 0 items: the Mail and Sub2 contracts, PCI and OIDC decisions, the target
+platform inventory, and the Phase 0 approval that binds all five inputs.
 
 ```powershell
 python scripts/target_intake_preflight.py preflight `
@@ -626,7 +653,8 @@ Retain the snapshot and every Phase 0 artifact it references under write-once
 controls. Continue adding Phase 1–6 items only to the original intake manifest;
 never edit, replace, or regenerate the checkpoint for an already executed
 release. A newly approved Phase 0 contract requires a new checkpoint and a new
-release execution ledger.
+release execution ledger. The same replacement rule applies when any Phase 0
+contract, decision, inventory or approval expires or is re-reviewed.
 
 Advance through the intermediate phases only after each phase's typed external
 material is reviewed and registered. The successful release execution ledger

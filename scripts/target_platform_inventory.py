@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import ipaddress
 import json
 from pathlib import Path, PurePosixPath
@@ -34,6 +35,8 @@ _TOP_LEVEL_KEYS = {
     "synthetic",
     "inventory_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "environment",
     "public_endpoints",
@@ -165,6 +168,10 @@ _DOMAIN = re.compile(
     r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
 _ENVIRONMENT = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+_UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z$"
+)
 _PLACEHOLDERS = {
     "change_me",
     "changeme",
@@ -187,6 +194,20 @@ def _safe_reference(value: Any) -> bool:
         and _REFERENCE.fullmatch(value) is not None
         and value.casefold() not in _PLACEHOLDERS
     )
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _production_domain(value: Any) -> bool:
@@ -226,12 +247,17 @@ def _mapping_has_exact_keys(value: Any, keys: set[str]) -> bool:
     return isinstance(value, dict) and set(value) == keys
 
 
-def inventory_errors(document: Any) -> list[str]:
+def inventory_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    evaluation_time = evaluated_at or _utc_now()
     if not isinstance(document, dict) or set(document) != _TOP_LEVEL_KEYS:
         return ["target platform inventory top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or document.get("record_type") != "target_platform_inventory"
     ):
         errors.append("target platform inventory identity is invalid")
@@ -273,6 +299,8 @@ def inventory_errors(document: Any) -> list[str]:
     synthetic = document.get("synthetic")
     reference = document.get("inventory_reference")
     review_reference = document.get("review_reference")
+    reviewed_at = document.get("reviewed_at")
+    valid_until = document.get("valid_until")
     environment = document.get("environment")
     if not isinstance(synthetic, bool) or not _safe_reference(reference):
         errors.append("target platform inventory reference is invalid")
@@ -311,6 +339,8 @@ def inventory_errors(document: Any) -> list[str]:
             or document.get("inventory_status") != "pending"
             or environment != "production"
             or review_reference is not None
+            or reviewed_at is not None
+            or valid_until is not None
             or not isinstance(runtime, dict)
             or runtime.get("repository_external_confirmed") is not False
             or any(value is not None for value in nested_values)
@@ -331,6 +361,14 @@ def inventory_errors(document: Any) -> list[str]:
         or reference == review_reference
     ):
         errors.append("reviewed target platform inventory metadata is invalid")
+    reviewed = _parse_utc(reviewed_at)
+    expires = _parse_utc(valid_until)
+    if reviewed is None or expires is None or reviewed >= expires:
+        errors.append("reviewed target platform inventory validity window is invalid")
+    elif reviewed > evaluation_time:
+        errors.append("reviewed target platform inventory timestamp is in the future")
+    elif expires <= evaluation_time:
+        errors.append("reviewed target platform inventory is expired")
 
     if isinstance(public, dict):
         domain = public.get("platform_domain")
@@ -393,8 +431,10 @@ def runtime_alignment_errors(
     *,
     compose_text: str | None = None,
     env_text: str | None = None,
+    evaluated_at: datetime | None = None,
 ) -> list[str]:
-    if inventory_errors(document):
+    evaluation_time = evaluated_at or _utc_now()
+    if inventory_errors(document, evaluated_at=evaluation_time):
         return ["target platform inventory must be valid before runtime alignment"]
     try:
         if compose_text is None:
@@ -429,19 +469,20 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluation_time = _utc_now()
     path = INVENTORY if arguments.command == "verify-repository" else arguments.input
     try:
         document = _load(path)
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("target-platform-inventory-invalid", file=sys.stderr)
         return 1
-    errors = inventory_errors(document)
+    errors = inventory_errors(document, evaluated_at=evaluation_time)
     if arguments.command == "check" and not errors and document.get("synthetic") is not False:
         errors.append("target platform inventory must be reviewed non-synthetic material")
     if errors:
         print("; ".join(errors), file=sys.stderr)
         return 1
-    alignment = runtime_alignment_errors(document)
+    alignment = runtime_alignment_errors(document, evaluated_at=evaluation_time)
     if alignment:
         print("; ".join(alignment), file=sys.stderr)
         return 1 if arguments.command == "verify-repository" else 2

@@ -1,10 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "phase0_boundary_approval",
   "approval_reference": "synthetic-phase0-boundary-approval",
   "synthetic": true,
   "approval_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "data_classification": {
     "live_credentials": {
@@ -66,6 +68,7 @@
     "sub2_contract": null,
     "card_pci_boundary": null,
     "oidc_deployment_identity": null,
+    "target_platform_inventory": null,
     "target_intake_requirements_sha256": null
   },
   "reviewers": {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -31,6 +32,8 @@ _TOP_LEVEL_KEYS = {
     "synthetic",
     "approval_status",
     "review_reference",
+    "reviewed_at",
+    "valid_until",
     "production_acceptance",
     "data_classification",
     "data_classification_sha256",
@@ -43,6 +46,7 @@ _BINDING_IDS = (
     "sub2_contract",
     "card_pci_boundary",
     "oidc_deployment_identity",
+    "target_platform_inventory",
 )
 _BINDING_KEYS = set(_BINDING_IDS) | {"target_intake_requirements_sha256"}
 _REVIEWER_KEYS = {
@@ -61,6 +65,10 @@ _PROHIBITED_KEYS = {
 _POLICY_KEYS = {"classification", "allowed_locations", "logs", "audit"}
 _REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z$"
+)
 _PLACEHOLDERS = {"example", "placeholder", "tbd", "todo", "unknown"}
 
 _DATA_CLASSIFICATION = {
@@ -121,12 +129,31 @@ def _safe_reference(value: Any) -> bool:
     )
 
 
-def approval_errors(document: Any) -> list[str]:
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or _UTC_TIMESTAMP.fullmatch(value) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo == timezone.utc else None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def approval_errors(
+    document: Any,
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[str]:
+    evaluation_time = evaluated_at or _utc_now()
     if not isinstance(document, dict) or set(document) != _TOP_LEVEL_KEYS:
         return ["phase0 approval top-level schema is invalid"]
     errors: list[str] = []
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or document.get("record_type") != "phase0_boundary_approval"
     ):
         errors.append("phase0 approval identity is invalid")
@@ -170,6 +197,8 @@ def approval_errors(document: Any) -> list[str]:
     synthetic = document.get("synthetic")
     approval_reference = document.get("approval_reference")
     review_reference = document.get("review_reference")
+    reviewed_at = document.get("reviewed_at")
+    valid_until = document.get("valid_until")
     if not isinstance(synthetic, bool) or not _safe_reference(approval_reference):
         errors.append("phase0 approval reference is invalid")
         return errors
@@ -178,6 +207,8 @@ def approval_errors(document: Any) -> list[str]:
             not approval_reference.startswith("synthetic-")
             or document.get("approval_status") != "pending"
             or review_reference is not None
+            or reviewed_at is not None
+            or valid_until is not None
             or not isinstance(bindings, dict)
             or any(value is not None for value in bindings.values())
             or not isinstance(reviewers, dict)
@@ -196,6 +227,14 @@ def approval_errors(document: Any) -> list[str]:
         or len(set(references)) != len(references)
     ):
         errors.append("reviewed phase0 approval references are invalid or not independent")
+    reviewed = _parse_utc(reviewed_at)
+    expires = _parse_utc(valid_until)
+    if reviewed is None or expires is None or reviewed >= expires:
+        errors.append("reviewed phase0 approval validity window is invalid")
+    elif reviewed > evaluation_time:
+        errors.append("reviewed phase0 approval timestamp is in the future")
+    elif expires <= evaluation_time:
+        errors.append("reviewed phase0 approval is expired")
     if (
         not isinstance(bindings, dict)
         or any(
@@ -215,6 +254,7 @@ def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
         return ["phase0 approval intake manifest is invalid"]
 
     errors: list[str] = []
+    approval_reviewed_at = _parse_utc(document.get("reviewed_at"))
     for identifier in _BINDING_IDS:
         matches = [
             item
@@ -234,6 +274,33 @@ def intake_binding_errors(document: Any, manifest: Any) -> list[str]:
             errors.append(
                 f"phase0 approval {identifier} binding does not match this intake manifest"
             )
+        else:
+            dependency_reviewed_at = _parse_utc(matches[0].get("reviewed_at"))
+            if dependency_reviewed_at is None:
+                errors.append(
+                    f"phase0 approval {identifier} review time is invalid"
+                )
+            elif (
+                approval_reviewed_at is not None
+                and dependency_reviewed_at > approval_reviewed_at
+            ):
+                errors.append(
+                    f"phase0 approval predates the reviewed {identifier} input"
+                )
+    approval_items = [
+        item
+        for item in manifest["items"]
+        if isinstance(item, dict) and item.get("id") == "phase0_boundary_approval"
+    ]
+    if (
+        len(approval_items) != 1
+        or approval_items[0].get("status") != "provided"
+        or approval_items[0].get("reviewed_by") != document.get("review_reference")
+        or approval_items[0].get("reviewed_at") != document.get("reviewed_at")
+    ):
+        errors.append(
+            "phase0 approval review metadata does not match this intake manifest"
+        )
     requirements_sha = manifest.get("requirements_sha256")
     if (
         not isinstance(requirements_sha, str)
@@ -264,13 +331,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    evaluation_time = _utc_now()
     if arguments.command == "verify-repository":
         try:
             document = _load(APPROVAL)
         except (OSError, UnicodeError, json.JSONDecodeError):
             print("phase0-boundary-approval-invalid", file=sys.stderr)
             return 1
-        errors = approval_errors(document)
+        errors = approval_errors(document, evaluated_at=evaluation_time)
         if errors:
             print("; ".join(errors), file=sys.stderr)
             return 1
@@ -285,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, json.JSONDecodeError):
         print("phase0-boundary-approval-invalid", file=sys.stderr)
         return 1
-    errors = approval_errors(document)
+    errors = approval_errors(document, evaluated_at=evaluation_time)
     if not errors and document.get("synthetic") is not False:
         errors.append("phase0 approval must be reviewed non-synthetic material")
     if errors:

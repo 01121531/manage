@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -16,6 +17,8 @@ from scripts.decision_envelope_validation import (
 
 
 class DecisionEnvelopeValidationTests(unittest.TestCase):
+    EVALUATED_AT = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
+
     def setUp(self) -> None:
         self.card = json.loads(CARD_PCI_DECISION.read_text(encoding="utf-8"))
         self.oidc = json.loads(OIDC_IDENTITY_DECISION.read_text(encoding="utf-8"))
@@ -91,6 +94,8 @@ class DecisionEnvelopeValidationTests(unittest.TestCase):
                 "decision_reference": "card-decision-record-42",
                 "decision_status": "approved",
                 "review_reference": "security-review-record-42",
+                "reviewed_at": "2026-08-26T12:00:00Z",
+                "valid_until": "2099-08-26T12:00:00Z",
             }
         )
         card["pci_scope"].update(
@@ -107,6 +112,8 @@ class DecisionEnvelopeValidationTests(unittest.TestCase):
                 "decision_reference": "oidc-decision-record-42",
                 "decision_status": "approved",
                 "review_reference": "identity-review-record-42",
+                "reviewed_at": "2026-08-26T12:00:00Z",
+                "valid_until": "2099-08-26T12:00:00Z",
             }
         )
         oidc["deployment_identity"]["issuer_reference"] = "issuer-record-42"
@@ -140,6 +147,53 @@ class DecisionEnvelopeValidationTests(unittest.TestCase):
         self.assertTrue(
             decision_errors(incomplete, expected_type="card_pci_boundary")
         )
+
+    def test_reviewed_decision_validity_is_canonical_current_and_exclusive(self) -> None:
+        reviewed = copy.deepcopy(self.card)
+        reviewed.update(
+            {
+                "synthetic": False,
+                "decision_reference": "card-decision-record-42",
+                "decision_status": "approved",
+                "review_reference": "security-review-record-42",
+                "reviewed_at": "2026-08-26T12:00:00Z",
+                "valid_until": "2026-08-28T12:00:00Z",
+            }
+        )
+        reviewed["pci_scope"].update(
+            {
+                "classification": "in_scope",
+                "assessment_reference": "pci-assessment-record-42",
+                "card_vault_owner_reference": "card-vault-owner-record-42",
+            }
+        )
+        self.assertEqual(
+            decision_errors(
+                reviewed,
+                expected_type="card_pci_boundary",
+                evaluated_at=self.EVALUATED_AT,
+            ),
+            [],
+        )
+
+        expired = copy.deepcopy(reviewed)
+        expired["valid_until"] = "2026-08-27T12:00:00Z"
+        future = copy.deepcopy(reviewed)
+        future["reviewed_at"] = "2026-08-27T12:00:01Z"
+        noncanonical = copy.deepcopy(reviewed)
+        noncanonical["reviewed_at"] = "2026-08-26T20:00:00+08:00"
+        reversed_window = copy.deepcopy(reviewed)
+        reversed_window["valid_until"] = reviewed["reviewed_at"]
+
+        for document in (expired, future, noncanonical, reversed_window):
+            with self.subTest(document=document):
+                self.assertTrue(
+                    decision_errors(
+                        document,
+                        expected_type="card_pci_boundary",
+                        evaluated_at=self.EVALUATED_AT,
+                    )
+                )
 
     def test_unknown_fields_acceptance_and_sensitive_claims_fail_closed(self) -> None:
         mutations = []
@@ -196,6 +250,8 @@ class DecisionEnvelopeValidationTests(unittest.TestCase):
             "--expected-type oidc_deployment_identity",
             "synthetic decision envelopes cannot satisfy strict intake",
             "does not authorize cvv storage",
+            "[reviewed_at, valid_until)",
+            "host clock is not evidence of a trusted external time source",
             "exit code 2",
         ):
             with self.subTest(expected=expected):

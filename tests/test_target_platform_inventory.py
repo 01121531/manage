@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -16,6 +17,8 @@ from scripts.target_platform_inventory import (
 
 
 class TargetPlatformInventoryTests(unittest.TestCase):
+    EVALUATED_AT = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
+
     def setUp(self) -> None:
         self.inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
 
@@ -27,6 +30,8 @@ class TargetPlatformInventoryTests(unittest.TestCase):
                 "synthetic": False,
                 "inventory_status": "reviewed",
                 "review_reference": "target-platform-review-record-42",
+                "reviewed_at": "2026-08-26T12:00:00Z",
+                "valid_until": "2099-08-26T12:00:00Z",
                 "environment": "staging",
             }
         )
@@ -79,6 +84,29 @@ class TargetPlatformInventoryTests(unittest.TestCase):
             "evidence_root": "/srv/email-platform/evidence",
         }
         return document
+
+    def test_reviewed_inventory_validity_is_canonical_current_and_exclusive(self) -> None:
+        reviewed = self._reviewed()
+        reviewed["valid_until"] = "2026-08-28T12:00:00Z"
+        self.assertEqual(
+            inventory_errors(reviewed, evaluated_at=self.EVALUATED_AT),
+            [],
+        )
+
+        expired = copy.deepcopy(reviewed)
+        expired["valid_until"] = "2026-08-27T12:00:00Z"
+        future = copy.deepcopy(reviewed)
+        future["reviewed_at"] = "2026-08-27T12:00:01Z"
+        noncanonical = copy.deepcopy(reviewed)
+        noncanonical["reviewed_at"] = "2026-08-26T20:00:00+08:00"
+        reversed_window = copy.deepcopy(reviewed)
+        reversed_window["valid_until"] = reviewed["reviewed_at"]
+
+        for document in (expired, future, noncanonical, reversed_window):
+            with self.subTest(document=document):
+                self.assertTrue(
+                    inventory_errors(document, evaluated_at=self.EVALUATED_AT)
+                )
 
     def test_repository_template_is_safe_closed_aligned_and_in_quality_gate(self) -> None:
         self.assertEqual(inventory_errors(self.inventory), [])
@@ -245,6 +273,8 @@ class TargetPlatformInventoryTests(unittest.TestCase):
             "target_platform_inventory.py check",
             "synthetic target platform inventory cannot satisfy strict intake",
             "paths and owner references only",
+            "inventory is usable only inside `[reviewed_at, valid_until)`",
+            "does not make the local clock trusted time",
             "does not prove that the target paths exist",
             "exit code 2",
         ):

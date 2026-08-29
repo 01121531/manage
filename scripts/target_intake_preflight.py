@@ -450,16 +450,20 @@ def _artifact_errors(
         "oidc_deployment_identity": "oidc_deployment_identity",
     }.get(identifier)
     if expected_decision_type is not None and artifact_bytes is not None:
-        decision = artifact_document
-        if decision_errors(decision, expected_type=expected_decision_type):
+        validated_document = artifact_document
+        if decision_errors(
+            validated_document,
+            expected_type=expected_decision_type,
+            evaluated_at=evaluated_at,
+        ):
             errors.append(f"{identifier} decision envelope is invalid")
-        elif decision.get("synthetic") is not False:
+        elif validated_document.get("synthetic") is not False:
             errors.append(
                 f"{identifier} decision envelope must be reviewed non-synthetic material"
             )
     if identifier == "phase0_boundary_approval" and artifact_bytes is not None:
         validated_document = artifact_document
-        if approval_errors(validated_document):
+        if approval_errors(validated_document, evaluated_at=evaluated_at):
             errors.append("phase0_boundary_approval envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -467,7 +471,7 @@ def _artifact_errors(
             )
     if identifier == "target_platform_inventory" and artifact_bytes is not None:
         validated_document = artifact_document
-        if inventory_errors(validated_document):
+        if inventory_errors(validated_document, evaluated_at=evaluated_at):
             errors.append("target_platform_inventory envelope is invalid")
         elif validated_document.get("synthetic") is not False:
             errors.append(
@@ -598,6 +602,7 @@ def intake_errors(
     target_inventory: Any | None = None
     target_phase_artifacts: dict[str, Any] = {}
     provider_contracts: dict[str, Any] = {}
+    decision_envelopes: dict[str, Any] = {}
     sub2_evidence: Any | None = None
     vault_egress_evidence: Any | None = None
     phase6_pilot_inputs: Any | None = None
@@ -647,14 +652,31 @@ def intake_errors(
             if (
                 identifier == "phase0_boundary_approval"
                 and isinstance(validated_document, dict)
-                and not approval_errors(validated_document)
+                and not approval_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 phase0_approval = validated_document
             if (
+                identifier in {"card_pci_boundary", "oidc_deployment_identity"}
+                and isinstance(validated_document, dict)
+                and not decision_errors(
+                    validated_document,
+                    expected_type=identifier,
+                    evaluated_at=evaluation_time,
+                )
+                and validated_document.get("synthetic") is False
+            ):
+                decision_envelopes[identifier] = validated_document
+            if (
                 identifier == "target_platform_inventory"
                 and isinstance(validated_document, dict)
-                and not inventory_errors(validated_document)
+                and not inventory_errors(
+                    validated_document,
+                    evaluated_at=evaluation_time,
+                )
                 and validated_document.get("synthetic") is False
             ):
                 target_inventory = validated_document
@@ -760,6 +782,22 @@ def intake_errors(
             errors.append(
                 f"{identifier} review metadata does not match this intake manifest"
             )
+    for identifier, decision in decision_envelopes.items():
+        own_items = [
+            item
+            for item in document["items"]
+            if isinstance(item, dict) and item.get("id") == identifier
+        ]
+        if (
+            len(own_items) != 1
+            or own_items[0].get("status") != "provided"
+            or own_items[0].get("reviewed_by")
+            != decision.get("review_reference")
+            or own_items[0].get("reviewed_at") != decision.get("reviewed_at")
+        ):
+            errors.append(
+                f"{identifier} review metadata does not match this intake manifest"
+            )
     if (
         target_inventory is not None
         and target_inventory.get("environment") != document.get("environment")
@@ -767,6 +805,24 @@ def intake_errors(
         errors.append(
             "target_platform_inventory environment does not match this intake manifest"
         )
+    if target_inventory is not None:
+        own_items = [
+            item
+            for item in document["items"]
+            if isinstance(item, dict)
+            and item.get("id") == "target_platform_inventory"
+        ]
+        if (
+            len(own_items) != 1
+            or own_items[0].get("status") != "provided"
+            or own_items[0].get("reviewed_by")
+            != target_inventory.get("review_reference")
+            or own_items[0].get("reviewed_at")
+            != target_inventory.get("reviewed_at")
+        ):
+            errors.append(
+                "target_platform_inventory review metadata does not match this intake manifest"
+            )
     for identifier, artifact in target_phase_artifacts.items():
         errors.extend(
             target_phase_binding_errors(

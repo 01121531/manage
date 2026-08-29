@@ -1,10 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "decision_type": "oidc_deployment_identity",
   "decision_reference": "synthetic-oidc-deployment-identity",
   "synthetic": true,
   "decision_status": "pending",
   "review_reference": null,
+  "reviewed_at": null,
+  "valid_until": null,
   "production_acceptance": false,
   "deployment_identity": {
     "issuer_reference": null,
