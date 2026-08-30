@@ -116,6 +116,12 @@ try {
     python scripts/verify_target_intake_runtime_attestation_provider_selection.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation provider selection static verification failed." }
 
+    python scripts/target_intake_runtime_attestation_provider_cas_evidence.py verify-repository
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation provider CAS evidence verification failed." }
+
+    python scripts/verify_target_intake_runtime_attestation_provider_cas_evidence.py
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation provider CAS evidence static verification failed." }
+
     python scripts/verify_target_intake_runtime_attestation_release_handoff.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation release handoff static verification failed." }
 

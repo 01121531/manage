@@ -360,6 +360,15 @@ The Phase 6 CI rehearsal is only a preflight artifact and must have
 - Provider-native opaque version/generation, retention, delete-denial/readback and cross-host latest-head/fork/rollback evidence (currently `unverified`):
 - Required conclusion: provider selection does not establish provider custody; reviewer authority, provider-native CAS, custody and `production_acceptance=false` remain unverified/false.
 
+### Provider CAS evidence package boundary
+
+- Caller-pinned T210 policy, T209 selection profile and repository-external evidence-manifest raw SHA-256 values:
+- Exact nine-file raw artifact inventory, sizes and SHA-256 values, with immutable entry and mutable head references kept distinct:
+- Distinct successful/stale writer hosts, caller-pinned prior head, one successful conditional update and one non-retried provider-specific stale failure:
+- Opaque version/generation, entry/head readback, locked retention, protected-version delete denial, post-denial readback and cross-host latest-head/fork/rollback review:
+- Independent authentication of provider responses, workload identity, reviewer authority and trusted time (currently `unverified`):
+- Required conclusion: CAS evidence structure does not establish provider authority or custody; provider-native CAS, retention/delete-denial, custody and `production_acceptance=false` remain unverified/false.
+
 ### Three-image release handoff boundary
 
 - Caller-pinned T208 three-image release handoff, including independent handoff SHA-256 and ordered api/web/edge index SHA-256 values:

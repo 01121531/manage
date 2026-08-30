@@ -1,0 +1,5 @@
+{
+  "fixture": "immutable_entry_write",
+  "production_acceptance": false,
+  "synthetic": true
+}

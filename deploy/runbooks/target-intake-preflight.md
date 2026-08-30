@@ -1515,6 +1515,58 @@ operator conclusion is: provider selection does not establish provider custody.
 `production_acceptance=false` remain unverified/false until the real adapter
 and target evidence pass independent review.
 
+## T210 provider CAS evidence package
+
+After an independently pinned T209 profile selects exactly one provider, use
+the T210 package contract to retain the raw execution and review material. The
+repository fixture verifies the schema and negative-authority boundary only:
+
+```powershell
+python scripts/target_intake_runtime_attestation_provider_cas_evidence.py verify-repository
+python scripts/verify_target_intake_runtime_attestation_provider_cas_evidence.py
+```
+
+Create a new repository-external directory containing exactly
+`runtime-attestation-provider-cas-evidence.json` and these nine raw files:
+`immutable-entry-write.json`, `successful-head-cas.json`,
+`immutable-entry-readback.json`, `stale-head-cas.json`,
+`current-head-readback.json`, `retention-configuration.json`,
+`protected-version-delete-denial.json`, `post-denial-readback.json`, and
+`cross-host-review.json`. Keep the independently approved T209 selection
+profile outside that package directory. Independently retain the profile and
+evidence-manifest raw SHA-256 values, then run:
+
+```powershell
+python scripts/target_intake_runtime_attestation_provider_cas_evidence.py verify `
+  --selection-profile D:\external-evidence\provider-selection.json `
+  --evidence-manifest D:\external-evidence\provider-cas\runtime-attestation-provider-cas-evidence.json `
+  --evidence-root D:\external-evidence\provider-cas `
+  --expected-policy-sha256 ca4be029992e21d2f21fc9bc0462685d29807a2e9435d62d4312d79b943fd59d `
+  --expected-selection-profile-sha256 <independently-recorded-profile-sha256> `
+  --expected-evidence-sha256 <independently-recorded-evidence-sha256>
+```
+
+The manifest binds the selected provider and profile, distinct successful and
+stale-writer hosts, caller-pinned prior head, one successful conditional head
+write, one non-retried stale failure, exact entry/head readback, opaque
+version/generation identities, locked retention, protected-version delete
+denial, post-denial readback, and a final cross-host latest-head/fork/rollback
+review. The verifier requires canonical closed JSON, exact artifact order,
+size and raw SHA-256, repository-external single-link files, stable rechecks,
+strict operation ordering, and the selected provider's T209 precondition,
+failure and immutability semantics. Synthetic markers are rejected from a real
+package.
+
+The raw artifacts remain provider/CLI/reviewer material whose authenticity and
+currentness must be established independently. The offline verifier neither
+calls the cloud provider nor authenticates its responses, reviewer, workload
+identity, retention enforcement or time source. Therefore the mandatory
+conclusion is: CAS evidence structure does not establish provider authority or custody.
+`reviewer_authority`, `provider_response_authentication`,
+`provider_native_cas`, `retention_delete_denial`, `provider_custody`,
+`trusted_time`, and `production_acceptance=false` remain unverified/false until
+the real package and provider account are independently reviewed.
+
 ## T208 three-image external evidence handoff
 
 The T208 verifier closes the cross-image release boundary that three separate

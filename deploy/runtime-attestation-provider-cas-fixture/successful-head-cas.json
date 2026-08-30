@@ -1,0 +1,5 @@
+{
+  "fixture": "successful_head_cas",
+  "production_acceptance": false,
+  "synthetic": true
+}

@@ -1,0 +1,100 @@
+{
+  "artifact_inventory": [
+    {
+      "kind": "immutable_entry_write",
+      "media_type": "application/json",
+      "path": "immutable-entry-write.json"
+    },
+    {
+      "kind": "successful_head_cas",
+      "media_type": "application/json",
+      "path": "successful-head-cas.json"
+    },
+    {
+      "kind": "immutable_entry_readback",
+      "media_type": "application/json",
+      "path": "immutable-entry-readback.json"
+    },
+    {
+      "kind": "stale_head_cas",
+      "media_type": "application/json",
+      "path": "stale-head-cas.json"
+    },
+    {
+      "kind": "current_head_readback",
+      "media_type": "application/json",
+      "path": "current-head-readback.json"
+    },
+    {
+      "kind": "retention_configuration",
+      "media_type": "application/json",
+      "path": "retention-configuration.json"
+    },
+    {
+      "kind": "protected_version_delete_denial",
+      "media_type": "application/json",
+      "path": "protected-version-delete-denial.json"
+    },
+    {
+      "kind": "post_denial_readback",
+      "media_type": "application/json",
+      "path": "post-denial-readback.json"
+    },
+    {
+      "kind": "cross_host_review",
+      "media_type": "application/json",
+      "path": "cross-host-review.json"
+    }
+  ],
+  "evidence_contract": {
+    "cross_host_writers_required": true,
+    "current_head_readback_required": true,
+    "evidence_caller_pinned": true,
+    "immutable_entry_readback_required": true,
+    "no_automatic_retry": true,
+    "post_denial_readback_required": true,
+    "prior_head_caller_pinned": true,
+    "protected_version_delete_denial_required": true,
+    "retention_configuration_required": true,
+    "selection_profile_caller_pinned": true,
+    "stale_write_attempt_exactly_once": true,
+    "success_write_exactly_once": true
+  },
+  "policy_kind": "runtime_attestation_provider_cas_evidence_policy",
+  "policy_status": "external_execution_required",
+  "predecessor": {
+    "policy_kind": "runtime_attestation_provider_selection_policy",
+    "raw_sha256": "1b678805c08f97331cd76aa1c1139fc095edd5271ba9f95d00546fa67e274581",
+    "schema_version": 1
+  },
+  "production_acceptance": false,
+  "provider_semantics": {
+    "aws_s3_object_lock": {
+      "head_precondition": "if_match_etag",
+      "immutability_control": "s3_object_lock_compliance",
+      "stale_failure_outcomes": [
+        "http_409_conflict",
+        "http_412_precondition_failed"
+      ],
+      "version_identity_field": "version_id"
+    },
+    "azure_blob_immutable": {
+      "head_precondition": "if_match_etag",
+      "immutability_control": "azure_version_level_locked_time_retention",
+      "stale_failure_outcomes": [
+        "http_412_precondition_failed"
+      ],
+      "version_identity_field": "version_id"
+    },
+    "gcp_cloud_storage_generation": {
+      "head_precondition": "if_generation_match",
+      "immutability_control": "gcs_locked_bucket_retention_policy",
+      "stale_failure_outcomes": [
+        "http_412_precondition_failed"
+      ],
+      "version_identity_field": "generation"
+    }
+  },
+  "schema_version": 1,
+  "synthetic": false
+}

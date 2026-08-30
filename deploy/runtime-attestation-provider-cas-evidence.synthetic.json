@@ -1,0 +1,150 @@
+{
+  "actors": {
+    "stale_writer_host_ref": "synthetic://host/provider-writer-b",
+    "successful_writer_host_ref": "synthetic://host/provider-writer-a",
+    "workload_identity_ref": "synthetic://aws/iam/role/provider-writer"
+  },
+  "artifacts": [
+    {
+      "kind": "immutable_entry_write",
+      "media_type": "application/json",
+      "path": "immutable-entry-write.json",
+      "raw_sha256": "c1db5b4ff743d81da3320450b63894cbd75c3432f2921c3c617587bc3ec124f3",
+      "size": 96
+    },
+    {
+      "kind": "successful_head_cas",
+      "media_type": "application/json",
+      "path": "successful-head-cas.json",
+      "raw_sha256": "b4c669130ae16dfde82067b723d17ae22ce1f0dbdaedfe8e807abee4ba1447fb",
+      "size": 94
+    },
+    {
+      "kind": "immutable_entry_readback",
+      "media_type": "application/json",
+      "path": "immutable-entry-readback.json",
+      "raw_sha256": "07b0a563c49d793e1fbbdcd063af15c2e0f696ab93572513a6940a3c653a6d06",
+      "size": 99
+    },
+    {
+      "kind": "stale_head_cas",
+      "media_type": "application/json",
+      "path": "stale-head-cas.json",
+      "raw_sha256": "09936da4ca1a4839916c49801a03994df31733244a357264e3a9d689908e2477",
+      "size": 89
+    },
+    {
+      "kind": "current_head_readback",
+      "media_type": "application/json",
+      "path": "current-head-readback.json",
+      "raw_sha256": "726d7bcc7acfcd01225802ef5974a646b859bc75793a43425be3c7dbc8ec512c",
+      "size": 96
+    },
+    {
+      "kind": "retention_configuration",
+      "media_type": "application/json",
+      "path": "retention-configuration.json",
+      "raw_sha256": "675259a032178f1c7d0f6bcb7233df1afd671dbca9c42f2ad9a5c3621254aa5f",
+      "size": 98
+    },
+    {
+      "kind": "protected_version_delete_denial",
+      "media_type": "application/json",
+      "path": "protected-version-delete-denial.json",
+      "raw_sha256": "149f7f120ba1c8240b378e09823851a37683fdc78e2fbafdc1c24ac7b690a18d",
+      "size": 106
+    },
+    {
+      "kind": "post_denial_readback",
+      "media_type": "application/json",
+      "path": "post-denial-readback.json",
+      "raw_sha256": "aa4b0ccae242883bae0859ac0b8b351dfe068595e2ce2ddff1d98b5d097d6540",
+      "size": 95
+    },
+    {
+      "kind": "cross_host_review",
+      "media_type": "application/json",
+      "path": "cross-host-review.json",
+      "raw_sha256": "489825fc632993225fb96021636d6ca366c2855fb14a5f572cb8b682f15b595b",
+      "size": 92
+    }
+  ],
+  "evidence_kind": "runtime_attestation_provider_cas_evidence",
+  "execution": {
+    "cross_host_review": {
+      "fork_detected": false,
+      "latest_head_value": "head-fixture-0001",
+      "observed_at": "2026-08-19T01:09:00Z",
+      "rollback_detected": false
+    },
+    "delete_denial": {
+      "observed_at": "2026-08-19T01:07:00Z",
+      "opaque_version_identity": "version-fixture-entry-0001",
+      "outcome": "denied",
+      "post_denial_observed_at": "2026-08-19T01:08:00Z",
+      "post_denial_payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "post_denial_version_identity": "version-fixture-entry-0001",
+      "request_id": "delete-fixture-0001"
+    },
+    "entry": {
+      "immutable_entry_ref": "synthetic://aws/s3/example/entries/runtime-attestation-0001.json",
+      "opaque_version_identity": "version-fixture-entry-0001",
+      "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "readback_observed_at": "2026-08-19T01:03:00Z",
+      "readback_payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "readback_version_identity": "version-fixture-entry-0001",
+      "version_identity_field": "version_id",
+      "write_observed_at": "2026-08-19T01:01:00Z",
+      "write_request_id": "entry-write-fixture-0001"
+    },
+    "head": {
+      "head_precondition_kind": "if_match_etag",
+      "mutable_head_locator_ref": "synthetic://aws/s3/example/head/latest.json",
+      "prior_head_precondition": "etag-fixture-0000",
+      "prior_head_value": "head-fixture-0000",
+      "proposed_head_payload_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proposed_head_value": "head-fixture-0001",
+      "readback_head_value": "head-fixture-0001",
+      "readback_observed_at": "2026-08-19T01:05:00Z",
+      "readback_payload_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "readback_version_identity": "version-fixture-head-0001",
+      "stale_attempted_head_value": "head-fixture-stale",
+      "stale_automatic_retry_count": 0,
+      "stale_observed_at": "2026-08-19T01:04:00Z",
+      "stale_outcome": "http_412_precondition_failed",
+      "stale_precondition": "etag-fixture-0000",
+      "stale_request_id": "head-stale-fixture-0001",
+      "success_observed_at": "2026-08-19T01:02:00Z",
+      "success_outcome": "succeeded",
+      "success_request_id": "head-success-fixture-0001",
+      "successful_version_identity": "version-fixture-head-0001",
+      "version_identity_field": "version_id"
+    },
+    "retention": {
+      "immutability_control": "s3_object_lock_compliance",
+      "locked": true,
+      "observed_at": "2026-08-19T01:06:00Z",
+      "protected_until": "2026-09-18T01:06:00Z",
+      "retention_configuration_ref": "synthetic://aws/s3/example/object-lock/configuration"
+    }
+  },
+  "execution_window": {
+    "finished_at": "2026-08-19T01:10:00Z",
+    "started_at": "2026-08-19T01:00:00Z"
+  },
+  "policy_sha256": "ca4be029992e21d2f21fc9bc0462685d29807a2e9435d62d4312d79b943fd59d",
+  "production_acceptance": false,
+  "provider_account_ref": "synthetic://aws/account/example",
+  "review": {
+    "conclusion": "structurally_complete_unverified_provider_evidence",
+    "reviewed_at": "2026-08-19T01:11:00Z",
+    "reviewer_ref": "synthetic://reviewer/provider-cas-evidence",
+    "valid_until": "2026-08-20T00:00:00Z"
+  },
+  "schema_version": 1,
+  "selected_provider_kind": "aws_s3_object_lock",
+  "selection_policy_sha256": "1b678805c08f97331cd76aa1c1139fc095edd5271ba9f95d00546fa67e274581",
+  "selection_profile_sha256": "8a507d52fb8367c3fc8563a4c8d32f6b9215ab4f78da14df3c41a1b22272b3c3",
+  "synthetic": true,
+  "target_environment": "synthetic-fixture"
+}

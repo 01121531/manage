@@ -1,0 +1,5 @@
+{
+  "fixture": "current_head_readback",
+  "production_acceptance": false,
+  "synthetic": true
+}
