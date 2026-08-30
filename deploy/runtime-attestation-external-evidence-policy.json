@@ -1,0 +1,89 @@
+{
+  "integration": {
+    "authoring": false,
+    "deployment": false,
+    "recovery": false,
+    "runtime_acceptance": false
+  },
+  "policy_kind": "runtime_attestation_external_evidence_policy",
+  "policy_status": "unconfigured",
+  "production_acceptance": false,
+  "provider_custody": {
+    "allowed_provider_kinds": [
+      "aws_s3_object_lock",
+      "azure_blob_immutable",
+      "gcp_cloud_storage_generation"
+    ],
+    "required_evidence": [
+      "authenticated_workload_identity",
+      "caller_pinned_prior_head",
+      "provider_native_cas_precondition",
+      "stale_write_409_or_412_or_generation_failure",
+      "no_automatic_retry",
+      "immutable_version_identity",
+      "retention_configuration",
+      "delete_denial",
+      "post_denial_readback",
+      "cross_host_latest_head",
+      "fork_and_rollback_review"
+    ],
+    "selected_provider_kind": null,
+    "status": "unverified"
+  },
+  "release_evidence": {
+    "artifact_names": [
+      "oci_manifest",
+      "cosign_bundle",
+      "cosign_payload",
+      "github_bundle",
+      "github_sigstore_trusted_root",
+      "tuf_verify_result",
+      "cosign_executable_digest",
+      "cosign_version",
+      "cosign_bundle_verify_result",
+      "cosign_verify_result",
+      "cosign_verify_attestation_result",
+      "github_executable_digest",
+      "github_version",
+      "github_verify_result"
+    ],
+    "bundle_bytes_must_be_preserved": true,
+    "caller_pinned_manifest_required": true,
+    "external_absolute_root_required": true,
+    "oci_manifest_digest_must_match_release": true,
+    "stable_single_link_reads_required": true
+  },
+  "schema_version": 1,
+  "synthetic": true,
+  "target_observer": {
+    "allowed_execution_locations": [
+      "dedicated_management_host",
+      "isolated_kubernetes_namespace"
+    ],
+    "required_evidence": [
+      "federated_workload_identity",
+      "kms_or_hsm_key_reference",
+      "observer_key_authorization_snapshot",
+      "observer_key_validity_and_revocation",
+      "release_challenge_nonce",
+      "target_environment_and_host_identity",
+      "image_object_id_and_repo_digest",
+      "process_start_and_executable_digest",
+      "loaded_module_and_native_evidence",
+      "post_deploy_readback",
+      "independent_trusted_time"
+    ],
+    "signing_domain": "email-platform/runtime-attestation-target-observer/v1",
+    "status": "unconfigured",
+    "workflow_signer_key_reuse_allowed": false
+  },
+  "trust_currentness": {
+    "host_clock_is_trusted_time": false,
+    "online_revocation_or_status_required": true,
+    "rekor_and_ct_currentness_required": true,
+    "signed_timestamp_replay_policy_required": true,
+    "status": "unverified",
+    "trusted_root_refresh_per_release_required": true,
+    "tuf_metadata_chain_required": true
+  }
+}

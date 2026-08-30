@@ -184,6 +184,7 @@ def validate_supply_chain(
         "Attach GitHub build provenance",
         "Capture raw provider evidence before promotion",
         "Verify keyless image signature and SBOM attestation",
+        "Build caller-pinnable external evidence index",
         "Publish verified release tag",
         "Record immutable container evidence",
         "Upload signed container release evidence",
@@ -208,8 +209,8 @@ def validate_supply_chain(
         errors.append("release version tag must not be pushed before evidence verification")
     cosign_script = str(_step(container, "Keyless-sign image and attach Syft SBOM").get("run", ""))
     installer = _step(container, "Install Cosign")
-    if _mapping(installer.get("with")).get("cosign-release") != "v3.0.6":
-        errors.append("release Cosign version must be explicitly pinned")
+    if _mapping(installer.get("with")).get("cosign-release") != "v3.1.3":
+        errors.append("release Cosign version must be pinned to the patched v3.1.3 baseline")
     for marker in ("cosign sign --yes", "--bundle", "--output-payload", "cosign attest --yes --type spdxjson", '"${IMAGE}@${DIGEST}"'):
         if marker not in cosign_script:
             errors.append(f"release Cosign step is missing: {marker}")
@@ -224,15 +225,39 @@ def validate_supply_chain(
     ):
         errors.append("release provenance must bind and attach the pushed OCI digest")
     capture_script = str(_step(container, "Capture raw provider evidence before promotion").get("run", ""))
-    for marker in ("GITHUB_PROVENANCE_BUNDLE", "cp --", "github-provenance.bundle.jsonl", "sha256sum", "cosign version --json"):
+    for marker in (
+        "GITHUB_PROVENANCE_BUNDLE", "cp --", "github-provenance.bundle.jsonl",
+        "docker buildx imagetools inspect --raw", "oci-manifest.raw.json",
+        '"sha256:${manifest_sha}" != "$DIGEST"', "sha256sum", "cosign version --json",
+        "gh attestation trusted-root", "--verify-only", "github.executable.sha256",
+        "github.version.txt", "github-sigstore.trusted-root.jsonl", "tuf.verify.txt",
+    ):
         if marker not in capture_script:
             errors.append(f"release raw provider evidence capture is missing: {marker}")
     if "jq" in capture_script:
         errors.append("raw provider bundle capture must not parse or reserialize JSON")
     verify_script = str(_step(container, "Verify keyless image signature and SBOM attestation").get("run", ""))
-    for marker in ("cosign verify --output json", "cosign verify-attestation --output json", "--certificate-identity", "--certificate-oidc-issuer", "cosign.verify.json", "cosign.verify-attestation.json"):
+    for marker in (
+        "cosign verify-blob", "cosign.bundle.json", "cosign.payload.json",
+        "cosign.bundle.verify.txt", "cosign verify --output json",
+        "cosign verify-attestation --output json", "--certificate-identity",
+        "--certificate-oidc-issuer", "cosign.verify.json",
+        "cosign.verify-attestation.json", "gh attestation verify", "--bundle",
+        "--custom-trusted-root", "--source-digest", "--source-ref", "--format json",
+        "github.verify.json",
+    ):
         if marker not in verify_script:
             errors.append(f"release must verify keyless evidence: {marker}")
+
+    index_script = str(_step(container, "Build caller-pinnable external evidence index").get("run", ""))
+    for marker in (
+        "create_runtime_attestation_external_evidence_index.py", "--evidence-dir supply-chain",
+        "runtime-attestation.external-evidence-index.json", "--repository-id",
+        "--owner-id", "--workflow-ref", "--run-id", "--run-attempt",
+        "--captured-at",
+    ):
+        if marker not in index_script:
+            errors.append(f"release external evidence index is missing: {marker}")
 
     promote_script = str(_step(container, "Publish verified release tag").get("run", ""))
     for marker in (

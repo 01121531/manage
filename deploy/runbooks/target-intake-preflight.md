@@ -1403,6 +1403,68 @@ cannot prove the original command ran. The required operator conclusion is:
 fixture cryptography does not establish provider authority. Runtime authority,
 original execution and `production_acceptance=false` therefore remain unchanged.
 
+## Release-captured external runtime-attestation evidence
+
+T207 adds an external, caller-pinned intake for the real raw files emitted by a
+tagged release workflow. First validate the repository policy and static
+boundary:
+
+```powershell
+python scripts/target_intake_runtime_attestation_external_evidence.py verify-repository
+python scripts/verify_target_intake_runtime_attestation_external_evidence.py
+```
+
+After downloading one `container-release-*` artifact to a directory outside
+the repository, obtain the index SHA-256 through an independent handoff and run:
+
+```powershell
+python scripts/target_intake_runtime_attestation_external_evidence.py verify `
+  --manifest D:\external-evidence\api.runtime-attestation.external-evidence-index.json `
+  --evidence-root D:\external-evidence `
+  --expected-manifest-sha256 <independently-recorded-index-sha256> `
+  --expected-policy-sha256 3c52cacdf836ba3c63288adf053871e8943cbe8c21676ce7c4fe1381a4820bbd
+```
+
+The release records the exact OCI manifest bytes and proves their SHA-256
+equals the staged digest before tag promotion. It copies the Cosign and GitHub
+bundles without JSON parse-reserialization, records the Cosign/GitHub executable
+digests and versions, refreshes GitHub/Sigstore trusted roots through the GitHub
+CLI TUF client, verifies its local TUF repository, verifies the exact Cosign
+bundle payload and GitHub bundle, and builds the canonical evidence index before
+the stable tag is published. The intake independently re-reads every single-link
+file, checks caller pins, exact sizes, OCI digest, Cosign Simple Signing subject
+and GitHub in-toto subject, then rechecks file identity and bytes before return.
+
+This capture still uses workflow time, workflow identity and CLI output. A
+trusted-root file has no built-in proof that no revocation happened after its
+refresh, and a successful command record is not proof that an independently
+authorized observer or provider performed the operation. Therefore the required
+conclusion is: captured external evidence is not runtime authority.
+`trust_root_currentness`, `revocation_freshness`, `transparency_currentness`,
+`original_execution`, `runtime_authority` and `production_acceptance` remain
+unverified/false.
+
+Before a target observer can move from `unconfigured`, the operator must select
+either a dedicated management host or isolated Kubernetes namespace, bind a
+federated workload identity to a KMS/HSM key dedicated to
+`email-platform/runtime-attestation-target-observer/v1`, and provide independent
+key authorization, validity and revocation evidence. The key may not be the
+release workflow signer. Each observation must bind a release challenge nonce,
+target environment/account/host, image object ID and RepoDigest, process start
+and executable digest, loaded module/native evidence, post-deploy readback and
+independent trusted time.
+
+Provider custody also remains unconfigured until one reviewed adapter is chosen
+from `aws_s3_object_lock`, `azure_blob_immutable`, or
+`gcp_cloud_storage_generation`. Its external evidence must include workload
+identity, caller-pinned prior head, the provider-native ETag or generation
+precondition, a separately attempted stale write that fails with the provider's
+409/412/generation-precondition result without automatic retry, immutable
+version identity, retention configuration, delete denial, post-denial readback,
+and a cross-host latest-head/fork/rollback review. Do not combine several
+provider semantics into one claimed receipt, and do not fill these fields from
+the release workflow.
+
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and
 redaction assertions. It never proves that a provider contract is correct,

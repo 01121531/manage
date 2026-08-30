@@ -341,6 +341,15 @@ The Phase 6 CI rehearsal is only a preflight artifact and must have
 - Independent confirmation that caller-pinned CLI records do not prove original execution:
 - Required conclusion: fixture cryptography does not establish provider authority; runtime authority and `production_acceptance=false` remain unchanged.
 
+### External runtime-attestation evidence boundary
+
+- Caller-pinned T207 external index plus raw OCI manifest, Cosign/GitHub bundles, trusted-root/TUF result, executable/version pins and CLI outputs:
+- Independent confirmation that the OCI manifest/raw subject checks authenticate byte bindings only:
+- Independent confirmation that refreshed trusted-root material does not by itself prove revocation or transparency-log currentness:
+- Target-observer deployment location, federated identity, dedicated KMS/HSM key, authorization/revocation evidence and independent trusted-time review (currently `unconfigured`):
+- Selected provider-native adapter, stale-write failure, immutable version, retention/delete-denial/readback and cross-host latest-head/fork/rollback review (currently `unconfigured`):
+- Required conclusion: captured external evidence is not runtime authority; original execution, runtime authority and `production_acceptance=false` remain unchanged.
+
 ## Final signoff
 
 - Approved for production:

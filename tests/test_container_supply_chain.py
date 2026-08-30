@@ -192,6 +192,52 @@ class ContainerSupplyChainTests(unittest.TestCase):
 
         self.assertTrue(any("cosign attest" in error for error in errors), errors)
 
+    def test_vulnerable_cosign_release_is_rejected(self) -> None:
+        self.release = copy.deepcopy(self.release)
+        job = self.release["jobs"]["verified-container-release"]
+        self.step(job, "Install Cosign")["with"]["cosign-release"] = "v3.0.6"
+
+        errors = self.validate()
+
+        self.assertTrue(any("patched v3.1.3" in error for error in errors), errors)
+
+    def test_raw_oci_manifest_and_tuf_refresh_cannot_be_omitted(self) -> None:
+        for marker in ("docker buildx imagetools inspect --raw", "gh attestation trusted-root --verify-only"):
+            with self.subTest(marker=marker):
+                self.release = copy.deepcopy(load_workflows()[1])
+                job = self.release["jobs"]["verified-container-release"]
+                step = self.step(job, "Capture raw provider evidence before promotion")
+                step["run"] = step["run"].replace(marker, "echo omitted", 1)
+
+                errors = self.validate()
+
+                self.assertTrue(any("raw provider evidence" in error for error in errors), errors)
+
+    def test_exact_bundle_cli_verification_cannot_be_omitted(self) -> None:
+        for marker in ("cosign verify-blob", "gh attestation verify"):
+            with self.subTest(marker=marker):
+                self.release = copy.deepcopy(load_workflows()[1])
+                job = self.release["jobs"]["verified-container-release"]
+                step = self.step(job, "Verify keyless image signature and SBOM attestation")
+                step["run"] = step["run"].replace(marker, "echo omitted", 1)
+
+                errors = self.validate()
+
+                self.assertTrue(any("verify keyless evidence" in error for error in errors), errors)
+
+    def test_external_index_must_precede_release_tag_promotion(self) -> None:
+        self.release = copy.deepcopy(self.release)
+        job = self.release["jobs"]["verified-container-release"]
+        steps = job["steps"]
+        index = self.step(job, "Build caller-pinnable external evidence index")
+        steps.remove(index)
+        promote_index = steps.index(self.step(job, "Publish verified release tag"))
+        steps.insert(promote_index + 1, index)
+
+        errors = self.validate()
+
+        self.assertTrue(any("in order" in error for error in errors), errors)
+
     def test_mutable_base_image_is_rejected(self) -> None:
         dockerfiles = list(self.dockerfiles)
         dockerfiles[0] = dockerfiles[0].replace("@sha256:", "#sha256:", 1)
