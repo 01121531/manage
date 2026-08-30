@@ -10,7 +10,8 @@ WORKDIR /app
 
 # Keep the runtime image non-root.  No source or build secret is copied into
 # the image; all credentials are supplied by the deployment secret manager.
-RUN addgroup -S -g 10001 platform \
+RUN apk upgrade --no-cache \
+    && addgroup -S -g 10001 platform \
     && adduser -S -D -u 10001 -G platform -h /home/platform platform \
     && mkdir -p /app/platform \
     && chown -R platform:platform /app

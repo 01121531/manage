@@ -80,6 +80,7 @@ Release manifest:
 - Edge OCI digest:
 - SBOM SHA-256 values:
 - Trivy report SHA-256 values:
+- Image package readback confirms no HIGH/CRITICAL `libcrypto3`/`libssl3` or Python `cryptography` finding, with scanner database/version and workflow run URL:
 - Cosign certificate identity:
 - Cosign OIDC issuer:
 - Provenance attestation evidence:

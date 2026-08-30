@@ -37,3 +37,21 @@ Repository verification proves the workflows retain these fail-closed commands;
 it does not query live vulnerability databases. A local or CI structural pass is
 therefore preflight only and must record `production_acceptance=false` until the
 networked audit run and independent review are complete.
+
+## 2026-08-30 online gate remediation
+
+Security Gate run #57 for commit `4f795bcd8c856419243793997395b0e81b7a5d85`
+failed closed before release. `pip-audit` identified four advisories against
+`cryptography 46.0.7`; the container reports independently identified
+`libcrypto3` and `libssl3` 3.5.7-r0, whose scanner-fixed version is 3.5.8-r0.
+The API image also contained the same vulnerable Python package. The repository
+remediation raises the runtime dependency floor to `cryptography>=50.0.1,<51.0`,
+updates the Node and Nginx multi-platform image digest pins, and applies current
+Alpine security updates while constructing the digest-pinned API image.
+
+The SARIF annotation helper now has a direct-script import regression test so
+`python scripts/report_trivy_sarif.py ...` works on the Linux runner. This helper
+remains non-authoritative: the original Trivy step alone decides pass or fail.
+Retain the failed run URL and all three SARIF artifacts with the replacement
+run; do not approve a release until the replacement CI and Security Gate runs
+both finish successfully for the exact remediation commit.

@@ -12,7 +12,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.external_json import load_unique_json
+try:
+    from scripts.external_json import load_unique_json
+except ModuleNotFoundError:  # Direct script execution from scripts/.
+    from external_json import load_unique_json
 
 
 _MAX_SARIF_BYTES = 32 * 1024 * 1024

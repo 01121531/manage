@@ -271,7 +271,7 @@ def broker_contract_errors(
         "command -v \"$tool\"",
         "vault policy write \"$policy_name\" \"$policy_file\"",
         'vault read -format=json "sys/policies/acl/$policy_name"',
-        "jq -er '.data.policy'",
+        "jq -ej '.data.policy'",
         'vault policy fmt "$local_copy"',
         'vault policy fmt "$remote_copy"',
         'cmp -s "$local_copy" "$remote_copy"',

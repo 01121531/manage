@@ -32,8 +32,12 @@ CONTAINER_TOKEN_FILE = "/run/secrets/email-platform-vault/token"
 CONTAINER_TOKEN_DIRECTORY = "/run/secrets/email-platform-vault"
 MAX_TOKEN_BYTES = 4096
 MAX_ENV_INVENTORY_BYTES = 64 * 1024
-CONTAINER_UID = 10001
-CONTAINER_GID = 10001
+RUNTIME_UID = 10001
+RUNTIME_GID = 10001
+# Kept separate so POSIX tests can substitute the host-owned token leaf
+# identity without weakening the fixed container runtime identity contract.
+CONTAINER_UID = RUNTIME_UID
+CONTAINER_GID = RUNTIME_GID
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
@@ -93,7 +97,7 @@ def _validate_compose_contract(compose_file: Path) -> None:
     services = loaded["services"]
     for service_name, variable in SERVICE_TOKEN_DIRECTORIES.items():
         service = services[service_name]
-        if str(service.get("user")) != f"{CONTAINER_UID}:{CONTAINER_GID}":
+        if str(service.get("user")) != f"{RUNTIME_UID}:{RUNTIME_GID}":
             raise _InvalidSink
         if (service.get("environment") or {}).get(
             "PLATFORM_VAULT_TOKEN_FILE"

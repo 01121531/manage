@@ -1,9 +1,15 @@
 import json
 from pathlib import Path
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 
 from scripts.report_trivy_sarif import _github_escape, findings
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "report_trivy_sarif.py"
 
 
 class TrivySarifReporterTests(unittest.TestCase):
@@ -44,6 +50,25 @@ class TrivySarifReporterTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "runs"):
                 findings(report)
+
+    def test_runs_as_a_direct_script_from_the_repository_root(self) -> None:
+        with TemporaryDirectory() as directory:
+            report = Path(directory) / "report.sarif"
+            report.write_text('{"runs": [{"results": []}]}', encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), str(report)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.stdout.strip(),
+                "::notice::Trivy reported no HIGH/CRITICAL findings",
+            )
 
 
 if __name__ == "__main__":

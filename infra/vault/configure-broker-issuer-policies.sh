@@ -43,7 +43,7 @@ configure_policy() {
     policy_failed
   policy_json=$(vault read -format=json "sys/policies/acl/$policy_name" 2>/dev/null) ||
     policy_failed
-  printf '%s' "$policy_json" | jq -er '.data.policy' >"$remote_copy" 2>/dev/null ||
+  printf '%s' "$policy_json" | jq -ej '.data.policy' >"$remote_copy" 2>/dev/null ||
     policy_failed
   vault policy fmt "$local_copy" >/dev/null 2>&1 || policy_failed
   vault policy fmt "$remote_copy" >/dev/null 2>&1 || policy_failed
