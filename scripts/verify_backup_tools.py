@@ -805,7 +805,7 @@ def backup_key_contract_errors(
             "FileSecurity",
             '"handle_list": [inherited_handle]',
             "close_fds=True",
-            "timeout=15",
+            "timeout=60",
             '"System32"',
             '"WindowsPowerShell"',
             '"powershell.exe"',

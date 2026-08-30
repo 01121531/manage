@@ -52,7 +52,7 @@ class BackupKeyContractTests(unittest.TestCase):
             self.crypto.replace("SafeFileHandle", "PathHandle"),
             self.crypto.replace('"handle_list": [inherited_handle]', '"handle_list": []', 1),
             self.crypto.replace("close_fds=True", "close_fds=False", 1),
-            self.crypto.replace("timeout=15", "timeout=None", 1),
+            self.crypto.replace("timeout=60", "timeout=None", 1),
             self.crypto.replace(
                 "$rawHandle = [Console]::In.ReadToEnd()",
                 "$path = [Console]::In.ReadToEnd()\n$acl = Get-Acl -LiteralPath $path",

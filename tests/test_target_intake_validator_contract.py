@@ -161,17 +161,17 @@ class TargetIntakeValidatorContractTests(unittest.TestCase):
         direct_closure = direct["distribution_closure"]
         self.assertEqual(direct_closure["root_names"], list(contract.DEPENDENCY_ROOT_NAMES))
         self.assertIn("annotated-types", direct_closure["metadata_closure_names"])
-        self.assertNotIn("brotli", direct_closure["union_names"])
+        self.assertNotIn("pip", direct_closure["union_names"])
 
         selected = {
-            "owner_names": ["brotli"],
+            "owner_names": ["pip"],
             "origin_file_count": 1,
             "origin_map_sha256": "a" * 64,
         }
         loaded = contract._current_runtime_environment(selected)
         loaded_closure = loaded["distribution_closure"]
-        self.assertIn("brotli", loaded_closure["loaded_owner_names"])
-        self.assertIn("brotli", loaded_closure["union_names"])
+        self.assertIn("pip", loaded_closure["loaded_owner_names"])
+        self.assertIn("pip", loaded_closure["union_names"])
         self.assertIn("packaging", loaded_closure["union_names"])
         self.assertEqual(
             [item["name"] for item in loaded["distributions"]],

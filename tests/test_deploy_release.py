@@ -288,7 +288,9 @@ class FakeRunner:
 
 class DeployReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
-        digest_env_patch = mock.patch.dict(os.environ, THIRD_PARTY_DIGEST_ENV)
+        digest_env_patch = mock.patch.dict(
+            os.environ, THIRD_PARTY_DIGEST_ENV, clear=True
+        )
         digest_env_patch.start()
         self.addCleanup(digest_env_patch.stop)
         self.temp_dir = tempfile.TemporaryDirectory()

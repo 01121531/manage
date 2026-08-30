@@ -167,7 +167,7 @@ $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentif
                 "WINDIR": str(windows_directory),
                 "PATH": str(powershell.parent),
             },
-            timeout=15,
+            timeout=60,
         )
         acl = json.loads(result.stdout)
     except (
