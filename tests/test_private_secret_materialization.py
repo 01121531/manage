@@ -17,6 +17,14 @@ DIGEST = hashlib.sha256(RAW).hexdigest()
 
 
 class PrivateSecretMaterializationTests(unittest.TestCase):
+    def test_claim_id_and_digest_domains_are_distinct(self) -> None:
+        claim_id = "a" * 32
+        digest = "b" * 64
+        self.assertIsNotNone(materialization._CLAIM_ID.fullmatch(claim_id))
+        self.assertIsNone(materialization._CLAIM_ID.fullmatch(digest))
+        self.assertIsNotNone(materialization._SHA256.fullmatch(digest))
+        self.assertIsNone(materialization._SHA256.fullmatch(claim_id))
+
     def test_digest_and_input_are_closed_before_materialization(self) -> None:
         for raw, digest in (
             (b"", hashlib.sha256(b"").hexdigest()),

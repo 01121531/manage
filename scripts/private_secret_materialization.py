@@ -21,6 +21,7 @@ from typing import Any
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CLAIM_ID = re.compile(r"^[0-9a-f]{32}$")
 _ERROR = "private secret materialization failed"
 _FILENAME = "secret"
 _CLAIM_FILENAME = "claim.json"
@@ -578,7 +579,7 @@ def _verify_posix(path: Path, expected_sha256: str, state: _PosixState | _Window
         path.name != _FILENAME
         or path != state.file_path
         or path.parent.name != state.directory_name
-        or _SHA256.fullmatch(state.directory_name) is None
+        or _CLAIM_ID.fullmatch(state.directory_name) is None
         or _identity(root_metadata) != state.root_identity
         or _identity(os.lstat(state.root_path)) != state.root_identity
         or not stat.S_ISDIR(root_metadata.st_mode)

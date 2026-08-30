@@ -9,7 +9,8 @@ FROM nginxinc/nginx-unprivileged:1.30.4-alpine@sha256:93722936b82ec8a1178d48448e
 COPY infra/nginx/web.conf /etc/nginx/conf.d/default.conf
 COPY infra/nginx/validate-web-tls.sh /docker-entrypoint.d/10-validate-web-tls.sh
 USER root
-RUN chmod 0555 /docker-entrypoint.d/10-validate-web-tls.sh
+RUN apk upgrade --no-cache libcrypto3 libssl3 \
+    && chmod 0555 /docker-entrypoint.d/10-validate-web-tls.sh
 USER 101:101
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8443

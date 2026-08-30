@@ -46,8 +46,10 @@ failed closed before release. `pip-audit` identified four advisories against
 `libcrypto3` and `libssl3` 3.5.7-r0, whose scanner-fixed version is 3.5.8-r0.
 The API image also contained the same vulnerable Python package. The repository
 remediation raises the runtime dependency floor to `cryptography>=50.0.1,<51.0`,
-updates the Node and Nginx multi-platform image digest pins, and applies current
-Alpine security updates while constructing the digest-pinned API image.
+updates the Node and Nginx multi-platform image digest pins, and applies the
+scanner-required `libcrypto3`/`libssl3` security updates while constructing all
+three digest-pinned runtime images. Updating only the Nginx base digest was not
+sufficient because the current image still resolved both packages to 3.5.7-r0.
 
 The SARIF annotation helper now has a direct-script import regression test so
 `python scripts/report_trivy_sarif.py ...` works on the Linux runner. This helper
@@ -55,3 +57,11 @@ remains non-authoritative: the original Trivy step alone decides pass or fail.
 Retain the failed run URL and all three SARIF artifacts with the replacement
 run; do not approve a release until the replacement CI and Security Gate runs
 both finish successfully for the exact remediation commit.
+
+The first replacement run for commit `dc7d7ec942e4db90bdcc15944ae4538bd5bc4ac4`
+proved the dependency audit, Vault Linux gate and SARIF annotations, then failed
+closed on the remaining Nginx package versions and a POSIX materialization
+regression. The latter used the 64-character SHA-256 validator for a
+32-character random claim ID. The follow-up repair gives claim IDs their own
+closed validator and retains all owner, mode, identity, link-count and digest
+checks. Retain both failed replacement run URLs with the final green run.
