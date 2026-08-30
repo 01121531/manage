@@ -10,11 +10,82 @@ from scripts.phase6_rehearsal import (
     RehearsalError,
     SCHEMA_VERSION,
     _assert_no_secret,
+    _seal_evidence,
     main,
     run_rehearsal,
     verify_evidence,
     write_evidence,
 )
+
+
+def fixture_evidence(commit: str) -> dict[str, object]:
+    """Build valid sealed evidence without repeating the business-flow rehearsal."""
+
+    return _seal_evidence(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "evidence_kind": "phase6_ci_rehearsal",
+            "pilot_id": f"phase6-ci-rehearsal-{commit[:12]}",
+            "production_acceptance": False,
+            "source_commit": commit,
+            "identity_mode": "local_test",
+            "scenario": "login-task-card-mail-code-upload-close-audit",
+            "status": "passed",
+            "task_trace_id": "00000000-0000-4000-8000-000000000006",
+            "checks": {
+                "audit_resource_replay": True,
+                "audit_trace_replay": True,
+                "authenticated_platform_session": True,
+                "authorization_isolation": True,
+                "full_business_flow": True,
+                "one_time_verification": True,
+                "persistent_secret_scan": True,
+                "resource_cleanup": True,
+                "server_side_upload": True,
+            },
+            "resource_states": {
+                "card_allocation": "released",
+                "mail_session": "revoked_and_erased",
+                "outbox": "processed",
+                "task": "completed",
+                "upload_job": "succeeded",
+            },
+            "audit_event_types": [
+                "card.allocated",
+                "card.released",
+                "mail_session.code_checked",
+                "mail_session.code_consumed",
+                "mail_session.code_ready",
+                "mail_session.created",
+                "mail_session.revoked",
+                "mail_session.watermark_initialized",
+                "mailbox.health_changed",
+                "task.completed",
+                "task.created",
+                "upload.preflight_started",
+                "upload.provider_result_received",
+                "upload.provider_submit_started",
+                "upload.queued",
+                "upload.succeeded",
+            ],
+            "security": {
+                "ephemeral_secret_origins_excluded": [
+                    "auth.login.access_token",
+                    "mail_session.code.consume",
+                    "mail_session.create.session_token",
+                ],
+                "forbidden_sentinels_found": 0,
+                "persistent_surfaces": [
+                    "admin_audit_csv",
+                    "admin_audit_json",
+                    "application_logs",
+                    "database_rows",
+                    "metrics",
+                    "non_ephemeral_http_responses",
+                ],
+            },
+        }
+    )
 
 
 class Phase6RehearsalTests(unittest.TestCase):
@@ -34,6 +105,7 @@ class Phase6RehearsalTests(unittest.TestCase):
         first = run_rehearsal(commit)
         second = run_rehearsal(commit)
         self.assertEqual(first, second)
+        self.assertEqual(first, fixture_evidence(commit))
         self.assertEqual(first["schema_version"], SCHEMA_VERSION)
         self.assertEqual(first["status"], "passed")
         self.assertFalse(first["production_acceptance"])
@@ -55,7 +127,7 @@ class Phase6RehearsalTests(unittest.TestCase):
             self.assertEqual(list(evidence_path.parent.glob("*.tmp")), [])
 
     def test_verifier_rejects_tampering_and_unknown_fields(self) -> None:
-        evidence = run_rehearsal("b" * 40)
+        evidence = fixture_evidence("b" * 40)
         with tempfile.TemporaryDirectory() as directory:
             evidence_path = Path(directory) / "phase6-evidence.json"
             write_evidence(evidence_path, evidence)
@@ -74,7 +146,7 @@ class Phase6RehearsalTests(unittest.TestCase):
 
     def test_verifier_binds_evidence_to_expected_release_commit(self) -> None:
         commit = "c" * 40
-        evidence = run_rehearsal(commit)
+        evidence = fixture_evidence(commit)
         with tempfile.TemporaryDirectory() as directory:
             evidence_path = Path(directory) / "phase6-evidence.json"
             write_evidence(evidence_path, evidence)
@@ -102,7 +174,7 @@ class Phase6RehearsalTests(unittest.TestCase):
     def test_output_policy_rejects_relative_repository_and_existing_paths_before_run(
         self,
     ) -> None:
-        evidence = run_rehearsal("e" * 40)
+        evidence = fixture_evidence("e" * 40)
         with tempfile.TemporaryDirectory() as directory:
             existing = Path(directory) / "existing.json"
             existing.write_bytes(b"stale-evidence")
@@ -129,7 +201,7 @@ class Phase6RehearsalTests(unittest.TestCase):
             self.assertEqual(existing.read_bytes(), b"stale-evidence")
 
     def test_second_run_does_not_overwrite_committed_evidence(self) -> None:
-        evidence = run_rehearsal("f" * 40)
+        evidence = fixture_evidence("f" * 40)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "phase6-evidence.json"
             with mock.patch(
@@ -164,7 +236,7 @@ class Phase6RehearsalTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), original)
 
     def test_publish_race_preserves_target_winner_and_cleans_temporary_file(self) -> None:
-        evidence = run_rehearsal("1" * 40)
+        evidence = fixture_evidence("1" * 40)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "phase6-evidence.json"
 
@@ -182,7 +254,7 @@ class Phase6RehearsalTests(unittest.TestCase):
             self.assertEqual(list(output.parent.glob(f".{output.name}.*.tmp")), [])
 
     def test_publish_cleanup_failure_is_a_committed_success(self) -> None:
-        evidence = run_rehearsal("2" * 40)
+        evidence = fixture_evidence("2" * 40)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "phase6-evidence.json"
             with mock.patch(
@@ -193,7 +265,7 @@ class Phase6RehearsalTests(unittest.TestCase):
             self.assertEqual(verify_evidence(output), evidence)
 
     def test_prepublication_failure_leaves_no_final_or_temporary_file(self) -> None:
-        evidence = run_rehearsal("3" * 40)
+        evidence = fixture_evidence("3" * 40)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "phase6-evidence.json"
             with mock.patch(

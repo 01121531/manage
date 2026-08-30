@@ -624,7 +624,10 @@ def run_rehearsal(source_commit: str) -> dict[str, Any]:
         ) != 1:
             raise RehearsalError("upload worker did not process one job")
         if len(adapter.commands) != 1:
-            raise RehearsalError("upload worker crossed the boundary more than once")
+            raise RehearsalError(
+                "upload worker external-call count was "
+                f"{len(adapter.commands)} instead of one"
+            )
         completed_upload = _request(
             app,
             "GET",
