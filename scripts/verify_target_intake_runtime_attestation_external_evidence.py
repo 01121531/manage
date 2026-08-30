@@ -89,14 +89,27 @@ def verify_static_contract() -> list[str]:
         "gh attestation verify",
         "create_runtime_attestation_external_evidence_index.py",
         "runtime-attestation.external-evidence-index.json",
+        "promote-verified-container-release",
+        "Preflight every release tag before any promotion",
+        "Publish all verified release tags after aggregate preflight",
     )
     if any(marker not in release for marker in required_release):
         errors.append("release workflow does not capture and index the T207 evidence set")
     capture = release.find("- name: Capture raw provider evidence before promotion")
     verify = release.find("- name: Verify keyless image signature and SBOM attestation")
     index = release.find("- name: Build caller-pinnable external evidence index")
-    promote = release.find("- name: Publish verified release tag")
-    if min(capture, verify, index, promote) < 0 or not capture < verify < index < promote:
+    promoter = release.find("  promote-verified-container-release:")
+    preflight = release.find("- name: Preflight every release tag before any promotion")
+    promote = release.find(
+        "- name: Publish all verified release tags after aggregate preflight"
+    )
+    if (
+        min(capture, verify, index, promoter, preflight, promote) < 0
+        or not capture < verify < index < promoter < preflight < promote
+        or "    needs:\n      - verified-container-release" not in release[
+            promoter:preflight
+        ]
+    ):
         errors.append("T207 capture, verification, indexing, and promotion order drifted")
     capture_text = release[capture:verify]
     if "jq" in capture_text or "github-provenance.bundle.jsonl" not in capture_text:

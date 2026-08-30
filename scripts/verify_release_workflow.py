@@ -60,6 +60,7 @@ def workflow_errors(text: str) -> list[str]:
         "release-codeql",
         "release-security-gate",
         "verified-container-release",
+        "promote-verified-container-release",
         "verified-windows-release",
     }
     if not required_jobs.issubset(jobs):
@@ -232,6 +233,24 @@ def workflow_errors(text: str) -> list[str]:
     container_steps = named_steps("verified-container-release")
     if "Upload signed container release evidence" not in container_steps:
         errors.append("container release must upload signed evidence")
+    if "Publish verified release tag" in container_steps:
+        errors.append("container matrix must not publish a public release tag")
+    promoter = jobs["promote-verified-container-release"]
+    if isinstance(promoter, dict) and "if" in promoter:
+        errors.append("coordinated container promotion must not override dependency success")
+    promoter_needs = (
+        set(promoter.get("needs", [])) if isinstance(promoter, dict) else set()
+    )
+    if promoter_needs != {"verified-container-release"}:
+        errors.append("coordinated promotion must depend on every container matrix branch")
+    promoter_steps = named_steps("promote-verified-container-release")
+    for name in (
+        "Download all verified container evidence",
+        "Preflight every release tag before any promotion",
+        "Publish all verified release tags after aggregate preflight",
+    ):
+        if name not in promoter_steps:
+            errors.append(f"coordinated promotion is missing step: {name}")
     windows = jobs["verified-windows-release"]
     if isinstance(windows, dict) and "if" in windows:
         errors.append("Windows publication must not override dependency success")
@@ -241,7 +260,7 @@ def workflow_errors(text: str) -> list[str]:
         "release-browser-e2e",
         "release-codeql",
         "release-security-gate",
-        "verified-container-release",
+        "promote-verified-container-release",
     }:
         errors.append(
             "Windows publication must depend on quality, browser E2E, SAST, "

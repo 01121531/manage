@@ -21,12 +21,17 @@ class RuntimeAttestationExternalEvidenceStaticTests(unittest.TestCase):
                 errors = static_gate.verify_static_contract()
         self.assertTrue(any("network or subprocess" in error for error in errors), errors)
 
-    def test_promotion_before_index_mutation_is_rejected(self) -> None:
+    def test_promotion_without_matrix_completion_dependency_is_rejected(self) -> None:
         source = static_gate.RELEASE.read_text(encoding="utf-8")
-        first = source.index("- name: Build caller-pinnable external evidence index")
-        second = source.index("- name: Publish verified release tag")
-        index_block = source[first:second]
-        mutated = source[:first] + source[second:] + "\n" + index_block
+        promoter = source.index("  promote-verified-container-release:")
+        mutated = (
+            source[:promoter]
+            + source[promoter:].replace(
+                "    needs:\n      - verified-container-release",
+                "    needs: []",
+                1,
+            )
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.yml"
             path.write_text(mutated, encoding="utf-8")

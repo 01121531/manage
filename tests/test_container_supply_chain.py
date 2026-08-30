@@ -70,25 +70,27 @@ class ContainerSupplyChainTests(unittest.TestCase):
 
     def test_release_tag_cannot_precede_signature_verification(self) -> None:
         self.release = copy.deepcopy(self.release)
-        job = self.release["jobs"]["verified-container-release"]
-        steps = job["steps"]
-        promote = self.step(job, "Publish verified release tag")
-        steps.remove(promote)
+        matrix_job = self.release["jobs"]["verified-container-release"]
+        promoter = self.release["jobs"]["promote-verified-container-release"]
+        steps = matrix_job["steps"]
+        promote = copy.deepcopy(
+            self.step(promoter, "Publish all verified release tags after aggregate preflight")
+        )
         verify_index = steps.index(
-            self.step(job, "Verify keyless image signature and SBOM attestation")
+            self.step(matrix_job, "Verify keyless image signature and SBOM attestation")
         )
         steps.insert(verify_index, promote)
 
         errors = self.validate()
 
-        self.assertTrue(any("in order" in error for error in errors), errors)
+        self.assertTrue(any("matrix must not promote" in error for error in errors), errors)
 
     def test_release_tag_must_confirm_the_verified_digest(self) -> None:
         self.release = copy.deepcopy(self.release)
-        job = self.release["jobs"]["verified-container-release"]
-        promote = self.step(job, "Publish verified release tag")
+        job = self.release["jobs"]["promote-verified-container-release"]
+        promote = self.step(job, "Publish all verified release tags after aggregate preflight")
         promote["run"] = promote["run"].replace(
-            '[[ "$published_digest" != "$DIGEST" ]]',
+            '[[ "$published_digest" != "$digest" ]]',
             '[[ -z "$published_digest" ]]',
             1,
         )
@@ -104,19 +106,19 @@ class ContainerSupplyChainTests(unittest.TestCase):
         mutations.append(missing_concurrency)
 
         no_existing_digest_guard = copy.deepcopy(self.release)
-        job = no_existing_digest_guard["jobs"]["verified-container-release"]
-        promote = self.step(job, "Publish verified release tag")
-        promote["run"] = promote["run"].replace(
-            '[[ -z "$existing_digest" || "$existing_digest" != "$DIGEST" ]]',
+        job = no_existing_digest_guard["jobs"]["promote-verified-container-release"]
+        preflight = self.step(job, "Preflight every release tag before any promotion")
+        preflight["run"] = preflight["run"].replace(
+            '[[ -z "$existing_digest" || "$existing_digest" != "$digest" ]]',
             '[[ -z "$existing_digest" ]]',
             1,
         )
         mutations.append(no_existing_digest_guard)
 
         fail_open_inspection = copy.deepcopy(self.release)
-        job = fail_open_inspection["jobs"]["verified-container-release"]
-        promote = self.step(job, "Publish verified release tag")
-        promote["run"] = promote["run"].replace(
+        job = fail_open_inspection["jobs"]["promote-verified-container-release"]
+        preflight = self.step(job, "Preflight every release tag before any promotion")
+        preflight["run"] = preflight["run"].replace(
             "manifest unknown|not found", "anything", 1
         ).replace(
             "Cannot safely determine whether the release tag already exists",
@@ -129,6 +131,32 @@ class ContainerSupplyChainTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.release = mutation
                 self.assertTrue(self.validate())
+
+    def test_aggregate_preflight_covers_every_image_without_mutation(self) -> None:
+        mutations = []
+
+        missing_edge = copy.deepcopy(self.release)
+        job = missing_edge["jobs"]["promote-verified-container-release"]
+        preflight = self.step(job, "Preflight every release tag before any promotion")
+        preflight["run"] = preflight["run"].replace(
+            "for name in api web edge", "for name in api web", 1
+        )
+        mutations.append((missing_edge, "aggregate release-tag preflight is missing"))
+
+        mutating_preflight = copy.deepcopy(self.release)
+        job = mutating_preflight["jobs"]["promote-verified-container-release"]
+        preflight = self.step(job, "Preflight every release tag before any promotion")
+        preflight["run"] += (
+            '\ndocker buildx imagetools create --tag "$release_ref" '
+            '"${image}@${digest}"\n'
+        )
+        mutations.append((mutating_preflight, "must not mutate registry tags"))
+
+        for mutation, expected in mutations:
+            with self.subTest(expected=expected):
+                self.release = mutation
+                errors = self.validate()
+                self.assertTrue(any(expected in error for error in errors), errors)
 
     def test_windows_release_without_container_dependency_is_rejected(self) -> None:
         self.release = copy.deepcopy(self.release)
@@ -158,7 +186,11 @@ class ContainerSupplyChainTests(unittest.TestCase):
         self.assertTrue(any("Windows release must wait" in error for error in errors), errors)
 
     def test_publication_jobs_cannot_override_success_only_needs_semantics(self) -> None:
-        for job_name in ("verified-container-release", "verified-windows-release"):
+        for job_name in (
+            "verified-container-release",
+            "promote-verified-container-release",
+            "verified-windows-release",
+        ):
             with self.subTest(job_name=job_name):
                 self.release = copy.deepcopy(load_workflows()[1])
                 self.release["jobs"][job_name]["if"] = "${{ always() }}"
@@ -227,16 +259,14 @@ class ContainerSupplyChainTests(unittest.TestCase):
 
     def test_external_index_must_precede_release_tag_promotion(self) -> None:
         self.release = copy.deepcopy(self.release)
-        job = self.release["jobs"]["verified-container-release"]
-        steps = job["steps"]
-        index = self.step(job, "Build caller-pinnable external evidence index")
-        steps.remove(index)
-        promote_index = steps.index(self.step(job, "Publish verified release tag"))
-        steps.insert(promote_index + 1, index)
+        self.release["jobs"]["promote-verified-container-release"]["needs"] = []
 
         errors = self.validate()
 
-        self.assertTrue(any("in order" in error for error in errors), errors)
+        self.assertTrue(
+            any("wait for every container matrix branch" in error for error in errors),
+            errors,
+        )
 
     def test_mutable_base_image_is_rejected(self) -> None:
         dockerfiles = list(self.dockerfiles)

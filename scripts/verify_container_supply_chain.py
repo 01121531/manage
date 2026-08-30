@@ -132,9 +132,13 @@ def validate_supply_chain(
         errors.append("release workflow must serialize the same tag without cancellation")
     quality = _mapping(release_jobs.get("release-quality-gate"))
     container = _mapping(release_jobs.get("verified-container-release"))
+    promoter = _mapping(release_jobs.get("promote-verified-container-release"))
     windows = _mapping(release_jobs.get("verified-windows-release"))
-    if not quality or not container or not windows:
-        errors.append("release workflow must contain quality, container, and Windows jobs")
+    if not quality or not container or not promoter or not windows:
+        errors.append(
+            "release workflow must contain quality, container evidence, "
+            "coordinated promotion, and Windows jobs"
+        )
         return errors
     if "if" in container:
         errors.append("container publication must not override dependency success")
@@ -185,15 +189,21 @@ def validate_supply_chain(
         "Capture raw provider evidence before promotion",
         "Verify keyless image signature and SBOM attestation",
         "Build caller-pinnable external evidence index",
-        "Publish verified release tag",
         "Record immutable container evidence",
         "Upload signed container release evidence",
     )
     indexes = [_step_index(container, name) for name in ordered_steps]
     if -1 in indexes or indexes != sorted(indexes) or len(set(indexes)) != len(indexes):
         errors.append(
-            "release must build, scan, stage, sign, attest, verify, promote, and publish evidence in order"
+            "release must build, scan, stage, sign, attest, verify, and publish evidence in order"
         )
+    matrix_scripts = "\n".join(str(step.get("run", "")) for step in _steps(container))
+    if (
+        _step(container, "Publish verified release tag")
+        or _step(container, "Publish all verified release tags after aggregate preflight")
+        or "imagetools create --tag" in matrix_scripts
+    ):
+        errors.append("release matrix must not promote a public version tag")
 
     push_script = str(_step(container, "Push scanned staging digest").get("run", ""))
     for marker in (
@@ -259,17 +269,69 @@ def validate_supply_chain(
         if marker not in index_script:
             errors.append(f"release external evidence index is missing: {marker}")
 
-    promote_script = str(_step(container, "Publish verified release tag").get("run", ""))
+    if "if" in promoter:
+        errors.append("coordinated container promotion must not override dependency success")
+    if set(_list(promoter.get("needs"))) != {"verified-container-release"}:
+        errors.append("coordinated promotion must wait for every container matrix branch")
+    promoter_permissions = _mapping(promoter.get("permissions"))
+    if promoter_permissions != {"contents": "read", "packages": "write"}:
+        errors.append("coordinated promotion permissions must be exactly contents:read and packages:write")
+    promotion_steps = (
+        "Download all verified container evidence",
+        "Set up Docker Buildx for coordinated promotion",
+        "Login to GitHub Container Registry for coordinated promotion",
+        "Preflight every release tag before any promotion",
+        "Publish all verified release tags after aggregate preflight",
+    )
+    promotion_indexes = [_step_index(promoter, name) for name in promotion_steps]
+    if (
+        -1 in promotion_indexes
+        or promotion_indexes != sorted(promotion_indexes)
+        or len(set(promotion_indexes)) != len(promotion_indexes)
+    ):
+        errors.append("coordinated promotion must download, preflight, then publish in order")
+    download = _step(promoter, "Download all verified container evidence")
+    download_with = _mapping(download.get("with"))
+    if (
+        download_with.get("pattern") != "container-release-*"
+        or download_with.get("merge-multiple") is not True
+    ):
+        errors.append("coordinated promotion must merge all verified matrix evidence")
+    preflight_script = str(
+        _step(promoter, "Preflight every release tag before any promotion").get("run", "")
+    )
     for marker in (
-        'release_ref="${IMAGE}:${GITHUB_REF_NAME}"',
+        "for name in api web edge",
+        'metadata="supply-chain/${name}.metadata.json"',
+        'image="$(jq -er \'.image\' "$metadata")"',
+        'digest="$(jq -er \'.digest\' "$metadata")"',
+        'tag="$(jq -er \'.tag\' "$metadata")"',
+        'commit="$(jq -er \'.commit\' "$metadata")"',
+        '"$tag" != "$GITHUB_REF_NAME"',
+        '"$commit" != "$GITHUB_SHA"',
+        'release_ref="${image}:${GITHUB_REF_NAME}"',
         'docker buildx imagetools inspect "$release_ref"',
         "manifest unknown|not found",
-        '[[ -z "$existing_digest" || "$existing_digest" != "$DIGEST" ]]',
+        '[[ -z "$existing_digest" || "$existing_digest" != "$digest" ]]',
         "Cannot safely determine whether the release tag already exists",
-        'docker tag "$CANDIDATE" "$release_ref"',
-        'push_output="$(docker push "$release_ref")"',
+    ):
+        if marker not in preflight_script:
+            errors.append(f"aggregate release-tag preflight is missing: {marker}")
+    if "imagetools create" in preflight_script or "docker push" in preflight_script:
+        errors.append("aggregate release-tag preflight must not mutate registry tags")
+    promote_script = str(
+        _step(promoter, "Publish all verified release tags after aggregate preflight").get(
+            "run", ""
+        )
+    )
+    for marker in (
+        "for name in api web edge",
+        'metadata="supply-chain/${name}.metadata.json"',
+        'release_ref="${image}:${GITHUB_REF_NAME}"',
+        'docker buildx imagetools create --tag "$release_ref" "${image}@${digest}"',
+        'docker buildx imagetools inspect "$release_ref"',
         'published_digest=',
-        '[[ "$published_digest" != "$DIGEST" ]]',
+        '[[ "$published_digest" != "$digest" ]]',
     ):
         if marker not in promote_script:
             errors.append(f"verified release-tag promotion is missing: {marker}")
@@ -282,7 +344,7 @@ def validate_supply_chain(
         "release-browser-e2e",
         "release-codeql",
         "release-security-gate",
-        "verified-container-release",
+        "promote-verified-container-release",
     }:
         errors.append(
             "Windows release must wait for quality, browser E2E, SAST, dependency, and verified container publication"

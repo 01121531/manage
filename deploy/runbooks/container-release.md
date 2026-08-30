@@ -8,13 +8,18 @@ deployable release tag. The three application images follow this order:
 2. `Push scanned staging digest`; do not push `${GITHUB_REF_NAME}` here.
 3. Keyless-sign the exact digest, attach the SPDX attestation and GitHub build
    provenance, then verify the expected workflow identity and OIDC issuer.
-4. `Publish verified release tag` only after verification. The registry push
-   response digest must equal the already verified digest. Runs for the same
-   Git ref are serialized without cancellation; promotion refuses to overwrite
-   an existing version tag that resolves to a different or ambiguous digest,
-   and registry inspection errors fail closed.
-5. Record and upload the digest-bound metadata, SBOM and scan evidence before
-   Windows/GitHub Release publication can proceed.
+4. Record and upload each digest-bound metadata set, SBOM and scan result. The
+   matrix job does not publish a stable version tag.
+5. After all three matrix branches succeed, the aggregate promotion job
+   downloads the API/Web/Edge evidence and performs a read-only preflight for
+   all three release tags before making any registry change. It rejects a tag
+   that resolves to a different or ambiguous digest, and inspection errors fail
+   closed.
+6. Only after the complete preflight succeeds, publish all three verified
+   release tags and confirm each registry response resolves to its already
+   verified digest. Runs for the same Git ref are serialized without
+   cancellation. Windows/GitHub Release publication waits for this aggregate
+   job.
 
 The workflow's non-authoritative GitHub annotation helper reads each Trivy
 SARIF once through a stable regular-file handle with a 32 MiB limit and rejects
@@ -26,6 +31,14 @@ If signing, attestation, provenance or verification fails, the stable version
 tag must not exist. A `sha-${GITHUB_SHA}` staging reference left by a failed job
 is not approved for deployment; consumers must use the signed digest from the
 release manifest, never infer trust from a tag.
+
+The aggregate read-only preflight removes partial publication caused by one
+matrix branch promoting while another branch later fails validation. GHCR does
+not provide a cross-repository transaction for the API/Web/Edge tags, so a
+network or registry failure during the subsequent three writes can still leave
+a partially visible tag set. Treat the GitHub Release and its three matching
+digest records as the deployable-set boundary; operators must not deploy an
+incomplete set.
 
 Run the repository preflight with:
 

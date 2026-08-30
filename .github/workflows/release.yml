@@ -474,39 +474,6 @@ jobs:
             --tag "$GITHUB_REF_NAME" \
             --captured-at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-      - name: Publish verified release tag
-        shell: bash
-        env:
-          CANDIDATE: ${{ steps.image.outputs.candidate }}
-          DIGEST: ${{ steps.push.outputs.digest }}
-          IMAGE: ${{ steps.image.outputs.image }}
-        run: |
-          set -euo pipefail
-          release_ref="${IMAGE}:${GITHUB_REF_NAME}"
-          set +e
-          existing_output="$(docker buildx imagetools inspect "$release_ref" 2>&1)"
-          inspect_status=$?
-          set -e
-          existing_digest=""
-          if [[ $inspect_status -eq 0 ]]; then
-            existing_digest="$(printf '%s\n' "$existing_output" | sed -nE 's/^Digest:[[:space:]]+(sha256:[0-9a-f]{64})$/\1/p' | head -n 1)"
-            if [[ -z "$existing_digest" || "$existing_digest" != "$DIGEST" ]]; then
-              echo "Existing release tag is ambiguous or points to another digest" >&2
-              exit 1
-            fi
-          elif ! grep -Eqi 'manifest unknown|not found' <<<"$existing_output"; then
-            echo "Cannot safely determine whether the release tag already exists" >&2
-            exit 1
-          fi
-          docker tag "$CANDIDATE" "$release_ref"
-          push_output="$(docker push "$release_ref")"
-          printf '%s\n' "$push_output"
-          published_digest="$(printf '%s\n' "$push_output" | sed -nE 's/^digest: (sha256:[0-9a-f]{64}) size:.*$/\1/p' | tail -n 1)"
-          if [[ "$published_digest" != "$DIGEST" ]]; then
-            echo "Published release tag digest does not match verified digest" >&2
-            exit 1
-          fi
-
       - name: Record immutable container evidence
         shell: bash
         env:
@@ -542,13 +509,95 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  promote-verified-container-release:
+    needs:
+      - verified-container-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download all verified container evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: container-release-*
+          path: supply-chain
+          merge-multiple: true
+
+      - name: Set up Docker Buildx for coordinated promotion
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to GitHub Container Registry for coordinated promotion
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preflight every release tag before any promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="${GITHUB_REPOSITORY,,}"
+          for name in api web edge; do
+            metadata="supply-chain/${name}.metadata.json"
+            test -f "$metadata"
+            image="$(jq -er '.image' "$metadata")"
+            digest="$(jq -er '.digest' "$metadata")"
+            tag="$(jq -er '.tag' "$metadata")"
+            commit="$(jq -er '.commit' "$metadata")"
+            if [[ "$image" != "ghcr.io/${repository}-${name}" ||
+                  "$digest" != sha256:* || ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ||
+                  "$tag" != "$GITHUB_REF_NAME" || "$commit" != "$GITHUB_SHA" ]]; then
+              echo "Container evidence binding is invalid for ${name}" >&2
+              exit 1
+            fi
+            release_ref="${image}:${GITHUB_REF_NAME}"
+            set +e
+            existing_output="$(docker buildx imagetools inspect "$release_ref" 2>&1)"
+            inspect_status=$?
+            set -e
+            if [[ $inspect_status -eq 0 ]]; then
+              existing_digest="$(printf '%s\n' "$existing_output" | sed -nE 's/^Digest:[[:space:]]+(sha256:[0-9a-f]{64})$/\1/p' | head -n 1)"
+              if [[ -z "$existing_digest" || "$existing_digest" != "$digest" ]]; then
+                echo "Existing release tag is ambiguous or points to another digest" >&2
+                exit 1
+              fi
+            elif ! grep -Eqi 'manifest unknown|not found' <<<"$existing_output"; then
+              echo "Cannot safely determine whether the release tag already exists" >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish all verified release tags after aggregate preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in api web edge; do
+            metadata="supply-chain/${name}.metadata.json"
+            image="$(jq -er '.image' "$metadata")"
+            digest="$(jq -er '.digest' "$metadata")"
+            release_ref="${image}:${GITHUB_REF_NAME}"
+            docker buildx imagetools create --tag "$release_ref" "${image}@${digest}"
+            published_output="$(docker buildx imagetools inspect "$release_ref")"
+            published_digest="$(printf '%s\n' "$published_output" | sed -nE 's/^Digest:[[:space:]]+(sha256:[0-9a-f]{64})$/\1/p' | head -n 1)"
+            if [[ "$published_digest" != "$digest" ]]; then
+              echo "Published release tag digest does not match verified digest" >&2
+              exit 1
+            fi
+          done
+
   verified-windows-release:
     needs:
       - release-quality-gate
       - release-browser-e2e
       - release-codeql
       - release-security-gate
-      - verified-container-release
+      - promote-verified-container-release
     runs-on: windows-latest
     permissions:
       contents: write

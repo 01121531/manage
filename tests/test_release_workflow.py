@@ -195,9 +195,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         windows_without_e2e = text.replace(
             "      - release-browser-e2e\n      - release-codeql\n"
-            "      - release-security-gate\n      - verified-container-release",
+            "      - release-security-gate\n      - promote-verified-container-release",
             "      - release-codeql\n      - release-security-gate\n"
-            "      - verified-container-release",
+            "      - promote-verified-container-release",
             1,
         )
         self.assertTrue(workflow_errors(windows_without_e2e))
@@ -206,7 +206,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
         )
-        for job_name in ("verified-container-release", "verified-windows-release"):
+        for job_name in (
+            "verified-container-release",
+            "promote-verified-container-release",
+            "verified-windows-release",
+        ):
             mutated = text.replace(
                 f"  {job_name}:\n    needs:",
                 f"  {job_name}:\n    if: ${{{{ always() }}}}\n    needs:",
@@ -282,8 +286,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         windows_without_security = text.replace(
             "      - release-codeql\n      - release-security-gate\n"
-            "      - verified-container-release",
-            "      - verified-container-release",
+            "      - promote-verified-container-release",
+            "      - promote-verified-container-release",
             1,
         )
         self.assertTrue(workflow_errors(windows_without_security))
@@ -458,6 +462,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "release-security-gate",
             "release-browser-e2e",
             "verified-container-release",
+            "promote-verified-container-release",
         ):
             self.assertEqual(original["jobs"][job_name]["runs-on"], "ubuntu-24.04")
             for unsafe in ("ubuntu-latest", "ubuntu-22.04", "self-hosted"):
