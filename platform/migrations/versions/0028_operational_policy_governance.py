@@ -15,8 +15,18 @@ down_revision: str | None = "0027_card_allocation_reason"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_POSTGRES_VERSION_TABLE_EXPANSION = (
+    "ALTER TABLE alembic_version "
+    "ALTER COLUMN version_num TYPE VARCHAR(255)"
+)
+
 
 def upgrade() -> None:
+    if op.get_bind().dialect.name == "postgresql":
+        # Alembic creates VARCHAR(32) by default. This is the first revision
+        # whose immutable identifier exceeds that boundary, so widen before
+        # Alembic records the successful revision.
+        op.execute(_POSTGRES_VERSION_TABLE_EXPANSION)
     op.create_table(
         "operational_policy_versions",
         sa.Column("id", sa.String(length=36), nullable=False),

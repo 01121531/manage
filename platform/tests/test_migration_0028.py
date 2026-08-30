@@ -1,4 +1,5 @@
 import os
+from io import StringIO
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,35 @@ COMPATIBILITY_FLOOR = "0024_schema_compatibility"
 
 
 class OperationalPolicyGovernanceMigrationTests(unittest.TestCase):
+    def test_postgresql_offline_sql_widens_version_table_before_revision(self) -> None:
+        url = "postgresql+psycopg://offline:offline@invalid.example/email_platform"
+        previous = os.environ.get("ALEMBIC_DATABASE_URL")
+        os.environ["ALEMBIC_DATABASE_URL"] = url
+        try:
+            output = StringIO()
+            config = Config(str(ROOT / "alembic.ini"), output_buffer=output)
+            command.upgrade(
+                config,
+                f"{PREVIOUS_REVISION}:{REVISION}",
+                sql=True,
+            )
+            sql = output.getvalue()
+        finally:
+            if previous is None:
+                os.environ.pop("ALEMBIC_DATABASE_URL", None)
+            else:
+                os.environ["ALEMBIC_DATABASE_URL"] = previous
+
+        expansion = (
+            "ALTER TABLE alembic_version "
+            "ALTER COLUMN version_num TYPE VARCHAR(255)"
+        )
+        stamp = f"SET version_num='{REVISION}'"
+        self.assertIn(expansion, sql)
+        self.assertIn(stamp, sql)
+        self.assertLess(sql.index(expansion), sql.index(stamp))
+        self.assertNotIn("TYPE VARCHAR(32)", sql)
+
     def test_upgrade_adds_policy_tables_and_frozen_runtime_columns(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "operational-policies.db"

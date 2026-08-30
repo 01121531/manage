@@ -29,6 +29,11 @@ The PostgreSQL preflight uses a bounded, data-dependent aggregate divisor: an
 empty invalid-row set returns normally, while one actual invalid row makes the
 divisor zero and aborts. Do not replace it with a literal `1 / 0` inside `CASE`;
 PostgreSQL may fold that constant during planning even when the branch is false.
+Revision `0028_operational_policy_governance` is the first immutable revision ID
+longer than Alembic's default 32-character version column. Its hash-bound,
+PostgreSQL-only first statement widens only `alembic_version.version_num` to
+`VARCHAR(255)` before Alembic records 0028; do not rename historical revisions
+or generalize this exception to application tables.
 
 ## Rollout sequence
 

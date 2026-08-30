@@ -185,6 +185,14 @@ def _sql_code_only(sql: str) -> str:
 
 def _sql_error(sql: str) -> str | None:
     code = _sql_code_only(sql)
+    # The first revision identifier over Alembic's default 32-character
+    # version table boundary must widen only that metadata column.
+    if re.fullmatch(
+        r"ALTER TABLE ALEMBIC_VERSION ALTER COLUMN VERSION_NUM "
+        r"TYPE VARCHAR\(255\);?",
+        code,
+    ):
+        return None
     # Reviewed security invariant for revision 0020. Keep this exception
     # deliberately exact so CREATE TRIGGER cannot become a generic dynamic-SQL
     # escape hatch for later migrations.

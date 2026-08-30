@@ -31,7 +31,7 @@
     "0025_oidc_session_revocations.py": "1c6f6ec13778917c8dbb18f76a24a94b6caca68ddbc2bc29ba85221d53e16fe9",
     "0026_mail_message_metadata.py": "21497d96cb399fecaa08017edf934cef11655da0fb4b1da21a6355f47ab81c74",
     "0027_card_allocation_reason.py": "49ec46ca90991590ea10e6f971b51d3a08d3d054222d73cab57e5c95f0043aae",
-    "0028_operational_policy_governance.py": "81a1bc55522a3512b09dffea4549bb3e0aaad4cc1e0528473b1a8b0480bb0638",
+    "0028_operational_policy_governance.py": "9c69916e615ca343825f55bf59719b934589211645c6e7e7be8594c54198a7ac",
     "0029_card_replacement.py": "6333748895435193d94ea44cae674acdf9505bf92e31793479ef6ad450bbd047",
     "0030_mailbox_task_routing.py": "ca47bc4c2add22e2c519c18092bcd54572c516cf0f2d69bced600cd2ca3bbdeb",
     "0031_card_pool_routing.py": "cab4de46421452504ca2b3a3cd09665ef92ca751fa57586b2cdf1ea863248f75",

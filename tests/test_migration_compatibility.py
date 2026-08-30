@@ -286,6 +286,16 @@ class MigrationCompatibilityTests(unittest.TestCase):
             "raw drop": 'op.execute(sa.text("DROP TABLE users"))',
             "raw set not null": 'op.execute("ALTER TABLE users ALTER COLUMN email SET NOT NULL")',
             "raw non-null add": 'op.execute("ALTER TABLE users ADD COLUMN x TEXT NOT NULL")',
+            "version table wrong target": (
+                'op.execute("ALTER TABLE users ALTER COLUMN version_num TYPE VARCHAR(255)")'
+            ),
+            "version table wrong width": (
+                'op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(32)")'
+            ),
+            "version table statement suffix": (
+                'op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num '
+                'TYPE VARCHAR(255); SELECT 1")'
+            ),
             "different trigger target": (
                 'op.execute("CREATE TRIGGER audit_events_subject_binding BEFORE INSERT ON users '
                 'FOR EACH ROW EXECUTE FUNCTION audit_events_validate_subject_binding()")'
