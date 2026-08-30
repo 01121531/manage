@@ -1465,6 +1465,56 @@ and a cross-host latest-head/fork/rollback review. Do not combine several
 provider semantics into one claimed receipt, and do not fill these fields from
 the release workflow.
 
+## T209 provider selection profile
+
+Validate the repository-neutral selection policy and its synthetic schema
+fixture before collecting a real approval:
+
+```powershell
+python scripts/target_intake_runtime_attestation_provider_selection.py verify-repository
+python scripts/verify_target_intake_runtime_attestation_provider_selection.py
+```
+
+The policy fixes the T207 external-evidence policy raw SHA-256 as its
+predecessor and deliberately leaves `selected_provider_kind` null. Do not edit
+that policy to make a production choice. Create one canonical profile outside
+the repository, choose exactly one allowed provider, retain the profile SHA-256
+through an independent reviewed channel, and run:
+
+```powershell
+python scripts/target_intake_runtime_attestation_provider_selection.py verify `
+  --profile D:\external-evidence\provider-selection.json `
+  --expected-policy-sha256 1b678805c08f97331cd76aa1c1139fc095edd5271ba9f95d00546fa67e274581 `
+  --expected-profile-sha256 <independently-recorded-profile-sha256>
+```
+
+The profile must keep the immutable entry namespace and mutable latest-head
+locator distinct. AWS uses `If-Match` against the caller-pinned ETag and treats
+409/412 as failed competing writes; Azure uses `If-Match`/ETag and 412; GCP
+uses `ifGenerationMatch`/generation and 412. A failed conditional write is a
+review event and must not be retried automatically. The selected adapter must
+later return the provider's opaque version/generation, read the write back,
+prove the protected version cannot be deleted, and supply cross-host
+latest-head/fork/rollback evidence.
+
+Primary provider references: [AWS conditional
+writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html),
+[AWS Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html),
+[Azure conditional
+headers](https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations),
+[Azure version-level
+immutability](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-policy-configure-version-scope),
+[GCP request
+preconditions](https://cloud.google.com/storage/docs/request-preconditions), and
+[GCP Bucket Lock](https://cloud.google.com/storage/docs/using-bucket-lock).
+
+The verifier authenticates caller-pinned bytes and the closed selection shape;
+it does not authenticate the reviewer or call the provider. The mandatory
+operator conclusion is: provider selection does not establish provider custody.
+`reviewer_authority`, `provider_native_cas`, `provider_custody`, and
+`production_acceptance=false` remain unverified/false until the real adapter
+and target evidence pass independent review.
+
 ## T208 three-image external evidence handoff
 
 The T208 verifier closes the cross-image release boundary that three separate

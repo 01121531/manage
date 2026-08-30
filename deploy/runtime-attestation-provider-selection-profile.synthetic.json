@@ -1,0 +1,34 @@
+{
+  "approval": {
+    "decision_id": "provider-selection-fixture-0001",
+    "provider_account_ref": "synthetic://aws/account/example",
+    "reviewed_at": "2026-08-19T00:00:00Z",
+    "reviewer_ref": "synthetic://reviewer/provider-selection",
+    "target_environment": "synthetic-fixture",
+    "valid_until": "2026-08-20T00:00:00Z"
+  },
+  "policy_sha256": "1b678805c08f97331cd76aa1c1139fc095edd5271ba9f95d00546fa67e274581",
+  "predecessor_policy_sha256": "3c52cacdf836ba3c63288adf053871e8943cbe8c21676ce7c4fe1381a4820bbd",
+  "production_acceptance": false,
+  "profile_kind": "runtime_attestation_provider_selection_profile",
+  "provider": {
+    "head_precondition": "if_match_etag",
+    "immutability_control": "s3_object_lock_compliance",
+    "immutable_entry_namespace_ref": "synthetic://aws/s3/example/entries",
+    "mutable_head_locator_ref": "synthetic://aws/s3/example/head/latest.json",
+    "namespace_ref": "synthetic://aws/s3/example",
+    "no_automatic_retry": true,
+    "post_write_readback_required": true,
+    "protected_version_delete_denial_required": true,
+    "stale_failure_outcomes": [
+      "http_409_conflict",
+      "http_412_precondition_failed"
+    ],
+    "version_identity_field": "version_id",
+    "workload_identity_ref": "synthetic://aws/iam/role/provider-writer"
+  },
+  "review_status": "approved_assertion",
+  "schema_version": 1,
+  "selected_provider_kind": "aws_s3_object_lock",
+  "synthetic": true
+}

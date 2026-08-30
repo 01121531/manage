@@ -351,6 +351,15 @@ The Phase 6 CI rehearsal is only a preflight artifact and must have
 - Selected provider-native adapter, stale-write failure, immutable version, retention/delete-denial/readback and cross-host latest-head/fork/rollback review (currently `unconfigured`):
 - Required conclusion: captured external evidence is not runtime authority; original execution, runtime authority and `production_acceptance=false` remain unchanged.
 
+### Provider selection boundary
+
+- Caller-pinned T209 provider-selection policy SHA-256 and repository-external profile SHA-256:
+- Exactly one selected provider kind (`aws_s3_object_lock`, `azure_blob_immutable`, or `gcp_cloud_storage_generation`):
+- Independent reviewer identity/authority and profile validity-window evidence:
+- Confirmation that immutable entry and mutable head are distinct and automatic retry is disabled after a stale-write failure:
+- Provider-native opaque version/generation, retention, delete-denial/readback and cross-host latest-head/fork/rollback evidence (currently `unverified`):
+- Required conclusion: provider selection does not establish provider custody; reviewer authority, provider-native CAS, custody and `production_acceptance=false` remain unverified/false.
+
 ### Three-image release handoff boundary
 
 - Caller-pinned T208 three-image release handoff, including independent handoff SHA-256 and ordered api/web/edge index SHA-256 values:

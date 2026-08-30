@@ -1,0 +1,68 @@
+{
+  "adapter_contract": {
+    "head_and_entry_must_be_distinct": true,
+    "immutable_entry_write_once": true,
+    "no_automatic_retry": true,
+    "post_write_readback_required": true,
+    "prior_head_must_be_caller_pinned": true,
+    "stale_write_must_fail": true
+  },
+  "allowed_provider_kinds": [
+    "aws_s3_object_lock",
+    "azure_blob_immutable",
+    "gcp_cloud_storage_generation"
+  ],
+  "policy_kind": "runtime_attestation_provider_selection_policy",
+  "policy_status": "external_selection_required",
+  "predecessor": {
+    "policy_kind": "runtime_attestation_external_evidence_policy",
+    "raw_sha256": "3c52cacdf836ba3c63288adf053871e8943cbe8c21676ce7c4fe1381a4820bbd",
+    "schema_version": 1
+  },
+  "production_acceptance": false,
+  "profile_requirements": [
+    "external_approval_assertion",
+    "caller_pinned_policy_and_profile",
+    "authenticated_workload_identity_ref",
+    "immutable_entry_namespace_ref",
+    "mutable_head_locator_ref",
+    "provider_native_cas",
+    "no_automatic_retry",
+    "post_write_readback",
+    "retention_configuration_ref",
+    "opaque_version_identity",
+    "protected_version_delete_denial",
+    "cross_host_latest_head",
+    "fork_and_rollback_review"
+  ],
+  "provider_semantics": {
+    "aws_s3_object_lock": {
+      "head_precondition": "if_match_etag",
+      "immutability_control": "s3_object_lock_compliance",
+      "stale_failure_outcomes": [
+        "http_409_conflict",
+        "http_412_precondition_failed"
+      ],
+      "version_identity_field": "version_id"
+    },
+    "azure_blob_immutable": {
+      "head_precondition": "if_match_etag",
+      "immutability_control": "azure_version_level_locked_time_retention",
+      "stale_failure_outcomes": [
+        "http_412_precondition_failed"
+      ],
+      "version_identity_field": "version_id"
+    },
+    "gcp_cloud_storage_generation": {
+      "head_precondition": "if_generation_match",
+      "immutability_control": "gcs_locked_bucket_retention_policy",
+      "stale_failure_outcomes": [
+        "http_412_precondition_failed"
+      ],
+      "version_identity_field": "generation"
+    }
+  },
+  "schema_version": 1,
+  "selected_provider_kind": null,
+  "synthetic": false
+}
