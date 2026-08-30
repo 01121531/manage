@@ -25,6 +25,10 @@ trigger name, table, event and function tuple; changing any part or appending SQ
 fails the gate. Before rollout, the preflight must report no historical invalid
 row. If it fails, stop the release and investigate under an approved incident
 procedure; never disable the append-only guards or silently rewrite audit rows.
+The PostgreSQL preflight uses a bounded, data-dependent aggregate divisor: an
+empty invalid-row set returns normally, while one actual invalid row makes the
+divisor zero and aborts. Do not replace it with a literal `1 / 0` inside `CASE`;
+PostgreSQL may fold that constant during planning even when the branch is false.
 
 ## Rollout sequence
 

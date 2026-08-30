@@ -23,7 +23,7 @@
   "reviewed_expansions": {
     "0018_access_token_revocations.py": "d510e01c07cf5558418e474e7e0f95ab4683691195db0904e2b570d2daa869bd",
     "0019_admin_role_change_approval.py": "51bbda30e14f88afdeea1b6292fed854775ec09d51dad7bb8c869a2b9f833a85",
-    "0020_audit_event_subject_binding.py": "930f1838631a484546c1bb0c3d8891b31334a3c3779053f35a25e80fb8254f21",
+    "0020_audit_event_subject_binding.py": "fcac649e464cdc18e226dae8c4f7441b6e7c3c104d23871e6c48370eabffff59",
     "0021_audit_archive_index.py": "daa62faa6a22413ba994fe06d8c20af00b6d6f752db635d7df4bf88e74bfe540",
     "0022_card_quarantine.py": "f5c89adfddd163cabd939477d8a10f4a4835e1409994acf84dbfd39115b95cd3",
     "0023_card_events.py": "08efb4a2ff801969eb7bdefcc987b8197cb517b5504163728a95d3698a26f774",

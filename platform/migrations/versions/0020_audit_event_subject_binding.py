@@ -35,7 +35,8 @@ LIMIT 1
 """
 
 _POSTGRES_PREFLIGHT_QUERY = """
-SELECT CASE WHEN EXISTS (
+SELECT 1 / (1 - COUNT(*)) AS audit_event_subject_bindings_valid
+FROM (
         SELECT 1
         FROM audit_events
         LEFT JOIN users
@@ -51,7 +52,8 @@ SELECT CASE WHEN EXISTS (
             (audit_events.device_id IS NOT NULL AND (
                 audit_events.user_id IS NULL OR devices.id IS NULL
             ))
-    ) THEN 1 / 0 ELSE 1 END AS audit_event_subject_bindings_valid
+        LIMIT 1
+    ) AS invalid_audit_event_subject_binding
 """
 
 _SQLITE_TRIGGER = """
@@ -111,8 +113,8 @@ $$;
 def _preflight_subject_bindings() -> None:
     if op.get_bind().dialect.name == "postgresql":
         # Keep offline release SQL fail-closed without dynamic SQL or a
-        # temporary privileged function. PostgreSQL short-circuits CASE, so
-        # any invalid historical binding aborts the migration.
+        # temporary privileged function. The bounded aggregate returns 0 or 1;
+        # only a real invalid row makes the data-dependent divisor zero.
         op.execute(_POSTGRES_PREFLIGHT_QUERY)
         return
     invalid = op.get_bind().execute(sa.text(_INVALID_BINDING_QUERY)).first()

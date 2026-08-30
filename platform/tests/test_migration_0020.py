@@ -230,8 +230,9 @@ class AuditEventSubjectBindingMigrationTests(unittest.TestCase):
             self._restore_url(previous)
 
         for required in (
-            "SELECT CASE WHEN EXISTS",
-            "THEN 1 / 0 ELSE 1 END AS audit_event_subject_bindings_valid",
+            "SELECT 1 / (1 - COUNT(*)) AS audit_event_subject_bindings_valid",
+            "LIMIT 1",
+            "AS invalid_audit_event_subject_binding",
             "CREATE FUNCTION audit_events_validate_subject_binding()",
             "RAISE EXCEPTION 'audit_events subject binding invalid'",
             "USING ERRCODE = '23503'",
@@ -241,13 +242,15 @@ class AuditEventSubjectBindingMigrationTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, sql)
 
-        preflight_start = sql.index("SELECT CASE WHEN EXISTS")
+        preflight_start = sql.index(
+            "SELECT 1 / (1 - COUNT(*)) AS audit_event_subject_bindings_valid"
+        )
         trigger_function_start = sql.index(
             "CREATE FUNCTION audit_events_validate_subject_binding()"
         )
         self.assertLess(preflight_start, trigger_function_start)
         preflight_sql = sql[preflight_start:trigger_function_start]
-        for forbidden in ("DO $$", "EXECUTE ", "CALL "):
+        for forbidden in ("1 / 0", "DO $$", "EXECUTE ", "CALL "):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, preflight_sql)
 
