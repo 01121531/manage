@@ -77,7 +77,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("phase6_rehearsal.py verify", quality_gate)
 
         missing_external_output = workflow.replace(
-            "      PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
+            "          PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
             "",
             1,
         )
@@ -87,6 +87,15 @@ class CiWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(verification_errors(missing_external_output))
         self.assertTrue(verification_errors(repository_output))
+
+        job_level_runner_context = workflow.replace(
+            "        env:\n"
+            "          PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
+            "    env:\n"
+            "      PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
+            1,
+        )
+        self.assertTrue(verification_errors(job_level_runner_context))
 
     def test_ci_quality_gate_cannot_omit_migration_compatibility(self) -> None:
         quality_gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")

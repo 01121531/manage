@@ -330,12 +330,20 @@ def verification_errors(
     quality_steps = quality_job.get("steps", [])
     quality_serialized = "\n".join(str(step) for step in quality_steps)
     phase6_output = "${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json"
-    quality_environment = quality_job.get("env", {})
+    quality_step = next(
+        (
+            step
+            for step in quality_steps
+            if isinstance(step, dict) and step.get("name") == "Run quality gate"
+        ),
+        {},
+    )
+    quality_environment = quality_step.get("env", {})
     if (
         not isinstance(quality_environment, dict)
         or quality_environment.get("PHASE6_EVIDENCE_OUTPUT") != phase6_output
     ):
-        errors.append("quality gate must bind Phase 6 evidence to the external runner temp path")
+        errors.append("quality gate step must bind Phase 6 evidence to the external runner temp path")
     for required in (
         "phase6-ci-rehearsal-${{ github.sha }}",
         phase6_output,

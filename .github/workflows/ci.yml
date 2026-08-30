@@ -12,8 +12,6 @@ jobs:
   quality-gate:
     needs: postgres-migration-gate
     runs-on: windows-latest
-    env:
-      PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -38,6 +36,8 @@ jobs:
 
       - name: Run quality gate
         shell: pwsh
+        env:
+          PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json
         run: ./scripts/quality_gate.ps1
 
       - name: Upload Phase 6 CI rehearsal evidence

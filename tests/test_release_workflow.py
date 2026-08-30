@@ -58,7 +58,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertTrue(workflow_errors(without_upload))
 
         missing_external_output = text.replace(
-            "      PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
+            "          PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
             "",
             1,
         )
@@ -68,6 +68,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(workflow_errors(missing_external_output))
         self.assertTrue(workflow_errors(repository_output))
+
+        job_level_runner_context = text.replace(
+            "        env:\n"
+            "          PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
+            "    env:\n"
+            "      PHASE6_EVIDENCE_OUTPUT: ${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json\n",
+            1,
+        )
+        self.assertTrue(workflow_errors(job_level_runner_context))
 
         missing_allowed = text.replace(
             "          if-no-files-found: error",

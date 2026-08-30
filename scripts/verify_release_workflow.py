@@ -98,12 +98,12 @@ def workflow_errors(text: str) -> list[str]:
     if "Run full quality gate" not in quality_steps:
         errors.append("release quality job must run the full quality gate")
     phase6_output = "${{ runner.temp }}/phase6-ci-rehearsal-${{ github.sha }}.json"
-    quality_environment = release_quality.get("env", {})
+    quality_environment = quality_steps.get("Run full quality gate", {}).get("env", {})
     if (
         not isinstance(quality_environment, dict)
         or quality_environment.get("PHASE6_EVIDENCE_OUTPUT") != phase6_output
     ):
-        errors.append("release quality job must bind Phase 6 evidence to the external runner temp path")
+        errors.append("release quality step must bind Phase 6 evidence to the external runner temp path")
     phase6_upload = quality_steps.get("Upload Phase 6 CI rehearsal evidence", {})
     if not phase6_upload:
         errors.append("release quality job must upload Phase 6 evidence")
