@@ -34,6 +34,19 @@ class RuntimeAttestationExternalEvidenceStaticTests(unittest.TestCase):
                 errors = static_gate.verify_static_contract()
         self.assertTrue(any("order drifted" in error for error in errors), errors)
 
+    def test_nested_policy_closure_mutation_is_rejected(self) -> None:
+        source = static_gate.INTAKE.read_text(encoding="utf-8").replace(
+            '_closed(value.get("provider_custody"), _POLICY_PROVIDER_FIELDS',
+            'dict(value.get("provider_custody")) # ',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mutated.py"
+            path.write_text(source, encoding="utf-8")
+            with mock.patch.object(static_gate, "INTAKE", path):
+                errors = static_gate.verify_static_contract()
+        self.assertTrue(any("boundary is missing" in error for error in errors), errors)
+
 
 if __name__ == "__main__":
     unittest.main()

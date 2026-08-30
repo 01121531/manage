@@ -630,19 +630,52 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${{ github.ref_name }}"
-          release/assets/email-platform-windows.exe
-          release/assets/update-manifest.json
-          release/assets/container-release-manifest.json
-          release/assets/phase6-ci-rehearsal.json
-          release/assets/phase6-ci-rehearsal.json.sha256
-          release/assets/supply-chain/api.spdx.json
-          release/assets/supply-chain/web.spdx.json
-          release/assets/supply-chain/edge.spdx.json
-          release/assets/supply-chain/api.trivy.sarif
-          release/assets/supply-chain/web.trivy.sarif
-          release/assets/supply-chain/edge.trivy.sarif
-          --verify-tag
-          --generate-notes
-          --title "邮箱验证码助手 ${{ github.ref_name }}"
+        run: |
+          $externalSuffixes = @(
+            "runtime-attestation.external-evidence-index.json",
+            "oci-manifest.raw.json",
+            "cosign.bundle.json",
+            "cosign.payload.json",
+            "github-provenance.bundle.jsonl",
+            "github-sigstore.trusted-root.jsonl",
+            "tuf.verify.txt",
+            "cosign.executable.sha256",
+            "cosign.version.json",
+            "cosign.bundle.verify.txt",
+            "cosign.verify.json",
+            "cosign.verify-attestation.json",
+            "github.executable.sha256",
+            "github.version.txt",
+            "github.verify.json"
+          )
+          $externalAssets = @(
+            foreach ($name in @("api", "web", "edge")) {
+              foreach ($suffix in $externalSuffixes) {
+                "release/assets/supply-chain/$name.$suffix"
+              }
+            }
+          )
+          $missing = @($externalAssets | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($externalAssets.Count -ne 45 -or $missing.Count -ne 0) {
+            throw "The complete three-image external evidence inventory is required."
+          }
+          $releaseAssets = @(
+            "release/assets/email-platform-windows.exe",
+            "release/assets/update-manifest.json",
+            "release/assets/container-release-manifest.json",
+            "release/assets/phase6-ci-rehearsal.json",
+            "release/assets/phase6-ci-rehearsal.json.sha256",
+            "release/assets/supply-chain/api.spdx.json",
+            "release/assets/supply-chain/web.spdx.json",
+            "release/assets/supply-chain/edge.spdx.json",
+            "release/assets/supply-chain/api.trivy.sarif",
+            "release/assets/supply-chain/web.trivy.sarif",
+            "release/assets/supply-chain/edge.trivy.sarif"
+          ) + $externalAssets
+          $releaseArgs = @("${{ github.ref_name }}") + $releaseAssets + @(
+            "--verify-tag",
+            "--generate-notes",
+            "--title",
+            "邮箱验证码助手 ${{ github.ref_name }}"
+          )
+          gh release create @releaseArgs

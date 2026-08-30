@@ -93,11 +93,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertTrue(workflow_errors(without_commit_binding))
 
         without_release_asset = text.replace(
-            "          release/assets/phase6-ci-rehearsal.json.sha256\n",
+            '            "release/assets/phase6-ci-rehearsal.json.sha256",\n',
             "",
             1,
         )
         self.assertTrue(workflow_errors(without_release_asset))
+
+        without_external_index = text.replace(
+            '            "runtime-attestation.external-evidence-index.json",\n',
+            "",
+            1,
+        )
+        without_complete_count = text.replace(
+            "$externalAssets.Count -ne 45",
+            "$externalAssets.Count -lt 1",
+            1,
+        )
+        without_external_splat = text.replace(
+            ") + $externalAssets",
+            ")",
+            1,
+        )
+        self.assertTrue(workflow_errors(without_external_index))
+        self.assertTrue(workflow_errors(without_complete_count))
+        self.assertTrue(workflow_errors(without_external_splat))
 
     def test_release_browser_e2e_is_fail_closed_and_runs_real_command(self) -> None:
         text = (ROOT / ".github" / "workflows" / "release.yml").read_text(

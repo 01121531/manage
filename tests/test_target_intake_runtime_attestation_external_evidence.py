@@ -163,6 +163,31 @@ class RuntimeAttestationExternalEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(external.RuntimeAttestationExternalEvidenceError, "index is invalid"):
             self.verify()
 
+    def test_policy_nested_fields_and_inventories_are_closed(self) -> None:
+        policy = json.loads(external.POLICY.read_bytes())
+        mutations = (
+            lambda value: value["integration"].update(extra=False),
+            lambda value: value["integration"].pop("authoring"),
+            lambda value: value["provider_custody"].update(extra="unverified"),
+            lambda value: value["provider_custody"]["allowed_provider_kinds"].reverse(),
+            lambda value: value["provider_custody"]["required_evidence"].pop(),
+            lambda value: value["release_evidence"].update(extra=True),
+            lambda value: value["target_observer"].update(extra=False),
+            lambda value: value["target_observer"]["required_evidence"].pop(),
+            lambda value: value["trust_currentness"].update(extra=False),
+            lambda value: value["trust_currentness"].pop("tuf_metadata_chain_required"),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                drifted = copy.deepcopy(policy)
+                mutation(drifted)
+                raw = canonical(drifted)
+                with self.assertRaises(external.RuntimeAttestationExternalEvidenceError):
+                    external.verify_policy_bytes(
+                        raw,
+                        expected_sha256=hashlib.sha256(raw).hexdigest(),
+                    )
+
     def test_raw_artifact_pin_size_and_identity_are_enforced(self) -> None:
         payload_path = self.root / f"{self.name}.cosign.payload.json"
         payload_path.write_bytes(self.cosign_payload + b" ")

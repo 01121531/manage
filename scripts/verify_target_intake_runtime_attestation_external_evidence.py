@@ -61,6 +61,14 @@ def _capability_errors() -> list[str]:
         "expected_policy_sha256",
         "metadata.st_nlink != 1",
         "expected_identity=blob.identity",
+        "_POLICY_INTEGRATION_FIELDS",
+        "_POLICY_PROVIDER_FIELDS",
+        "_POLICY_RELEASE_FIELDS",
+        "_POLICY_OBSERVER_FIELDS",
+        "_POLICY_TRUST_FIELDS",
+        '_closed(value.get("provider_custody"), _POLICY_PROVIDER_FIELDS',
+        '_closed(value.get("target_observer"), _POLICY_OBSERVER_FIELDS',
+        '_closed(value.get("trust_currentness"), _POLICY_TRUST_FIELDS',
     ):
         if marker not in source:
             errors.append(f"T207 intake boundary is missing: {marker}")

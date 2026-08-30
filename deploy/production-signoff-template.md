@@ -350,6 +350,16 @@ The Phase 6 CI rehearsal is only a preflight artifact and must have
 - Selected provider-native adapter, stale-write failure, immutable version, retention/delete-denial/readback and cross-host latest-head/fork/rollback review (currently `unconfigured`):
 - Required conclusion: captured external evidence is not runtime authority; original execution, runtime authority and `production_acceptance=false` remain unchanged.
 
+### Three-image release handoff boundary
+
+- Caller-pinned T208 three-image release handoff, including independent handoff SHA-256 and ordered api/web/edge index SHA-256 values:
+- Exact shared repository, tag, commit, workflow ref, numeric repository/owner/run IDs and run-attempt review:
+- Confirmation that every index plus all 42 raw files was downloaded outside the repository and the cross-image verifier passed:
+- Real tag workflow execution and independent download review (currently not executed):
+- Confirmation that GitHub Release persistence is not provider-native custody and does not prove retention, delete denial, CAS, latest-head, fork or rollback protection:
+- Selected provider profile/pin and target-observer deployment evidence (currently `unconfigured`):
+- Required conclusion: cross-image byte binding does not establish target observation, trusted time, provider custody, original execution, runtime authority or production acceptance.
+
 ## Final signoff
 
 - Approved for production:

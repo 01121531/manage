@@ -110,6 +110,9 @@ try {
     python scripts/verify_target_intake_runtime_attestation_external_evidence.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake external runtime-attestation evidence static verification failed." }
 
+    python scripts/verify_target_intake_runtime_attestation_release_handoff.py
+    if ($LASTEXITCODE -ne 0) { throw "Target-intake runtime-attestation release handoff static verification failed." }
+
     python scripts/verify_target_intake_snapshot_launcher.py
     if ($LASTEXITCODE -ne 0) { throw "Target-intake clean source snapshot launch verification failed." }
 

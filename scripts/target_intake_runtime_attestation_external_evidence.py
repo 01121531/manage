@@ -100,6 +100,45 @@ _REQUIREMENTS = {
     "trust_root_currentness": "unverified",
     "trusted_time": "unverified",
 }
+_POLICY_INTEGRATION_FIELDS = {
+    "authoring", "deployment", "recovery", "runtime_acceptance",
+}
+_POLICY_PROVIDER_FIELDS = {
+    "allowed_provider_kinds", "required_evidence", "selected_provider_kind", "status",
+}
+_POLICY_RELEASE_FIELDS = {
+    "artifact_names", "bundle_bytes_must_be_preserved", "caller_pinned_manifest_required",
+    "external_absolute_root_required", "oci_manifest_digest_must_match_release",
+    "stable_single_link_reads_required",
+}
+_POLICY_OBSERVER_FIELDS = {
+    "allowed_execution_locations", "required_evidence", "signing_domain", "status",
+    "workflow_signer_key_reuse_allowed",
+}
+_POLICY_TRUST_FIELDS = {
+    "host_clock_is_trusted_time", "online_revocation_or_status_required",
+    "rekor_and_ct_currentness_required", "signed_timestamp_replay_policy_required",
+    "status", "trusted_root_refresh_per_release_required", "tuf_metadata_chain_required",
+}
+_PROVIDER_KINDS = [
+    "aws_s3_object_lock", "azure_blob_immutable", "gcp_cloud_storage_generation",
+]
+_PROVIDER_EVIDENCE = [
+    "authenticated_workload_identity", "caller_pinned_prior_head",
+    "provider_native_cas_precondition", "stale_write_409_or_412_or_generation_failure",
+    "no_automatic_retry", "immutable_version_identity", "retention_configuration",
+    "delete_denial", "post_denial_readback", "cross_host_latest_head",
+    "fork_and_rollback_review",
+]
+_OBSERVER_LOCATIONS = ["dedicated_management_host", "isolated_kubernetes_namespace"]
+_OBSERVER_EVIDENCE = [
+    "federated_workload_identity", "kms_or_hsm_key_reference",
+    "observer_key_authorization_snapshot", "observer_key_validity_and_revocation",
+    "release_challenge_nonce", "target_environment_and_host_identity",
+    "image_object_id_and_repo_digest", "process_start_and_executable_digest",
+    "loaded_module_and_native_evidence", "post_deploy_readback",
+    "independent_trusted_time",
+]
 
 
 class RuntimeAttestationExternalEvidenceError(ValueError):
@@ -119,9 +158,17 @@ class StableInput:
 class VerifiedExternalEvidence:
     manifest_sha256: str
     policy_sha256: str
+    name: str
     image: str
     digest: str
     commit: str
+    repository: str
+    repository_id: str
+    owner_id: str
+    tag: str
+    workflow_ref: str
+    run_id: str
+    run_attempt: int
     artifact_sha256: tuple[tuple[str, str], ...]
     exact_subject_bindings_verified: bool
     original_execution_verified: bool = False
@@ -218,31 +265,39 @@ def verify_policy_bytes(raw: bytes, *, expected_sha256: str) -> str:
     }
     if set(value) != expected_fields or value.get("schema_version") != 1 or type(value.get("schema_version")) is not int:
         raise RuntimeAttestationExternalEvidenceError("external evidence policy is invalid")
-    integration = value.get("integration")
-    provider = value.get("provider_custody")
-    observer = value.get("target_observer")
-    trust = value.get("trust_currentness")
+    integration = _closed(value.get("integration"), _POLICY_INTEGRATION_FIELDS, "policy integration")
+    provider = _closed(value.get("provider_custody"), _POLICY_PROVIDER_FIELDS, "policy provider custody")
+    release_evidence = _closed(value.get("release_evidence"), _POLICY_RELEASE_FIELDS, "policy release evidence")
+    observer = _closed(value.get("target_observer"), _POLICY_OBSERVER_FIELDS, "policy target observer")
+    trust = _closed(value.get("trust_currentness"), _POLICY_TRUST_FIELDS, "policy trust currentness")
     if (
         value.get("policy_kind") != "runtime_attestation_external_evidence_policy"
         or value.get("policy_status") != "unconfigured"
         or value.get("synthetic") is not True
         or value.get("production_acceptance") is not False
-        or not isinstance(integration, Mapping)
         or any(item is not False for item in integration.values())
-        or not isinstance(provider, Mapping)
+        or provider.get("allowed_provider_kinds") != _PROVIDER_KINDS
+        or provider.get("required_evidence") != _PROVIDER_EVIDENCE
         or provider.get("selected_provider_kind") is not None
         or provider.get("status") != "unverified"
-        or not isinstance(observer, Mapping)
+        or release_evidence.get("artifact_names") != [item[0] for item in ARTIFACT_SPECS]
+        or any(
+            release_evidence.get(field) is not True
+            for field in _POLICY_RELEASE_FIELDS.difference({"artifact_names"})
+        )
+        or observer.get("allowed_execution_locations") != _OBSERVER_LOCATIONS
+        or observer.get("required_evidence") != _OBSERVER_EVIDENCE
+        or observer.get("signing_domain") != "email-platform/runtime-attestation-target-observer/v1"
         or observer.get("status") != "unconfigured"
         or observer.get("workflow_signer_key_reuse_allowed") is not False
-        or not isinstance(trust, Mapping)
         or trust.get("status") != "unverified"
         or trust.get("host_clock_is_trusted_time") is not False
+        or any(
+            trust.get(field) is not True
+            for field in _POLICY_TRUST_FIELDS.difference({"status", "host_clock_is_trusted_time"})
+        )
     ):
         raise RuntimeAttestationExternalEvidenceError("external evidence policy overstates authority")
-    release_evidence = value.get("release_evidence")
-    if not isinstance(release_evidence, Mapping) or release_evidence.get("artifact_names") != [item[0] for item in ARTIFACT_SPECS]:
-        raise RuntimeAttestationExternalEvidenceError("external evidence policy artifact inventory drifted")
     return actual
 
 
@@ -444,9 +499,17 @@ def verify_external_evidence(
     return VerifiedExternalEvidence(
         manifest_sha256=manifest_blob.sha256,
         policy_sha256=policy_sha,
+        name=str(index["name"]),
         image=image,
         digest=digest,
         commit=str(release["commit"]),
+        repository=str(release["repository"]),
+        repository_id=str(release["repository_id"]),
+        owner_id=str(release["owner_id"]),
+        tag=str(release["tag"]),
+        workflow_ref=str(release["workflow_ref"]),
+        run_id=str(release["run_id"]),
+        run_attempt=int(release["run_attempt"]),
         artifact_sha256=tuple((name, blobs[name].sha256) for name, _, _ in ARTIFACT_SPECS),
         exact_subject_bindings_verified=True,
     )

@@ -1465,6 +1465,54 @@ and a cross-host latest-head/fork/rollback review. Do not combine several
 provider semantics into one claimed receipt, and do not fill these fields from
 the release workflow.
 
+## T208 three-image external evidence handoff
+
+The T208 verifier closes the cross-image release boundary that three separate
+T207 indexes cannot prove by themselves. GitHub rejected the previous CI and
+release workflows before any job started because `runner.temp` was referenced
+from job-level `env`; the value is now scoped to the quality-gate step, where
+the runner context exists. Do not create a release tag until the resulting
+online CI run has completed successfully.
+
+The final GitHub Release now requires all 45 external evidence assets: one
+index plus 14 raw files for each of `api`, `web`, and `edge`. These copies avoid
+depending only on the 90-day Actions artifact window. GitHub Release assets are persistence copies, not provider custody: an owner can still remove or replace
+them, so they do not prove Object Lock, immutable retention, delete denial,
+provider CAS, latest head, fork absence, or rollback protection.
+
+On a separate host, download all three flat evidence sets to one new directory
+outside the repository. An independent reviewer must retain the three index
+SHA-256 values, create a canonical `runtime_attestation_release_handoff_v1`
+document with the exact release repository, numeric repository/owner/run IDs,
+run attempt, tag, commit, workflow ref, and ordered `api`/`web`/`edge` index
+paths and hashes, and then communicate a caller-supplied handoff pin through a
+separate reviewed channel. The repository and release workflow must not derive
+that pin for the reviewer.
+
+Run the offline, read-only verification with:
+
+```powershell
+python scripts/target_intake_runtime_attestation_release_handoff.py `
+  --handoff-manifest D:\external-evidence\runtime-attestation.release-handoff.json `
+  --evidence-root D:\external-evidence `
+  --expected-handoff-sha256 <independently-recorded-handoff-sha256> `
+  --expected-policy-sha256 3c52cacdf836ba3c63288adf053871e8943cbe8c21676ce7c4fe1381a4820bbd
+```
+
+The verifier requires one release/run/workflow identity across all three
+indexes, the exact GHCR image name for each component, every raw T207 artifact,
+and unchanged stable single-link handoff bytes. It does not write a handoff,
+download an artifact, access a network or host clock, execute a provider CLI,
+or sign evidence. A successful result therefore keeps target observer,
+trusted time, provider-native CAS/custody, original execution, runtime
+authority, and `production_acceptance=false` unverified.
+
+The current application version and latest immutable tag are both `0.1.3`.
+The old tag must never be moved or reused. A future real release requires a
+reviewed version bump and a new immutable tag, followed by the independent
+download and handoff procedure above. At this checkpoint, real tag release has not been executed, no new GHCR evidence exists, and no provider or target
+observer has been selected.
+
 Checkpoint success proves only that the items required through that phase have
 valid metadata, safely located paths, matching hashes, and explicit review and
 redaction assertions. It never proves that a provider contract is correct,

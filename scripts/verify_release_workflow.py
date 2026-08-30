@@ -271,6 +271,31 @@ def workflow_errors(text: str) -> list[str]:
     ):
         if marker not in publish_run:
             errors.append(f"release publication is missing: {marker}")
+    for marker in (
+        '$externalSuffixes = @(',
+        '"runtime-attestation.external-evidence-index.json"',
+        '"oci-manifest.raw.json"',
+        '"cosign.bundle.json"',
+        '"cosign.payload.json"',
+        '"github-provenance.bundle.jsonl"',
+        '"github-sigstore.trusted-root.jsonl"',
+        '"tuf.verify.txt"',
+        '"cosign.executable.sha256"',
+        '"cosign.version.json"',
+        '"cosign.bundle.verify.txt"',
+        '"cosign.verify.json"',
+        '"cosign.verify-attestation.json"',
+        '"github.executable.sha256"',
+        '"github.version.txt"',
+        '"github.verify.json"',
+        'foreach ($name in @("api", "web", "edge"))',
+        '$externalAssets.Count -ne 45',
+        'Test-Path -LiteralPath $_ -PathType Leaf',
+        ') + $externalAssets',
+        'gh release create @releaseArgs',
+    ):
+        if marker not in publish_run:
+            errors.append(f"release publication external evidence is missing: {marker}")
     download_phase6 = windows_steps.get("Download Phase 6 CI rehearsal evidence", {})
     download_with = (
         download_phase6.get("with", {})
