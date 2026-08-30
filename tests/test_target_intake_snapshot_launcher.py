@@ -138,7 +138,7 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
             closure = contract["runtime_environment"]["distribution_closure"]
             self.assertEqual(len(closure["root_names"]), 11)
             self.assertIn("annotated-types", closure["metadata_closure_names"])
-            self.assertIn("brotli", closure["loaded_owner_names"])
+            self.assertIn("cffi", closure["loaded_owner_names"])
             self.assertIn("packaging", closure["union_names"])
             self.assertEqual(
                 [item["name"] for item in contract["runtime_environment"]["distributions"]],

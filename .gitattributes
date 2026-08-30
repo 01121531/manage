@@ -1,3 +1,5 @@
+* text=auto eol=lf
+
 deploy/target-intake-generation-context-handoff-policy.synthetic.json text eol=lf
 deploy/evidence-index-envelopes/target-intake-generation-context-handoff-readiness.synthetic.json text eol=lf
 deploy/target-intake-runtime-attestation-policy.synthetic.json text eol=lf

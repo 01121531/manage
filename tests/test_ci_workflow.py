@@ -14,6 +14,11 @@ from scripts.verify_ci_workflow import (
 
 
 class CiWorkflowTests(unittest.TestCase):
+    def test_repository_forces_lf_for_exact_byte_ci_contracts(self) -> None:
+        attributes = Path(".gitattributes").read_bytes()
+        self.assertTrue(attributes.startswith(b"* text=auto eol=lf\n"))
+        self.assertNotIn(b"\r\n", attributes)
+
     @staticmethod
     def workflow() -> dict:
         loaded = yaml.safe_load(
