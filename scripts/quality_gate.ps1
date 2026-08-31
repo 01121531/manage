@@ -279,6 +279,9 @@ try {
 
         npm run build
         if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
+
+        npm run test:e2e
+        if ($LASTEXITCODE -ne 0) { throw "Frontend Playwright tests failed." }
     }
     finally {
         Pop-Location

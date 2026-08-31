@@ -173,7 +173,8 @@
       "missing_input_state": "required_external",
       "gate_commands": [
         "python scripts/verify_desktop_package.py",
-        "python scripts/verify_release_workflow.py"
+        "python scripts/verify_release_workflow.py",
+        "npm run test:e2e"
       ],
       "runbooks": [
         "deploy/runbooks/deploy.md",
@@ -183,7 +184,9 @@
         "tests/test_desktop_package_boundary.py",
         "tests/test_platform_desktop.py",
         "tests/test_platform_clipboard.py",
-        "tests/test_update_client.py"
+        "tests/test_update_client.py",
+        "frontend/e2e/platform.spec.ts",
+        "tests/test_frontend_e2e_control_flow.py"
       ]
     },
     {
@@ -256,6 +259,6 @@
     }
   },
   "integrity": {
-    "payload_sha256": "17991f87d558baafdc6901f9dc30f08887c5f7998cacfcdce6561874d580aafa"
+    "payload_sha256": "be1eb16cea72ca0cbd350c7e81b88d9d3a303427cfb6f2e84f749c116c98f903"
   }
 }

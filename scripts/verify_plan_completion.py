@@ -163,6 +163,7 @@ _EXPECTED_ENTRYPOINTS = {
         "gate_commands": (
             "python scripts/verify_desktop_package.py",
             "python scripts/verify_release_workflow.py",
+            "npm run test:e2e",
         ),
         "runbooks": (
             "deploy/runbooks/deploy.md",
@@ -173,6 +174,8 @@ _EXPECTED_ENTRYPOINTS = {
             "tests/test_platform_desktop.py",
             "tests/test_platform_clipboard.py",
             "tests/test_update_client.py",
+            "frontend/e2e/platform.spec.ts",
+            "tests/test_frontend_e2e_control_flow.py",
         ),
     },
     6: {
@@ -423,6 +426,12 @@ def repository_entrypoint_errors(document: Any) -> list[str]:
                     f"completion ledger phase {number} gate command is not active"
                 )
                 continue
+            if command == "npm run test:e2e":
+                if not (ROOT / "frontend" / "package.json").is_file():
+                    errors.append(
+                        f"completion ledger phase {number} verifier path is invalid"
+                    )
+                continue
             match = re.match(r"^python (scripts/[A-Za-z0-9_.-]+\.py)", command)
             if match is None or not (ROOT / match.group(1)).is_file():
                 errors.append(
@@ -430,7 +439,7 @@ def repository_entrypoint_errors(document: Any) -> list[str]:
                 )
         for key, prefix in (
             ("runbooks", "deploy/runbooks/"),
-            ("test_modules", ("tests/", "platform/tests/")),
+            ("test_modules", ("tests/", "platform/tests/", "frontend/e2e/")),
         ):
             for value in phase.get(key, []):
                 prefixes = (prefix,) if isinstance(prefix, str) else prefix

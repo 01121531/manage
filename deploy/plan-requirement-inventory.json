@@ -74,7 +74,7 @@
     {"id":"R10.02","chapter":10,"source_ref":"10 统一响应与生成客户端","requirement":"错误统一返回业务 code、message、recovery_hint 与 trace_id，前端类型由 OpenAPI 生成。","classification":"repository_proven","evidence":["platform/errors.py","frontend/openapi.json","frontend/src/generated/openapi.ts","scripts/verify_openapi_client.py"],"gap_or_boundary":null},
 
     {"id":"R11.01","chapter":11,"source_ref":"11 运行拓扑","requirement":"Web/API、两个 Worker、PostgreSQL/Redis、Keycloak/Vault 在目标网络和服务边界运行。","classification":"target_evidence_required","evidence":["docker-compose.yml","scripts/target_platform_inventory.py","deploy/runbooks/target-intake-preflight.md"],"gap_or_boundary":"仓库拓扑已定义；仍需目标容器、网络、托管数据库和密钥服务清单证据。"},
-    {"id":"R11.02","chapter":11,"source_ref":"11.1 测试门禁","requirement":"API、权限、状态机、Worker、Playwright、EXE 登录与断网恢复在发布候选上通过。","classification":"target_evidence_required","evidence":["scripts/quality_gate.ps1",".github/workflows/ci.yml","deploy/runbooks/container-release.md"],"gap_or_boundary":"本地 CI 门禁可验证；仍需绑定不可变发布候选的目标运行证据。"},
+    {"id":"R11.02","chapter":11,"source_ref":"11.1 测试门禁","requirement":"API、权限、状态机、Worker、Playwright、EXE 登录与断网恢复在发布候选上通过。","classification":"target_evidence_required","evidence":["scripts/quality_gate.ps1",".github/workflows/ci.yml","frontend/e2e/platform.spec.ts","tests/test_frontend_e2e_control_flow.py","deploy/runbooks/container-release.md"],"gap_or_boundary":"本地 CI 门禁可验证；仍需绑定不可变发布候选的目标运行证据。"},
     {"id":"R11.03","chapter":11,"source_ref":"11.1 安全门禁","requirement":"SAST、依赖、密钥、容器、TLS 和越权检查在发布候选上通过。","classification":"target_evidence_required","evidence":[".github/workflows/security.yml","scripts/secret_scan.py","scripts/verify_container_supply_chain.py","deploy/runbooks/container-release.md"],"gap_or_boundary":"仓库扫描工件可验证；仍需目标 TLS、容器镜像与权限测试证据。"},
     {"id":"R11.04","chapter":11,"source_ref":"11.1 策略发布","requirement":"Sub2 策略发布具备独立审批、版本回滚与小流量灰度。","classification":"repository_proven","evidence":["platform/models.py","platform/api/v1/routes.py","platform/tests/test_admin_api.py","frontend/e2e/platform.spec.ts"],"gap_or_boundary":null},
     {"id":"R11.05","chapter":11,"source_ref":"11.1 非生产数据边界","requirement":"开发和演示不使用卡/邮箱生产数据，示例使用脱敏值和 .invalid 邮箱。","classification":"target_evidence_required","evidence":["scripts/secret_scan.py","deploy/runbooks/nonproduction-data-boundary.md","tests/test_service_boundaries.py"],"gap_or_boundary":"仓库示例与流程已门禁；仍需非生产 IAM/存储拒绝、数据来源、fixture 摘要、无实时连接器或邮箱密钥和独立复核证据证明目标开发/演示环境未使用生产数据。"}
@@ -88,6 +88,6 @@
     "target_evidence_required": 5
   },
   "integrity": {
-    "payload_sha256": "c7103a3b60c5532b18921cf0f7494296f450ec8576e32805cd163ab821545dd5"
+    "payload_sha256": "b7de1224ca8a06336589ddd018837ade000540e13bf3c97ad068cd57b65b510f"
   }
 }
