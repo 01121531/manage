@@ -26,9 +26,51 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 2)
+        self.assertEqual(contract["schema_version"], 3)
         self.assertFalse(contract["production_acceptance"])
+        self.assertEqual(
+            contract["ingestion_boundary"],
+            {
+                "operator_action": "administrator_manual_upload",
+                "automatic_collection": False,
+                "raw_source_transport": "approved_intake_workstation_to_vault_only",
+                "browser_input": "secret-free-signed-bundle_only",
+                "pools": {
+                    "card": "credit_card_pool",
+                    "mailbox": "mailbox_pool",
+                },
+            },
+        )
         self.assertEqual(contract["bundle_schema_version"], 2)
+        self.assertEqual(contract["execution_record_schema_version"], 1)
+        self.assertEqual(contract["smoke_plan_schema_version"], 1)
+        self.assertEqual(contract["cleanup_receipt_schema_version"], 1)
+        self.assertEqual(
+            contract["recovery"],
+            {
+                "states": [
+                    "unwritten",
+                    "partial_written",
+                    "commit_unknown",
+                    "completed",
+                ],
+                "assessment": "read_only",
+                "automatic_resume_allowed": False,
+                "existing_create_only_secret_equivalence_assumed": False,
+            },
+        )
+        self.assertEqual(
+            contract["canary_cleanup"],
+            {
+                "policy_scope": "exact_per_run_paths_only",
+                "wildcards_allowed": False,
+                "data_capabilities": ["read"],
+                "metadata_capabilities": ["read", "delete"],
+                "permanent_delete": "kv_v2_metadata_delete",
+                "preflight_both_canaries_before_delete": True,
+                "write_once_secret_free_receipt": True,
+            },
+        )
         self.assertEqual(
             contract["submission_key_binding"],
             "spi:<vault-transit-signed-receipt-uuid>",

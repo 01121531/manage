@@ -1,7 +1,9 @@
 # Secure card and mailbox pool import
 
-Use this runbook when an administrator manually adds resources to the separate
-card pool or mailbox pool. Do not upload the raw card or mailbox source file to
+Use this runbook when an administrator manually uploads resources into the two
+separate pools: card records enter only the credit-card pool, and mailbox
+records enter only the mailbox pool. There is no automatic source collection.
+Do not upload the raw card or mailbox source file to
 the browser, ordinary API, issue tracker, chat, or repository. PAN and mailbox
 credentials remain on the approved intake workstation and in Vault; CVV/CVC is
 not accepted at all.
@@ -10,29 +12,54 @@ not accepted at all.
    `infra/vault/configure-secure-import.sh`. Issue distinct short-lived card
    importer, mailbox importer, and API verifier tokens. Repository assets and
    local tests remain `production_acceptance=false`.
-2. Run `scripts/secure_import_vault_smoke.py` with the three external token
-   files. Preserve its write-once evidence and the matching Vault audit window.
-   The current smoke result deliberately records `cleanup_required=true`; an
-   approved operator must permanently remove only its two synthetic canary
-   metadata paths and verify absence. Until a dedicated pinned cleanup receipt
-   exists, this manual cleanup is a production-blocking external evidence gap.
-3. Run `scripts/secure_pool_import.py card` or `mailbox` against the matching
+2. Run `scripts/secure_import_vault_smoke.py run` with `--plan-output` and
+   `--evidence-output` set to distinct new absolute files outside the repository,
+   plus the three external token files. The write-once smoke plan is published
+   before the first mutation and binds the exact two canary data and metadata
+   paths. Preserve both files, their SHA-256 values and the matching Vault audit
+   window. The smoke evidence deliberately records `cleanup_required=true`.
+3. Pin the smoke plan SHA-256 and explicitly confirm its `run_id`. Run
+   `scripts/secure_import_vault_canary_cleanup.py render-policy` to a new
+   external file. Inspect that it contains no `*`: it may read only the exact
+   two data paths, and may read/delete only the exact two metadata paths. An
+   approved Vault administrator installs this uniquely named, per-run policy
+   and issues a short-lived token containing only it, with no `default` policy.
+   Run `secure_import_vault_canary_cleanup.py run` with the pinned plan hash,
+   pinned policy hash, confirmed run ID and a new receipt path, then run its
+   `verify` command. It must preflight both canaries before its first delete,
+   use KV v2 metadata delete for permanent removal, and prove all four exact
+   data/metadata reads return 404. Preserve the write-once secret-free cleanup
+   receipt, revoke the token, and remove the per-run policy. Never use a
+   `smoke/*` wildcard cleanup role.
+4. Run `scripts/secure_pool_import.py card` or `mailbox` against the matching
    restricted raw input. It emits a browser-safe `schema_version: 2` bundle
    containing masked items, a Transit receipt, and a `submission_key` of the
    form `spi:<signed receipt UUID>`. Keep the raw input, Vault token, and bundle
-   outside the repository with restricted permissions.
-4. On the matching administration page, select the safe bundle, review the
+   outside the repository with restricted permissions. Supply a new external
+   `--execution-directory`; the importer publishes `plan.json` before the first
+   Vault write, a write intent before each mutation, and a confirmation only
+   after Vault acknowledges version 1.
+5. If the importer is interrupted, run
+   `scripts/secure_pool_import_recovery.py` against that execution directory and
+   the intended receipt output. This is a read-only assessment with no network
+   client, write/delete operation or importer dependency. It reports one of
+   `unwritten`, `partial_written`, `commit_unknown`, or `completed`, always with
+   `automatic_resume_allowed=false`. Do not retry a partial or unknown batch:
+   create-only/CAS 0 rejection cannot prove an existing secret equals the
+   original input. Preserve the source and records under incident procedure for
+   operator reconciliation.
+6. On the matching administration page, select the safe bundle, review the
    pool type, count and routing preview, then confirm once. If the page reports
    “结果尚未确认”, do not select a different bundle. Use the same-batch recovery
    action. After a refresh or navigation, selecting the exact same bundle is
    also safe: its stable key lets the API return the committed receipt without
    consuming the Transit receipt again.
-5. A committed result must show the platform receipt ID, trace ID, pool/count,
+7. A committed result must show the platform receipt ID, trace ID, pool/count,
    `ordered_manifest_digest`, `secure_receipt_fingerprint`, Transit key version
    and timestamps. These are secret-free correlation fields, not proof that the
    target Vault, audit custody, reviewer identity or source secret values are
    authentic.
-6. Preserve the platform receipt and audit export according to the evidence
+8. Preserve the platform receipt and audit export according to the evidence
    policy. Destroy temporary raw input and bundle copies only under the approved
    intake retention procedure. Never print or paste a receipt token. Keep
    `production_acceptance=false` until real AppRole provenance, Vault audit,
@@ -41,6 +68,7 @@ not accepted at all.
 
 The stable submission key prevents blind duplicate batches after an HTTP 5xx,
 network loss, page navigation, or refresh. It does not recover a secure importer
-process that failed after only some Vault writes; that case remains a stopped,
-operator-reviewed recovery incident until the write-ahead execution evidence
-workflow is implemented.
+process that failed after only some Vault writes. The write-ahead evidence makes
+that failure classifiable, but deliberately does not turn it into an automatic
+resume; partial and unknown executions remain stopped, operator-reviewed
+recovery incidents.

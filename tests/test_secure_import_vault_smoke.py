@@ -107,6 +107,7 @@ class SecureImportVaultSmokeTests(unittest.TestCase):
             mailbox_token_file=str(self.mailbox_token),
             api_token_file=str(self.api_token),
             environment="staging",
+            plan_output=str(output.with_suffix(".plan.json")),
             evidence_output=str(output),
             ca_file=None,
         )
@@ -122,6 +123,9 @@ class SecureImportVaultSmokeTests(unittest.TestCase):
         self.assertEqual(payload["result"], "passed")
         self.assertFalse(payload["production_acceptance"])
         self.assertTrue(payload["cleanup_required"])
+        self.assertTrue(Path(self.arguments(output).plan_output).is_file())
+        plan = json.loads(Path(self.arguments(output).plan_output).read_text())
+        self.assertEqual(payload["plan_payload_sha256"], plan["integrity"]["payload_sha256"])
         self.assertEqual(len(payload["checks"]), 24)
         self.assertTrue(
             all(check["result"] == "passed" for check in payload["checks"].values())
@@ -159,6 +163,54 @@ class SecureImportVaultSmokeTests(unittest.TestCase):
         self.assertEqual(payload["checks"]["api_mailbox_sign_denied"]["result"], "not_run")
         self.assertTrue(output.is_file())
 
+    def test_write_ahead_plan_survives_interruption_after_first_canary(self) -> None:
+        output = self.directory / "interrupted.json"
+        plan_output = Path(self.arguments(output).plan_output)
+
+        class InterruptedAfterCreate(FakeVaultClient):
+            def request(
+                self,
+                method: str,
+                path: str,
+                body: dict[str, object] | None = None,
+            ) -> VaultResponse:
+                response = super().request(method, path, body)
+                if (
+                    self.role == "CARD_TOKEN_VALUE"
+                    and method == "POST"
+                    and path.startswith("secret/data/cards/imports/smoke/")
+                    and response.status in {200, 204}
+                ):
+                    self.assert_plan_exists(plan_output)
+                    raise KeyboardInterrupt
+                return response
+
+            @staticmethod
+            def assert_plan_exists(path: Path) -> None:
+                if not path.is_file():
+                    raise AssertionError("smoke plan must precede the first canary")
+
+        with self.assertRaises(KeyboardInterrupt):
+            execute(self.arguments(output), client_factory=InterruptedAfterCreate)
+
+        self.assertFalse(output.exists())
+        plan = json.loads(plan_output.read_text(encoding="ascii"))
+        self.assertEqual(plan["kind"], "secure_import_vault_smoke_plan")
+        self.assertEqual(plan["run_id"], plan["canary_data_paths"][0].rsplit("/", 1)[-1])
+        self.assertEqual(plan["canary_metadata_paths"], [
+            path.replace("/data/", "/metadata/", 1)
+            for path in plan["canary_data_paths"]
+        ])
+        self.assertTrue(plan["cleanup_required"])
+        raw = plan_output.read_text(encoding="ascii")
+        for prohibited in (
+            "CARD_TOKEN_VALUE",
+            "MAILBOX_TOKEN_VALUE",
+            "API_TOKEN_VALUE",
+            "vault.target.invalid",
+        ):
+            self.assertNotIn(prohibited, raw)
+
     def test_token_files_are_external_regular_and_distinct(self) -> None:
         output = self.directory / "duplicate.json"
         arguments = self.arguments(output)
@@ -167,14 +219,16 @@ class SecureImportVaultSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(SmokeFailure, "vault_token_files_not_distinct"):
             execute(arguments, client_factory=FakeVaultClient)
         self.assertFalse(output.exists())
+        self.assertTrue(Path(arguments.plan_output).is_file())
 
         alias = self.directory / "card-alias.token"
         os.link(self.card_token, alias)
-        arguments = self.arguments(output)
+        alias_output = self.directory / "alias.json"
+        arguments = self.arguments(alias_output)
         arguments.mailbox_token_file = str(alias)
         with self.assertRaisesRegex(SmokeFailure, "card_token_file_invalid"):
             execute(arguments, client_factory=FakeVaultClient)
-        self.assertFalse(output.exists())
+        self.assertFalse(alias_output.exists())
 
     def test_repository_evidence_output_is_rejected_before_credentials(self) -> None:
         output = ROOT / "must-not-exist-secure-import-smoke.json"

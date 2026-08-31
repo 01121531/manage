@@ -93,7 +93,11 @@ to the desktop or Web clients.
 ## Secure card and mailbox pool import
 
 Pool ingestion is a separate trust boundary from the three runtime identities
-above. `scripts/secure_pool_import.py` reads a restricted local input file,
+above. An administrator manually supplies card and mailbox source files from an
+approved intake workstation; the application does not collect either source
+automatically. Card records enter only the credit-card pool and mailbox records
+enter only the mailbox pool. `scripts/secure_pool_import.py` reads the matching
+restricted local input file,
 writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
 pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
 output JSON contains `schema_version: 2`, an explicit `pool_type`, a stable
@@ -117,6 +121,7 @@ python scripts/secure_pool_import.py card \
   --ca-file /etc/email-platform/internal-ca.pem \
   --token-file /run/secrets/email-platform-card-importer/token \
   --audience email-platform:pool-import:production \
+  --execution-directory /secure-evidence/card-import-execution-20260831 \
   --receipt-output /secure-intake/card-import-bundle.json
 ```
 
@@ -126,7 +131,21 @@ alias fails closed. Raw mailbox records place provider credentials under a
 `secret` object; the approved real provider schema is still an R04.02 input.
 The CLI disables proxy inheritance and redirects, requires HTTPS, reads bounded
 stable files, requires restricted POSIX permissions, writes the receipt once
-with mode `0600`, and never prints a secret or receipt token.
+with mode `0600`, and never prints a secret or receipt token. It publishes a
+secret-free execution plan before the first Vault mutation, then a write intent
+before and a confirmation after each create-only operation. If the process is
+interrupted, do not blindly rerun it: assess the new external execution
+directory without Vault access or filesystem mutation:
+
+```sh
+python scripts/secure_pool_import_recovery.py \
+  --execution-directory /secure-evidence/card-import-execution-20260831 \
+  --receipt-output /secure-intake/card-import-bundle.json
+```
+
+The assessment reports `unwritten`, `partial_written`, `commit_unknown`, or
+`completed` and always reports `automatic_resume_allowed=false`. In particular,
+an existing `cas=0` path never proves that its value equals the source secret.
 
 The API verifies the Transit signature and exact audience, tenant, pool,
 ordered manifest digest, count, validity interval, UUID and key version. It
@@ -171,6 +190,7 @@ python scripts/secure_import_vault_smoke.py run \
   --mailbox-token-file /run/secrets/email-platform-mailbox-importer/token \
   --api-token-file /run/secrets/email-platform-vault-api/token \
   --environment staging \
+  --plan-output /secure-evidence/secure-import-vault-smoke.plan.json \
   --evidence-output /secure-evidence/secure-import-vault-smoke.json
 
 python scripts/secure_import_vault_smoke.py verify \
@@ -185,9 +205,16 @@ does not test omission of the CAS field and therefore does not prove
 mount-level `cas_required` configuration. It
 disables redirects and proxy inheritance and writes only status codes, path
 identifiers and an origin digest; tokens, signatures and response bodies are
-not retained. A privileged operator must remove the two `canary_paths` listed
-in the evidence after preserving and reviewing the Vault audit trace. Importer
-tokens intentionally cannot perform that cleanup.
+not retained. The plan is published before the first canary write and binds the
+exact KV v2 data and metadata paths. After preserving the Vault audit trace,
+render an exact, per-run cleanup policy with
+`scripts/secure_import_vault_canary_cleanup.py render-policy`; an approved Vault
+administrator must install that exact policy and issue a short-lived token with
+only that policy and no `default` policy. The cleanup command reads and verifies
+both canaries before deleting either, permanently deletes only the two exact KV
+v2 metadata paths, verifies data and metadata both return 404, and emits a
+write-once, secret-free receipt. Wildcard cleanup policy paths are forbidden.
+Importer tokens intentionally cannot perform cleanup.
 
 Before production, also prove an observed key rotation with old-receipt
 verification, audit traces, and concurrent database consumption. Automatic-

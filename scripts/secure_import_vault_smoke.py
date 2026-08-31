@@ -26,6 +26,13 @@ import urllib.request
 from uuid import uuid4
 from uuid import UUID
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+_loaded_platform = sys.modules.get("platform")
+if _loaded_platform is not None and not hasattr(_loaded_platform, "__path__"):
+    del sys.modules["platform"]
+
 from platform.file_boundary import read_stable_runtime_bytes_with_metadata
 from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
 from scripts.backup_output_policy import (
@@ -101,6 +108,8 @@ _PAYLOAD_KEYS = {
     "environment",
     "vault_origin_sha256",
     "run_id",
+    "plan_payload_sha256",
+    "plan_file_sha256",
     "started_at",
     "finished_at",
     "result",
@@ -108,6 +117,19 @@ _PAYLOAD_KEYS = {
     "cleanup_required",
     "canary_paths",
     "checks",
+    "prohibited_content",
+}
+_PLAN_KEYS = {
+    "schema_version",
+    "kind",
+    "production_acceptance",
+    "environment",
+    "vault_origin_sha256",
+    "run_id",
+    "started_at",
+    "cleanup_required",
+    "canary_data_paths",
+    "canary_metadata_paths",
     "prohibited_content",
 }
 _PROHIBITED_KEYS = {
@@ -137,18 +159,7 @@ class VaultResponse:
 
 class VaultClient:
     def __init__(self, origin: str, token: str, *, ca_file: Path | None) -> None:
-        parsed = urllib.parse.urlsplit(origin.strip().rstrip("/"))
-        if (
-            parsed.scheme != "https"
-            or not parsed.netloc
-            or parsed.username
-            or parsed.password
-            or parsed.path
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise SmokeFailure("vault_origin_invalid")
-        self.origin = urllib.parse.urlunsplit(parsed)
+        self.origin = _vault_origin(origin)
         self._token = token
         context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
         self._opener = urllib.request.build_opener(
@@ -216,6 +227,21 @@ def _external_regular_file(value: str, *, label: str) -> Path:
     ):
         raise SmokeFailure(f"{label}_invalid")
     return path
+
+
+def _vault_origin(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value.strip().rstrip("/"))
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise SmokeFailure("vault_origin_invalid")
+    return urllib.parse.urlunsplit(parsed)
 
 
 def _read_token(path: Path) -> str:
@@ -299,13 +325,102 @@ def _canonical_bytes(value: dict[str, object]) -> bytes:
     ).encode("ascii")
 
 
-def _write_evidence(output: Path, payload: dict[str, object]) -> None:
+def _write_evidence(
+    output: Path,
+    payload: dict[str, object],
+) -> tuple[dict[str, object], bytes]:
     document = dict(payload)
     document["integrity"] = {
         "payload_sha256": hashlib.sha256(_canonical_bytes(payload)).hexdigest()
     }
-    temporary = write_fsynced_temporary_bytes(output, _canonical_bytes(document) + b"\n")
+    raw = _canonical_bytes(document) + b"\n"
+    temporary = write_fsynced_temporary_bytes(output, raw)
     publish_write_once_file(temporary, output)
+    return document, raw
+
+
+def smoke_plan_errors(document: object) -> list[str]:
+    if not isinstance(document, dict) or set(document) != _PLAN_KEYS | {"integrity"}:
+        return ["secure import smoke plan schema is invalid"]
+    errors: list[str] = []
+    if (
+        document.get("schema_version") != 1
+        or document.get("kind") != "secure_import_vault_smoke_plan"
+        or document.get("production_acceptance") is not False
+        or document.get("cleanup_required") is not True
+    ):
+        errors.append("secure import smoke plan identity is invalid")
+    environment = document.get("environment")
+    if not isinstance(environment, str) or _ENVIRONMENT.fullmatch(environment) is None:
+        errors.append("secure import smoke plan environment is invalid")
+    origin_digest = document.get("vault_origin_sha256")
+    if not isinstance(origin_digest, str) or re.fullmatch(r"[0-9a-f]{64}", origin_digest) is None:
+        errors.append("secure import smoke plan Vault binding is invalid")
+    try:
+        run_id = str(UUID(str(document.get("run_id"))))
+    except (ValueError, TypeError, AttributeError):
+        run_id = ""
+        errors.append("secure import smoke plan run identity is invalid")
+    if run_id:
+        data_paths = [
+            f"secret/data/cards/imports/smoke/{run_id}",
+            f"secret/data/mailboxes/imports/smoke/{run_id}",
+        ]
+        if document.get("canary_data_paths") != data_paths:
+            errors.append("secure import smoke plan data paths are invalid")
+        if document.get("canary_metadata_paths") != [
+            path.replace("/data/", "/metadata/", 1) for path in data_paths
+        ]:
+            errors.append("secure import smoke plan metadata paths are invalid")
+    started_at = document.get("started_at")
+    try:
+        parsed = datetime.fromisoformat(str(started_at).removesuffix("Z") + "+00:00")
+    except ValueError:
+        parsed = None
+    if (
+        not isinstance(started_at, str)
+        or not started_at.endswith("Z")
+        or parsed is None
+        or parsed.tzinfo != timezone.utc
+    ):
+        errors.append("secure import smoke plan start time is invalid")
+    prohibited = document.get("prohibited_content")
+    if (
+        not isinstance(prohibited, dict)
+        or set(prohibited) != _PROHIBITED_KEYS
+        or any(value is not False for value in prohibited.values())
+    ):
+        errors.append("secure import smoke plan redaction claim is invalid")
+    integrity = document.get("integrity")
+    payload = {key: value for key, value in document.items() if key != "integrity"}
+    expected_digest = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+    if (
+        not isinstance(integrity, dict)
+        or set(integrity) != {"payload_sha256"}
+        or integrity.get("payload_sha256") != expected_digest
+    ):
+        errors.append("secure import smoke plan integrity is invalid")
+    return errors
+
+
+def load_smoke_plan(
+    path_value: str,
+    *,
+    expected_sha256: str,
+) -> tuple[dict[str, object], str]:
+    if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise SmokeFailure("smoke_plan_pin_invalid")
+    path = _external_regular_file(path_value, label="smoke_plan")
+    try:
+        raw, _ = read_stable_runtime_bytes_with_metadata(path, max_bytes=MAX_RESPONSE_BYTES)
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise SmokeFailure("smoke_plan_pin_invalid")
+        document = parse_unique_json_bytes(raw)
+    except (OSError, JsonBoundaryError):
+        raise SmokeFailure("smoke_plan_invalid") from None
+    if smoke_plan_errors(document) or not isinstance(document, dict):
+        raise SmokeFailure("smoke_plan_invalid")
+    return dict(document), hashlib.sha256(raw).hexdigest()
 
 
 def evidence_errors(document: object) -> list[str]:
@@ -325,6 +440,10 @@ def evidence_errors(document: object) -> list[str]:
     origin_digest = document.get("vault_origin_sha256")
     if not isinstance(origin_digest, str) or re.fullmatch(r"[0-9a-f]{64}", origin_digest) is None:
         errors.append("secure import smoke Vault binding is invalid")
+    for name in ("plan_payload_sha256", "plan_file_sha256"):
+        value = document.get(name)
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            errors.append(f"secure import smoke {name} is invalid")
     try:
         run_id = str(UUID(str(document.get("run_id"))))
     except (ValueError, TypeError, AttributeError):
@@ -445,9 +564,44 @@ def execute(
     client_factory: Callable[..., VaultClient] = VaultClient,
 ) -> tuple[dict[str, object], bool]:
     output = prepare_write_once_file(args.evidence_output)
+    plan_output = prepare_write_once_file(args.plan_output)
+    if output.resolve() == plan_output.resolve():
+        raise SmokeFailure("smoke_output_paths_not_distinct")
     environment = args.environment.strip()
     if environment != args.environment or _ENVIRONMENT.fullmatch(environment) is None:
         raise SmokeFailure("environment_invalid")
+    origin = _vault_origin(args.vault_address)
+    origin_digest = hashlib.sha256(origin.encode("utf-8")).hexdigest()
+    run_id = str(uuid4())
+    started_at = datetime.now(timezone.utc)
+    card_path = f"secret/data/cards/imports/smoke/{run_id}"
+    mailbox_path = f"secret/data/mailboxes/imports/smoke/{run_id}"
+    plan_payload: dict[str, object] = {
+        "schema_version": 1,
+        "kind": "secure_import_vault_smoke_plan",
+        "production_acceptance": False,
+        "environment": environment,
+        "vault_origin_sha256": origin_digest,
+        "run_id": run_id,
+        "started_at": started_at.isoformat().replace("+00:00", "Z"),
+        "cleanup_required": True,
+        "canary_data_paths": [card_path, mailbox_path],
+        "canary_metadata_paths": [
+            card_path.replace("/data/", "/metadata/", 1),
+            mailbox_path.replace("/data/", "/metadata/", 1),
+        ],
+        "prohibited_content": {
+            "contains_token_values": False,
+            "contains_signatures": False,
+            "contains_response_bodies": False,
+            "contains_pan_values": False,
+            "contains_mailbox_credentials": False,
+        },
+    }
+    plan_document, plan_raw = _write_evidence(plan_output, plan_payload)
+    if smoke_plan_errors(plan_document):
+        raise SmokeFailure("smoke_plan_invalid")
+
     token_paths = {
         "card": _external_regular_file(args.card_token_file, label="card_token_file"),
         "mailbox": _external_regular_file(
@@ -473,19 +627,12 @@ def execute(
 
     clients = {
         name: client_factory(
-            args.vault_address,
+            origin,
             _read_token(path),
             ca_file=ca_file,
         )
         for name, path in token_paths.items()
     }
-    origin_digest = hashlib.sha256(
-        clients["api"].origin.encode("utf-8")
-    ).hexdigest()
-    run_id = str(uuid4())
-    started_at = datetime.now(timezone.utc)
-    card_path = f"secret/data/cards/imports/smoke/{run_id}"
-    mailbox_path = f"secret/data/mailboxes/imports/smoke/{run_id}"
     card_wrong_cas_path = card_path + "-wrong-cas"
     mailbox_wrong_cas_path = mailbox_path + "-wrong-cas"
     synthetic = {"smoke_canary": run_id}
@@ -545,6 +692,8 @@ def execute(
         "environment": environment,
         "vault_origin_sha256": origin_digest,
         "run_id": run_id,
+        "plan_payload_sha256": plan_document["integrity"]["payload_sha256"],
+        "plan_file_sha256": hashlib.sha256(plan_raw).hexdigest(),
         "started_at": started_at.isoformat().replace("+00:00", "Z"),
         "finished_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "result": "passed" if passed else "failed",
@@ -575,6 +724,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--mailbox-token-file", required=True)
     run.add_argument("--api-token-file", required=True)
     run.add_argument("--environment", required=True)
+    run.add_argument("--plan-output", required=True)
     run.add_argument("--evidence-output", required=True)
     run.add_argument("--ca-file")
     verify = commands.add_parser("verify")

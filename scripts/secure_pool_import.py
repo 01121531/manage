@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,13 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+_loaded_platform = sys.modules.get("platform")
+if _loaded_platform is not None and not hasattr(_loaded_platform, "__path__"):
+    del sys.modules["platform"]
+
 from platform.file_boundary import read_stable_runtime_bytes_with_metadata
 from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
 from platform.pool_imports import (
@@ -29,6 +37,17 @@ from platform.pool_imports import (
     pool_import_digest,
     pool_import_submission_key,
     pool_secret_ref,
+)
+from platform.pool_import_execution import (
+    build_execution_event,
+    build_execution_plan,
+    canonical_bytes as execution_canonical_bytes,
+)
+from scripts.backup_output_policy import (
+    create_write_once_directory,
+    prepare_write_once_file,
+    publish_write_once_file,
+    write_fsynced_temporary_bytes,
 )
 
 
@@ -53,6 +72,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         del req, fp, code, msg, headers, newurl
         return None
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _vault_origin(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value.strip().rstrip("/"))
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ImportFailure("Vault address must be an HTTPS origin")
+    return urllib.parse.urlunsplit(parsed)
 
 
 def _absolute_file(value: str, *, label: str) -> Path:
@@ -201,12 +239,7 @@ def _mailbox_record(value: object) -> tuple[dict[str, object], dict[str, object]
 
 class VaultClient:
     def __init__(self, addr: str, token: str, *, ca_file: Path | None) -> None:
-        parsed = urllib.parse.urlsplit(addr.strip().rstrip("/"))
-        if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-            raise ImportFailure("Vault address must be an HTTPS origin")
-        if parsed.path or parsed.query or parsed.fragment:
-            raise ImportFailure("Vault address must be an HTTPS origin")
-        self.addr = urllib.parse.urlunsplit(parsed)
+        self.addr = _vault_origin(addr)
         self.token = token
         context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
         self.opener = urllib.request.build_opener(
@@ -244,7 +277,14 @@ class VaultClient:
     def write_secret(self, secret_ref: str, secret: dict[str, object]) -> None:
         parsed = urllib.parse.urlsplit(secret_ref)
         path = f"/v1/{parsed.netloc}/data/{parsed.path.lstrip('/')}"
-        self.post(path, {"options": {"cas": 0}, "data": secret})
+        value = self.post(path, {"options": {"cas": 0}, "data": secret})
+        data = value.get("data")
+        if (
+            not isinstance(data, dict)
+            or data.get("version") != 1
+            or type(data.get("version")) is not int
+        ):
+            raise ImportFailure("Vault write acknowledgement is invalid")
 
     def sign(self, pool_type: Literal["card", "mailbox"], claims: bytes) -> str:
         key = f"email-platform-{pool_type}-import-receipt"
@@ -261,23 +301,36 @@ class VaultClient:
         return signature
 
 
-def _write_bundle(path: Path, bundle: dict[str, object]) -> None:
+def _write_execution_record(path: Path, document: dict[str, object]) -> None:
+    raw = execution_canonical_bytes(document) + b"\n"
     try:
-        with path.open("x", encoding="utf-8", newline="\n") as handle:
-            if os.name != "nt":
-                os.chmod(path, 0o600)
-            json.dump(bundle, handle, ensure_ascii=True, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-    except OSError:
+        output = prepare_write_once_file(path)
+        temporary = write_fsynced_temporary_bytes(output, raw)
+        publish_write_once_file(temporary, output)
+    except (OSError, ValueError):
+        raise ImportFailure("Execution record publication failed") from None
+
+
+def _write_bundle(path: Path, bundle: dict[str, object]) -> str:
+    raw = json.dumps(
+        bundle, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii") + b"\n"
+    try:
+        output = prepare_write_once_file(path)
+        temporary = write_fsynced_temporary_bytes(output, raw)
+        publish_write_once_file(temporary, output)
+    except (OSError, ValueError):
         raise ImportFailure("Receipt output must be a new writable file") from None
+    return hashlib.sha256(raw).hexdigest()
 
 
 def run(args: argparse.Namespace) -> tuple[str, int]:
     input_path = _absolute_file(args.input_file, label="Input file")
     token_path = _absolute_file(args.token_file, label="Vault token file")
     output_path = _absolute_file(args.receipt_output, label="Receipt output")
+    execution_path = Path(args.execution_directory)
+    if not execution_path.is_absolute():
+        raise ImportFailure("Execution record directory must be an absolute path")
     ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
     tenant_id = args.tenant_id.strip()
     audience = args.audience.strip()
@@ -289,7 +342,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         raise ImportFailure("Receipt output must not already exist")
     if not output_path.parent.is_dir():
         raise ImportFailure("Receipt output directory must already exist")
-    distinct_paths = [input_path, token_path, output_path]
+    distinct_paths = [input_path, token_path, output_path, execution_path]
     if ca_file is not None:
         distinct_paths.append(ca_file)
     if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
@@ -303,16 +356,58 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     manifest = [item[0] for item in parsed_records]
     secrets = [item[1] for item in parsed_records]
     receipt_id = str(uuid4())
-    client = VaultClient(args.vault_address, _read_token(token_path), ca_file=ca_file)
-    for index, secret in enumerate(secrets):
-        client.write_secret(pool_secret_ref(
+    vault_origin = _vault_origin(args.vault_address)
+    digest = pool_import_digest(pool_type, manifest)
+    secret_refs = [
+        pool_secret_ref(
             pool_type,
             tenant_id=tenant_id,
             receipt_id=receipt_id,
             index=index,
-        ), secret)
+        )
+        for index in range(len(secrets))
+    ]
+    try:
+        execution_claim = create_write_once_directory(execution_path)
+    except (OSError, ValueError):
+        raise ImportFailure("Execution record directory must be a new external directory") from None
+    execution_directory = execution_claim.path
+    plan = build_execution_plan(
+        execution_id=receipt_id,
+        pool_type=pool_type,
+        vault_origin=vault_origin,
+        tenant_id=tenant_id,
+        audience=audience,
+        ordered_manifest_digest=digest,
+        secret_refs=secret_refs,
+        created_at=_utc_now(),
+    )
+    _write_execution_record(execution_directory / "plan.json", plan)
+
+    client = VaultClient(vault_origin, _read_token(token_path), ca_file=ca_file)
+    for index, (secret_ref, secret) in enumerate(zip(secret_refs, secrets, strict=True)):
+        _write_execution_record(
+            execution_directory / f"write-{index:03d}.intent.json",
+            build_execution_event(
+                plan,
+                event_type="vault_write_intent",
+                index=index,
+                artifact_sha256=None,
+                occurred_at=_utc_now(),
+            ),
+        )
+        client.write_secret(secret_ref, secret)
+        _write_execution_record(
+            execution_directory / f"write-{index:03d}.confirmed.json",
+            build_execution_event(
+                plan,
+                event_type="vault_write_confirmed",
+                index=index,
+                artifact_sha256=None,
+                occurred_at=_utc_now(),
+            ),
+        )
     now = int(datetime.now(timezone.utc).timestamp())
-    digest = pool_import_digest(pool_type, manifest)
     claims = {
         "schema_version": 1,
         "audience": audience,
@@ -333,14 +428,37 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         unsigned = canonical_receipt_claims(claims)
         signature = client.sign(pool_type, unsigned)
         if int(signature.split(":", 2)[1].removeprefix("v")) != key_version:
-            raise ImportFailure("Transit key rotated during receipt signing; retry safely")
-    _write_bundle(output_path, {
+            raise ImportFailure(
+                "Transit key changed during signing; inspect the execution record"
+            )
+    bundle = {
         "schema_version": 2,
         "pool_type": pool_type,
         "submission_key": pool_import_submission_key(receipt_id),
         "receipt_token": encode_receipt_token(unsigned, signature),
         "items": manifest,
-    })
+    }
+    _write_execution_record(
+        execution_directory / "bundle.intent.json",
+        build_execution_event(
+            plan,
+            event_type="bundle_publish_intent",
+            index=None,
+            artifact_sha256=None,
+            occurred_at=_utc_now(),
+        ),
+    )
+    bundle_sha256 = _write_bundle(output_path, bundle)
+    _write_execution_record(
+        execution_directory / "complete.json",
+        build_execution_event(
+            plan,
+            event_type="execution_complete",
+            index=None,
+            artifact_sha256=bundle_sha256,
+            occurred_at=_utc_now(),
+        ),
+    )
     return receipt_id, len(manifest)
 
 
@@ -352,6 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vault-address", required=True)
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--receipt-output", required=True)
+    parser.add_argument("--execution-directory", required=True)
     parser.add_argument("--audience", required=True)
     parser.add_argument("--ca-file")
     return parser
@@ -361,7 +480,10 @@ def main() -> int:
     try:
         receipt_id, count = run(build_parser().parse_args())
     except ImportFailure as error:
-        print(f"secure-pool-import-failed: {error}", file=sys.stderr)
+        print(
+            f"secure-pool-import-failed: {error}; run the read-only execution assessment",
+            file=sys.stderr,
+        )
         return 1
     print(f"secure-pool-import-ok receipt_id={receipt_id} count={count}")
     return 0

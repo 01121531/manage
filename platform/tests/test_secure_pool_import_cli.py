@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.secure_pool_import_recovery import assess_execution_directory
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -28,6 +30,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
             "vault_address": "https://vault.example.test",
             "token_file": str((ROOT / "vault.token").resolve()),
             "receipt_output": str((ROOT / "receipt.json").resolve()),
+            "execution_directory": str((ROOT / "secure-import-execution").resolve()),
             "audience": "email-platform:pool-import:production",
             "ca_file": None,
         }
@@ -101,6 +104,24 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 "https://vault.example.test/path", "token", ca_file=None
             )
 
+    def test_vault_write_requires_exact_version_one_acknowledgement(self) -> None:
+        client = secure_pool_import.VaultClient(
+            "https://vault.example.test", "token", ca_file=None
+        )
+        secret_ref = "vault://secret/cards/imports/example/0"
+        with patch.object(client, "post", return_value={"data": {"version": 1}}):
+            client.write_secret(secret_ref, {"pan": "4111111111111111"})
+        for response in (
+            {},
+            {"data": {}},
+            {"data": {"version": True}},
+            {"data": {"version": 2}},
+        ):
+            with self.subTest(response=response), patch.object(
+                client, "post", return_value=response
+            ), self.assertRaises(secure_pool_import.ImportFailure):
+                client.write_secret(secret_ref, {"pan": "4111111111111111"})
+
     def test_run_rejects_unusable_receipt_binding_before_reading_secrets(self) -> None:
         for field, value in (("tenant_id", " tenant-1"), ("audience", "")):
             with self.subTest(field=field), self.assertRaises(
@@ -154,6 +175,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 input_file = root / "input.json"
                 token_file = root / "vault.token"
                 receipt_output = root / "receipt.json"
+                execution_directory = root / "execution"
                 input_file.write_text(json.dumps(source_records), encoding="utf-8")
                 token_file.write_text("test-vault-token", encoding="utf-8")
                 with patch.object(secure_pool_import, "VaultClient", FakeVaultClient):
@@ -162,6 +184,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                         input_file=str(input_file.resolve()),
                         token_file=str(token_file.resolve()),
                         receipt_output=str(receipt_output.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
                     ))
                 bundle = json.loads(receipt_output.read_text(encoding="utf-8"))
                 self.assertEqual(set(bundle), {
@@ -175,6 +198,127 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     r"^spi:[0-9a-f-]{36}$",
                 )
                 self.assertNotIn("test-vault-token", receipt_output.read_text())
+
+    def test_execution_plan_and_attempt_precede_each_vault_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            token_file = root / "vault.token"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([
+                {
+                    "email_masked": "a***@example.test",
+                    "connector_type": "http",
+                    "secret": {"password": "first-private-password"},
+                },
+                {
+                    "email_masked": "b***@example.test",
+                    "connector_type": "http",
+                    "secret": {"password": "second-private-password"},
+                },
+            ]), encoding="utf-8")
+            token_file.write_text("test-vault-token", encoding="utf-8")
+
+            class OrderedVaultClient:
+                writes = 0
+
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                    index = self.writes
+                    self.assert_execution_state(index)
+                    type(self).writes += 1
+
+                @staticmethod
+                def assert_execution_state(index: int) -> None:
+                    self.assertTrue((execution_directory / "plan.json").is_file())
+                    self.assertTrue(
+                        (execution_directory / f"write-{index:03d}.intent.json").is_file()
+                    )
+                    if index:
+                        self.assertTrue(
+                            (execution_directory / f"write-{index - 1:03d}.confirmed.json").is_file()
+                        )
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    return "vault:v1:test-signature"
+
+            with patch.object(secure_pool_import, "VaultClient", OrderedVaultClient):
+                secure_pool_import.run(self._args(
+                    pool_type="mailbox",
+                    input_file=str(input_file.resolve()),
+                    token_file=str(token_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(OrderedVaultClient.writes, 2)
+            self.assertTrue((execution_directory / "write-001.confirmed.json").is_file())
+            self.assertTrue((execution_directory / "complete.json").is_file())
+            recovery = assess_execution_directory(
+                execution_directory, receipt_output
+            )
+            self.assertEqual(recovery["status"], "completed")
+            execution_text = "".join(
+                path.read_text(encoding="ascii")
+                for path in execution_directory.iterdir()
+            )
+            self.assertNotIn("first-private-password", execution_text)
+            self.assertNotIn("second-private-password", execution_text)
+            self.assertNotIn("test-vault-token", execution_text)
+
+    def test_crash_after_vault_attempt_is_classified_commit_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            token_file = root / "vault.token"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            token_file.write_text("test-vault-token", encoding="utf-8")
+
+            class InterruptedVaultClient:
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                    raise KeyboardInterrupt
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    raise AssertionError("sign must not run after an unknown Vault write")
+
+            with patch.object(secure_pool_import, "VaultClient", InterruptedVaultClient):
+                with self.assertRaises(KeyboardInterrupt):
+                    secure_pool_import.run(self._args(
+                        input_file=str(input_file.resolve()),
+                        token_file=str(token_file.resolve()),
+                        receipt_output=str(receipt_output.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
+                    ))
+
+            self.assertTrue((execution_directory / "plan.json").is_file())
+            self.assertTrue(
+                (execution_directory / "write-000.intent.json").is_file()
+            )
+            self.assertFalse((execution_directory / "write-000.confirmed.json").exists())
+            recovery = assess_execution_directory(
+                execution_directory, receipt_output
+            )
+            self.assertEqual(recovery["status"], "commit_unknown")
+            self.assertEqual(recovery["phase"], "vault_write_commit_unknown")
+            self.assertEqual(recovery["unknown_index"], 0)
+            self.assertFalse(receipt_output.exists())
+            execution_text = "".join(
+                path.read_text(encoding="ascii")
+                for path in execution_directory.iterdir()
+            )
+            self.assertNotIn("4111111111111111", execution_text)
 
 
 if __name__ == "__main__":
