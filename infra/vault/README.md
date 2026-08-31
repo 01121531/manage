@@ -6,6 +6,7 @@ approved administrator workstation whose Vault CLI is already authenticated:
 ```sh
 VAULT_ADDR=https://vault.example.invalid sh ./infra/vault/configure-approles.sh
 VAULT_ADDR=https://vault.example.invalid sh ./infra/vault/configure-broker-issuer-policies.sh
+VAULT_ADDR=https://vault.example.invalid sh ./infra/vault/configure-secure-import.sh
 ```
 
 The helper requires HTTPS plus `vault` and `jq`. It installs each policy and
@@ -132,12 +133,51 @@ atomic with the database commit.
 
 The non-secret [`secure-import-contract.json`](secure-import-contract.json)
 and importer policies define the intended negative capabilities. They are
-preflight assets only. Before production, create two non-exportable Transit
-keys and three distinct external identities (card importer, mailbox importer,
-API verifier), prove create-only/CAS behavior, cross-pool denial, API signing
-denial, key rotation, audit traces, and concurrent database consumption. Keep
-`production_acceptance=false` until those target results and the separate PCI
-and mail-provider decisions are approved.
+preflight assets only. Run `configure-secure-import.sh` from an approved,
+already-authenticated administrator workstation after the AppRole and Transit
+mounts exist. It installs and exactly reads back the two importer policies plus
+the existing API policy, reconciles three AppRoles, and creates or verifies two
+pool-specific Ed25519 signing keys. Both keys are non-exportable, disallow
+plaintext backups and deletion, and are configured for 30-day automatic
+rotation. The helper never enables mounts, logs in, generates or reads RoleIDs,
+SecretIDs or tokens, or accesses private keys and pool data.
+
+Bind and deliver credentials for `email-platform-card-importer`,
+`email-platform-mailbox-importer`, and `email-platform-api-cards` as three
+distinct external identities. After their short-lived tokens are delivered to
+three separate protected files, run the target boundary smoke test. The output
+must be a new absolute file outside the repository:
+
+```sh
+python scripts/secure_import_vault_smoke.py run \
+  --vault-address https://vault.example.invalid \
+  --ca-file /etc/email-platform/internal-ca.pem \
+  --card-token-file /run/secrets/email-platform-card-importer/token \
+  --mailbox-token-file /run/secrets/email-platform-mailbox-importer/token \
+  --api-token-file /run/secrets/email-platform-vault-api/token \
+  --environment staging \
+  --evidence-output /secure-evidence/secure-import-vault-smoke.json
+
+python scripts/secure_import_vault_smoke.py verify \
+  --input /secure-evidence/secure-import-vault-smoke.json
+```
+
+The smoke test creates one synthetic canary under each import path and proves
+24 positive and negative operations: create with `cas=0`, replay and wrong-CAS
+rejection, cross-pool and cross-key denial, importer sign/verify separation,
+API verify/sign separation, and denial of key reads and API pool writes. It
+disables redirects and proxy inheritance and writes only status codes, path
+identifiers and an origin digest; tokens, signatures and response bodies are
+not retained. A privileged operator must remove the two `canary_paths` listed
+in the evidence after preserving and reviewing the Vault audit trace. Importer
+tokens intentionally cannot perform that cleanup.
+
+Before production, also prove an observed key rotation with old-receipt
+verification, audit traces, and concurrent database consumption. Automatic-
+rotation configuration alone is not evidence that a rotation occurred. A
+passing smoke artifact remains `production_acceptance=false` and requires an
+independent reviewer. Keep production acceptance false until those target
+results and the separate PCI and mail-provider decisions are approved.
 
 ## Production audit devices
 

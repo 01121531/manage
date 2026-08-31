@@ -4,9 +4,31 @@
   "receipt_authority": "vault-transit",
   "atomic_consumption": "postgresql-unique-secure-receipt-id",
   "maximum_receipt_ttl_seconds": 600,
+  "transit_keys": [
+    {
+      "key": "email-platform-card-import-receipt",
+      "type": "ed25519",
+      "derived": false,
+      "exportable": false,
+      "allow_plaintext_backup": false,
+      "deletion_allowed": false,
+      "auto_rotate_seconds": 2592000
+    },
+    {
+      "key": "email-platform-mailbox-import-receipt",
+      "type": "ed25519",
+      "derived": false,
+      "exportable": false,
+      "allow_plaintext_backup": false,
+      "deletion_allowed": false,
+      "auto_rotate_seconds": 2592000
+    }
+  ],
+  "target_smoke_check_count": 24,
   "roles": [
     {
       "role": "card-importer",
+      "approle": "email-platform-card-importer",
       "policy": "email-platform-card-importer",
       "allowed": [
         "create secret/data/cards/imports/* with cas=0",
@@ -16,6 +38,7 @@
     },
     {
       "role": "mailbox-importer",
+      "approle": "email-platform-mailbox-importer",
       "policy": "email-platform-mailbox-importer",
       "allowed": [
         "create secret/data/mailboxes/imports/* with cas=0",
@@ -25,6 +48,7 @@
     },
     {
       "role": "api-verifier",
+      "approle": "email-platform-api-cards",
       "policy": "email-platform-api-cards",
       "allowed": [
         "update transit/verify/email-platform-card-import-receipt",
