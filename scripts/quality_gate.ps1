@@ -227,6 +227,9 @@ try {
     python scripts/provider_contract_conformance.py verify-repository
     if ($LASTEXITCODE -ne 0) { throw "Provider contract verification failed." }
 
+    python scripts/verify_sub2_case_observation.py
+    if ($LASTEXITCODE -ne 0) { throw "Sub2 case observation verification failed." }
+
     python scripts/decision_envelope_validation.py verify-repository
     if ($LASTEXITCODE -ne 0) { throw "Decision envelope verification failed." }
 

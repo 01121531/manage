@@ -42,6 +42,7 @@ _EXPECTED_ENTRYPOINTS = {
     0: {
         "gate_commands": (
             "python scripts/provider_contract_conformance.py verify-repository",
+            "python scripts/verify_sub2_case_observation.py",
             "python scripts/decision_envelope_validation.py verify-repository",
             "python scripts/phase0_boundary_approval.py verify-repository",
             "python scripts/target_platform_inventory.py verify-repository",
@@ -50,6 +51,7 @@ _EXPECTED_ENTRYPOINTS = {
         "runbooks": ("deploy/runbooks/target-intake-preflight.md",),
         "test_modules": (
             "tests/test_provider_contract_conformance.py",
+            "tests/test_sub2_case_observation.py",
             "tests/test_decision_envelope_validation.py",
             "tests/test_phase0_boundary_approval.py",
             "tests/test_target_platform_inventory.py",
@@ -147,6 +149,7 @@ _EXPECTED_ENTRYPOINTS = {
     4: {
         "gate_commands": (
             "python scripts/provider_contract_conformance.py verify-repository",
+            "python scripts/verify_sub2_case_observation.py",
             "python scripts/sub2_execution_evidence.py verify-repository",
             "python scripts/vault_egress_evidence.py verify-repository",
         ),
@@ -155,6 +158,7 @@ _EXPECTED_ENTRYPOINTS = {
             "platform/tests/test_sub2_http_adapter.py",
             "platform/tests/test_sub2_concurrency.py",
             "tests/test_provider_contract_conformance.py",
+            "tests/test_sub2_case_observation.py",
             "tests/test_sub2_execution_evidence.py",
             "tests/test_vault_egress_evidence.py",
         ),

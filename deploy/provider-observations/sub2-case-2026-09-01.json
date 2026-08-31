@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "record_type": "sub2_public_interface_observation",
+  "observed_at": "2026-08-31T18:38:25.849Z",
+  "observation_scope": "request_shape_and_public_frontend_only",
+  "production_acceptance": false,
+  "review_status": "unreviewed",
+  "source": {
+    "page_url": "https://ai1.aisb.shop/login?redirect=/admin/dashboard",
+    "authentication_state": "logged_out_redirect",
+    "scanned_same_origin_script_count": 64,
+    "assets": [
+      {
+        "name": "index-BO-GxV3d.js",
+        "url": "https://ai1.aisb.shop/assets/index-BO-GxV3d.js",
+        "sha256": "ccb6a54723a4be14442fdb39531e4691cd41937f7a66c42b7cda62e86ac7ef36",
+        "byte_length": 174500
+      },
+      {
+        "name": "AccountsView-CMV6VUuq.js",
+        "url": "https://ai1.aisb.shop/assets/AccountsView-CMV6VUuq.js",
+        "sha256": "989a33965eb180e1b37245a3cdbc478a158c32928deb35d7bba0452ea922c0d1",
+        "byte_length": 669867
+      }
+    ],
+    "user_supplied_examples": [
+      {
+        "operation_id": "openai_generate_auth_url",
+        "scope": "request_shape_only"
+      },
+      {
+        "operation_id": "openai_exchange_code",
+        "scope": "request_shape_only"
+      },
+      {
+        "operation_id": "account_today_stats_batch",
+        "scope": "request_shape_only"
+      }
+    ]
+  },
+  "operations": [
+    {
+      "operation_id": "account_list",
+      "evidence": ["public_frontend_asset"],
+      "method": "GET",
+      "path": "/api/v1/admin/accounts",
+      "request": {
+        "path_fields": [],
+        "query_fields": ["page", "page_size", "platform", "type", "status", "group", "privacy_mode", "search", "sort_by", "sort_order"],
+        "header_fields": ["If-None-Match"],
+        "body_fields": []
+      },
+      "response": {
+        "header_fields": ["etag"],
+        "body_fields": [],
+        "derived_fields": []
+      },
+      "limitations": ["authenticated_response_shape_not_observed", "not_a_creation_status_query"]
+    },
+    {
+      "operation_id": "openai_generate_auth_url",
+      "evidence": ["user_supplied_request_shape", "public_frontend_asset"],
+      "method": "POST",
+      "path": "/api/v1/admin/openai/generate-auth-url",
+      "request": {
+        "path_fields": [],
+        "query_fields": [],
+        "header_fields": [],
+        "body_fields": ["proxy_id", "redirect_uri"]
+      },
+      "response": {
+        "header_fields": [],
+        "body_fields": ["auth_url", "session_id"],
+        "derived_fields": ["state_in_auth_url_query"]
+      },
+      "limitations": ["response_fields_are_static_ui_reads_only", "authentication_semantics_not_observed"]
+    },
+    {
+      "operation_id": "openai_exchange_code",
+      "evidence": ["user_supplied_request_shape", "public_frontend_asset"],
+      "method": "POST",
+      "path": "/api/v1/admin/openai/exchange-code",
+      "request": {
+        "path_fields": [],
+        "query_fields": [],
+        "header_fields": [],
+        "body_fields": ["session_id", "code", "state", "proxy_id"]
+      },
+      "response": {
+        "header_fields": [],
+        "body_fields": ["access_token", "expires_at", "refresh_token", "id_token", "email", "chatgpt_account_id", "chatgpt_user_id", "organization_id", "plan_type", "subscription_expires_at", "client_id", "name", "privacy_mode"],
+        "derived_fields": []
+      },
+      "limitations": ["response_fields_are_static_ui_reads_only", "success_failure_and_timeout_samples_not_observed"]
+    },
+    {
+      "operation_id": "account_create",
+      "evidence": ["public_frontend_asset"],
+      "method": "POST",
+      "path": "/api/v1/admin/accounts",
+      "request": {
+        "path_fields": [],
+        "query_fields": [],
+        "header_fields": [],
+        "body_fields": ["name", "notes", "platform", "type", "credentials", "extra", "proxy_id", "concurrency", "load_factor", "priority", "rate_multiplier", "group_ids", "expires_at", "auto_pause_on_expired"]
+      },
+      "response": {
+        "header_fields": [],
+        "body_fields": [],
+        "derived_fields": []
+      },
+      "limitations": ["authenticated_response_shape_not_observed", "idempotency_and_unknown_result_reconciliation_not_observed"]
+    },
+    {
+      "operation_id": "account_today_stats_batch",
+      "evidence": ["user_supplied_request_shape", "public_frontend_asset"],
+      "method": "POST",
+      "path": "/api/v1/admin/accounts/today-stats/batch",
+      "request": {
+        "path_fields": [],
+        "query_fields": [],
+        "header_fields": [],
+        "body_fields": ["account_ids"]
+      },
+      "response": {
+        "header_fields": [],
+        "body_fields": [],
+        "derived_fields": []
+      },
+      "limitations": ["authenticated_response_shape_not_observed", "statistics_are_not_creation_status"]
+    },
+    {
+      "operation_id": "account_duplicate",
+      "evidence": ["public_frontend_asset"],
+      "method": "POST",
+      "path": "/api/v1/admin/accounts/{account_id}/duplicate",
+      "request": {
+        "path_fields": ["account_id"],
+        "query_fields": [],
+        "header_fields": ["Idempotency-Key"],
+        "body_fields": []
+      },
+      "response": {
+        "header_fields": [],
+        "body_fields": [],
+        "derived_fields": []
+      },
+      "limitations": ["duplicate_only_not_account_create", "retention_and_replay_semantics_not_observed"]
+    }
+  ],
+  "negative_findings": [
+    "balance_check_endpoint_not_observed",
+    "legacy_check_concurrency_limit_not_observed",
+    "account_create_idempotency_header_not_observed",
+    "account_create_status_query_not_observed",
+    "authenticated_response_samples_not_captured",
+    "provider_idempotency_and_consistency_semantics_not_proven"
+  ],
+  "remaining_required_inputs": [
+    "redacted authentication contract and service-account ownership",
+    "balance or concurrency admission endpoint with request and response samples",
+    "account creation success rejection and timeout response samples",
+    "creation idempotency key location scope retention and replay semantics",
+    "creation status lookup with processing succeeded failed not_found and unknown mappings",
+    "status visibility delay query retention and rate-limit behavior"
+  ],
+  "redaction": {
+    "contains_live_credentials": false,
+    "contains_personal_data": false,
+    "contains_cardholder_data": false,
+    "contains_message_content": false,
+    "contains_verification_codes": false,
+    "contains_cookie_values": false,
+    "contains_session_values": false
+  }
+}

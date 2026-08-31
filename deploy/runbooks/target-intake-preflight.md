@@ -361,6 +361,16 @@ schema is closed.
 
 ## Provider contract envelopes
 
+`deploy/provider-observations/sub2-case-2026-09-01.json` is a redacted,
+non-authoritative observation of request shapes supplied by the operator and
+paths/field names visible in the case site's logged-out public frontend assets.
+It is useful only as an intake checklist. It does not prove authentication,
+runtime response shapes, balance admission, account-create idempotency, result
+lookup, rate limits, or consistency semantics, and it must never be promoted
+to a reviewed provider contract without independent authenticated evidence.
+Validate this repository observation with
+`python scripts/verify_sub2_case_observation.py`.
+
 The committed `deploy/provider-contracts/*.synthetic.json` files document the
 closed Mail and Sub2 field-shape envelopes. Copy only the relevant shape to the
 protected external intake directory, replace its capability mappings with the

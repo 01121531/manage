@@ -50,6 +50,7 @@ REPOSITORY_INPUT_FILES = (
     "deploy/decision-envelopes/phase0-boundary-approval.synthetic.json",
     "deploy/provider-contracts/mail.synthetic.json",
     "deploy/provider-contracts/sub2.synthetic.json",
+    "deploy/provider-observations/sub2-case-2026-09-01.json",
     "deploy/evidence-index-envelopes/phase1-platform.synthetic.json",
     "deploy/evidence-index-envelopes/phase2-mail.synthetic.json",
     "deploy/evidence-index-envelopes/phase3-card.synthetic.json",

@@ -17,6 +17,7 @@
       "missing_input_state": "required_external",
       "gate_commands": [
         "python scripts/provider_contract_conformance.py verify-repository",
+        "python scripts/verify_sub2_case_observation.py",
         "python scripts/decision_envelope_validation.py verify-repository",
         "python scripts/phase0_boundary_approval.py verify-repository",
         "python scripts/target_platform_inventory.py verify-repository",
@@ -27,6 +28,7 @@
       ],
       "test_modules": [
         "tests/test_provider_contract_conformance.py",
+        "tests/test_sub2_case_observation.py",
         "tests/test_decision_envelope_validation.py",
         "tests/test_phase0_boundary_approval.py",
         "tests/test_target_platform_inventory.py",
@@ -150,6 +152,7 @@
       "missing_input_state": "required_external",
       "gate_commands": [
         "python scripts/provider_contract_conformance.py verify-repository",
+        "python scripts/verify_sub2_case_observation.py",
         "python scripts/sub2_execution_evidence.py verify-repository",
         "python scripts/vault_egress_evidence.py verify-repository"
       ],
@@ -160,6 +163,7 @@
         "platform/tests/test_sub2_http_adapter.py",
         "platform/tests/test_sub2_concurrency.py",
         "tests/test_provider_contract_conformance.py",
+        "tests/test_sub2_case_observation.py",
         "tests/test_sub2_execution_evidence.py",
         "tests/test_vault_egress_evidence.py"
       ]
@@ -259,6 +263,6 @@
     }
   },
   "integrity": {
-    "payload_sha256": "be1eb16cea72ca0cbd350c7e81b88d9d3a303427cfb6f2e84f749c116c98f903"
+    "payload_sha256": "bb2d79a8781f787abcd07f868f7d6f489174a7fea9b312d7c98dc19a58322ea4"
   }
 }

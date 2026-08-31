@@ -22,7 +22,7 @@
     {"id":"R01.04","chapter":1,"source_ref":"1.1 Sub2 策略边界","requirement":"Sub2 账号、代理、分组、并发和模型仅由服务端版本化策略读取；客户端不得查看或覆盖。","classification":"repository_proven","evidence":["platform/schemas.py","platform/uploads.py","platform/tests/test_uploads.py"],"gap_or_boundary":null},
     {"id":"R01.05","chapter":1,"source_ref":"1.1 可追溯性","requirement":"卡、邮箱和上传动作可按用户、设备、任务、时间与 trace_id 回放。","classification":"repository_proven","evidence":["platform/api/v1/routes.py","frontend/src/views/AuditView.tsx","frontend/src/admin-api.ts","platform/tests/test_audit_resource_filters.py","frontend/e2e/platform.spec.ts"],"gap_or_boundary":null},
     {"id":"R01.06","chapter":1,"source_ref":"1.2 tenant_id","requirement":"平台从单组织起步，核心业务模型保留 tenant_id，并在应用/API 查询中实施多团队隔离。","classification":"repository_proven","evidence":["platform/models.py","platform/tests/test_role_boundaries.py","platform/tests/test_audit_append_only.py"],"gap_or_boundary":null},
-    {"id":"R01.07","chapter":1,"source_ref":"1.2 Sub2 假设","requirement":"生产采用经评审的服务端 HTTP Sub2 API，不向用户下发网页登录态。","classification":"external_input_required","evidence":["deploy/provider-contracts","deploy/decision-envelopes","scripts/provider_contract_conformance.py"],"gap_or_boundary":"仓库已封存可填写的余额检查、授权兑换、创建和状态查询四阶段形状与平台 phase 映射；仍需真实鉴权方式、字段映射、供应商操作引用、幂等键作用域与保留期、同键语义、状态一致性与可见/查询保留期材料通过外部评审，Phase 4 前还必须通过运行时一致性校验。"},
+    {"id":"R01.07","chapter":1,"source_ref":"1.2 Sub2 假设","requirement":"生产采用经评审的服务端 HTTP Sub2 API，不向用户下发网页登录态。","classification":"external_input_required","evidence":["deploy/provider-contracts","deploy/provider-observations/sub2-case-2026-09-01.json","scripts/provider_contract_conformance.py","scripts/verify_sub2_case_observation.py"],"gap_or_boundary":"仓库已封存四阶段契约形状，并以非权威观察记录案例后台公开前端中的授权 URL、授权兑换、账户创建、列表、统计与复制请求字段；未观察到余额检查、创建幂等头或创建结果状态查询。仍需经认证的脱敏响应样例、真实鉴权方式、余额检查与创建/查询字段映射、供应商操作引用、幂等键作用域与保留期、同键语义、状态一致性与可见/查询保留期材料通过外部评审，Phase 4 前还必须通过运行时一致性校验。"},
     {"id":"R01.08","chapter":1,"source_ref":"1.2 卡数据最小化","requirement":"默认不存 CVV；PAN 使用独立 secret_ref/token，普通模型只保存末四位、有效期等非敏感字段。","classification":"repository_proven","evidence":["platform/models.py","platform/schemas.py","platform/tests/test_admin_api.py"],"gap_or_boundary":null},
     {"id":"R01.09","chapter":1,"source_ref":"1.2 邮箱连接器封装","requirement":"邮件上游由服务端连接器封装，EXE 仅使用短期邮箱会话，不知道上游地址和认证细节。","classification":"repository_proven","evidence":["platform/mail_connectors.py","platform/tests/test_mail_http_connector.py","scripts/verify_service_boundaries.py"],"gap_or_boundary":null},
 
@@ -88,6 +88,6 @@
     "target_evidence_required": 5
   },
   "integrity": {
-    "payload_sha256": "b7de1224ca8a06336589ddd018837ade000540e13bf3c97ad068cd57b65b510f"
+    "payload_sha256": "d133319cf525897223ec73c132816d40f5b821073b9aafc16c92bf98fb3945a8"
   }
 }

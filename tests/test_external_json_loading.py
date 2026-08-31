@@ -26,6 +26,7 @@ from scripts import verify_chapter14_mvi
 from scripts import verify_phase_acceptance_matrix
 from scripts import verify_plan_completion
 from scripts import verify_plan_requirements
+from scripts import verify_sub2_case_observation
 
 
 _MAX_EXTERNAL_JSON_BYTES = 5 * 1024 * 1024
@@ -39,6 +40,7 @@ _LOADERS = (
     phase6_pilot_inputs._load,
     phase6_pilot_evidence._load,
     phase6_operations_evidence._load,
+    verify_sub2_case_observation._load,
 )
 
 _PLAN_CONSUMERS = (
