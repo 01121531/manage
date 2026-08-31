@@ -30,6 +30,7 @@ from platform.models import (
     Device,
     Mailbox,
     MailSession,
+    PoolImportReceipt,
     Task,
     OutboxEvent,
     UploadJob,
@@ -1422,6 +1423,385 @@ class AdminApiTests(unittest.TestCase):
             audit_text = "\n".join(event.details_json for event in db.query(AuditEvent))
         self.assertNotIn("vault://secret/cards/provider-card-managed", audit_text)
 
+    def test_admin_card_batch_import_is_atomic_safe_and_aggregated(self) -> None:
+        ops = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="card-import-ops@example.test",
+            password="card-import-ops-password",
+            device_name="card-import-ops-device",
+            role="ops_admin",
+        )
+        ops_token = self.login(
+            "tenant-a",
+            "card-import-ops@example.test",
+            "card-import-ops-password",
+            ops.device_id,
+        )
+        payload = [
+            {
+                "provider_ref": "batch-provider-1",
+                "pool_key": "checkout-cn",
+                "region": "cn-east",
+                "brand": "Visa",
+                "last4": "1111",
+                "expiry_month": 12,
+                "expiry_year": 2030,
+                "secret_ref": "vault://secret/cards/batch-card-1",
+            },
+            {
+                "provider_ref": "batch-provider-2",
+                "pool_key": "checkout-cn",
+                "region": "cn-east",
+                "brand": "Mastercard",
+                "last4": "2222",
+                "expiry_month": 11,
+                "expiry_year": 2031,
+                "secret_ref": "vault://secret/cards/batch-card-2",
+            },
+        ]
+        imported = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-1",
+            },
+            json=payload,
+        )
+
+        self.assertEqual(imported.status_code, 201, imported.text)
+        self.assertEqual(imported.json()["pool_type"], "card")
+        self.assertEqual(imported.json()["imported_count"], 2)
+        for forbidden in ("secret_ref", "vault://", "pan", "cvv"):
+            self.assertNotIn(forbidden, imported.text.lower())
+
+        replay = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-1",
+            },
+            json=payload,
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json(), imported.json())
+
+        mismatched_replay = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-1",
+            },
+            json=[{**payload[0], "provider_ref": "different-payload"}],
+        )
+        self.assertEqual(mismatched_replay.status_code, 409, mismatched_replay.text)
+        with self.app.state.session_factory() as db:
+            imported_cards = list(
+                db.scalars(
+                    select(Card)
+                    .where(Card.provider_ref.in_(("batch-provider-1", "batch-provider-2")))
+                    .order_by(Card.provider_ref)
+                )
+            )
+            import_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "admin.cards_imported"
+                    )
+                )
+            )
+            resource_import_audits = list(
+                db.scalars(
+                    select(AuditEvent)
+                    .where(AuditEvent.event_type == "admin.card_imported")
+                    .order_by(AuditEvent.entity_id)
+                )
+            )
+            card_events = list(
+                db.scalars(
+                    select(CardEvent).where(
+                        CardEvent.card_id.in_([card.id for card in imported_cards]),
+                        CardEvent.action == "card.created",
+                    )
+                )
+            )
+            receipt_count = db.scalar(
+                select(func.count()).select_from(PoolImportReceipt)
+            )
+        self.assertEqual(len(imported_cards), 2)
+        self.assertEqual(receipt_count, 1)
+        self.assertEqual(len(import_audits), 1)
+        self.assertEqual(
+            json.loads(import_audits[0].details_json),
+            {"count": 2, "pool_type": "card"},
+        )
+        self.assertNotIn("vault://", import_audits[0].details_json)
+        self.assertNotIn("secret_ref", import_audits[0].details_json)
+        self.assertEqual(len(resource_import_audits), 2)
+        self.assertEqual(
+            {audit.entity_id for audit in resource_import_audits},
+            {card.id for card in imported_cards},
+        )
+        self.assertEqual(
+            {
+                details["provider_ref"]
+                for details in (
+                    json.loads(audit.details_json) for audit in resource_import_audits
+                )
+            },
+            {"batch-provider-1", "batch-provider-2"},
+        )
+        for audit in resource_import_audits:
+            details = json.loads(audit.details_json)
+            self.assertEqual(details["import_receipt_id"], imported.json()["id"])
+            self.assertEqual(details["pool_key"], "checkout-cn")
+            self.assertEqual(details["region"], "cn-east")
+            self.assertNotIn("secret_ref", details)
+            self.assertNotIn("vault://", audit.details_json)
+        self.assertEqual(len(card_events), 2)
+
+        conflict = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-conflict",
+            },
+            json=[
+                {
+                    "provider_ref": "batch-must-rollback",
+                    "brand": "Visa",
+                    "last4": "3333",
+                    "secret_ref": "vault://secret/cards/batch-must-rollback",
+                },
+                payload[0],
+            ],
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        with self.app.state.session_factory() as db:
+            self.assertIsNone(
+                db.scalar(
+                    select(Card).where(Card.provider_ref == "batch-must-rollback")
+                )
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(AuditEvent)
+                    .where(AuditEvent.event_type == "admin.cards_imported")
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)),
+                1,
+            )
+
+        raw_secret = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-raw-secret",
+            },
+            json=[
+                {
+                    **payload[0],
+                    "provider_ref": "raw-card",
+                    "pan": "4111111111111111",
+                    "cvv": "123",
+                }
+            ],
+        )
+        self.assertEqual(raw_secret.status_code, 422, raw_secret.text)
+        self.assertNotIn("4111111111111111", raw_secret.text)
+        cross_pool_development_ref = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-cross-pool-env",
+            },
+            json=[
+                {
+                    **payload[0],
+                    "provider_ref": "cross-pool-env-card",
+                    "secret_ref": "env://MAILBOX_SHARED",
+                }
+            ],
+        )
+        self.assertEqual(
+            cross_pool_development_ref.status_code,
+            422,
+            cross_pool_development_ref.text,
+        )
+        empty = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-empty",
+            },
+            json=[],
+        )
+        self.assertEqual(empty.status_code, 422, empty.text)
+        valid_development_ref = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={
+                **self.headers(ops_token),
+                "Idempotency-Key": "card-batch-import-development-ref",
+            },
+            json=[
+                {
+                    **payload[0],
+                    "provider_ref": "development-env-card",
+                    "secret_ref": "env://CARD_DEVELOPMENT_JSON",
+                }
+            ],
+        )
+        self.assertEqual(
+            valid_development_ref.status_code,
+            201,
+            valid_development_ref.text,
+        )
+
+    def test_concurrent_card_pool_import_replays_one_atomic_receipt(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        payload = [
+            {
+                "provider_ref": "concurrent-import-card",
+                "pool_key": "checkout-cn",
+                "region": "cn-east",
+                "brand": "Visa",
+                "last4": "7878",
+                "secret_ref": "vault://secret/cards/concurrent-import-card",
+            }
+        ]
+        headers = {
+            **self.headers(admin_token),
+            "Idempotency-Key": "concurrent-card-pool-import",
+        }
+        start = Event()
+
+        def submit() -> httpx.Response:
+            start.wait(timeout=5)
+            return self.request(
+                "POST",
+                "/api/v1/admin/cards/imports",
+                headers=headers,
+                json=payload,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(submit) for _ in range(2)]
+            start.set()
+            responses = [future.result(timeout=10) for future in futures]
+
+        self.assertEqual(sorted(item.status_code for item in responses), [200, 201])
+        self.assertEqual(responses[0].json(), responses[1].json())
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(Card)
+                    .where(Card.provider_ref == "concurrent-import-card")
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(AuditEvent)
+                    .where(AuditEvent.event_type == "admin.cards_imported")
+                ),
+                1,
+            )
+
+    def test_pool_import_keys_are_scoped_by_tenant_pool_and_creator(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        other_token = self.login(
+            "tenant-b",
+            "other@example.test",
+            "other-account-password",
+            self.other_tenant.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        key = "shared-pool-import-key"
+        card_payload = [
+            {
+                "provider_ref": "shared-scope-card",
+                "brand": "Visa",
+                "last4": "8989",
+                "secret_ref": "vault://secret/cards/shared-scope-card",
+            }
+        ]
+        mailbox_payload = [
+            {
+                "email_masked": "s***@example.test",
+                "connector_type": "http",
+                "secret_ref": "vault://secret/mailboxes/shared-scope-mailbox",
+            }
+        ]
+
+        card = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={**self.headers(admin_token), "Idempotency-Key": key},
+            json=card_payload,
+        )
+        mailbox = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={**self.headers(admin_token), "Idempotency-Key": key},
+            json=mailbox_payload,
+        )
+        other_tenant = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={**self.headers(other_token), "Idempotency-Key": key},
+            json=card_payload,
+        )
+        cross_creator = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers={**self.headers(approver_token), "Idempotency-Key": key},
+            json=card_payload,
+        )
+
+        self.assertEqual(card.status_code, 201, card.text)
+        self.assertEqual(mailbox.status_code, 201, mailbox.text)
+        self.assertEqual(other_tenant.status_code, 201, other_tenant.text)
+        self.assertEqual(cross_creator.status_code, 409, cross_creator.text)
+        self.assertNotIn(key, cross_creator.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)),
+                3,
+            )
+
     def test_card_quarantine_is_distinct_idempotent_and_requires_explicit_release(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
@@ -2690,6 +3070,249 @@ class AdminApiTests(unittest.TestCase):
         )
         self.assertEqual(cross_tenant_audit.status_code, 200, cross_tenant_audit.text)
         self.assertEqual(cross_tenant_audit.json(), [])
+
+    def test_admin_mailbox_batch_import_is_atomic_safe_and_aggregated(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        payload = [
+            {
+                "email_masked": "a***@example.test",
+                "connector_type": "http",
+                "task_type": "mail_code",
+                "secret_ref": "vault://secret/mailboxes/batch-mailbox-1",
+            },
+            {
+                "email_masked": "b***@example.test",
+                "connector_type": "http",
+                "task_type": "password_reset",
+                "secret_ref": "vault://secret/mailboxes/batch-mailbox-2",
+            },
+        ]
+        imported = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-1",
+            },
+            json=payload,
+        )
+
+        self.assertEqual(imported.status_code, 201, imported.text)
+        self.assertEqual(imported.json()["pool_type"], "mailbox")
+        self.assertEqual(imported.json()["imported_count"], 2)
+        for forbidden in ("secret_ref", "vault://", "credential"):
+            self.assertNotIn(forbidden, imported.text.lower())
+
+        replay = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-1",
+            },
+            json=payload,
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json(), imported.json())
+
+        mismatched_replay = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-1",
+            },
+            json=[{**payload[0], "email_masked": "z***@example.test"}],
+        )
+        self.assertEqual(mismatched_replay.status_code, 409, mismatched_replay.text)
+        with self.app.state.session_factory() as db:
+            imported_mailboxes = list(
+                db.scalars(
+                    select(Mailbox).where(
+                        Mailbox.secret_ref.in_(
+                            (
+                                "vault://secret/mailboxes/batch-mailbox-1",
+                                "vault://secret/mailboxes/batch-mailbox-2",
+                            )
+                        )
+                    )
+                )
+            )
+            import_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "admin.mailboxes_imported"
+                    )
+                )
+            )
+            resource_import_audits = list(
+                db.scalars(
+                    select(AuditEvent)
+                    .where(AuditEvent.event_type == "admin.mailbox_imported")
+                    .order_by(AuditEvent.entity_id)
+                )
+            )
+            receipt_count = db.scalar(
+                select(func.count()).select_from(PoolImportReceipt)
+            )
+        self.assertEqual(len(imported_mailboxes), 2)
+        self.assertEqual(receipt_count, 1)
+        self.assertEqual(len(import_audits), 1)
+        self.assertEqual(
+            json.loads(import_audits[0].details_json),
+            {"count": 2, "pool_type": "mailbox"},
+        )
+        self.assertNotIn("vault://", import_audits[0].details_json)
+        self.assertNotIn("secret_ref", import_audits[0].details_json)
+        self.assertEqual(len(resource_import_audits), 2)
+        self.assertEqual(
+            {audit.entity_id for audit in resource_import_audits},
+            {mailbox.id for mailbox in imported_mailboxes},
+        )
+        self.assertEqual(
+            {
+                details["email_masked"]
+                for details in (
+                    json.loads(audit.details_json) for audit in resource_import_audits
+                )
+            },
+            {"a***@example.test", "b***@example.test"},
+        )
+        for audit in resource_import_audits:
+            details = json.loads(audit.details_json)
+            self.assertEqual(details["import_receipt_id"], imported.json()["id"])
+            self.assertEqual(details["connector_type"], "http")
+            self.assertNotIn("secret_ref", details)
+            self.assertNotIn("vault://", audit.details_json)
+
+        conflict = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-conflict",
+            },
+            json=[
+                {
+                    "email_masked": "c***@example.test",
+                    "connector_type": "http",
+                    "secret_ref": "vault://secret/mailboxes/batch-must-rollback",
+                },
+                payload[0],
+            ],
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        with self.app.state.session_factory() as db:
+            self.assertIsNone(
+                db.scalar(
+                    select(Mailbox).where(
+                        Mailbox.secret_ref
+                        == "vault://secret/mailboxes/batch-must-rollback"
+                    )
+                )
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(AuditEvent)
+                    .where(AuditEvent.event_type == "admin.mailboxes_imported")
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)),
+                1,
+            )
+
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        forbidden = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(operator_token),
+                "Idempotency-Key": "mailbox-batch-import-forbidden",
+            },
+            json=[payload[0]],
+        )
+        self.assertEqual(forbidden.status_code, 403, forbidden.text)
+        raw_secret = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-raw-secret",
+            },
+            json=[{**payload[0], "password": "mailbox-plaintext-password"}],
+        )
+        self.assertEqual(raw_secret.status_code, 422, raw_secret.text)
+        self.assertNotIn("mailbox-plaintext-password", raw_secret.text)
+        cross_pool_development_ref = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-cross-pool-env",
+            },
+            json=[
+                {
+                    **payload[0],
+                    "email_masked": "x***@example.test",
+                    "secret_ref": "env://CARD_SHARED",
+                }
+            ],
+        )
+        self.assertEqual(
+            cross_pool_development_ref.status_code,
+            422,
+            cross_pool_development_ref.text,
+        )
+        too_large = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-too-large",
+            },
+            json=[
+                {
+                    "email_masked": f"u{index}***@example.test",
+                    "connector_type": "http",
+                    "secret_ref": f"vault://secret/mailboxes/too-large-{index}",
+                }
+                for index in range(101)
+            ],
+        )
+        self.assertEqual(too_large.status_code, 422, too_large.text)
+        valid_development_ref = self.request(
+            "POST",
+            "/api/v1/admin/mailboxes/imports",
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": "mailbox-batch-import-development-ref",
+            },
+            json=[
+                {
+                    **payload[0],
+                    "email_masked": "v***@example.test",
+                    "secret_ref": "env://MAILBOX_DEVELOPMENT_JSON",
+                }
+            ],
+        )
+        self.assertEqual(
+            valid_development_ref.status_code,
+            201,
+            valid_development_ref.text,
+        )
 
     def test_mailbox_disable_revokes_consumed_upload_authority_and_repairs_residue(self) -> None:
         admin_token = self.login(

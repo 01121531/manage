@@ -282,7 +282,7 @@ test('worker and unknown roles fail closed without operator navigation', async (
     } else {
       await expect(page.getByRole('button', { name: '安全登录' })).toBeVisible()
     }
-    for (const label of ['工作台', '任务中心', '卡池管理', '邮箱连接器', 'Sub2 上传', '用户与权限', '审计中心', '策略配置']) {
+    for (const label of ['工作台', '任务中心', '卡池管理', '邮箱池管理', 'Sub2 上传', '用户与权限', '审计中心', '策略配置']) {
       await expect(page.getByText(label, { exact: true })).toHaveCount(0)
     }
     expect(requestedPaths).not.toContain('/api/v1/dashboard/summary')
@@ -3232,7 +3232,7 @@ test('security auditor filters and downloads redacted audit evidence', async ({ 
   await page.getByLabel('平台密码').fill('development-password')
   await page.getByLabel('设备标识').fill('audit-device')
   await page.getByRole('button', { name: '安全登录' }).click()
-  for (const forbiddenView of ['任务中心', '卡池管理', '邮箱连接器', '用户与权限', '策略配置']) {
+  for (const forbiddenView of ['任务中心', '卡池管理', '邮箱池管理', '用户与权限', '策略配置']) {
     await expect(page.getByText(forbiddenView, { exact: true })).toHaveCount(0)
   }
   await page.getByText('Sub2 上传', { exact: true }).click()
@@ -4570,7 +4570,7 @@ test('mailbox refresh failure clears secret rotation state and mutation actions'
   await page.getByLabel('平台密码').fill('development-password')
   await page.getByLabel('设备标识').fill('ops-device')
   await page.getByRole('button', { name: '安全登录' }).click()
-  await page.getByText('邮箱连接器', { exact: true }).click()
+  await page.getByText('邮箱池管理', { exact: true }).click()
 
   const mailboxRow = page.getByRole('row').filter({ hasText: 'r***@example.invalid' })
   await mailboxRow.getByRole('button', {
@@ -4698,7 +4698,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
 
   await page.goto('/')
   await signIn()
-  await page.getByText('邮箱连接器', { exact: true }).click()
+  await page.getByText('邮箱池管理', { exact: true }).click()
   const mailboxRow = page.getByRole('row').filter({ hasText: 's***@example.invalid' })
   const disableMailbox = mailboxRow.getByRole('button', {
     name: '停用邮箱 s***@example.invalid（mailbox-session）', exact: true,
@@ -4718,7 +4718,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
     await page.evaluate(() => window.dispatchEvent(new Event('platform:auth-expired')))
     await expect(page.getByRole('button', { name: '安全登录' })).toBeVisible()
     await signIn()
-    await page.getByText('邮箱连接器', { exact: true }).click()
+    await page.getByText('邮箱池管理', { exact: true }).click()
     const currentEnableMailbox = mailboxRow.getByRole('button', {
       name: '启用邮箱 s***@example.invalid（mailbox-session）', exact: true,
     })
@@ -4780,6 +4780,8 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   }]
   const cardStateRequests: Array<{ cardId: string; body: unknown }> = []
   const cardCreateBodies: unknown[] = []
+  const cardImportBodies: unknown[] = []
+  const cardImportKeys: string[] = []
   let cardListRequests = 0
   let releaseCardCreate = () => undefined
   const cardCreateGate = new Promise<void>((resolve) => { releaseCardCreate = resolve })
@@ -4791,6 +4793,8 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   const mailboxStateRequests: Array<{ mailboxId: string; body: unknown }> = []
   const mailboxRotationRequests: Array<{ mailboxId: string; body: unknown }> = []
   const mailboxCreateBodies: unknown[] = []
+  const mailboxImportBodies: unknown[] = []
+  const mailboxImportKeys: string[] = []
   let mailboxCreateFailures = 1
   let releaseMailboxCreate = () => undefined
   const mailboxCreateGate = new Promise<void>((resolve) => { releaseMailboxCreate = resolve })
@@ -4860,6 +4864,25 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
       }]
       return fulfill(cards[0], 201)
     }
+    if (path === '/api/v1/admin/cards/imports' && request.method() === 'POST') {
+      const body = request.postDataJSON() as Array<Record<string, unknown>>
+      cardImportBodies.push(body)
+      cardImportKeys.push(request.headers()['idempotency-key'] ?? '')
+      const imported = body.map((item, index) => ({
+        id: `card-import-${index + 1}`, tenant_id: 'tenant-1', provider_ref: item.provider_ref,
+        pool_key: item.pool_key, region: item.region, brand: item.brand, last4: item.last4,
+        expiry_month: null, expiry_year: null, status: 'available', quarantine_reason_code: null,
+        quarantined_at: null, is_active: true, created_at: '2026-08-20T00:00:00Z',
+      }))
+      if (cardImportBodies.length === 1) {
+        cards = [...cards, ...imported]
+        return fulfill({ error: { code: 'service_unavailable', message: 'import response lost' } }, 503)
+      }
+      return fulfill({
+        id: 'card-import-receipt', pool_type: 'card', imported_count: body.length,
+        trace_id: 'card-import-trace', created_at: '2026-08-20T00:00:00Z',
+      })
+    }
     const cardStateMatch = path.match(/^\/api\/v1\/admin\/cards\/([^/]+)$/)
     if (cardStateMatch && request.method() === 'PATCH') {
       const cardId = cardStateMatch[1]
@@ -4898,6 +4921,25 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
         active_session_count: 0, created_at: '2026-08-20T00:00:00Z',
       }, ...mailboxes]
       return fulfill(mailboxes[0], 201)
+    }
+    if (path === '/api/v1/admin/mailboxes/imports' && request.method() === 'POST') {
+      const body = request.postDataJSON() as Array<Record<string, unknown>>
+      mailboxImportBodies.push(body)
+      mailboxImportKeys.push(request.headers()['idempotency-key'] ?? '')
+      if (mailboxImportBodies.length === 1) {
+        return fulfill({ error: { code: 'validation_error', message: 'invalid reference manifest' } }, 422)
+      }
+      const imported = body.map((item, index) => ({
+        id: `mailbox-import-${index + 1}`, email_masked: item.email_masked,
+        connector_type: item.connector_type, task_type: item.task_type, is_active: true,
+        status: 'available', health_status: 'unknown', last_checked_at: null,
+        last_error_code: null, active_session_count: 0, created_at: '2026-08-20T00:00:00Z',
+      }))
+      mailboxes = [...imported, ...mailboxes]
+      return fulfill({
+        id: 'mailbox-import-receipt', pool_type: 'mailbox', imported_count: body.length,
+        trace_id: 'mailbox-import-trace', created_at: '2026-08-20T00:00:00Z',
+      }, 201)
     }
     const mailboxStateMatch = path.match(/^\/api\/v1\/admin\/mailboxes\/([^/]+)$/)
     if (mailboxStateMatch && request.method() === 'PATCH') {
@@ -4947,6 +4989,24 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   await page.getByRole('button', { name: '安全登录' }).click()
 
   await page.getByText('卡池管理', { exact: true }).click()
+  const cardImportPayload = [{
+    provider_ref: 'provider-imported', pool_key: 'checkout-cn', region: 'cn-east',
+    brand: 'VISA', last4: '6060', secret_ref: 'vault://secret/cards/provider-imported',
+  }]
+  await page.locator('input[type="file"][accept*="json"]').setInputFiles({
+    name: 'card-pool.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(cardImportPayload)),
+  })
+  await expect.poll(() => cardImportBodies).toEqual([cardImportPayload])
+  await expect(page.getByRole('button', { name: '重试上次信用卡池引用清单' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '放弃并清除上次信用卡池引用清单' })).toBeVisible()
+  await page.getByRole('button', { name: '重试上次信用卡池引用清单' }).click()
+  await expect.poll(() => cardImportBodies).toEqual([cardImportPayload, cardImportPayload])
+  expect(cardImportKeys[0]).toMatch(/^[0-9a-f-]{36}$/)
+  expect(cardImportKeys[1]).toBe(cardImportKeys[0])
+  await expect(page.getByRole('button', { name: '重试上次信用卡池引用清单' })).toHaveCount(0)
+  await expect(page.getByRole('row').filter({ hasText: 'provider-imported' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('vault://secret/cards/provider-imported')
   await page.getByRole('button', { name: '登记卡资源' }).click()
   let cardDialog = page.getByRole('dialog', { name: '登记卡资源' })
   await cardDialog.getByLabel('密钥引用').fill('vault://secret/cards/must-clear')
@@ -5047,7 +5107,27 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   })).toHaveCount(1)
   expect(cardStateRequests.filter((item) => item.cardId === 'card-2')).toHaveLength(2)
 
-  await page.getByText('邮箱连接器', { exact: true }).click()
+  await page.getByText('邮箱池管理', { exact: true }).click()
+  const mailboxImportPayload = [{
+    email_masked: 'i***@example.invalid', connector_type: 'http', task_type: 'mail_code',
+    secret_ref: 'vault://secret/mailboxes/imported-mailbox',
+  }]
+  await page.locator('input[type="file"][accept*="json"]').setInputFiles({
+    name: 'mailbox-pool.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(mailboxImportPayload)),
+  })
+  await expect.poll(() => mailboxImportBodies).toEqual([mailboxImportPayload])
+  expect(mailboxImportKeys[0]).toMatch(/^[0-9a-f-]{36}$/)
+  await expect(page.getByRole('button', { name: '重试上次邮箱池引用清单' })).toHaveCount(0)
+  await page.locator('input[type="file"][accept*="json"]').setInputFiles({
+    name: 'mailbox-pool.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(mailboxImportPayload)),
+  })
+  await expect.poll(() => mailboxImportBodies).toEqual([mailboxImportPayload, mailboxImportPayload])
+  expect(mailboxImportKeys[1]).toMatch(/^[0-9a-f-]{36}$/)
+  expect(mailboxImportKeys[1]).not.toBe(mailboxImportKeys[0])
+  await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('vault://secret/mailboxes/imported-mailbox')
   await expect(page.getByText('有 1 个邮箱连接器不可用')).toBeVisible()
   const unavailableMailboxRow = page.getByRole('row').filter({ hasText: 'd***@example.invalid' })
   await expect(page.getByRole('columnheader', { name: '服务端路由键' })).toBeVisible()
@@ -5127,7 +5207,7 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   expect(mailboxListRequests).toBe(listsBeforeLateMailboxOutcome)
   await expect(page.getByText(/原因：平台未能确认邮箱连接器状态变更结果。影响：.*下一步：/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: '锁定' })).toBeFocused()
-  await page.getByText('邮箱连接器', { exact: true }).click()
+  await page.getByText('邮箱池管理', { exact: true }).click()
   await expect(committedMailboxRow.getByText('disabled')).toBeVisible()
   await expect.poll(() => mailboxListRequests).toBeGreaterThan(listsBeforeLateMailboxOutcome)
 

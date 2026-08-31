@@ -16,6 +16,7 @@ import type {
   ManagedUserRole,
   OperationalPolicyDeployment,
   OperationalPolicyStatus,
+  PoolImportReceipt,
   RoleChangeRequest,
   TaskSummary,
   TaskTimeline,
@@ -83,6 +84,13 @@ export const recycleCardAllocation = (
 ))
 export const createCard = (payload: CardCreate): Promise<CardSummary> =>
   unwrap(api.POST('/api/v1/admin/cards', { body: payload }))
+export const importCards = (
+  payload: CardCreate[],
+  idempotencyKey: string,
+): Promise<PoolImportReceipt> => unwrap(api.POST('/api/v1/admin/cards/imports', {
+  params: { header: { 'Idempotency-Key': idempotencyKey } },
+  body: payload,
+}))
 export const updateCardState = (cardId: string, isActive: boolean): Promise<CardSummary> =>
   unwrap(api.PATCH('/api/v1/admin/cards/{card_id}', {
     params: { path: { card_id: cardId } },
@@ -99,6 +107,13 @@ export const releaseCardQuarantine = (cardId: string): Promise<CardSummary> =>
   }))
 export const createMailbox = (payload: MailboxCreate): Promise<MailboxSummary> =>
   unwrap(api.POST('/api/v1/admin/mailboxes', { body: payload }))
+export const importMailboxes = (
+  payload: MailboxCreate[],
+  idempotencyKey: string,
+): Promise<PoolImportReceipt> => unwrap(api.POST('/api/v1/admin/mailboxes/imports', {
+  params: { header: { 'Idempotency-Key': idempotencyKey } },
+  body: payload,
+}))
 export const updateMailboxState = (
   mailboxId: string,
   isActive: boolean,

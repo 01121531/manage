@@ -93,6 +93,7 @@ from platform.models import (
     OutboxEvent,
     OperationalPolicyDeployment,
     OperationalPolicyVersion,
+    PoolImportReceipt,
     AdminRoleChangeRequest,
     RevokedAccessToken,
     RevokedOidcSession,
@@ -117,6 +118,7 @@ from platform.schemas import (
     AdminMailboxCreate,
     AdminMailboxSecretRotation,
     AdminMailboxStateUpdate,
+    PoolImportReceiptResponse,
     LoginRequest,
     LogoutResponse,
     MailCodeResponse,
@@ -5399,6 +5401,62 @@ def _admin_card_response(card: Card, *, allocated: bool = False) -> AdminCardRes
     )
 
 
+def _pool_import_digest(pool_type: Literal["card", "mailbox"], payload: list[Any]) -> str:
+    canonical_payload = json.dumps(
+        [item.model_dump(mode="json") for item in payload],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    digest_input = (
+        f"email-platform:pool-import:v1\0{pool_type}\0{canonical_payload}"
+    ).encode("utf-8")
+    return hashlib.sha256(digest_input).hexdigest()
+
+
+def _pool_import_receipt_response(
+    receipt: PoolImportReceipt,
+) -> PoolImportReceiptResponse:
+    return PoolImportReceiptResponse(
+        id=receipt.id,
+        pool_type=receipt.pool_type,
+        imported_count=receipt.item_count,
+        trace_id=receipt.trace_id,
+        created_at=receipt.created_at,
+    )
+
+
+def _replay_pool_import_receipt(
+    db: Session,
+    *,
+    principal: AuthPrincipal,
+    pool_type: Literal["card", "mailbox"],
+    idempotency_key: str,
+    request_digest: str,
+    response: Response,
+) -> PoolImportReceiptResponse | None:
+    receipt = db.scalar(
+        select(PoolImportReceipt).where(
+            PoolImportReceipt.tenant_id == principal.tenant_id,
+            PoolImportReceipt.pool_type == pool_type,
+            PoolImportReceipt.idempotency_key == idempotency_key,
+        )
+    )
+    if receipt is None:
+        return None
+    if (
+        receipt.created_by != principal.user_id
+        or receipt.device_id != principal.device_id
+        or receipt.request_digest != request_digest
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency key is already bound to another pool import",
+        )
+    response.status_code = 200
+    return _pool_import_receipt_response(receipt)
+
+
 def _admin_card_allocation_response(
     allocation: CardAllocation, card: Card
 ) -> AdminCardAllocationResponse:
@@ -5655,6 +5713,132 @@ def admin_create_card(
     db.commit()
     db.refresh(card)
     return _admin_card_response(card)
+
+
+@router.post(
+    "/admin/cards/imports",
+    response_model=PoolImportReceiptResponse,
+    status_code=201,
+    tags=["admin"],
+)
+def admin_import_cards(
+    request: Request,
+    response: Response,
+    payload: list[AdminCardCreate] = Body(min_length=1, max_length=100),
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+    ),
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> PoolImportReceiptResponse:
+    request_digest = _pool_import_digest("card", payload)
+    replay = _replay_pool_import_receipt(
+        db,
+        principal=principal,
+        pool_type="card",
+        idempotency_key=idempotency_key,
+        request_digest=request_digest,
+        response=response,
+    )
+    if replay is not None:
+        return replay
+    receipt = PoolImportReceipt(
+        tenant_id=principal.tenant_id,
+        pool_type="card",
+        idempotency_key=idempotency_key,
+        request_digest=request_digest,
+        item_count=len(payload),
+        created_by=principal.user_id,
+        device_id=principal.device_id,
+        trace_id=request.state.trace_id,
+    )
+    db.add(receipt)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        replay = _replay_pool_import_receipt(
+            db,
+            principal=principal,
+            pool_type="card",
+            idempotency_key=idempotency_key,
+            request_digest=request_digest,
+            response=response,
+        )
+        if replay is not None:
+            return replay
+        raise HTTPException(status_code=409, detail="Pool import conflict") from None
+    cards = [
+        Card(
+            tenant_id=principal.tenant_id,
+            provider_ref=item.provider_ref,
+            pool_key=item.pool_key,
+            region=item.region,
+            brand=item.brand,
+            last4=item.last4,
+            expiry_month=item.expiry_month,
+            expiry_year=item.expiry_year,
+            secret_ref=item.secret_ref,
+            is_active=True,
+        )
+        for item in payload
+    ]
+    db.add_all(cards)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Card provider or secret reference already exists",
+        ) from None
+    for card in cards:
+        record_card_event(
+            db,
+            tenant_id=principal.tenant_id,
+            card_id=card.id,
+            actor_id=principal.user_id,
+            action="card.created",
+            trace_id=request.state.trace_id,
+            after_masked=_masked_card_state(card, status="available"),
+        )
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type="admin.card_imported",
+            entity_type="card",
+            entity_id=card.id,
+            trace_id=request.state.trace_id,
+            details={
+                "import_receipt_id": receipt.id,
+                "provider_ref": card.provider_ref,
+                "pool_key": card.pool_key,
+                "region": card.region,
+                "brand": card.brand,
+                "last4": card.last4,
+            },
+        )
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="admin.cards_imported",
+        entity_type="card_pool",
+        entity_id=receipt.id,
+        trace_id=request.state.trace_id,
+        details={"count": len(cards), "pool_type": "card"},
+    )
+    db.commit()
+    db.refresh(receipt)
+    return _pool_import_receipt_response(receipt)
 
 
 def _compensate_card_allocation(
@@ -6545,6 +6729,116 @@ def admin_create_mailbox(
     db.commit()
     db.refresh(mailbox)
     return _mailbox_status_response(mailbox, active_session_count=0)
+
+
+@router.post(
+    "/admin/mailboxes/imports",
+    response_model=PoolImportReceiptResponse,
+    status_code=201,
+    tags=["admin"],
+)
+def admin_import_mailboxes(
+    request: Request,
+    response: Response,
+    payload: list[AdminMailboxCreate] = Body(min_length=1, max_length=100),
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+    ),
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> PoolImportReceiptResponse:
+    request_digest = _pool_import_digest("mailbox", payload)
+    replay = _replay_pool_import_receipt(
+        db,
+        principal=principal,
+        pool_type="mailbox",
+        idempotency_key=idempotency_key,
+        request_digest=request_digest,
+        response=response,
+    )
+    if replay is not None:
+        return replay
+    receipt = PoolImportReceipt(
+        tenant_id=principal.tenant_id,
+        pool_type="mailbox",
+        idempotency_key=idempotency_key,
+        request_digest=request_digest,
+        item_count=len(payload),
+        created_by=principal.user_id,
+        device_id=principal.device_id,
+        trace_id=request.state.trace_id,
+    )
+    db.add(receipt)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        replay = _replay_pool_import_receipt(
+            db,
+            principal=principal,
+            pool_type="mailbox",
+            idempotency_key=idempotency_key,
+            request_digest=request_digest,
+            response=response,
+        )
+        if replay is not None:
+            return replay
+        raise HTTPException(status_code=409, detail="Pool import conflict") from None
+    mailboxes = [
+        Mailbox(
+            tenant_id=principal.tenant_id,
+            email_masked=item.email_masked,
+            connector_type=item.connector_type,
+            task_type=item.task_type,
+            secret_ref=item.secret_ref,
+            is_active=True,
+        )
+        for item in payload
+    ]
+    db.add_all(mailboxes)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Mailbox secret reference already exists"
+        ) from None
+    for mailbox in mailboxes:
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type="admin.mailbox_imported",
+            entity_type="mailbox",
+            entity_id=mailbox.id,
+            trace_id=request.state.trace_id,
+            details={
+                "import_receipt_id": receipt.id,
+                "email_masked": mailbox.email_masked,
+                "connector_type": mailbox.connector_type,
+                "task_type": mailbox.task_type,
+            },
+        )
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="admin.mailboxes_imported",
+        entity_type="mailbox_pool",
+        entity_id=receipt.id,
+        trace_id=request.state.trace_id,
+        details={"count": len(mailboxes), "pool_type": "mailbox"},
+    )
+    db.commit()
+    db.refresh(receipt)
+    return _pool_import_receipt_response(receipt)
 
 
 @router.patch(

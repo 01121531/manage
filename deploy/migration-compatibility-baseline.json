@@ -35,6 +35,7 @@
     "0029_card_replacement.py": "6333748895435193d94ea44cae674acdf9505bf92e31793479ef6ad450bbd047",
     "0030_mailbox_task_routing.py": "ca47bc4c2add22e2c519c18092bcd54572c516cf0f2d69bced600cd2ca3bbdeb",
     "0031_card_pool_routing.py": "cab4de46421452504ca2b3a3cd09665ef92ca751fa57586b2cdf1ea863248f75",
-    "0032_upload_phase_tracking.py": "24d5cbac43faae1b46479e163af7bb20a7ff2ba71beaefc08f718e25d5ce93d0"
+    "0032_upload_phase_tracking.py": "24d5cbac43faae1b46479e163af7bb20a7ff2ba71beaefc08f718e25d5ce93d0",
+    "0033_pool_import_receipts.py": "654b0cbf1e198fbbc8db9f5d77f342f33ee422c77e0f255bdce02f9edafa9383"
   }
 }

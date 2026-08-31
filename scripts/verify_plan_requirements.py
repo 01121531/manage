@@ -33,7 +33,7 @@ CLASSIFICATIONS = (
     "external_input_required",
     "target_evidence_required",
 )
-CHAPTER_COUNTS = {1: 9, 2: 3, 3: 5, 4: 4, 5: 5, 6: 4, 7: 5, 8: 4, 9: 5, 10: 2, 11: 5}
+CHAPTER_COUNTS = {1: 9, 2: 3, 3: 5, 4: 4, 5: 5, 6: 4, 7: 5, 8: 4, 9: 6, 10: 2, 11: 5}
 EXPECTED_IDS = tuple(
     f"R{chapter:02d}.{index:02d}"
     for chapter, count in CHAPTER_COUNTS.items()
@@ -45,6 +45,7 @@ NON_REPOSITORY_CLASSIFICATIONS = {
     "R05.01": "external_input_required",
     "R06.02": "repository_proven",
     "R07.03": "target_evidence_required",
+    "R09.06": "missing_implementation",
     "R11.01": "target_evidence_required",
     "R11.02": "target_evidence_required",
     "R11.03": "target_evidence_required",

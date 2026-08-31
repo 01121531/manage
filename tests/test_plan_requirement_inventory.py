@@ -46,10 +46,10 @@ class PlanRequirementInventoryTests(unittest.TestCase):
 
     def test_inventory_preserves_nonproduction_boundary_and_exact_counts(self) -> None:
         self.assertFalse(self.inventory["production_acceptance"])
-        self.assertEqual(self.inventory["summary"]["total"], 51)
+        self.assertEqual(self.inventory["summary"]["total"], 52)
         self.assertEqual(self.inventory["summary"]["repository_proven"], 43)
         self.assertEqual(self.inventory["summary"]["indirect_only"], 0)
-        self.assertEqual(self.inventory["summary"]["missing_implementation"], 0)
+        self.assertEqual(self.inventory["summary"]["missing_implementation"], 1)
         self.assertEqual(self.inventory["summary"]["external_input_required"], 3)
         self.assertEqual(self.inventory["summary"]["target_evidence_required"], 5)
 
@@ -90,16 +90,47 @@ class PlanRequirementInventoryTests(unittest.TestCase):
                 "frontend/src/AuthenticatedShell.tsx",
                 "frontend/src/authenticated.css",
             },
+            "R09.06": {
+                "frontend/src/views/CardsView.tsx",
+                "platform/api/v1/routes.py",
+            },
         }
         self.assertEqual(set(entries), set(expected))
         for requirement_id, paths in expected.items():
             with self.subTest(requirement_id=requirement_id):
-                self.assertEqual(entries[requirement_id]["classification"], "repository_proven")
+                expected_classification = (
+                    "missing_implementation"
+                    if requirement_id == "R09.06"
+                    else "repository_proven"
+                )
+                self.assertEqual(
+                    entries[requirement_id]["classification"],
+                    expected_classification,
+                )
                 self.assertTrue(paths.issubset(set(entries[requirement_id]["evidence"])))
                 self.assertIn(
                     "frontend/e2e/platform.spec.ts",
                     entries[requirement_id]["evidence"],
                 )
+
+    def test_card_pool_secure_import_remains_an_explicit_implementation_gap(self) -> None:
+        entry = next(
+            item for item in self.inventory["requirements"] if item["id"] == "R09.06"
+        )
+        self.assertEqual(entry["classification"], "missing_implementation")
+        for term in (
+            "Card Vault",
+            "租户",
+            "批次摘要",
+            "数量",
+            "短期一次性凭据",
+            "PAN/CVV",
+            "secret_ref",
+            "末四位",
+        ):
+            self.assertIn(term, entry["requirement"])
+        self.assertIn("引用清单登记", entry["gap_or_boundary"])
+        self.assertIn("R05.01", entry["gap_or_boundary"])
 
     def test_card_allocation_closes_source_selection_rules_with_direct_evidence(self) -> None:
         entry = next(
@@ -209,7 +240,7 @@ class PlanRequirementInventoryTests(unittest.TestCase):
             for entry in self.inventory["requirements"]
             if entry["classification"] == "missing_implementation"
         ]
-        self.assertEqual(missing, [])
+        self.assertEqual([entry["id"] for entry in missing], ["R09.06"])
         upload_phases = next(
             entry
             for entry in self.inventory["requirements"]

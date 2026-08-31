@@ -59,6 +59,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/cards/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Import Cards */
+        post: operations["admin_import_cards_api_v1_admin_cards_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/cards/{card_id}": {
         parameters: {
             query?: never;
@@ -189,6 +206,23 @@ export interface paths {
         put?: never;
         /** Admin Create Mailbox */
         post: operations["admin_create_mailbox_api_v1_admin_mailboxes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/mailboxes/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Import Mailboxes */
+        post: operations["admin_import_mailboxes_api_v1_admin_mailboxes_imports_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2159,6 +2193,25 @@ export interface components {
             /** Rollout Percent */
             rollout_percent: number | null;
         };
+        /** PoolImportReceiptResponse */
+        PoolImportReceiptResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Imported Count */
+            imported_count: number;
+            /**
+             * Pool Type
+             * @enum {string}
+             */
+            pool_type: "card" | "mailbox";
+            /** Trace Id */
+            trace_id: string;
+        };
         /** TaskCreate */
         TaskCreate: {
             /** Client Reference */
@@ -2678,6 +2731,50 @@ export interface operations {
             };
         };
     };
+    admin_import_cards_api_v1_admin_cards_imports_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminCardCreate"][];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolImportReceiptResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     admin_update_card_state_api_v1_admin_cards__card_id__patch: {
         parameters: {
             query?: never;
@@ -2994,6 +3091,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MailboxStatusResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_import_mailboxes_api_v1_admin_mailboxes_imports_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminMailboxCreate"][];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolImportReceiptResponse"];
                 };
             };
             /** @description Request validation failed */

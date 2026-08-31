@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0032_upload_phase_tracking"
+CURRENT = "0033_pool_import_receipts"
 
 
 class MigrationReadinessTests(unittest.TestCase):

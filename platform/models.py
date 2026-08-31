@@ -148,6 +148,41 @@ class Task(Base):
     )
 
 
+class PoolImportReceipt(Base):
+    """A secret-free idempotency receipt for one admin-managed pool import."""
+
+    __tablename__ = "pool_import_receipts"
+    __table_args__ = (
+        CheckConstraint(
+            "pool_type IN ('card', 'mailbox')",
+            name="ck_pool_import_receipts_pool_type",
+        ),
+        CheckConstraint(
+            "item_count >= 1 AND item_count <= 100",
+            name="ck_pool_import_receipts_item_count",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "pool_type",
+            "idempotency_key",
+            name="uq_pool_import_receipts_tenant_pool_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    pool_type: Mapped[str] = mapped_column(String(16))
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    item_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"))
+    trace_id: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
 class Mailbox(Base):
     __tablename__ = "mailboxes"
     __table_args__ = (

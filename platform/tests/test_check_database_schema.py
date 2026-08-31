@@ -24,7 +24,7 @@ class DatabaseSchemaCheckTests(unittest.TestCase):
                 connection.execute(
                     text(
                         "INSERT INTO alembic_version(version_num) "
-                        "VALUES ('0032_upload_phase_tracking')"
+                        "VALUES ('0033_pool_import_receipts')"
                     )
                 )
             engine.dispose()

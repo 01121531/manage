@@ -234,6 +234,14 @@ class AdminCardResponse(BaseModel):
     created_at: datetime
 
 
+class PoolImportReceiptResponse(BaseModel):
+    id: str
+    pool_type: Literal["card", "mailbox"]
+    imported_count: int
+    trace_id: str
+    created_at: datetime
+
+
 class AdminCardAllocationResponse(BaseModel):
     id: str
     card_id: str
@@ -289,7 +297,12 @@ class AdminCardRecycleRequest(BaseModel):
     reason_code: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
 
 
-def _normalize_opaque_secret_ref(value: str, *, vault_prefix: str) -> str:
+def _normalize_opaque_secret_ref(
+    value: str,
+    *,
+    vault_prefix: str,
+    env_prefix: str,
+) -> str:
     normalized = value.strip()
     if re.fullmatch(r"(?:vault|env)://[A-Za-z0-9][A-Za-z0-9._/-]*", normalized) is None:
         raise ValueError("secret_ref must be an opaque vault:// or env:// reference")
@@ -297,7 +310,9 @@ def _normalize_opaque_secret_ref(value: str, *, vault_prefix: str) -> str:
     if any(segment in {"", ".", ".."} for segment in path.split("/")):
         raise ValueError("secret_ref path must not contain empty, dot, or parent segments")
     if normalized.startswith("vault://") and not normalized.startswith(vault_prefix):
-        raise ValueError(f"secret_ref must use {vault_prefix} or an env:// development reference")
+        raise ValueError(f"secret_ref must use the {vault_prefix} namespace")
+    if normalized.startswith("env://") and not normalized.startswith(env_prefix):
+        raise ValueError(f"development secret_ref must use the {env_prefix} namespace")
     return normalized
 
 
@@ -345,7 +360,11 @@ class AdminCardCreate(BaseModel):
     @field_validator("secret_ref")
     @classmethod
     def validate_secret_ref(cls, value: str) -> str:
-        return _normalize_opaque_secret_ref(value, vault_prefix="vault://secret/cards/")
+        return _normalize_opaque_secret_ref(
+            value,
+            vault_prefix="vault://secret/cards/",
+            env_prefix="env://CARD_",
+        )
 
     @model_validator(mode="after")
     def validate_expiry_pair(self) -> "AdminCardCreate":
@@ -392,7 +411,11 @@ class AdminMailboxCreate(BaseModel):
     @field_validator("secret_ref")
     @classmethod
     def validate_secret_ref(cls, value: str) -> str:
-        return _normalize_opaque_secret_ref(value, vault_prefix="vault://secret/mailboxes/")
+        return _normalize_opaque_secret_ref(
+            value,
+            vault_prefix="vault://secret/mailboxes/",
+            env_prefix="env://MAILBOX_",
+        )
 
 
 class AdminMailboxStateUpdate(BaseModel):
@@ -409,7 +432,11 @@ class AdminMailboxSecretRotation(BaseModel):
     @field_validator("secret_ref")
     @classmethod
     def validate_secret_ref(cls, value: str) -> str:
-        return _normalize_opaque_secret_ref(value, vault_prefix="vault://secret/mailboxes/")
+        return _normalize_opaque_secret_ref(
+            value,
+            vault_prefix="vault://secret/mailboxes/",
+            env_prefix="env://MAILBOX_",
+        )
 
 
 class AdminUploadResponse(BaseModel):

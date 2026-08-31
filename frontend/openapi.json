@@ -2389,6 +2389,44 @@
         "title": "OperationalPolicyStatusResponse",
         "type": "object"
       },
+      "PoolImportReceiptResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "imported_count": {
+            "title": "Imported Count",
+            "type": "integer"
+          },
+          "pool_type": {
+            "enum": [
+              "card",
+              "mailbox"
+            ],
+            "title": "Pool Type",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "pool_type",
+          "imported_count",
+          "trace_id",
+          "created_at"
+        ],
+        "title": "PoolImportReceiptResponse",
+        "type": "object"
+      },
       "TaskCreate": {
         "additionalProperties": false,
         "properties": {
@@ -3982,6 +4020,82 @@
         ]
       }
     },
+    "/api/v1/admin/cards/imports": {
+      "post": {
+        "operationId": "admin_import_cards_api_v1_admin_cards_imports_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/AdminCardCreate"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "title": "Payload",
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolImportReceiptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Import Cards",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/cards/{card_id}": {
       "patch": {
         "operationId": "admin_update_card_state_api_v1_admin_cards__card_id__patch",
@@ -4524,6 +4638,82 @@
           }
         ],
         "summary": "Admin Create Mailbox",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/mailboxes/imports": {
+      "post": {
+        "operationId": "admin_import_mailboxes_api_v1_admin_mailboxes_imports_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/AdminMailboxCreate"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "title": "Payload",
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolImportReceiptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Import Mailboxes",
         "tags": [
           "admin"
         ]

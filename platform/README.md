@@ -47,6 +47,23 @@ The default endpoints are:
   provider error, or secret detail is returned.
 - `GET /api/v1/mailboxes` — masked mailbox connector status for the current
   tenant; no `secret_ref`, password, or raw mailbox configuration.
+- `POST /api/v1/admin/mailboxes/imports` — atomically register a 1–100 item
+  mailbox reference manifest containing masked records and pre-provisioned
+  `vault://secret/mailboxes/` references. It is not a raw credential upload
+  endpoint; the mailbox account and password must already have been handled by
+  a separate Vault security-import flow.
+  The endpoint is separate from the card pool and never accepts mailbox
+  passwords or returns secret references. A required `Idempotency-Key` header
+  binds the validated ordered payload to a secret-free durable receipt; an
+  exact replay returns that receipt with 200 and does not duplicate resources
+  or audit events.
+- `POST /api/v1/admin/cards/imports` — atomically register a 1–100 item card
+  reference manifest containing masked records and pre-provisioned
+  `vault://secret/cards/` references. It is not a raw card-data upload endpoint;
+  PAN/CVV must be handled by a separate Card Vault security-import flow. The
+  endpoint is separate from the mailbox pool and rejects PAN/CVV or mixed-pool fields.
+  It uses the same required idempotency receipt contract, namespaced to the
+  card pool.
 - `POST/GET /api/v1/tasks` — idempotently create and list the current user's tasks.
 - `GET /api/v1/tasks/{id}` — fetch an owned task; foreign tasks return 404.
 - `GET /api/v1/tasks/{id}/timeline` — return the current-device task workbench's

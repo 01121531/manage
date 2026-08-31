@@ -50,7 +50,7 @@
       "phase": 3,
       "scope": "卡池、分配、租约、掩码和一次性揭示",
       "acceptance_criterion": "并发分配无重复；用户无法越权；完整动作有审计",
-      "repository_status": "repository_gate_passed",
+      "repository_status": "boundary_partial",
       "production_acceptance": false,
       "target_evidence_required": [
         "target PostgreSQL concurrent-allocation and migration evidence",
@@ -58,6 +58,7 @@
       ],
       "missing_inputs": [
         "card PAN/CVV and PCI compliance boundary decision",
+        "approved Card Vault secure-import receipt contract and repository verifier/consumer implementation",
         "production Keycloak MFA ACR-to-LoA mapping"
       ]
     },

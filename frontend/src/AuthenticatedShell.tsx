@@ -44,7 +44,7 @@ const menuItems: MenuProps['items'] = [
   { key: 'dashboard', icon: <DashboardOutlined />, label: '工作台' },
   { key: 'tasks', icon: <UnorderedListOutlined />, label: '任务中心' },
   { key: 'cards', icon: <BankOutlined />, label: '卡池管理' },
-  { key: 'mailboxes', icon: <MailOutlined />, label: '邮箱连接器' },
+  { key: 'mailboxes', icon: <MailOutlined />, label: '邮箱池管理' },
   { key: 'uploads', icon: <CloudUploadOutlined />, label: 'Sub2 上传' },
   { key: 'users', icon: <TeamOutlined />, label: '用户与权限' },
   { key: 'audit', icon: <AuditOutlined />, label: '审计中心' },

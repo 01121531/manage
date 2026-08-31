@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Col, Descriptions, Empty, Form, Input, InputNumber, Modal, Row, Space, Spin, Table, Select, Timeline, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
-import { createCard, getCardTimeline, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
+import { createCard, getCardTimeline, importCards, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
 import type { CardAllocationSummary, CardCreate, CardEventSummary, CardSummary, CardTimeline } from '../types'
+import { readPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { CardStatusTag, StatusTag, cardAllocationReasonNames, cardEventActionNames, cardQuarantineReasonNames, compareTableText, formatLocalDateTime, maskedStateLabel } from './shared'
 
@@ -24,6 +25,13 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const [quarantineReason, setQuarantineReason] = useState<string>()
   const [quarantineSaving, setQuarantineSaving] = useState(false)
   const cardCreatePendingRef = useRef(false)
+  const cardImportInputRef = useRef<HTMLInputElement>(null)
+  const cardImportPendingRef = useRef(false)
+  const cardImportRetryRef = useRef<{
+    payload: CardCreate[]
+    idempotencyKey: string
+  } | null>(null)
+  const [cardImportRetryAvailable, setCardImportRetryAvailable] = useState(false)
   const [cardActionId, setCardActionId] = useState<string | null>(null)
   const cardActionRef = useRef<{ cardId: string; pending: boolean } | null>(null)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
@@ -126,6 +134,62 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   function closeCreateCard() {
     form.resetFields()
     setCreateOpen(false)
+  }
+
+  async function importCardFile(file: File | undefined) {
+    if (!file || cardImportPendingRef.current) return
+    cardImportPendingRef.current = true
+    setSaving(true)
+    try {
+      const payload = await readPoolImportJson<CardCreate>(file)
+      const batch = { payload, idempotencyKey: crypto.randomUUID() }
+      cardImportRetryRef.current = batch
+      setCardImportRetryAvailable(true)
+      const receipt = await importCards(batch.payload, batch.idempotencyKey)
+      cardImportRetryRef.current = null
+      setCardImportRetryAvailable(false)
+      message.success(`已向信用卡池登记 ${receipt.imported_count} 条资源引用。`)
+      refreshCardsFromServer()
+    } catch (error) {
+      if (!shouldRetainPoolImportForRetry(error)) {
+        cardImportRetryRef.current = null
+        setCardImportRetryAvailable(false)
+      }
+      message.error(error instanceof Error ? error.message : '信用卡池引用清单登记失败')
+    } finally {
+      if (cardImportInputRef.current) cardImportInputRef.current.value = ''
+      cardImportPendingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  function discardCardImportRetry() {
+    cardImportRetryRef.current = null
+    setCardImportRetryAvailable(false)
+    message.info('已从当前页面内存清除上次信用卡池引用清单。')
+  }
+
+  async function retryCardImport() {
+    const batch = cardImportRetryRef.current
+    if (!batch || cardImportPendingRef.current) return
+    cardImportPendingRef.current = true
+    setSaving(true)
+    try {
+      const receipt = await importCards(batch.payload, batch.idempotencyKey)
+      cardImportRetryRef.current = null
+      setCardImportRetryAvailable(false)
+      message.success(`已确认信用卡池引用清单，共 ${receipt.imported_count} 条资源。`)
+      refreshCardsFromServer()
+    } catch (error) {
+      if (!shouldRetainPoolImportForRetry(error)) {
+        cardImportRetryRef.current = null
+        setCardImportRetryAvailable(false)
+      }
+      message.error(error instanceof Error ? error.message : '信用卡池引用清单重试失败')
+    } finally {
+      cardImportPendingRef.current = false
+      setSaving(false)
+    }
   }
 
   function reserveCardAction(cardId: string) {
@@ -432,8 +496,16 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     }] : []),
   ]
   return <>
-    <div className="page-heading"><div><Title level={2}>卡池管理</Title><Text type="secondary">登记接口不接收 PAN/CVV；PAN 保存在 Vault 且仅经 step-up 揭示，CVV 默认不返回。</Text></div>{canManage ? <Button type="primary" onClick={() => setCreateOpen(true)}>登记卡资源</Button> : null}</div>
-    <Alert className="section-card" type="info" showIcon message="敏感卡信息必须保存在服务端密钥管理器" description="生产环境必须填写 vault://secret/cards/ 引用；env:// 仅限开发和测试。停用会释放活动租约，取消排队上传，并将运行中上传转为待人工核对。" />
+    <div className="page-heading"><div><Title level={2}>卡池管理</Title><Text type="secondary">卡资源由管理员手动登记并独立于邮箱池管理；登记接口不接收 PAN/CVV，PAN 保存在 Vault 且仅经 step-up 揭示，CVV 默认不返回。</Text></div>{canManage ? <Space>
+      <input ref={cardImportInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => { void importCardFile(event.currentTarget.files?.[0]) }} />
+      {cardImportRetryAvailable ? <>
+        <Button disabled={saving} onClick={() => { void retryCardImport() }}>重试上次信用卡池引用清单</Button>
+        <Button disabled={saving} onClick={discardCardImportRetry}>放弃并清除上次信用卡池引用清单</Button>
+      </> : null}
+      <Button disabled={saving || loading || cardListError !== undefined || cardActionId !== null} onClick={() => cardImportInputRef.current?.click()}>导入信用卡池引用清单 JSON</Button>
+      <Button type="primary" disabled={saving || cardActionId !== null} onClick={() => setCreateOpen(true)}>登记卡资源</Button>
+    </Space> : null}</div>
+    <Alert className="section-card" type="info" showIcon message="这里只登记已安全预置的卡资源引用" description="PAN/CVV 必须先由独立 Card Vault 安全导入流程处理；本页 JSON 只接收脱敏元数据和 vault://secret/cards/ 引用，不是原始卡数据上传入口。env://CARD_ 仅限开发和测试。" />
     <Card className="section-card">{loading ? <div className="centered"><Spin /></div> : cardListError ? <Alert
       type="warning"
       showIcon
@@ -527,7 +599,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
           <Col span={12}><Form.Item label="有效期月份" name="expiry_month" dependencies={['expiry_year']} rules={[({ getFieldValue }) => ({ validator(_, value) { return (value == null) === (getFieldValue('expiry_year') == null) ? Promise.resolve() : Promise.reject(new Error('月份和年份须同时填写')) } })]}><InputNumber min={1} max={12} className="full-width" placeholder="12" /></Form.Item></Col>
           <Col span={12}><Form.Item label="有效期年份" name="expiry_year" dependencies={['expiry_month']} rules={[({ getFieldValue }) => ({ validator(_, value) { return (value == null) === (getFieldValue('expiry_month') == null) ? Promise.resolve() : Promise.reject(new Error('月份和年份须同时填写')) } })]}><InputNumber min={2000} max={9999} className="full-width" placeholder="2030" /></Form.Item></Col>
         </Row>
-        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/cards/；env:// 仅限开发/测试。请勿粘贴卡号或安全码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/cards\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/cards/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/cards/provider-card-001" /></Form.Item>
+        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/cards/；env://CARD_ 仅限开发/测试。请勿粘贴卡号或安全码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/cards\/[A-Za-z0-9]|env:\/\/CARD_[A-Za-z0-9])[A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/cards/；开发引用必须使用 env://CARD_' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/cards/provider-card-001" /></Form.Item>
       </Form>
     </Modal>
     <Modal

@@ -29,7 +29,7 @@ EXPECTED = (
     (0, "确认 Sub2 API、卡字段、邮箱供应商、角色和部署环境", "形成接口样例、数据分类、合规边界和不可变更项", "boundary_partial"),
     (1, "FastAPI/React/PostgreSQL/Keycloak/Vault 骨架、CI/CD", "能登录、鉴权、审计、生成 OpenAPI 和前端客户端", "repository_gate_passed"),
     (2, "任务、邮箱连接器、mail session、验证码 API", "EXE 能登录并只通过 session 获取验证码；原始凭据不出服务端", "repository_gate_passed"),
-    (3, "卡池、分配、租约、掩码和一次性揭示", "并发分配无重复；用户无法越权；完整动作有审计", "repository_gate_passed"),
+    (3, "卡池、分配、租约、掩码和一次性揭示", "并发分配无重复；用户无法越权；完整动作有审计", "boundary_partial"),
     (4, "Sub2 Adapter、策略、幂等、未知结果核对", "客户端无 Sub2 配置；成功/失败/未知可区分和回放", "generic_adapter_gate_passed"),
     (5, "EXE 登录改造、平台任务工作台、自动填充适配", "现有连续复制/粘贴体验保留，注销/过期可安全停止", "repository_gate_passed"),
     (6, "小范围试点、监控、培训、回滚演练", "试点用户全流程完成；无越权、无敏感日志、可追溯", "preflight_only"),

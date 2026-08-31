@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Form, Input, Modal, Space, Spin, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
-import { createMailbox, listMailboxes, rotateMailboxSecret, updateMailboxState } from '../admin-api'
+import { createMailbox, importMailboxes, listMailboxes, rotateMailboxSecret, updateMailboxState } from '../admin-api'
 import type { MailboxCreate, MailboxSummary } from '../types'
+import { readPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { useViewActionScope } from '../useViewActionScope'
 import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableDate, compareTableText, mailboxHealthErrorNames } from './shared'
@@ -20,6 +21,13 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const [rotateTarget, setRotateTarget] = useState<MailboxSummary | null>(null)
   const [saving, setSaving] = useState(false)
   const mailboxCreatePendingRef = useRef(false)
+  const mailboxImportInputRef = useRef<HTMLInputElement>(null)
+  const mailboxImportPendingRef = useRef(false)
+  const mailboxImportRetryRef = useRef<{
+    payload: MailboxCreate[]
+    idempotencyKey: string
+  } | null>(null)
+  const [mailboxImportRetryAvailable, setMailboxImportRetryAvailable] = useState(false)
   const [mailboxActionKey, setMailboxActionKey] = useState<string | null>(null)
   const [mailboxActionPending, setMailboxActionPending] = useState(false)
   const mailboxActionRef = useRef<{
@@ -85,6 +93,70 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   function closeCreateMailbox() {
     createForm.resetFields()
     setCreateOpen(false)
+  }
+
+  async function importMailboxFile(file: File | undefined) {
+    if (!file || mailboxImportPendingRef.current) return
+    const isCurrent = beginViewAction()
+    mailboxImportPendingRef.current = true
+    setSaving(true)
+    try {
+      const payload = await readPoolImportJson<MailboxCreate>(file)
+      const batch = { payload, idempotencyKey: crypto.randomUUID() }
+      mailboxImportRetryRef.current = batch
+      setMailboxImportRetryAvailable(true)
+      const receipt = await importMailboxes(batch.payload, batch.idempotencyKey)
+      if (!isCurrent()) return
+      mailboxImportRetryRef.current = null
+      setMailboxImportRetryAvailable(false)
+      message.success(`已向邮箱池登记 ${receipt.imported_count} 条资源引用。`)
+      await refreshMailboxRows(isCurrent)
+    } catch (error) {
+      if (!isCurrent()) return
+      if (!shouldRetainPoolImportForRetry(error)) {
+        mailboxImportRetryRef.current = null
+        setMailboxImportRetryAvailable(false)
+      }
+      message.error(error instanceof Error ? error.message : '邮箱池引用清单登记失败')
+    } finally {
+      if (mailboxImportInputRef.current) mailboxImportInputRef.current.value = ''
+      mailboxImportPendingRef.current = false
+      if (!isCurrent()) return
+      setSaving(false)
+    }
+  }
+
+  function discardMailboxImportRetry() {
+    mailboxImportRetryRef.current = null
+    setMailboxImportRetryAvailable(false)
+    message.info('已从当前页面内存清除上次邮箱池引用清单。')
+  }
+
+  async function retryMailboxImport() {
+    const batch = mailboxImportRetryRef.current
+    if (!batch || mailboxImportPendingRef.current) return
+    const isCurrent = beginViewAction()
+    mailboxImportPendingRef.current = true
+    setSaving(true)
+    try {
+      const receipt = await importMailboxes(batch.payload, batch.idempotencyKey)
+      if (!isCurrent()) return
+      mailboxImportRetryRef.current = null
+      setMailboxImportRetryAvailable(false)
+      message.success(`已确认邮箱池引用清单，共 ${receipt.imported_count} 条资源。`)
+      await refreshMailboxRows(isCurrent)
+    } catch (error) {
+      if (!isCurrent()) return
+      if (!shouldRetainPoolImportForRetry(error)) {
+        mailboxImportRetryRef.current = null
+        setMailboxImportRetryAvailable(false)
+      }
+      message.error(error instanceof Error ? error.message : '邮箱池引用清单重试失败')
+    } finally {
+      mailboxImportPendingRef.current = false
+      if (!isCurrent()) return
+      setSaving(false)
+    }
   }
 
   function closeSecretRotation() {
@@ -279,7 +351,16 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     </Space> }] : []),
   ]
   return <>
-    <div className="page-heading"><div><Title level={2}>邮箱连接器</Title><Text type="secondary">只显示连接状态与掩码地址，源邮箱账号和密码不进入浏览器。</Text></div>{canManage && !loading && !mailboxListError ? <Button type="primary" disabled={saving || mailboxActionKey !== null} onClick={() => setCreateOpen(true)}>登记邮箱连接器</Button> : null}</div>
+    <div className="page-heading"><div><Title level={2}>邮箱池管理</Title><Text type="secondary">邮箱资源独立于信用卡池管理；页面只显示连接状态与掩码地址，源邮箱账号和密码不进入浏览器。</Text></div>{canManage && !loading && !mailboxListError ? <Space>
+      <input ref={mailboxImportInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => { void importMailboxFile(event.currentTarget.files?.[0]) }} />
+      {mailboxImportRetryAvailable ? <>
+        <Button disabled={saving} onClick={() => { void retryMailboxImport() }}>重试上次邮箱池引用清单</Button>
+        <Button disabled={saving} onClick={discardMailboxImportRetry}>放弃并清除上次邮箱池引用清单</Button>
+      </> : null}
+      <Button disabled={saving || mailboxActionKey !== null} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池引用清单 JSON</Button>
+      <Button type="primary" disabled={saving || mailboxActionKey !== null} onClick={() => setCreateOpen(true)}>登记邮箱连接器</Button>
+    </Space> : null}</div>
+    <Alert className="section-card" type="info" showIcon message="这里只登记已安全预置的邮箱连接器引用" description="原始邮箱账号和密码必须先由独立 Vault 安全导入流程处理；本页 JSON 只接收脱敏元数据和 vault://secret/mailboxes/ 引用，不是原始凭据上传入口。env://MAILBOX_ 仅限开发和测试。" />
     {unavailableRows.length > 0 ? <Alert
       style={{ marginBottom: 16 }}
       type="error"
@@ -299,7 +380,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         <Form.Item label="掩码邮箱" name="email_masked" extra="必须使用掩码地址，例如 m***@example.invalid。" rules={[{ required: true }, { pattern: /^[^@]*\*[^@]*@[^@]+$/, message: '请输入包含 * 的掩码邮箱' }]}><Input autoComplete="off" placeholder="m***@example.invalid" /></Form.Item>
         <Form.Item label="连接器类型" name="connector_type" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_-]*$/, message: '仅允许小写字母、数字、横线和下划线' }]}><Input placeholder="http" /></Form.Item>
         <Form.Item label="服务端路由键" name="task_type" initialValue="mail_code" extra="由服务端按任务类型选择邮箱池，普通客户端不能指定连接器或邮箱。" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_-]*$/, message: '仅允许小写字母、数字、横线和下划线' }]}><Input autoComplete="off" placeholder="mail_code" /></Form.Item>
-        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env:// 仅限开发/测试。请勿填写邮箱账号或密码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001" /></Form.Item>
+        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env://MAILBOX_ 仅限开发/测试。请勿填写邮箱账号或密码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/[A-Za-z0-9]|env:\/\/MAILBOX_[A-Za-z0-9])[A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；开发引用必须使用 env://MAILBOX_' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001" /></Form.Item>
       </Form>
     </Modal>
     <Modal title={rotateTarget ? `轮换邮箱密钥引用 ${rotateTarget.email_masked}` : '轮换邮箱密钥引用'} open={rotateTarget !== null} onCancel={closeSecretRotation} onOk={() => rotateForm.submit()} confirmLoading={saving} okText="确认轮换" cancelText="取消" destroyOnHidden>
@@ -309,7 +390,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       </Descriptions> : null}
       <Alert type="warning" showIcon message="仅更新密钥引用" description="新凭据应已预先写入服务端密钥管理器；审计只记录轮换动作，不记录引用值。" />
       <Form className="modal-form" form={rotateForm} layout="vertical" onFinish={submitRotation}>
-        <Form.Item label="新密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env:// 仅限开发/测试。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/|env:\/\/)[A-Za-z0-9][A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；env:// 仅限开发/测试' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001-v2" /></Form.Item>
+        <Form.Item label="新密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env://MAILBOX_ 仅限开发/测试。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/[A-Za-z0-9]|env:\/\/MAILBOX_[A-Za-z0-9])[A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；开发引用必须使用 env://MAILBOX_' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001-v2" /></Form.Item>
       </Form>
     </Modal>
   </>
