@@ -167,6 +167,12 @@ plaintext backups and deletion, and are configured for 30-day automatic
 rotation. The helper never enables mounts, logs in, generates or reads RoleIDs,
 SecretIDs or tokens, or accesses private keys and pool data.
 
+The contract's ordered `required_target_evidence` list is the exact 12-scenario
+secure-import portion of the repository-external `vault_egress_evidence`
+index. Repository verification fails if either side is missing, reordered or
+renamed. This binds evidence coverage only; it does not authenticate the
+referenced target objects or grant production acceptance.
+
 The KV v2 policies grant only `create` on their own pool paths, so an existing
 secret cannot be updated by either importer. The CLI additionally sends
 `options.cas=0` for every write. Vault KV v2 does not support

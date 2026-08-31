@@ -122,9 +122,22 @@ class SecureImportVaultContractTests(unittest.TestCase):
         })
         self.assertNotIn("required_parameters", card_policy)
         self.assertNotIn("required_parameters", mailbox_policy)
-        self.assertIn(
-            "importer_create_only_effective_capability_and_cli_cas_zero_observed",
+        self.assertEqual(
             contract["required_target_evidence"],
+            [
+                "three_distinct_external_principals",
+                "importer_create_only_effective_capability_and_cli_cas_zero_observed",
+                "cross_pool_access_denied",
+                "api_sign_denied",
+                "importer_verify_denied",
+                "transit_keys_non_exportable_and_rotated",
+                "vault_audit_trace_reviewed",
+                "database_concurrent_receipt_consumption_verified",
+                "exact_run_canary_cleanup_receipt_verified",
+                "administrator_card_pool_batch_committed",
+                "administrator_mailbox_pool_batch_committed",
+                "dual_pool_execution_records_read_only_recovery_assessed_without_automatic_resume",
+            ],
         )
         self.assertIn("transit/verify/email-platform-card-import-receipt", api_policy)
         self.assertIn("transit/verify/email-platform-mailbox-import-receipt", api_policy)

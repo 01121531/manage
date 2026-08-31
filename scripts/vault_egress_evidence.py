@@ -39,6 +39,57 @@ from scripts.verify_vault_isolation import load_assets, validate_vault_isolation
 EVIDENCE_INDEX = (
     ROOT / "deploy" / "evidence-index-envelopes" / "vault-egress.synthetic.json"
 )
+SECURE_IMPORT_CONTRACT = ROOT / "infra" / "vault" / "secure-import-contract.json"
+SECURE_IMPORT_SCENARIO_CONTRACT = {
+    "secure_import_principals_distinct": (
+        "three_distinct_external_principals",
+        "three_external_principals_verified",
+    ),
+    "secure_import_create_only_cas": (
+        "importer_create_only_effective_capability_and_cli_cas_zero_observed",
+        "importer_create_only_and_cas_zero_observed",
+    ),
+    "secure_import_cross_pool_denied": (
+        "cross_pool_access_denied",
+        "card_and_mailbox_cross_pool_access_denied",
+    ),
+    "secure_import_api_sign_denied": (
+        "api_sign_denied",
+        "api_transit_sign_permission_denied",
+    ),
+    "secure_import_importer_verify_denied": (
+        "importer_verify_denied",
+        "importer_transit_verify_permission_denied",
+    ),
+    "secure_import_transit_rotation": (
+        "transit_keys_non_exportable_and_rotated",
+        "non_exportable_transit_keys_rotated",
+    ),
+    "secure_import_vault_audit": (
+        "vault_audit_trace_reviewed",
+        "vault_audit_trace_independently_reviewed",
+    ),
+    "secure_import_receipt_concurrency": (
+        "database_concurrent_receipt_consumption_verified",
+        "single_receipt_consumed_once_under_concurrency",
+    ),
+    "secure_import_canary_cleanup": (
+        "exact_run_canary_cleanup_receipt_verified",
+        "exact_run_canaries_permanently_deleted_with_receipt",
+    ),
+    "secure_import_card_manual_batch": (
+        "administrator_card_pool_batch_committed",
+        "administrator_card_pool_batch_committed",
+    ),
+    "secure_import_mailbox_manual_batch": (
+        "administrator_mailbox_pool_batch_committed",
+        "administrator_mailbox_pool_batch_committed",
+    ),
+    "secure_import_recovery_read_only": (
+        "dual_pool_execution_records_read_only_recovery_assessed_without_automatic_resume",
+        "both_pool_execution_records_assessed_without_automatic_resume",
+    ),
+}
 
 REQUIRED_SCENARIO_OBSERVATIONS = {
     "vault_api_cards_allowed": "read_succeeded",
@@ -59,18 +110,10 @@ REQUIRED_SCENARIO_OBSERVATIONS = {
     "sub2_application_similar_suffix_denied": "rejected_before_secret_or_network_access",
     "sub2_network_approved_destination_allowed": "destination_connection_allowed",
     "sub2_network_unapproved_destination_denied": "destination_connection_denied",
-    "secure_import_principals_distinct": "three_external_principals_verified",
-    "secure_import_create_only_cas": "importer_create_only_and_cas_zero_observed",
-    "secure_import_cross_pool_denied": "card_and_mailbox_cross_pool_access_denied",
-    "secure_import_api_sign_denied": "api_transit_sign_permission_denied",
-    "secure_import_importer_verify_denied": "importer_transit_verify_permission_denied",
-    "secure_import_transit_rotation": "non_exportable_transit_keys_rotated",
-    "secure_import_vault_audit": "vault_audit_trace_independently_reviewed",
-    "secure_import_receipt_concurrency": "single_receipt_consumed_once_under_concurrency",
-    "secure_import_canary_cleanup": "exact_run_canaries_permanently_deleted_with_receipt",
-    "secure_import_card_manual_batch": "administrator_card_pool_batch_committed",
-    "secure_import_mailbox_manual_batch": "administrator_mailbox_pool_batch_committed",
-    "secure_import_recovery_read_only": "both_pool_execution_records_assessed_without_automatic_resume",
+    **{
+        scenario: observation
+        for scenario, (_, observation) in SECURE_IMPORT_SCENARIO_CONTRACT.items()
+    },
 }
 
 _PAYLOAD_KEYS = {
@@ -431,6 +474,25 @@ def repository_control_errors() -> list[str]:
         errors = validate_vault_isolation(*load_assets())
     except (OSError, ValueError) as error:
         return [f"repository Vault control assets are unavailable: {error}"]
+    try:
+        secure_import_contract = load_unique_json(SECURE_IMPORT_CONTRACT)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        errors.append("secure import target evidence contract is unavailable")
+    else:
+        expected_evidence = [
+            contract_evidence
+            for contract_evidence, _ in SECURE_IMPORT_SCENARIO_CONTRACT.values()
+        ]
+        if (
+            not isinstance(secure_import_contract, dict)
+            or secure_import_contract.get("schema_version") != 3
+            or secure_import_contract.get("production_acceptance") is not False
+            or secure_import_contract.get("required_target_evidence")
+            != expected_evidence
+        ):
+            errors.append(
+                "secure import target evidence contract does not match the evidence index"
+            )
     try:
         approved = _origin_key("https://sub2-upload.invalid", allow_path=False)
         if approved != _origin_key(

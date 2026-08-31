@@ -95,6 +95,10 @@
     "importer_verify_denied",
     "transit_keys_non_exportable_and_rotated",
     "vault_audit_trace_reviewed",
-    "database_concurrent_receipt_consumption_verified"
+    "database_concurrent_receipt_consumption_verified",
+    "exact_run_canary_cleanup_receipt_verified",
+    "administrator_card_pool_batch_committed",
+    "administrator_mailbox_pool_batch_committed",
+    "dual_pool_execution_records_read_only_recovery_assessed_without_automatic_resume"
   ]
 }

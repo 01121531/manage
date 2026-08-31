@@ -127,6 +127,24 @@ class VaultEgressEvidenceTests(unittest.TestCase):
         gate = Path("scripts/quality_gate.ps1").read_text(encoding="utf-8")
         self.assertIn("python scripts/vault_egress_evidence.py verify-repository", gate)
 
+    def test_repository_control_rejects_secure_import_evidence_contract_drift(
+        self,
+    ) -> None:
+        with mock.patch(
+            "scripts.vault_egress_evidence.load_unique_json",
+            return_value={
+                "schema_version": 3,
+                "production_acceptance": False,
+                "required_target_evidence": [
+                    "three_distinct_external_principals",
+                ],
+            },
+        ):
+            self.assertIn(
+                "secure import target evidence contract does not match the evidence index",
+                repository_control_errors(),
+            )
+
     def test_inventory_is_exact_full_vault_matrix_plus_egress_controls(self) -> None:
         self.assertEqual(len(REQUIRED_SCENARIO_OBSERVATIONS), 30)
         self.assertEqual(
