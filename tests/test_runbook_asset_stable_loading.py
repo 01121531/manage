@@ -16,6 +16,7 @@ from scripts import verify_runbooks
 
 
 EXPECTED_RUNBOOKS = (
+    "secure-pool-import.md",
     "admin-plane-separation.md",
     "nonproduction-data-boundary.md",
     "rolling-release.md",
@@ -265,7 +266,7 @@ class RunbookAssetStableLoadingTests(unittest.TestCase):
             with mock.patch.object(verify_runbooks, "ROOT", root):
                 self.assertEqual(
                     self._run_main(),
-                    (1, "", "Missing runbook: admin-plane-separation.md\n"),
+                    (1, "", f"Missing runbook: {EXPECTED_RUNBOOKS[0]}\n"),
                 )
 
         first = EXPECTED_RUNBOOKS[0]

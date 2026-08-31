@@ -2441,6 +2441,11 @@
       },
       "PoolImportReceiptResponse": {
         "properties": {
+          "consumed_at": {
+            "format": "date-time",
+            "title": "Consumed At",
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -2454,12 +2459,32 @@
             "title": "Imported Count",
             "type": "integer"
           },
+          "key_version": {
+            "minimum": 1.0,
+            "title": "Key Version",
+            "type": "integer"
+          },
+          "ordered_manifest_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Ordered Manifest Digest",
+            "type": "string"
+          },
           "pool_type": {
             "enum": [
               "card",
               "mailbox"
             ],
             "title": "Pool Type",
+            "type": "string"
+          },
+          "secure_receipt_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Secure Receipt Fingerprint",
+            "type": "string"
+          },
+          "status": {
+            "const": "committed",
+            "title": "Status",
             "type": "string"
           },
           "trace_id": {
@@ -2469,8 +2494,13 @@
         },
         "required": [
           "id",
+          "status",
           "pool_type",
           "imported_count",
+          "ordered_manifest_digest",
+          "secure_receipt_fingerprint",
+          "key_version",
+          "consumed_at",
           "trace_id",
           "created_at"
         ],

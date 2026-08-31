@@ -5131,7 +5131,9 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
         return fulfill({ error: { code: 'service_unavailable', message: 'import response lost' } }, 503)
       }
       return fulfill({
-        id: 'card-import-receipt', pool_type: 'card', imported_count: body.length,
+        id: 'card-import-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
+        ordered_manifest_digest: 'a'.repeat(64), secure_receipt_fingerprint: 'b'.repeat(64),
+        key_version: 3, consumed_at: '2026-08-20T00:00:00Z',
         trace_id: 'card-import-trace', created_at: '2026-08-20T00:00:00Z',
       })
     }
@@ -5188,9 +5190,23 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
         status: 'available', health_status: 'unknown', last_checked_at: null,
         last_error_code: null, active_session_count: 0, created_at: '2026-08-20T00:00:00Z',
       }))
+      if (mailboxImportBodies.length === 2) {
+        mailboxes = [...imported, ...mailboxes]
+        return fulfill({ error: { code: 'service_unavailable', message: 'import response lost' } }, 503)
+      }
+      if (mailboxImportBodies.length === 3) {
+        return fulfill({
+          id: 'mailbox-import-receipt', status: 'committed', pool_type: 'mailbox', imported_count: body.length,
+          ordered_manifest_digest: 'c'.repeat(64), secure_receipt_fingerprint: 'd'.repeat(64),
+          key_version: 4, consumed_at: '2026-08-20T00:00:00Z',
+          trace_id: 'mailbox-import-trace', created_at: '2026-08-20T00:00:00Z',
+        })
+      }
       mailboxes = [...imported, ...mailboxes]
       return fulfill({
-        id: 'mailbox-import-receipt', pool_type: 'mailbox', imported_count: body.length,
+        id: 'mailbox-import-receipt', status: 'committed', pool_type: 'mailbox', imported_count: body.length,
+        ordered_manifest_digest: 'c'.repeat(64), secure_receipt_fingerprint: 'd'.repeat(64),
+        key_version: 4, consumed_at: '2026-08-20T00:00:00Z',
         trace_id: 'mailbox-import-trace', created_at: '2026-08-20T00:00:00Z',
       }, 201)
     }
@@ -5253,10 +5269,12 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     provider_ref: 'provider-imported', pool_key: 'checkout-cn', region: 'cn-east',
     brand: 'VISA', last4: '6060', expiry_month: null, expiry_year: null,
   }]
+  const cardSubmissionKey = 'spi:11111111-1111-4111-8111-111111111111'
+  const mailboxSubmissionKey = 'spi:22222222-2222-4222-8222-222222222222'
   await cardBundleInput.setInputFiles({
     name: 'wrong-mailbox-pool.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'mailbox',
+      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
       receipt_token: 'epir1.wrong-pool.signature',
       items: [{ email_masked: 'w***@example.invalid', connector_type: 'http', task_type: 'mail_code' }],
     })),
@@ -5266,7 +5284,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await cardBundleInput.setInputFiles({
     name: 'card-pool-with-secret.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'card',
+      schema_version: 2, pool_type: 'card', submission_key: cardSubmissionKey,
       receipt_token: 'epir1.card-receipt.signature',
       items: [{ ...secureCardItems[0], pan: '4111111111111111' }],
     })),
@@ -5277,7 +5295,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await cardBundleInput.setInputFiles({
     name: 'card-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'card',
+      schema_version: 2, pool_type: 'card', submission_key: cardSubmissionKey,
       receipt_token: 'epir1.card-receipt.signature', items: secureCardItems,
     })),
   })
@@ -5289,9 +5307,13 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await cardPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => cardImportBodies).toEqual([secureCardItems])
   expect(cardImportReceipts).toEqual(['epir1.card-receipt.signature'])
-  await expect(page.getByRole('button', { name: '重试上次信用卡池引用清单' })).toBeVisible()
-  await page.getByRole('button', { name: '重试上次信用卡池引用清单' }).click()
+  const cardRecovery = page.getByRole('alert').filter({ hasText: '上次信用卡池导入结果尚未确认' })
+  await expect(cardRecovery).toContainText(cardSubmissionKey)
+  await expect(page.getByRole('button', { name: '导入信用卡池安全包 JSON' })).toBeDisabled()
+  await expect(page.locator('body')).not.toContainText('epir1.card-receipt.signature')
+  await cardRecovery.getByRole('button', { name: '使用同一批次核验信用卡池导入' }).click()
   await expect.poll(() => cardImportBodies).toEqual([secureCardItems, secureCardItems])
+  expect(cardImportKeys).toEqual([cardSubmissionKey, cardSubmissionKey])
   expect(cardImportKeys[1]).toBe(cardImportKeys[0])
   expect(cardImportReceipts).toEqual([
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
@@ -5311,7 +5333,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-with-secret.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'mailbox',
+      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
       receipt_token: 'epir1.mail-receipt.signature',
       items: [{ ...secureMailboxItems[0], password: 'mailbox-secret-value' }],
     })),
@@ -5322,22 +5344,22 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-cancelled.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'mailbox',
+      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
-  let mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' })
+  let mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' }).last()
   await mailboxPreview.getByRole('button', { name: /取\s*消/ }).click()
   await expect(mailboxPreview).toBeHidden()
   expect(mailboxImportBodies).toEqual([])
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'mailbox',
+      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
-  mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' })
+  mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' }).last()
   await expect(mailboxPreview).toContainText('mailbox-pool-secure.json')
   await expect(mailboxPreview).toContainText('服务端路由：mail_code')
   expect(mailboxImportBodies).toEqual([])
@@ -5348,18 +5370,29 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 1, pool_type: 'mailbox',
+      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
-  mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' })
+  mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' }).last()
   await mailboxPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => mailboxImportBodies).toEqual([
     secureMailboxItems, secureMailboxItems,
   ])
-  expect(mailboxImportKeys[1]).not.toBe(mailboxImportKeys[0])
+  const mailboxRecovery = page.getByRole('alert').filter({ hasText: '上次邮箱池导入结果尚未确认' })
+  await expect(mailboxRecovery).toContainText(mailboxSubmissionKey)
+  await expect(page.getByRole('button', { name: '导入邮箱池安全包 JSON' })).toBeDisabled()
+  await expect(page.locator('body')).not.toContainText('epir1.mail-receipt.signature')
+  await mailboxRecovery.getByRole('button', { name: '使用同一批次核验邮箱池导入' }).click()
+  await expect.poll(() => mailboxImportBodies).toEqual([
+    secureMailboxItems, secureMailboxItems, secureMailboxItems,
+  ])
+  expect(mailboxImportKeys).toEqual([
+    mailboxSubmissionKey, mailboxSubmissionKey, mailboxSubmissionKey,
+  ])
   expect(mailboxImportReceipts).toEqual([
     'epir1.mail-receipt.signature', 'epir1.mail-receipt.signature',
+    'epir1.mail-receipt.signature',
   ])
   await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
   await expect(page.getByText('最近一次邮箱池导入已确认：1 条', { exact: true })).toBeVisible()

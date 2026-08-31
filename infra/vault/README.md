@@ -96,9 +96,12 @@ Pool ingestion is a separate trust boundary from the three runtime identities
 above. `scripts/secure_pool_import.py` reads a restricted local input file,
 writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
 pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
-output JSON contains `schema_version: 1`, an explicit `pool_type`, the
-`receipt_token`, and ordered masked `items`; upload that output through the
-matching card or mailbox pool page. The page rejects a wrong-pool bundle or
+output JSON contains `schema_version: 2`, an explicit `pool_type`, a stable
+`submission_key` derived from the signed receipt UUID, the `receipt_token`, and
+ordered masked `items`; upload that output through the matching card or mailbox
+pool page. The API verifies that the submission key matches the signed receipt,
+so selecting the exact same bundle after a lost response replays the original
+platform receipt instead of creating another batch. The page rejects a wrong-pool bundle or
 any item with an extra field before making an API request, then shows a
 secret-free preview for confirmation. Never upload the raw input file through
 the Web application.

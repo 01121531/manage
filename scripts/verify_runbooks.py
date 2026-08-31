@@ -33,6 +33,18 @@ RELEASE_ENVIRONMENT_REQUIRED = (
     "absent from Git, Cosign, Trivy, Docker, Compose, restore, and smoke-test processes",
 )
 RUNBOOKS = {
+    "secure-pool-import.md": [
+        "schema_version: 2",
+        "submission_key",
+        "signed receipt UUID",
+        "Do not upload the raw",
+        "结果尚未确认",
+        "same bundle",
+        "ordered_manifest_digest",
+        "secure_receipt_fingerprint",
+        "production_acceptance=false",
+        "cleanup_required=true",
+    ],
     "admin-plane-separation.md": [
         "distinct human administrator groups",
         "must not administer both control planes",

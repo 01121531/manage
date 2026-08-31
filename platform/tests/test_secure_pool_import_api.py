@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -106,12 +107,21 @@ class SecurePoolImportApiTests(unittest.TestCase):
         first = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers=self.headers(receipt_id, "card-import-1"),
+            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
             json=payload,
         )
         self.assertEqual(first.status_code, 201, first.text)
         self.assertEqual(self.verifier.calls, 1)
-        replay_headers = self.headers(str(uuid4()), "card-import-1")
+        first_receipt = first.json()
+        self.assertEqual(first_receipt["status"], "committed")
+        self.assertEqual(first_receipt["key_version"], 1)
+        self.assertEqual(
+            first_receipt["secure_receipt_fingerprint"],
+            hashlib.sha256(receipt_id.encode("ascii")).hexdigest(),
+        )
+        self.assertRegex(first_receipt["ordered_manifest_digest"], r"^[0-9a-f]{64}$")
+        self.assertIsInstance(first_receipt["consumed_at"], str)
+        replay_headers = self.headers(str(uuid4()), f"spi:{receipt_id}")
         replay_headers.pop("Secure-Import-Receipt")
         replay = self.request(
             "POST",
@@ -133,6 +143,8 @@ class SecurePoolImportApiTests(unittest.TestCase):
             audit_json = "\n".join(item.details_json for item in db.scalars(select(AuditEvent)))
             self.assertNotIn(receipt_id, audit_json)
             self.assertNotIn("vault://", audit_json)
+            self.assertIn(first_receipt["ordered_manifest_digest"], audit_json)
+            self.assertIn(first_receipt["secure_receipt_fingerprint"], audit_json)
 
     def test_mailbox_import_and_receipt_one_time_consumption(self) -> None:
         receipt_id = str(uuid4())
@@ -144,20 +156,49 @@ class SecurePoolImportApiTests(unittest.TestCase):
         first = self.request(
             "POST",
             "/api/v1/admin/mailboxes/imports",
-            headers=self.headers(receipt_id, "mail-import-1"),
+            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
             json=payload,
         )
         self.assertEqual(first.status_code, 201, first.text)
         consumed = self.request(
             "POST",
-            "/api/v1/admin/mailboxes/imports",
-            headers=self.headers(receipt_id, "mail-import-2"),
-            json=[{**payload[0], "email_masked": "n***@example.test"}],
+            "/api/v1/admin/cards/imports",
+            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
+            json=[{
+                "provider_ref": "provider-cross-pool",
+                "pool_key": "checkout-cn",
+                "region": "cn-east",
+                "brand": "Visa",
+                "last4": "4242",
+            }],
         )
         self.assertEqual(consumed.status_code, 409, consumed.text)
         with self.app.state.session_factory() as db:
             self.assertEqual(db.scalar(select(func.count()).select_from(Mailbox)), 1)
             self.assertEqual(db.scalar(select(func.count()).select_from(PoolImportReceipt)), 1)
+
+    def test_first_import_requires_submission_key_bound_to_signed_receipt(self) -> None:
+        receipt_id = str(uuid4())
+        payload = [{
+            "provider_ref": "provider-card-bound-key",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+
+        rejected = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=self.headers(receipt_id, f"spi:{uuid4()}"),
+            json=payload,
+        )
+
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertEqual(self.verifier.calls, 1)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 0)
+            self.assertEqual(db.scalar(select(func.count()).select_from(PoolImportReceipt)), 0)
 
     def test_import_rejects_secret_fields_and_unreceipted_first_write(self) -> None:
         payload = [{

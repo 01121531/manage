@@ -28,6 +28,11 @@ class SecureImportVaultContractTests(unittest.TestCase):
         )
         self.assertEqual(contract["schema_version"], 2)
         self.assertFalse(contract["production_acceptance"])
+        self.assertEqual(contract["bundle_schema_version"], 2)
+        self.assertEqual(
+            contract["submission_key_binding"],
+            "spi:<vault-transit-signed-receipt-uuid>",
+        )
         roles = {item["role"]: item for item in contract["roles"]}
         self.assertEqual(set(roles), {"card-importer", "mailbox-importer", "api-verifier"})
         self.assertEqual(

@@ -2215,6 +2215,11 @@ export interface components {
         /** PoolImportReceiptResponse */
         PoolImportReceiptResponse: {
             /**
+             * Consumed At
+             * Format: date-time
+             */
+            consumed_at: string;
+            /**
              * Created At
              * Format: date-time
              */
@@ -2223,11 +2228,22 @@ export interface components {
             id: string;
             /** Imported Count */
             imported_count: number;
+            /** Key Version */
+            key_version: number;
+            /** Ordered Manifest Digest */
+            ordered_manifest_digest: string;
             /**
              * Pool Type
              * @enum {string}
              */
             pool_type: "card" | "mailbox";
+            /** Secure Receipt Fingerprint */
+            secure_receipt_fingerprint: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "committed";
             /** Trace Id */
             trace_id: string;
         };

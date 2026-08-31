@@ -152,6 +152,12 @@ def pool_secret_ref(
     )
 
 
+def pool_import_submission_key(receipt_id: str) -> str:
+    """Derive the stable API idempotency key from a signed receipt identity."""
+
+    return f"spi:{UUID(receipt_id)}"
+
+
 def canonical_receipt_claims(claims: dict[str, object]) -> bytes:
     """Encode exact receipt claims for Vault Transit signing."""
 

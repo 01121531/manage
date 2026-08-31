@@ -165,10 +165,16 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     ))
                 bundle = json.loads(receipt_output.read_text(encoding="utf-8"))
                 self.assertEqual(set(bundle), {
-                    "schema_version", "pool_type", "receipt_token", "items",
+                    "schema_version", "pool_type", "submission_key",
+                    "receipt_token", "items",
                 })
-                self.assertEqual(bundle["schema_version"], 1)
+                self.assertEqual(bundle["schema_version"], 2)
                 self.assertEqual(bundle["pool_type"], pool_type)
+                self.assertRegex(
+                    bundle["submission_key"],
+                    r"^spi:[0-9a-f-]{36}$",
+                )
+                self.assertNotIn("test-vault-token", receipt_output.read_text())
 
 
 if __name__ == "__main__":

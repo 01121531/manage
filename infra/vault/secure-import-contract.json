@@ -3,6 +3,8 @@
   "production_acceptance": false,
   "receipt_authority": "vault-transit",
   "atomic_consumption": "postgresql-unique-secure-receipt-id",
+  "bundle_schema_version": 2,
+  "submission_key_binding": "spi:<vault-transit-signed-receipt-uuid>",
   "maximum_receipt_ttl_seconds": 600,
   "transit_keys": [
     {

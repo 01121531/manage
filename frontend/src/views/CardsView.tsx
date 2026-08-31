@@ -173,7 +173,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   }, [refresh, selectedCardId, timelineRefresh])
 
   async function importCardFile(file: File | undefined) {
-    if (!file || cardImportPendingRef.current) return
+    if (!file || cardImportPendingRef.current || cardImportRetryRef.current !== null) return
     cardImportPendingRef.current = true
     setSaving(true)
     try {
@@ -206,7 +206,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const batch = {
         payload: bundle.items,
         receiptToken: bundle.receipt_token,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: bundle.submission_key,
       }
       cardImportRetryRef.current = batch
       setCardImportRetryAvailable(true)
@@ -606,21 +606,34 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   return <>
     <div className="page-heading"><div><Title level={2}>卡池管理</Title><Text type="secondary">卡资源由管理员手动登记并独立于邮箱池管理；登记接口不接收 PAN/CVV，PAN 保存在 Vault 且仅经 step-up 揭示，CVV 默认不返回。</Text></div>{canManage ? <Space>
       <input ref={cardImportInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => { void importCardFile(event.currentTarget.files?.[0]) }} />
-      {cardImportRetryAvailable ? <>
-        <Button disabled={saving} onClick={() => { void retryCardImport() }}>重试上次信用卡池引用清单</Button>
-        <Button disabled={saving} onClick={discardCardImportRetry}>放弃并清除上次信用卡池引用清单</Button>
-      </> : null}
-      <Button type="primary" loading={saving} disabled={loading || cardListError !== undefined || cardActionId !== null} onClick={() => cardImportInputRef.current?.click()}>导入信用卡池安全包 JSON</Button>
+      <Button type="primary" loading={saving} disabled={loading || cardListError !== undefined || cardActionId !== null || cardImportRetryAvailable} onClick={() => cardImportInputRef.current?.click()}>导入信用卡池安全包 JSON</Button>
     </Space> : null}</div>
     <Alert className="section-card" type="info" showIcon message="这里只接收独立安全导入器生成的卡池安全包" description="PAN/CVV 不进入浏览器或普通 API；安全包只含脱敏元数据和短期 Vault Transit 签名收据，密钥引用由服务端固定派生。单条资源也使用同一安全导入流程。" />
+    {cardImportRetryAvailable && cardImportRetryRef.current ? <Alert
+      className="section-card"
+      type="warning"
+      showIcon
+      message="上次信用卡池导入结果尚未确认"
+      description={<Space direction="vertical" size={4}>
+        <Text>平台可能已完成导入。不要选择新安全包；请使用同一批次核验，或明确放弃当前页面内存中的恢复上下文。</Text>
+        <Text>稳定提交键：</Text><Text code copyable>{cardImportRetryRef.current.idempotencyKey}</Text>
+      </Space>}
+      action={<Space wrap>
+        <Button disabled={saving} onClick={() => { void retryCardImport() }}>使用同一批次核验信用卡池导入</Button>
+        <Button disabled={saving} onClick={discardCardImportRetry}>明确放弃本次核验</Button>
+      </Space>}
+    /> : null}
     {lastCardImportReceipt ? <Alert
       className="section-card"
       type="success"
       showIcon
       message={`最近一次信用卡池导入已确认：${lastCardImportReceipt.imported_count} 条`}
       description={<Space wrap>
-        <Text>回执 ID：</Text><Text code copyable>{lastCardImportReceipt.id}</Text>
+        <Text>平台导入回执 ID：</Text><Text code copyable>{lastCardImportReceipt.id}</Text>
         <Text>Trace ID：</Text><Text code copyable>{lastCardImportReceipt.trace_id}</Text>
+        <Text>状态：{lastCardImportReceipt.status} / Transit key v{lastCardImportReceipt.key_version}</Text>
+        <Text>清单摘要：</Text><Text code copyable>{lastCardImportReceipt.ordered_manifest_digest}</Text>
+        <Text>安全收据指纹：</Text><Text code copyable>{lastCardImportReceipt.secure_receipt_fingerprint}</Text>
         <Text>时间：{formatLocalDateTime(lastCardImportReceipt.created_at)}</Text>
       </Space>}
     /> : null}

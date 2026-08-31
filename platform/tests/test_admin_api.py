@@ -38,7 +38,12 @@ from platform.models import (
     User,
     utc_now,
 )
-from platform.pool_imports import VerifiedPoolImportReceipt
+from platform.pool_imports import (
+    VerifiedPoolImportReceipt,
+    pool_import_digest,
+    pool_import_submission_key,
+)
+from platform.schemas import AdminCardImportItem, AdminMailboxImportItem
 from platform.uploads import (
     Sub2UploadResult,
     process_queued_uploads,
@@ -197,6 +202,20 @@ class AdminApiTests(unittest.TestCase):
             "Authorization": f"Bearer {value}",
             "Secure-Import-Receipt": "admin-test-secure-import-receipt",
         }
+
+    @staticmethod
+    def pool_import_key(
+        tenant_id: str,
+        pool_type: str,
+        payload: list[dict[str, object]],
+    ) -> str:
+        item_type = AdminCardImportItem if pool_type == "card" else AdminMailboxImportItem
+        digest = pool_import_digest(
+            pool_type,
+            [item_type.model_validate(item) for item in payload],
+        )
+        receipt_id = str(uuid5(NAMESPACE_URL, f"{tenant_id}:{pool_type}:{digest}"))
+        return pool_import_submission_key(receipt_id)
 
     def create_card_upload_fixture(
         self,
@@ -1688,12 +1707,13 @@ class AdminApiTests(unittest.TestCase):
                 "expiry_year": 2031,
             },
         ]
+        import_key = self.pool_import_key("tenant-a", "card", payload)
         imported = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
             headers={
                 **self.headers(ops_token),
-                "Idempotency-Key": "card-batch-import-1",
+                "Idempotency-Key": import_key,
             },
             json=payload,
         )
@@ -1709,7 +1729,7 @@ class AdminApiTests(unittest.TestCase):
             "/api/v1/admin/cards/imports",
             headers={
                 **self.headers(ops_token),
-                "Idempotency-Key": "card-batch-import-1",
+                "Idempotency-Key": import_key,
             },
             json=payload,
         )
@@ -1721,7 +1741,7 @@ class AdminApiTests(unittest.TestCase):
             "/api/v1/admin/cards/imports",
             headers={
                 **self.headers(ops_token),
-                "Idempotency-Key": "card-batch-import-1",
+                "Idempotency-Key": import_key,
             },
             json=[{**payload[0], "provider_ref": "different-payload"}],
         )
@@ -1762,10 +1782,18 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(len(imported_cards), 2)
         self.assertEqual(receipt_count, 1)
         self.assertEqual(len(import_audits), 1)
+        batch_audit = json.loads(import_audits[0].details_json)
+        self.assertEqual(batch_audit["count"], 2)
+        self.assertEqual(batch_audit["pool_type"], "card")
         self.assertEqual(
-            json.loads(import_audits[0].details_json),
-            {"count": 2, "pool_type": "card"},
+            batch_audit["ordered_manifest_digest"],
+            imported.json()["ordered_manifest_digest"],
         )
+        self.assertEqual(
+            batch_audit["secure_receipt_fingerprint"],
+            imported.json()["secure_receipt_fingerprint"],
+        )
+        self.assertEqual(batch_audit["key_version"], 1)
         self.assertNotIn("vault://", import_audits[0].details_json)
         self.assertNotIn("secret_ref", import_audits[0].details_json)
         self.assertEqual(len(resource_import_audits), 2)
@@ -1791,21 +1819,24 @@ class AdminApiTests(unittest.TestCase):
             self.assertNotIn("vault://", audit.details_json)
         self.assertEqual(len(card_events), 2)
 
+        conflict_payload = [
+            {
+                "provider_ref": "batch-must-rollback",
+                "brand": "Visa",
+                "last4": "3333",
+            },
+            payload[0],
+        ]
         conflict = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
             headers={
                 **self.headers(ops_token),
-                "Idempotency-Key": "card-batch-import-conflict",
+                "Idempotency-Key": self.pool_import_key(
+                    "tenant-a", "card", conflict_payload
+                ),
             },
-            json=[
-                {
-                    "provider_ref": "batch-must-rollback",
-                    "brand": "Visa",
-                    "last4": "3333",
-                },
-                payload[0],
-            ],
+            json=conflict_payload,
         )
         self.assertEqual(conflict.status_code, 409, conflict.text)
         with self.app.state.session_factory() as db:
@@ -1914,7 +1945,7 @@ class AdminApiTests(unittest.TestCase):
         ]
         headers = {
             **self.headers(admin_token),
-            "Idempotency-Key": "concurrent-card-pool-import",
+            "Idempotency-Key": self.pool_import_key("tenant-a", "card", payload),
         }
         start = Event()
 
@@ -1975,7 +2006,6 @@ class AdminApiTests(unittest.TestCase):
             "approver-account-password",
             self.approver.device_id,
         )
-        key = "shared-pool-import-key"
         card_payload = [
             {
                 "provider_ref": "shared-scope-card",
@@ -1993,25 +2023,45 @@ class AdminApiTests(unittest.TestCase):
         card = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers={**self.headers(admin_token), "Idempotency-Key": key},
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": self.pool_import_key(
+                    "tenant-a", "card", card_payload
+                ),
+            },
             json=card_payload,
         )
         mailbox = self.request(
             "POST",
             "/api/v1/admin/mailboxes/imports",
-            headers={**self.headers(admin_token), "Idempotency-Key": key},
+            headers={
+                **self.headers(admin_token),
+                "Idempotency-Key": self.pool_import_key(
+                    "tenant-a", "mailbox", mailbox_payload
+                ),
+            },
             json=mailbox_payload,
         )
         other_tenant = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers={**self.headers(other_token), "Idempotency-Key": key},
+            headers={
+                **self.headers(other_token),
+                "Idempotency-Key": self.pool_import_key(
+                    "tenant-b", "card", card_payload
+                ),
+            },
             json=card_payload,
         )
         cross_creator = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers={**self.headers(approver_token), "Idempotency-Key": key},
+            headers={
+                **self.headers(approver_token),
+                "Idempotency-Key": self.pool_import_key(
+                    "tenant-a", "card", card_payload
+                ),
+            },
             json=card_payload,
         )
 
@@ -2019,7 +2069,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(mailbox.status_code, 201, mailbox.text)
         self.assertEqual(other_tenant.status_code, 201, other_tenant.text)
         self.assertEqual(cross_creator.status_code, 409, cross_creator.text)
-        self.assertNotIn(key, cross_creator.text)
+        self.assertNotIn("spi:", cross_creator.text)
         with self.app.state.session_factory() as db:
             self.assertEqual(
                 db.scalar(select(func.count()).select_from(PoolImportReceipt)),
@@ -3307,12 +3357,13 @@ class AdminApiTests(unittest.TestCase):
                 "task_type": "password_reset",
             },
         ]
+        import_key = self.pool_import_key("tenant-a", "mailbox", payload)
         imported = self.request(
             "POST",
             "/api/v1/admin/mailboxes/imports",
             headers={
                 **self.headers(admin_token),
-                "Idempotency-Key": "mailbox-batch-import-1",
+                "Idempotency-Key": import_key,
             },
             json=payload,
         )
@@ -3328,7 +3379,7 @@ class AdminApiTests(unittest.TestCase):
             "/api/v1/admin/mailboxes/imports",
             headers={
                 **self.headers(admin_token),
-                "Idempotency-Key": "mailbox-batch-import-1",
+                "Idempotency-Key": import_key,
             },
             json=payload,
         )
@@ -3340,7 +3391,7 @@ class AdminApiTests(unittest.TestCase):
             "/api/v1/admin/mailboxes/imports",
             headers={
                 **self.headers(admin_token),
-                "Idempotency-Key": "mailbox-batch-import-1",
+                "Idempotency-Key": import_key,
             },
             json=[{**payload[0], "email_masked": "z***@example.test"}],
         )
@@ -3375,10 +3426,18 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(len(imported_mailboxes), 2)
         self.assertEqual(receipt_count, 1)
         self.assertEqual(len(import_audits), 1)
+        batch_audit = json.loads(import_audits[0].details_json)
+        self.assertEqual(batch_audit["count"], 2)
+        self.assertEqual(batch_audit["pool_type"], "mailbox")
         self.assertEqual(
-            json.loads(import_audits[0].details_json),
-            {"count": 2, "pool_type": "mailbox"},
+            batch_audit["ordered_manifest_digest"],
+            imported.json()["ordered_manifest_digest"],
         )
+        self.assertEqual(
+            batch_audit["secure_receipt_fingerprint"],
+            imported.json()["secure_receipt_fingerprint"],
+        )
+        self.assertEqual(batch_audit["key_version"], 1)
         self.assertNotIn("vault://", import_audits[0].details_json)
         self.assertNotIn("secret_ref", import_audits[0].details_json)
         self.assertEqual(len(resource_import_audits), 2)
@@ -3402,16 +3461,6 @@ class AdminApiTests(unittest.TestCase):
             self.assertNotIn("secret_ref", details)
             self.assertNotIn("vault://", audit.details_json)
 
-        conflict = self.request(
-            "POST",
-            "/api/v1/admin/mailboxes/imports",
-            headers={
-                **self.headers(admin_token),
-                "Idempotency-Key": "mailbox-batch-import-conflict",
-            },
-            json=payload,
-        )
-        self.assertEqual(conflict.status_code, 409, conflict.text)
         with self.app.state.session_factory() as db:
             self.assertIsNone(
                 db.scalar(

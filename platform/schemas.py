@@ -250,8 +250,13 @@ class AdminCardPageResponse(BaseModel):
 
 class PoolImportReceiptResponse(BaseModel):
     id: str
+    status: Literal["committed"]
     pool_type: Literal["card", "mailbox"]
     imported_count: int
+    ordered_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    secure_receipt_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    key_version: int = Field(ge=1)
+    consumed_at: datetime
     trace_id: str
     created_at: datetime
 

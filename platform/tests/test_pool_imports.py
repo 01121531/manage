@@ -13,6 +13,7 @@ from platform.pool_imports import (
     canonical_receipt_claims,
     encode_receipt_token,
     pool_import_digest,
+    pool_import_submission_key,
     pool_secret_ref,
 )
 
@@ -153,6 +154,10 @@ class PoolImportReceiptTests(unittest.TestCase):
         right = list(reversed(left))
         self.assertNotEqual(pool_import_digest("card", left), pool_import_digest("card", right))
         receipt_id = str(uuid4())
+        self.assertEqual(
+            pool_import_submission_key(receipt_id),
+            f"spi:{receipt_id}",
+        )
         card_ref = pool_secret_ref(
             "card", tenant_id="tenant-a", receipt_id=receipt_id, index=0
         )

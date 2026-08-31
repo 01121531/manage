@@ -27,6 +27,7 @@ from platform.pool_imports import (
     canonical_receipt_claims,
     encode_receipt_token,
     pool_import_digest,
+    pool_import_submission_key,
     pool_secret_ref,
 )
 
@@ -334,8 +335,9 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         if int(signature.split(":", 2)[1].removeprefix("v")) != key_version:
             raise ImportFailure("Transit key rotated during receipt signing; retry safely")
     _write_bundle(output_path, {
-        "schema_version": 1,
+        "schema_version": 2,
         "pool_type": pool_type,
+        "submission_key": pool_import_submission_key(receipt_id),
         "receipt_token": encode_receipt_token(unsigned, signature),
         "items": manifest,
     })

@@ -110,7 +110,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   }, [committedMailboxSearch, mailboxSearch])
 
   async function importMailboxFile(file: File | undefined) {
-    if (!file || mailboxImportPendingRef.current) return
+    if (!file || mailboxImportPendingRef.current || mailboxImportRetryRef.current !== null) return
     const isCurrent = beginViewAction()
     mailboxImportPendingRef.current = true
     setSaving(true)
@@ -144,7 +144,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       const batch = {
         payload: bundle.items,
         receiptToken: bundle.receipt_token,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: bundle.submission_key,
       }
       mailboxImportRetryRef.current = batch
       setMailboxImportRetryAvailable(true)
@@ -364,21 +364,34 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   return <>
     <div className="page-heading"><div><Title level={2}>邮箱池管理</Title><Text type="secondary">邮箱资源独立于信用卡池管理；页面只显示连接状态与掩码地址，源邮箱账号和密码不进入浏览器。</Text></div>{canManage && !loading && !mailboxListError ? <Space>
       <input ref={mailboxImportInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => { void importMailboxFile(event.currentTarget.files?.[0]) }} />
-      {mailboxImportRetryAvailable ? <>
-        <Button disabled={saving} onClick={() => { void retryMailboxImport() }}>重试上次邮箱池引用清单</Button>
-        <Button disabled={saving} onClick={discardMailboxImportRetry}>放弃并清除上次邮箱池引用清单</Button>
-      </> : null}
-      <Button type="primary" loading={saving} disabled={mailboxActionKey !== null} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池安全包 JSON</Button>
+      <Button type="primary" loading={saving} disabled={mailboxActionKey !== null || mailboxImportRetryAvailable} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池安全包 JSON</Button>
     </Space> : null}</div>
     <Alert className="section-card" type="info" showIcon message="这里只接收独立安全导入器生成的邮箱池安全包" description="邮箱账号、密码和令牌不进入浏览器或普通 API；安全包只含 m***@example.invalid 这类脱敏元数据和短期 Vault Transit 签名收据，密钥引用由服务端固定派生。单条资源也使用同一安全导入流程。" />
+    {mailboxImportRetryAvailable && mailboxImportRetryRef.current ? <Alert
+      className="section-card"
+      type="warning"
+      showIcon
+      message="上次邮箱池导入结果尚未确认"
+      description={<Space direction="vertical" size={4}>
+        <Text>平台可能已完成导入。不要选择新安全包；请使用同一批次核验，或明确放弃当前页面内存中的恢复上下文。</Text>
+        <Text>稳定提交键：</Text><Text code copyable>{mailboxImportRetryRef.current.idempotencyKey}</Text>
+      </Space>}
+      action={<Space wrap>
+        <Button disabled={saving} onClick={() => { void retryMailboxImport() }}>使用同一批次核验邮箱池导入</Button>
+        <Button disabled={saving} onClick={discardMailboxImportRetry}>明确放弃本次核验</Button>
+      </Space>}
+    /> : null}
     {lastMailboxImportReceipt ? <Alert
       className="section-card"
       type="success"
       showIcon
       message={`最近一次邮箱池导入已确认：${lastMailboxImportReceipt.imported_count} 条`}
       description={<Space wrap>
-        <Text>回执 ID：</Text><Text code copyable>{lastMailboxImportReceipt.id}</Text>
+        <Text>平台导入回执 ID：</Text><Text code copyable>{lastMailboxImportReceipt.id}</Text>
         <Text>Trace ID：</Text><Text code copyable>{lastMailboxImportReceipt.trace_id}</Text>
+        <Text>状态：{lastMailboxImportReceipt.status} / Transit key v{lastMailboxImportReceipt.key_version}</Text>
+        <Text>清单摘要：</Text><Text code copyable>{lastMailboxImportReceipt.ordered_manifest_digest}</Text>
+        <Text>安全收据指纹：</Text><Text code copyable>{lastMailboxImportReceipt.secure_receipt_fingerprint}</Text>
         <Text>时间：{formatLocalDateTime(lastMailboxImportReceipt.created_at)}</Text>
       </Space>}
     /> : null}

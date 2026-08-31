@@ -112,6 +112,7 @@ from platform.pool_imports import (
     PoolImportReceiptInvalid,
     PoolImportReceiptVerifierUnavailable,
     pool_import_digest,
+    pool_import_submission_key,
     pool_secret_ref,
 )
 from platform.uploads import transition_upload_phase
@@ -5616,11 +5617,19 @@ def _admin_card_response(card: Card, *, allocated: bool = False) -> AdminCardRes
 
 def _pool_import_receipt_response(
     receipt: PoolImportReceipt,
+    consumption: SecurePoolImportConsumption,
 ) -> PoolImportReceiptResponse:
     return PoolImportReceiptResponse(
         id=receipt.id,
+        status="committed",
         pool_type=receipt.pool_type,
         imported_count=receipt.item_count,
+        ordered_manifest_digest=receipt.request_digest,
+        secure_receipt_fingerprint=hashlib.sha256(
+            consumption.receipt_id.encode("ascii")
+        ).hexdigest(),
+        key_version=consumption.key_version,
+        consumed_at=consumption.consumed_at,
         trace_id=receipt.trace_id,
         created_at=receipt.created_at,
     )
@@ -5644,12 +5653,13 @@ def _replay_pool_import_receipt(
     )
     if receipt is None:
         return None
+    consumption = db.scalar(
+        select(SecurePoolImportConsumption).where(
+            SecurePoolImportConsumption.pool_import_receipt_id == receipt.id
+        )
+    )
     if (
-        db.scalar(
-            select(SecurePoolImportConsumption.receipt_id).where(
-                SecurePoolImportConsumption.pool_import_receipt_id == receipt.id
-            )
-        ) is None
+        consumption is None
         or receipt.created_by != principal.user_id
         or receipt.device_id != principal.device_id
         or receipt.request_digest != request_digest
@@ -5659,7 +5669,7 @@ def _replay_pool_import_receipt(
             detail="Idempotency key is already bound to another pool import",
         )
     response.status_code = 200
-    return _pool_import_receipt_response(receipt)
+    return _pool_import_receipt_response(receipt, consumption)
 
 
 def _verify_pool_import_receipt(
@@ -5951,6 +5961,11 @@ def admin_import_cards(
         request_digest=request_digest,
         item_count=len(payload),
     )
+    if idempotency_key != pool_import_submission_key(verified_receipt.receipt_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency key does not match the secure import receipt",
+        )
     receipt = PoolImportReceipt(
         id=new_id(),
         tenant_id=principal.tenant_id,
@@ -5962,15 +5977,16 @@ def admin_import_cards(
         device_id=principal.device_id,
         trace_id=request.state.trace_id,
     )
+    consumption = SecurePoolImportConsumption(
+        receipt_id=verified_receipt.receipt_id,
+        pool_import_receipt_id=receipt.id,
+        issued_at=verified_receipt.issued_at,
+        expires_at=verified_receipt.expires_at,
+        key_version=verified_receipt.key_version,
+    )
     db.add_all([
         receipt,
-        SecurePoolImportConsumption(
-            receipt_id=verified_receipt.receipt_id,
-            pool_import_receipt_id=receipt.id,
-            issued_at=verified_receipt.issued_at,
-            expires_at=verified_receipt.expires_at,
-            key_version=verified_receipt.key_version,
-        ),
+        consumption,
     ])
     try:
         db.flush()
@@ -6062,11 +6078,20 @@ def admin_import_cards(
         entity_type="card_pool",
         entity_id=receipt.id,
         trace_id=request.state.trace_id,
-        details={"count": len(cards), "pool_type": "card"},
+        details={
+            "count": len(cards),
+            "pool_type": "card",
+            "ordered_manifest_digest": request_digest,
+            "secure_receipt_fingerprint": hashlib.sha256(
+                verified_receipt.receipt_id.encode("ascii")
+            ).hexdigest(),
+            "key_version": verified_receipt.key_version,
+        },
     )
     db.commit()
     db.refresh(receipt)
-    return _pool_import_receipt_response(receipt)
+    db.refresh(consumption)
+    return _pool_import_receipt_response(receipt, consumption)
 
 
 def _compensate_card_allocation(
@@ -6974,6 +6999,11 @@ def admin_import_mailboxes(
         request_digest=request_digest,
         item_count=len(payload),
     )
+    if idempotency_key != pool_import_submission_key(verified_receipt.receipt_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency key does not match the secure import receipt",
+        )
     receipt = PoolImportReceipt(
         id=new_id(),
         tenant_id=principal.tenant_id,
@@ -6985,15 +7015,16 @@ def admin_import_mailboxes(
         device_id=principal.device_id,
         trace_id=request.state.trace_id,
     )
+    consumption = SecurePoolImportConsumption(
+        receipt_id=verified_receipt.receipt_id,
+        pool_import_receipt_id=receipt.id,
+        issued_at=verified_receipt.issued_at,
+        expires_at=verified_receipt.expires_at,
+        key_version=verified_receipt.key_version,
+    )
     db.add_all([
         receipt,
-        SecurePoolImportConsumption(
-            receipt_id=verified_receipt.receipt_id,
-            pool_import_receipt_id=receipt.id,
-            issued_at=verified_receipt.issued_at,
-            expires_at=verified_receipt.expires_at,
-            key_version=verified_receipt.key_version,
-        ),
+        consumption,
     ])
     try:
         db.flush()
@@ -7069,11 +7100,20 @@ def admin_import_mailboxes(
         entity_type="mailbox_pool",
         entity_id=receipt.id,
         trace_id=request.state.trace_id,
-        details={"count": len(mailboxes), "pool_type": "mailbox"},
+        details={
+            "count": len(mailboxes),
+            "pool_type": "mailbox",
+            "ordered_manifest_digest": request_digest,
+            "secure_receipt_fingerprint": hashlib.sha256(
+                verified_receipt.receipt_id.encode("ascii")
+            ).hexdigest(),
+            "key_version": verified_receipt.key_version,
+        },
     )
     db.commit()
     db.refresh(receipt)
-    return _pool_import_receipt_response(receipt)
+    db.refresh(consumption)
+    return _pool_import_receipt_response(receipt, consumption)
 
 
 @router.patch(

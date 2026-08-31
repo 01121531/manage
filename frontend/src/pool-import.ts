@@ -10,8 +10,9 @@ const PROVIDER_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const CARD_BRAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/
 
 export type PoolImportBundle<T> = {
-  schema_version: 1
+  schema_version: 2
   pool_type: 'card' | 'mailbox'
+  submission_key: string
   receipt_token: string
   items: T[]
 }
@@ -120,17 +121,21 @@ async function readPoolImportJson<T>(
   const candidate = parsed as {
     schema_version?: unknown
     pool_type?: unknown
+    submission_key?: unknown
     receipt_token?: unknown
     items?: unknown
   }
   if (
-    keys.length !== 4
+    keys.length !== 5
     || !keys.includes('schema_version')
     || !keys.includes('pool_type')
+    || !keys.includes('submission_key')
     || !keys.includes('receipt_token')
     || !keys.includes('items')
-    || candidate.schema_version !== 1
+    || candidate.schema_version !== 2
     || (candidate.pool_type !== 'card' && candidate.pool_type !== 'mailbox')
+    || typeof candidate.submission_key !== 'string'
+    || !/^spi:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(candidate.submission_key)
     || typeof candidate.receipt_token !== 'string'
     || candidate.receipt_token.length < 1
     || candidate.receipt_token.length > MAX_RECEIPT_TOKEN_LENGTH
@@ -147,8 +152,9 @@ async function readPoolImportJson<T>(
       : '该安全包属于信用卡池，不能导入邮箱池。')
   }
   return {
-    schema_version: 1,
+    schema_version: 2,
     pool_type: expectedPoolType,
+    submission_key: candidate.submission_key,
     receipt_token: candidate.receipt_token,
     items: candidate.items.map(parseItem),
   }
