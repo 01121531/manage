@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Empty, Input, Select, Space, Spin, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { importMailboxes, listMailboxes, updateMailboxState } from '../admin-api'
@@ -6,7 +6,7 @@ import type { MailboxImportItem, MailboxSummary, PoolImportReceipt } from '../ty
 import { readMailboxPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { useViewActionScope } from '../useViewActionScope'
-import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableDate, compareTableText, formatLocalDateTime, mailboxHealthErrorNames } from './shared'
+import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableText, formatLocalDateTime, mailboxHealthErrorNames } from './shared'
 
 const { Title, Text } = Typography
 
@@ -18,8 +18,15 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const [loading, setLoading] = useState(true)
   const [mailboxListError, setMailboxListError] = useState<string>()
   const [mailboxSearch, setMailboxSearch] = useState('')
+  const [committedMailboxSearch, setCommittedMailboxSearch] = useState('')
   const [mailboxStatusFilter, setMailboxStatusFilter] = useState<MailboxSummary['status']>()
   const [mailboxHealthFilter, setMailboxHealthFilter] = useState<MailboxSummary['health_status']>()
+  const [mailboxCursor, setMailboxCursor] = useState<string>()
+  const [mailboxCursorHistory, setMailboxCursorHistory] = useState<string[]>([])
+  const [mailboxTotalCount, setMailboxTotalCount] = useState(0)
+  const [mailboxHasMore, setMailboxHasMore] = useState(false)
+  const [mailboxNextCursor, setMailboxNextCursor] = useState<string>()
+  const [mailboxRefresh, setMailboxRefresh] = useState(0)
   const [saving, setSaving] = useState(false)
   const mailboxImportInputRef = useRef<HTMLInputElement>(null)
   const mailboxImportPendingRef = useRef(false)
@@ -39,7 +46,6 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     pending: boolean
   } | null>(null)
   const mailboxListGenerationRef = useRef(0)
-  const mailboxListPendingRef = useRef(false)
 
   function failClosedMailboxList() {
     setMailboxListError(
@@ -49,22 +55,59 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     )
   }
 
+  function invalidateMailboxList() {
+    mailboxListGenerationRef.current += 1
+    setLoading(true)
+    setMailboxListError(undefined)
+    setRows([])
+    setMailboxTotalCount(0)
+    setMailboxHasMore(false)
+    setMailboxNextCursor(undefined)
+  }
+
   useEffect(() => {
-    let alive = true
+    const controller = new AbortController()
     const generation = mailboxListGenerationRef.current + 1
     mailboxListGenerationRef.current = generation
     setLoading(true)
     setMailboxListError(undefined)
     setRows([])
-    listMailboxes().then((items) => {
-      if (alive && mailboxListGenerationRef.current === generation) setRows(items)
+    setMailboxTotalCount(0)
+    setMailboxHasMore(false)
+    setMailboxNextCursor(undefined)
+    listMailboxes({
+      q: committedMailboxSearch || undefined,
+      status: mailboxStatusFilter,
+      health_status: mailboxHealthFilter,
+      cursor: mailboxCursor,
+    }, controller.signal).then((page) => {
+      if (mailboxListGenerationRef.current !== generation) return
+      setRows(page.items)
+      setMailboxTotalCount(page.total_count)
+      setMailboxHasMore(page.has_more)
+      setMailboxNextCursor(page.next_cursor ?? undefined)
     }).catch(() => {
-      if (alive && mailboxListGenerationRef.current === generation) failClosedMailboxList()
+      if (mailboxListGenerationRef.current === generation) failClosedMailboxList()
     }).finally(() => {
-      if (alive && mailboxListGenerationRef.current === generation) setLoading(false)
+      if (mailboxListGenerationRef.current === generation) setLoading(false)
     })
-    return () => { alive = false }
-  }, [])
+    return () => {
+      controller.abort()
+      if (mailboxListGenerationRef.current === generation) {
+        mailboxListGenerationRef.current += 1
+      }
+    }
+  }, [committedMailboxSearch, mailboxCursor, mailboxHealthFilter, mailboxRefresh, mailboxStatusFilter])
+
+  useEffect(() => {
+    const normalized = mailboxSearch.trim().toLocaleLowerCase()
+    if (normalized === committedMailboxSearch) return
+    invalidateMailboxList()
+    setMailboxCursor(undefined)
+    setMailboxCursorHistory([])
+    const timer = window.setTimeout(() => setCommittedMailboxSearch(normalized), 300)
+    return () => window.clearTimeout(timer)
+  }, [committedMailboxSearch, mailboxSearch])
 
   async function importMailboxFile(file: File | undefined) {
     if (!file || mailboxImportPendingRef.current) return
@@ -116,7 +159,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       setMailboxImportRetryAvailable(false)
       setLastMailboxImportReceipt(receipt)
       message.success(`已向邮箱池登记 ${receipt.imported_count} 条资源引用。`)
-      await refreshMailboxRows(isCurrent)
+      await refreshMailboxRows(isCurrent, true)
     } catch (error) {
       if (!isCurrent()) return
       if (!shouldRetainPoolImportForRetry(error)) {
@@ -156,7 +199,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       setMailboxImportRetryAvailable(false)
       setLastMailboxImportReceipt(receipt)
       message.success(`已确认邮箱池引用清单，共 ${receipt.imported_count} 条资源。`)
-      await refreshMailboxRows(isCurrent)
+      await refreshMailboxRows(isCurrent, true)
     } catch (error) {
       if (!isCurrent()) return
       if (!shouldRetainPoolImportForRetry(error)) {
@@ -192,29 +235,14 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     setMailboxActionPending(false)
   }
 
-  async function refreshMailboxRows(isCurrent?: () => boolean) {
+  async function refreshMailboxRows(isCurrent?: () => boolean, firstPage = false) {
     if (isCurrent && !isCurrent()) return
-    if (mailboxListPendingRef.current) return
-    mailboxListPendingRef.current = true
-    const generation = mailboxListGenerationRef.current + 1
-    mailboxListGenerationRef.current = generation
-    setLoading(true)
-    setMailboxListError(undefined)
-    setRows([])
-    try {
-      const items = await listMailboxes()
-      if (isCurrent && !isCurrent()) return
-      if (mailboxListGenerationRef.current === generation) setRows(items)
-    } catch {
-      if (isCurrent && !isCurrent()) return
-      if (mailboxListGenerationRef.current === generation) failClosedMailboxList()
-    } finally {
-      if (isCurrent && !isCurrent()) return
-      if (mailboxListGenerationRef.current === generation) {
-        mailboxListPendingRef.current = false
-        setLoading(false)
-      }
+    invalidateMailboxList()
+    if (firstPage) {
+      setMailboxCursor(undefined)
+      setMailboxCursorHistory([])
     }
+    setMailboxRefresh((value) => value + 1)
   }
 
   async function changeState(
@@ -273,32 +301,56 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   }
 
   const unavailableRows = rows.filter((row) => row.health_status === 'unavailable')
-  const filteredRows = useMemo(() => {
-    const query = mailboxSearch.trim().toLocaleLowerCase()
-    return rows.filter((row) => {
-      if (mailboxStatusFilter && row.status !== mailboxStatusFilter) return false
-      if (mailboxHealthFilter && row.health_status !== mailboxHealthFilter) return false
-      if (!query) return true
-      return [row.email_masked, row.connector_type, row.task_type]
-        .some((value) => value.toLocaleLowerCase().includes(query))
-    })
-  }, [mailboxHealthFilter, mailboxSearch, mailboxStatusFilter, rows])
+
+  function resetMailboxQueryPage() {
+    invalidateMailboxList()
+    setMailboxCursor(undefined)
+    setMailboxCursorHistory([])
+  }
+
+  function changeMailboxStatusFilter(value: MailboxSummary['status'] | undefined) {
+    if (value === mailboxStatusFilter) return
+    resetMailboxQueryPage()
+    setMailboxStatusFilter(value)
+  }
+
+  function changeMailboxHealthFilter(value: MailboxSummary['health_status'] | undefined) {
+    if (value === mailboxHealthFilter) return
+    resetMailboxQueryPage()
+    setMailboxHealthFilter(value)
+  }
+
+  function showNextMailboxPage() {
+    if (loading || !mailboxHasMore || !mailboxNextCursor) return
+    invalidateMailboxList()
+    setMailboxCursorHistory((history) => [...history, mailboxCursor ?? ''])
+    setMailboxCursor(mailboxNextCursor)
+  }
+
+  function showPreviousMailboxPage() {
+    if (loading || mailboxCursorHistory.length === 0) return
+    const previous = mailboxCursorHistory[mailboxCursorHistory.length - 1]
+    invalidateMailboxList()
+    setMailboxCursorHistory((history) => history.slice(0, -1))
+    setMailboxCursor(previous || undefined)
+  }
+
   const columns: TableColumnsType<MailboxSummary> = [
-    { title: '邮箱', dataIndex: 'email_masked', sorter: (left, right) => compareTableText(left.email_masked, right.email_masked) },
-    { title: '连接器', dataIndex: 'connector_type', sorter: (left, right) => compareTableText(left.connector_type, right.connector_type) },
-    { title: '服务端路由键', dataIndex: 'task_type', sorter: (left, right) => compareTableText(left.task_type, right.task_type) },
+    { title: '邮箱', dataIndex: 'email_masked' },
+    { title: '连接器', dataIndex: 'connector_type' },
+    { title: '服务端路由键', dataIndex: 'task_type' },
     { title: '容量状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
     { title: '健康', dataIndex: 'health_status', render: (value, row) => <Space direction="vertical" size={0}>
       <MailboxHealthTag value={value} />
       {row.last_error_code ? <Text type="danger">{mailboxHealthErrorNames[row.last_error_code] ?? '连接器异常'}</Text> : null}
     </Space> },
     { title: '上次检测', dataIndex: 'last_checked_at', render: (value: string | null) => value ?? '尚未检测' },
-    { title: '等待会话', dataIndex: 'active_session_count', sorter: (left, right) => left.active_session_count - right.active_session_count },
+    { title: '等待会话', dataIndex: 'active_session_count' },
     {
       title: '启用', dataIndex: 'is_active',
       render: (value: boolean) => <BooleanStateTag value={value} trueLabel="是" falseLabel="否" />,
     },
-    { title: '创建时间', dataIndex: 'created_at', sorter: (left, right) => compareTableDate(left.created_at, right.created_at) },
+    { title: '创建时间', dataIndex: 'created_at' },
     ...(canManage ? [{ title: '操作', render: (_: unknown, row: MailboxSummary) => <Space>
       <Button
         danger={row.is_active}
@@ -334,7 +386,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       style={{ marginBottom: 16 }}
       type="error"
       showIcon
-      message={`有 ${unavailableRows.length} 个邮箱连接器不可用`}
+      message={`本页有 ${unavailableRows.length} 个邮箱连接器不可用`}
       description="取码可能延迟或失败。请检查 Mail Worker、连接器配置和密钥引用，必要时轮换密钥或停用连接器。"
     /> : null}
     <Card>{loading ? <div className="centered"><Spin /></div> : mailboxListError ? <Alert
@@ -347,6 +399,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       <Space wrap>
         <Input
           allowClear
+          disabled={saving || mailboxActionKey !== null}
           aria-label="搜索邮箱池"
           placeholder="搜索掩码邮箱、连接器或服务端路由键"
           value={mailboxSearch}
@@ -355,6 +408,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         />
         <Select<MailboxSummary['status']>
           allowClear
+          disabled={saving || mailboxActionKey !== null}
           aria-label="按邮箱容量状态筛选"
           placeholder="全部容量状态"
           value={mailboxStatusFilter}
@@ -363,11 +417,12 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
             { label: '忙碌', value: 'busy' },
             { label: '已停用', value: 'disabled' },
           ]}
-          onChange={setMailboxStatusFilter}
+          onChange={changeMailboxStatusFilter}
           style={{ minWidth: 160 }}
         />
         <Select<MailboxSummary['health_status']>
           allowClear
+          disabled={saving || mailboxActionKey !== null}
           aria-label="按邮箱健康状态筛选"
           placeholder="全部健康状态"
           value={mailboxHealthFilter}
@@ -376,12 +431,16 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
             { label: '异常', value: 'unavailable' },
             { label: '未检测', value: 'unknown' },
           ]}
-          onChange={setMailboxHealthFilter}
+          onChange={changeMailboxHealthFilter}
           style={{ minWidth: 160 }}
         />
-        <Text type="secondary" role="status" aria-live="polite">显示 {filteredRows.length} / 共 {rows.length} 个邮箱</Text>
+        <Text type="secondary" role="status" aria-live="polite">第 {mailboxCursorHistory.length + 1} 页，显示 {rows.length} / 匹配 {mailboxTotalCount} 个邮箱</Text>
       </Space>
-      <Table columns={columns} dataSource={filteredRows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的邮箱连接器" /> }} scroll={{ x: 1220 }} />
+      <Table pagination={false} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的邮箱连接器" /> }} scroll={{ x: 1220 }} />
+      <Space>
+        <Button disabled={loading || mailboxCursorHistory.length === 0} onClick={showPreviousMailboxPage}>上一页</Button>
+        <Button disabled={loading || !mailboxHasMore || !mailboxNextCursor} onClick={showNextMailboxPage}>下一页</Button>
+      </Space>
     </Space>}</Card>
   </>
 }

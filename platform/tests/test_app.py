@@ -745,8 +745,12 @@ class PlatformAppTests(unittest.TestCase):
             "GET", "/api/v1/mailboxes", headers=self.bearer(token)
         )
         self.assertEqual(response.status_code, 200, response.text)
-        rows = response.json()
+        page = response.json()
+        rows = page["items"]
         self.assertEqual(len(rows), 3)
+        self.assertEqual(page["total_count"], 3)
+        self.assertFalse(page["has_more"])
+        self.assertIsNone(page["next_cursor"])
         statuses = {row["email_masked"]: row["status"] for row in rows}
         self.assertEqual(statuses["a***@example.test"], "available")
         self.assertEqual(statuses["b***@example.test"], "busy")

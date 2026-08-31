@@ -7,10 +7,12 @@ import type {
   CardAllocationSummary,
   CardImportItem,
   CardPolicyVersion,
+  CardPage,
   CardSummary,
   CardTimeline,
   DashboardSummary,
   MailboxImportItem,
+  MailboxPage,
   MailboxSummary,
   MailPolicyVersion,
   ManagedUserRole,
@@ -28,8 +30,20 @@ import type {
 
 export const getDashboardSummary = (): Promise<DashboardSummary> =>
   unwrap(api.GET('/api/v1/dashboard/summary'))
-export const listMailboxes = (): Promise<MailboxSummary[]> =>
-  unwrap(api.GET('/api/v1/mailboxes'))
+export type MailboxListQuery = {
+  q?: string
+  status?: MailboxSummary['status']
+  health_status?: MailboxSummary['health_status']
+  cursor?: string
+  limit?: number
+}
+export const listMailboxes = (
+  query: MailboxListQuery = {}, signal?: AbortSignal,
+): Promise<MailboxPage> => unwrap(api.GET('/api/v1/mailboxes', {
+  params: { query: { limit: 50, ...query } },
+  cache: 'no-store',
+  signal,
+}))
 export type TaskListFilters = {
   status?: string
   user_id?: string
@@ -56,8 +70,20 @@ export const revokeDevice = (deviceId: string): Promise<AdminDevice> =>
   unwrap(api.POST('/api/v1/admin/devices/{device_id}/revoke', {
     params: { path: { device_id: deviceId } },
   }))
-export const listCards = (): Promise<CardSummary[]> =>
-  unwrap(api.GET('/api/v1/admin/cards'))
+export type CardListQuery = {
+  q?: string
+  pool_key?: string
+  status?: CardSummary['status']
+  cursor?: string
+  limit?: number
+}
+export const listCards = (
+  query: CardListQuery = {}, signal?: AbortSignal,
+): Promise<CardPage> => unwrap(api.GET('/api/v1/admin/cards', {
+  params: { query: { limit: 50, ...query } },
+  cache: 'no-store',
+  signal,
+}))
 export const getCardTimeline = (
   cardId: string,
   page: { allocationsCursor?: string; eventsCursor?: string } = {},

@@ -949,11 +949,11 @@ class AdminApiTests(unittest.TestCase):
         )
         cards = self.request("GET", "/api/v1/admin/cards", headers=self.headers(admin_token))
         self.assertEqual(cards.status_code, 200, cards.text)
-        self.assertEqual(cards.json()[0]["last4"], "4242")
+        self.assertEqual(cards.json()["items"][0]["last4"], "4242")
         serialized = json.dumps(cards.json()).lower()
         self.assertNotIn("secret_ref", serialized)
         self.assertNotIn("vault://", serialized)
-        card_id = cards.json()[0]["id"]
+        card_id = cards.json()["items"][0]["id"]
         with self.app.state.session_factory() as db:
             audit_event = db.scalar(
                 select(AuditEvent).where(
@@ -981,6 +981,208 @@ class AdminApiTests(unittest.TestCase):
                     "card_status": "available",
                 },
             )
+
+    def test_card_list_uses_filter_bound_stable_keyset_pages(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        created_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        with self.app.state.session_factory() as db:
+            for index in range(1, 6):
+                db.add(Card(
+                    id=f"card-page-{index:02d}",
+                    tenant_id="tenant-a",
+                    provider_ref=f"provider-page-{index:02d}",
+                    pool_key="checkout-cn" if index < 5 else "backup-us",
+                    region="cn-east" if index < 5 else "us-west",
+                    brand="Visa",
+                    last4=f"{index:04d}",
+                    secret_ref=f"vault://secret/cards/page-{index:02d}",
+                    is_active=index != 2,
+                    quarantined_at=created_at if index == 1 else None,
+                    quarantine_reason_code="provider_risk" if index == 1 else None,
+                    created_at=created_at,
+                ))
+            db.add(Card(
+                id="card-page-foreign",
+                tenant_id="tenant-b",
+                provider_ref="provider-page-foreign",
+                pool_key="checkout-cn",
+                region="cn-east",
+                brand="Visa",
+                last4="9999",
+                secret_ref="vault://secret/cards/page-foreign",
+                created_at=created_at,
+            ))
+            db.commit()
+
+        first = self.request(
+            "GET",
+            "/api/v1/admin/cards?limit=2&pool_key=checkout-cn",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        first_page = first.json()
+        self.assertEqual(first_page["total_count"], 4)
+        self.assertTrue(first_page["has_more"])
+        self.assertEqual(
+            [row["id"] for row in first_page["items"]],
+            ["card-page-04", "card-page-03"],
+        )
+        self.assertNotIn("secret_ref", first.text)
+        cursor = first_page["next_cursor"]
+        second = self.request(
+            "GET",
+            f"/api/v1/admin/cards?limit=2&pool_key=checkout-cn&cursor={cursor}",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(
+            [row["id"] for row in second.json()["items"]],
+            ["card-page-02", "card-page-01"],
+        )
+        self.assertFalse(second.json()["has_more"])
+        self.assertEqual(
+            {row["status"] for row in second.json()["items"]},
+            {"disabled", "quarantined"},
+        )
+
+        mismatched = self.request(
+            "GET",
+            f"/api/v1/admin/cards?limit=2&pool_key=backup-us&cursor={cursor}",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(mismatched.status_code, 422, mismatched.text)
+        invalid = self.request(
+            "GET", "/api/v1/admin/cards?cursor=not-a-cursor",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        searched = self.request(
+            "GET", "/api/v1/admin/cards?q=PAGE-05",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(
+            [row["id"] for row in searched.json()["items"]], ["card-page-05"]
+        )
+
+    def test_mailbox_list_pages_filter_and_use_constant_query_count(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        now = datetime.now(timezone.utc)
+        created_at = datetime(2026, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+        with self.app.state.session_factory() as db:
+            mailboxes = []
+            for index in range(1, 13):
+                mailbox = Mailbox(
+                    id=f"mailbox-page-{index:02d}",
+                    tenant_id="tenant-a",
+                    email_masked=f"m{index:02d}***@example.test",
+                    connector_type="http",
+                    task_type="mail_code",
+                    secret_ref=f"vault://secret/mailboxes/page-{index:02d}",
+                    is_active=index != 2,
+                    health_status="unavailable" if index == 3 else "healthy",
+                    last_error_code="connector_unavailable" if index == 3 else None,
+                    created_at=created_at,
+                )
+                db.add(mailbox)
+                mailboxes.append(mailbox)
+            db.add(Mailbox(
+                id="mailbox-page-foreign",
+                tenant_id="tenant-b",
+                email_masked="foreign***@example.test",
+                connector_type="http",
+                task_type="mail_code",
+                secret_ref="vault://secret/mailboxes/page-foreign",
+                created_at=created_at,
+            ))
+            db.flush()
+            task = Task(
+                id="task-mailbox-page",
+                tenant_id="tenant-a",
+                user_id=self.operator.user_id,
+                device_id=self.operator.device_id,
+                task_type="mail_code",
+                idempotency_key="task-mailbox-page",
+                expires_at=now + timedelta(minutes=10),
+            )
+            db.add(task)
+            db.flush()
+            db.add(MailSession(
+                id="session-mailbox-page",
+                tenant_id="tenant-a",
+                task_id=task.id,
+                user_id=self.operator.user_id,
+                device_id=self.operator.device_id,
+                mailbox_id=mailboxes[-1].id,
+                status="waiting",
+                expires_at=now + timedelta(minutes=5),
+            ))
+            db.commit()
+
+        statements: list[str] = []
+
+        def capture_statement(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            normalized = statement.casefold()
+            if normalized.lstrip().startswith("select") and (
+                "from mailboxes" in normalized or "from mail_sessions" in normalized
+            ):
+                statements.append(normalized)
+
+        event.listen(self.app.state.engine, "before_cursor_execute", capture_statement)
+        try:
+            first = self.request(
+                "GET", "/api/v1/mailboxes?limit=5",
+                headers=self.headers(admin_token),
+            )
+        finally:
+            event.remove(self.app.state.engine, "before_cursor_execute", capture_statement)
+        self.assertEqual(first.status_code, 200, first.text)
+        page = first.json()
+        self.assertEqual(page["total_count"], 12)
+        self.assertEqual(len(page["items"]), 5)
+        self.assertTrue(page["has_more"])
+        self.assertLessEqual(len(statements), 2, statements)
+        self.assertNotIn("secret_ref", first.text)
+
+        busy = self.request(
+            "GET", "/api/v1/mailboxes?status=busy",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(busy.status_code, 200, busy.text)
+        self.assertEqual(
+            [row["id"] for row in busy.json()["items"]], ["mailbox-page-12"]
+        )
+        self.assertEqual(busy.json()["items"][0]["active_session_count"], 1)
+        disabled = self.request(
+            "GET", "/api/v1/mailboxes?status=disabled",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(
+            [row["id"] for row in disabled.json()["items"]], ["mailbox-page-02"]
+        )
+        unhealthy = self.request(
+            "GET", "/api/v1/mailboxes?health_status=unavailable&q=M03",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(
+            [row["id"] for row in unhealthy.json()["items"]], ["mailbox-page-03"]
+        )
+        cursor = page["next_cursor"]
+        mismatch = self.request(
+            "GET", f"/api/v1/mailboxes?status=available&cursor={cursor}",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(mismatch.status_code, 422, mismatch.text)
 
     def test_repeated_user_disable_repairs_resources_without_repeating_state_audit(
         self,
@@ -1844,7 +2046,7 @@ class AdminApiTests(unittest.TestCase):
             "GET", "/api/v1/admin/cards", headers=self.headers(admin_token)
         )
         self.assertEqual(listed.status_code, 200, listed.text)
-        self.assertEqual(listed.json()[0]["status"], "allocated")
+        self.assertEqual(listed.json()["items"][0]["status"], "allocated")
 
         unsafe_reason = self.request(
             "POST",

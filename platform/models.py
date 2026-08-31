@@ -206,6 +206,12 @@ class Mailbox(Base):
         UniqueConstraint(
             "tenant_id", "secret_ref", name="uq_mailboxes_tenant_secret_ref"
         ),
+        Index(
+            "ix_mailboxes_tenant_created_at_id",
+            "tenant_id",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -240,6 +246,18 @@ class MailSession(Base):
             "uq_active_mail_session_mailbox",
             "mailbox_id",
             unique=True,
+            sqlite_where=text(
+                "status IN ('initializing', 'waiting', 'code_ready')"
+            ),
+            postgresql_where=text(
+                "status IN ('initializing', 'waiting', 'code_ready')"
+            ),
+        ),
+        Index(
+            "ix_active_mail_sessions_tenant_mailbox_expires",
+            "tenant_id",
+            "mailbox_id",
+            "expires_at",
             sqlite_where=text(
                 "status IN ('initializing', 'waiting', 'code_ready')"
             ),
@@ -301,6 +319,7 @@ class Card(Base):
         UniqueConstraint(
             "tenant_id", "secret_ref", name="uq_cards_tenant_secret_ref"
         ),
+        Index("ix_cards_tenant_created_at_id", "tenant_id", "created_at", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

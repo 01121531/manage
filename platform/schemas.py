@@ -122,6 +122,13 @@ class MailboxStatusResponse(BaseModel):
     created_at: datetime
 
 
+class MailboxPageResponse(BaseModel):
+    items: list[MailboxStatusResponse]
+    total_count: int = Field(ge=0)
+    has_more: bool
+    next_cursor: str | None
+
+
 class AdminUserResponse(BaseModel):
     """Safe user projection; password hashes are never part of the API."""
 
@@ -232,6 +239,13 @@ class AdminCardResponse(BaseModel):
     quarantined_at: datetime | None
     is_active: bool
     created_at: datetime
+
+
+class AdminCardPageResponse(BaseModel):
+    items: list[AdminCardResponse]
+    total_count: int = Field(ge=0)
+    has_more: bool
+    next_cursor: str | None
 
 
 class PoolImportReceiptResponse(BaseModel):

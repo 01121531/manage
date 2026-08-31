@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0034_secure_pool_import_receipts"
+CURRENT = "0035_pool_list_pagination"
 
 
 class MigrationReadinessTests(unittest.TestCase):

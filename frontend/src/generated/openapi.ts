@@ -990,7 +990,7 @@ export interface paths {
         };
         /**
          * List Mailboxes
-         * @description List safe masked mailbox connector status for the current tenant.
+         * @description List one stable page of safe masked mailbox connector status.
          */
         get: operations["list_mailboxes_api_v1_mailboxes_get"];
         put?: never;
@@ -1458,6 +1458,17 @@ export interface components {
              * @default legacy-unclassified
              */
             region: string;
+        };
+        /** AdminCardPageResponse */
+        AdminCardPageResponse: {
+            /** Has More */
+            has_more: boolean;
+            /** Items */
+            items: components["schemas"]["AdminCardResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Total Count */
+            total_count: number;
         };
         /** AdminCardQuarantineRequest */
         AdminCardQuarantineRequest: {
@@ -2103,6 +2114,17 @@ export interface components {
             /** Trace Id */
             trace_id: string;
         };
+        /** MailboxPageResponse */
+        MailboxPageResponse: {
+            /** Has More */
+            has_more: boolean;
+            /** Items */
+            items: components["schemas"]["MailboxStatusResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Total Count */
+            total_count: number;
+        };
         /** MailboxStatusResponse */
         MailboxStatusResponse: {
             /** Active Session Count */
@@ -2650,7 +2672,13 @@ export interface operations {
     };
     admin_list_cards_api_v1_admin_cards_get: {
         parameters: {
-            query?: never;
+            query?: {
+                q?: string | null;
+                pool_key?: string | null;
+                status?: ("available" | "allocated" | "disabled" | "quarantined") | null;
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2663,7 +2691,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminCardResponse"][];
+                    "application/json": components["schemas"]["AdminCardPageResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -5028,7 +5056,13 @@ export interface operations {
     };
     list_mailboxes_api_v1_mailboxes_get: {
         parameters: {
-            query?: never;
+            query?: {
+                q?: string | null;
+                status?: ("available" | "busy" | "disabled") | null;
+                health_status?: ("unknown" | "healthy" | "unavailable") | null;
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5041,7 +5075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MailboxStatusResponse"][];
+                    "application/json": components["schemas"]["MailboxPageResponse"];
                 };
             };
             /** @description Request validation failed */

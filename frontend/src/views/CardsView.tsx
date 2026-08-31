@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Input, Modal, Space, Spin, Table, Select, Timeline, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { getCardTimeline, importCards, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
@@ -19,8 +19,15 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const [loading, setLoading] = useState(true)
   const [cardListError, setCardListError] = useState<string>()
   const [cardSearch, setCardSearch] = useState('')
+  const [committedCardSearch, setCommittedCardSearch] = useState('')
+  const [cardPoolInput, setCardPoolInput] = useState('')
   const [cardPoolFilter, setCardPoolFilter] = useState<string>()
   const [cardStatusFilter, setCardStatusFilter] = useState<CardSummary['status']>()
+  const [cardCursor, setCardCursor] = useState<string>()
+  const [cardCursorHistory, setCardCursorHistory] = useState<string[]>([])
+  const [cardTotalCount, setCardTotalCount] = useState(0)
+  const [cardHasMore, setCardHasMore] = useState(false)
+  const [cardNextCursor, setCardNextCursor] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   const [saving, setSaving] = useState(false)
   const [quarantineTarget, setQuarantineTarget] = useState<CardSummary | null>(null)
@@ -48,22 +55,55 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const [recycleTarget, setRecycleTarget] = useState<CardAllocationSummary | null>(null)
   const [recycleReason, setRecycleReason] = useState<string>()
   const [recycleSaving, setRecycleSaving] = useState(false)
+  const cardListGenerationRef = useRef(0)
 
-  function refreshCardsFromServer() {
+  function invalidateCardList(clearSelection = true) {
+    cardListGenerationRef.current += 1
     setLoading(true)
     setCardListError(undefined)
     setRows([])
+    setCardTotalCount(0)
+    setCardHasMore(false)
+    setCardNextCursor(undefined)
+    if (clearSelection) {
+      setSelectedCardId(null)
+      setCardTimeline(null)
+    }
+  }
+
+  function refreshCardsFromServer(firstPage = false) {
+    invalidateCardList(false)
+    if (firstPage) {
+      setCardCursor(undefined)
+      setCardCursorHistory([])
+    }
     setRefresh((value) => value + 1)
   }
 
   useEffect(() => {
-    let alive = true
+    const controller = new AbortController()
+    const generation = cardListGenerationRef.current + 1
+    cardListGenerationRef.current = generation
     setLoading(true)
     setCardListError(undefined)
     setRows([])
-    listCards().then((items) => { if (alive) setRows(items) })
+    setCardTotalCount(0)
+    setCardHasMore(false)
+    setCardNextCursor(undefined)
+    listCards({
+      q: committedCardSearch || undefined,
+      pool_key: cardPoolFilter,
+      status: cardStatusFilter,
+      cursor: cardCursor,
+    }, controller.signal).then((page) => {
+      if (cardListGenerationRef.current !== generation) return
+      setRows(page.items)
+      setCardTotalCount(page.total_count)
+      setCardHasMore(page.has_more)
+      setCardNextCursor(page.next_cursor ?? undefined)
+    })
       .catch(() => {
-        if (alive) {
+        if (cardListGenerationRef.current === generation) {
           setSelectedCardId(null)
           setCardTimeline(null)
           setCardListError(
@@ -73,9 +113,26 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
           )
         }
       })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [refresh])
+      .finally(() => {
+        if (cardListGenerationRef.current === generation) setLoading(false)
+      })
+    return () => {
+      controller.abort()
+      if (cardListGenerationRef.current === generation) {
+        cardListGenerationRef.current += 1
+      }
+    }
+  }, [cardCursor, cardPoolFilter, cardStatusFilter, committedCardSearch, refresh])
+
+  useEffect(() => {
+    const normalized = cardSearch.trim().toLocaleLowerCase()
+    if (normalized === committedCardSearch) return
+    invalidateCardList()
+    setCardCursor(undefined)
+    setCardCursorHistory([])
+    const timer = window.setTimeout(() => setCommittedCardSearch(normalized), 300)
+    return () => window.clearTimeout(timer)
+  }, [cardSearch, committedCardSearch])
 
   useEffect(() => {
     if (!selectedCardId) {
@@ -163,7 +220,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       setCardImportRetryAvailable(false)
       setLastCardImportReceipt(receipt)
       message.success(`已向信用卡池登记 ${receipt.imported_count} 条资源引用。`)
-      refreshCardsFromServer()
+      refreshCardsFromServer(true)
     } catch (error) {
       if (!shouldRetainPoolImportForRetry(error)) {
         cardImportRetryRef.current = null
@@ -199,7 +256,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       setCardImportRetryAvailable(false)
       setLastCardImportReceipt(receipt)
       message.success(`已确认信用卡池引用清单，共 ${receipt.imported_count} 条资源。`)
-      refreshCardsFromServer()
+      refreshCardsFromServer(true)
     } catch (error) {
       if (!shouldRetainPoolImportForRetry(error)) {
         cardImportRetryRef.current = null
@@ -454,25 +511,49 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     }
   }
 
-  const cardPoolOptions = useMemo(() => Array.from(
-    new Set(rows.map((row) => row.pool_key)),
-  ).sort(compareTableText).map((value) => ({ label: value, value })), [rows])
-  const filteredRows = useMemo(() => {
-    const query = cardSearch.trim().toLocaleLowerCase()
-    return rows.filter((row) => {
-      if (cardPoolFilter && row.pool_key !== cardPoolFilter) return false
-      if (cardStatusFilter && row.status !== cardStatusFilter) return false
-      if (!query) return true
-      return [row.provider_ref, row.pool_key, row.region, row.brand, row.last4]
-        .some((value) => value.toLocaleLowerCase().includes(query))
-    })
-  }, [cardPoolFilter, cardSearch, cardStatusFilter, rows])
+  function resetCardQueryPage() {
+    invalidateCardList()
+    setCardCursor(undefined)
+    setCardCursorHistory([])
+  }
+
+  function applyCardPoolFilter(value: string) {
+    const normalized = value.trim().toLocaleLowerCase()
+    if (normalized && !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(normalized)) {
+      message.error('卡池键只能包含小写字母、数字、点、下划线或连字符。')
+      return
+    }
+    if ((normalized || undefined) === cardPoolFilter) return
+    resetCardQueryPage()
+    setCardPoolFilter(normalized || undefined)
+  }
+
+  function changeCardStatusFilter(value: CardSummary['status'] | undefined) {
+    if (value === cardStatusFilter) return
+    resetCardQueryPage()
+    setCardStatusFilter(value)
+  }
+
+  function showNextCardPage() {
+    if (loading || !cardHasMore || !cardNextCursor) return
+    invalidateCardList()
+    setCardCursorHistory((history) => [...history, cardCursor ?? ''])
+    setCardCursor(cardNextCursor)
+  }
+
+  function showPreviousCardPage() {
+    if (loading || cardCursorHistory.length === 0) return
+    const previous = cardCursorHistory[cardCursorHistory.length - 1]
+    invalidateCardList()
+    setCardCursorHistory((history) => history.slice(0, -1))
+    setCardCursor(previous || undefined)
+  }
 
   const columns: TableColumnsType<CardSummary> = [
-    { title: '提供方引用', dataIndex: 'provider_ref', sorter: (left, right) => compareTableText(left.provider_ref, right.provider_ref) },
-    { title: '卡池', dataIndex: 'pool_key', sorter: (left, right) => compareTableText(left.pool_key, right.pool_key) },
-    { title: '地区', dataIndex: 'region', sorter: (left, right) => compareTableText(left.region, right.region) },
-    { title: '品牌', dataIndex: 'brand', sorter: (left, right) => compareTableText(left.brand, right.brand) },
+    { title: '提供方引用', dataIndex: 'provider_ref' },
+    { title: '卡池', dataIndex: 'pool_key' },
+    { title: '地区', dataIndex: 'region' },
+    { title: '品牌', dataIndex: 'brand' },
     { title: '尾号', dataIndex: 'last4', render: (value: string) => `•••• ${value}` },
     { title: '有效期', render: (_, row) => row.expiry_month && row.expiry_year ? `${String(row.expiry_month).padStart(2, '0')}/${row.expiry_year}` : '—' },
     {
@@ -548,28 +629,35 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       showIcon
       message="卡资源列表暂不可用"
       description={cardListError}
-      action={<Button onClick={refreshCardsFromServer}>重新获取卡资源真实状态</Button>}
+      action={<Button onClick={() => refreshCardsFromServer()}>重新获取卡资源真实状态</Button>}
     /> : <Space direction="vertical" size={16} className="full-width">
       <Space wrap>
         <Input
           allowClear
+          disabled={saving || cardActionId !== null}
           aria-label="搜索信用卡池"
           placeholder="搜索提供方引用、卡池、地区、品牌或尾号"
           value={cardSearch}
           onChange={(event) => setCardSearch(event.currentTarget.value)}
           style={{ width: 320 }}
         />
-        <Select
-          allowClear
+        <Input.Search
+          disabled={saving || cardActionId !== null}
           aria-label="按卡池筛选"
-          placeholder="全部卡池"
-          value={cardPoolFilter}
-          options={cardPoolOptions}
-          onChange={setCardPoolFilter}
-          style={{ minWidth: 160 }}
+          placeholder="输入精确卡池键后回车"
+          value={cardPoolInput}
+          enterButton="应用卡池"
+          onChange={(event) => {
+            const value = event.currentTarget.value
+            setCardPoolInput(value)
+            if (!value) applyCardPoolFilter('')
+          }}
+          onSearch={applyCardPoolFilter}
+          style={{ width: 280 }}
         />
         <Select<CardSummary['status']>
           allowClear
+          disabled={saving || cardActionId !== null}
           aria-label="按卡状态筛选"
           placeholder="全部状态"
           value={cardStatusFilter}
@@ -579,12 +667,16 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
             { label: '已停用', value: 'disabled' },
             { label: '已隔离', value: 'quarantined' },
           ]}
-          onChange={setCardStatusFilter}
+          onChange={changeCardStatusFilter}
           style={{ minWidth: 140 }}
         />
-        <Text type="secondary" role="status" aria-live="polite">显示 {filteredRows.length} / 共 {rows.length} 张卡</Text>
+        <Text type="secondary" role="status" aria-live="polite">第 {cardCursorHistory.length + 1} 页，显示 {rows.length} / 匹配 {cardTotalCount} 张卡</Text>
       </Space>
-      <Table columns={columns} dataSource={filteredRows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的卡资源" /> }} scroll={{ x: 1100 }} />
+      <Table pagination={false} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的卡资源" /> }} scroll={{ x: 1100 }} />
+      <Space>
+        <Button disabled={loading || cardCursorHistory.length === 0} onClick={showPreviousCardPage}>上一页</Button>
+        <Button disabled={loading || !cardHasMore || !cardNextCursor} onClick={showNextCardPage}>下一页</Button>
+      </Space>
     </Space>}</Card>
     {selectedCardId ? <Card
       className="section-card"

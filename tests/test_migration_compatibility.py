@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0034_secure_pool_import_receipts"
+down_revision = "0035_pool_list_pagination"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0034_secure_pool_import_receipts"
+down_revision = "0035_pool_list_pagination"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0034_secure_pool_import_receipts"',
+            'down_revision = "0035_pool_list_pagination"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -318,7 +318,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0034_secure_pool_import_receipts"
+down_revision = "0035_pool_list_pagination"
 def upgrade():
     {body}
 def downgrade():

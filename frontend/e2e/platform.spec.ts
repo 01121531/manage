@@ -1,6 +1,15 @@
 import { expect, test } from '@playwright/test'
 import type { Page, Route } from '@playwright/test'
 
+function poolPage<T>(items: T[], nextCursor: string | null = null, totalCount = items.length) {
+  return {
+    items,
+    total_count: totalCount,
+    has_more: nextCursor !== null,
+    next_cursor: nextCursor,
+  }
+}
+
 async function supportsDevelopmentModuleProbes(page: Page): Promise<boolean> {
   return page.locator('script[type="module"][src^="/src/"]').count().then((count) => count > 0)
 }
@@ -144,7 +153,8 @@ async function exerciseOidcCallbackIdentityFailure(
   })
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
-    const path = new URL(request.url()).pathname
+    const url = new URL(request.url())
+    const path = url.pathname
     if (path === '/api/v1/auth/config') {
       return fulfillJson(route, {
         mode: 'oidc', issuer, client_id: 'web-console',
@@ -741,7 +751,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'GET') {
       cardListRequests += 1
-      return fulfill([card])
+      return fulfill(poolPage([card]))
     }
     if (path === '/api/v1/admin/cards/card-quarantine/quarantine' && request.method() === 'POST') {
       const body = request.postDataJSON()
@@ -897,7 +907,7 @@ test('ops admin reads masked card history and recycles one exact allocation', as
       })
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'GET') {
-      return fulfill([{ ...card, status: allocation.status === 'active' ? 'allocated' : 'available' }])
+      return fulfill(poolPage([{ ...card, status: allocation.status === 'active' ? 'allocated' : 'available' }]))
     }
     if (path === '/api/v1/admin/cards/card-timeline/timeline' && request.method() === 'GET') {
       const eventsCursor = new URL(request.url()).searchParams.get('events_cursor')
@@ -4439,7 +4449,7 @@ test('card true-state refresh fails closed before privileged actions recover', a
         waitForRecoveryList = false
         await recoveryListGate
       }
-      return fulfill(cards)
+      return fulfill(poolPage(cards))
     }
     if (path === '/api/v1/admin/cards/card-refresh' && request.method() === 'PATCH') {
       expect(request.postDataJSON()).toEqual({ is_active: false })
@@ -4549,7 +4559,7 @@ test('mailbox UI retires direct registration and secret rotation', async ({ page
         waitForRecoveryList = false
         await recoveryListGate
       }
-      return fulfill(mailboxes)
+      return fulfill(poolPage(mailboxes))
     }
     if (path === '/api/v1/admin/mailboxes/mailbox-refresh/secret-rotations' && request.method() === 'POST') {
       expect(request.postDataJSON()).toEqual({ secret_ref: 'vault://secret/mailboxes/recovery-2' })
@@ -4675,7 +4685,8 @@ test('card and mailbox pools keep masked search and filters separate', async ({ 
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
-    const path = new URL(request.url()).pathname
+    const url = new URL(request.url())
+    const path = url.pathname
     const fulfill = (value: unknown, status = 200) => route.fulfill({
       status,
       contentType: 'application/json',
@@ -4702,8 +4713,32 @@ test('card and mailbox pools keep masked search and filters separate', async ({ 
         card_allocation_statuses: {}, upload_statuses: {},
       })
     }
-    if (path === '/api/v1/admin/cards') return fulfill(cards)
-    if (path === '/api/v1/mailboxes') return fulfill(mailboxes)
+    if (path === '/api/v1/admin/cards') {
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const poolKey = url.searchParams.get('pool_key')
+      const status = url.searchParams.get('status')
+      const items = cards.filter((card) => {
+        if (poolKey && card.pool_key !== poolKey) return false
+        if (status && card.status !== status) return false
+        if (!q) return true
+        return [card.provider_ref, card.pool_key, card.region, card.brand, card.last4]
+          .some((value) => value.toLowerCase().includes(q))
+      })
+      return fulfill(poolPage(items))
+    }
+    if (path === '/api/v1/mailboxes') {
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const status = url.searchParams.get('status')
+      const health = url.searchParams.get('health_status')
+      const items = mailboxes.filter((mailbox) => {
+        if (status && mailbox.status !== status) return false
+        if (health && mailbox.health_status !== health) return false
+        if (!q) return true
+        return [mailbox.email_masked, mailbox.connector_type, mailbox.task_type]
+          .some((value) => value.toLowerCase().includes(q))
+      })
+      return fulfill(poolPage(items))
+    }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
 
@@ -4715,22 +4750,21 @@ test('card and mailbox pools keep masked search and filters separate', async ({ 
   await page.getByRole('button', { name: '安全登录' }).click()
 
   await page.getByText('卡池管理', { exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: '显示 3 / 共 3 张卡' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: '显示 3 / 匹配 3 张卡' })).toBeVisible()
   const cardSearch = page.getByLabel('搜索信用卡池')
   await cardSearch.fill('4242')
   await expect(page.getByText('provider-cn', { exact: true })).toBeVisible()
   await expect(page.getByText('provider-eu', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('status').filter({ hasText: '显示 1 / 共 3 张卡' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: '显示 1 / 匹配 1 张卡' })).toBeVisible()
   await cardSearch.fill('')
   const cardPoolFilter = page.getByLabel('按卡池筛选')
-  await cardPoolFilter.click()
-  await page.locator('.ant-select-dropdown:visible .ant-select-item-option')
-    .filter({ hasText: 'checkout-eu' }).click()
+  await cardPoolFilter.fill('checkout-eu')
+  await cardPoolFilter.press('Enter')
   await expect(page.getByText('provider-eu', { exact: true })).toBeVisible()
   await expect(page.getByText('provider-cn', { exact: true })).toHaveCount(0)
 
   await page.getByText('邮箱池管理', { exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: '显示 3 / 共 3 个邮箱' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: '显示 3 / 匹配 3 个邮箱' })).toBeVisible()
   const mailboxSearch = page.getByLabel('搜索邮箱池')
   await mailboxSearch.fill('imap')
   await expect(page.getByText('i***@example.invalid', { exact: true })).toBeVisible()
@@ -4745,6 +4779,91 @@ test('card and mailbox pools keep masked search and filters separate', async ({ 
   await expect(page.locator('body')).not.toContainText('4111111111111111')
   await expect(page.locator('body')).not.toContainText('hidden@example.com')
   await expect(page.locator('body')).not.toContainText('mailbox-secret-value')
+})
+
+test('card and mailbox pool pages use server cursors without mixing rows', async ({ page }) => {
+  const accessValue = 'pool-page-access'
+  const cardQueries: string[] = []
+  const mailboxQueries: string[] = []
+  const card = (id: string, providerRef: string, createdAt: string) => ({
+    id, tenant_id: 'tenant-1', provider_ref: providerRef,
+    pool_key: 'checkout-cn', region: 'cn-east', brand: 'Visa', last4: '4242',
+    expiry_month: null, expiry_year: null, status: 'available',
+    quarantine_reason_code: null, quarantined_at: null, is_active: true,
+    created_at: createdAt,
+  })
+  const mailbox = (id: string, emailMasked: string, createdAt: string) => ({
+    id, email_masked: emailMasked, connector_type: 'http', task_type: 'mail_code',
+    is_active: true, status: 'available', health_status: 'healthy',
+    last_checked_at: createdAt, last_error_code: null, active_session_count: 0,
+    created_at: createdAt,
+  })
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const path = url.pathname
+    const fulfill = (value: unknown, status = 200) => route.fulfill({
+      status, contentType: 'application/json', body: JSON.stringify(value),
+    })
+    if (path === '/api/v1/auth/config') {
+      return fulfill({ mode: 'local', issuer: null, client_id: null, desktop_client_id: null, audience: null })
+    }
+    if (path === '/api/v1/auth/login') {
+      return fulfill({ access_token: accessValue, expires_in: 900, token_type: 'bearer' })
+    }
+    expect(request.headers().authorization).toBe(`Bearer ${accessValue}`)
+    if (path === '/api/v1/me') {
+      return fulfill({
+        id: 'ops-user', tenant_id: 'tenant-1', email: 'ops@example.invalid',
+        device_id: 'ops-device', role: 'ops_admin',
+      })
+    }
+    if (path === '/api/v1/dashboard/summary') {
+      return fulfill({
+        scope: 'tenant', generated_at: '2026-08-20T00:00:00Z', active_tasks: 0,
+        allocated_cards: 0, waiting_mail_sessions: 0, queued_uploads: 0,
+        unknown_uploads: 0, task_statuses: {}, mail_session_statuses: {},
+        card_allocation_statuses: {}, upload_statuses: {},
+      })
+    }
+    if (path === '/api/v1/admin/cards') {
+      cardQueries.push(url.search)
+      return url.searchParams.get('cursor') === 'card-next'
+        ? fulfill(poolPage([card('card-page-2', 'provider-page-2', '2026-08-19T00:00:00Z')], null, 2))
+        : fulfill(poolPage([card('card-page-1', 'provider-page-1', '2026-08-20T00:00:00Z')], 'card-next', 2))
+    }
+    if (path === '/api/v1/mailboxes') {
+      mailboxQueries.push(url.search)
+      return url.searchParams.get('cursor') === 'mailbox-next'
+        ? fulfill(poolPage([mailbox('mailbox-page-2', 'b***@example.invalid', '2026-08-19T00:00:00Z')], null, 2))
+        : fulfill(poolPage([mailbox('mailbox-page-1', 'a***@example.invalid', '2026-08-20T00:00:00Z')], 'mailbox-next', 2))
+    }
+    return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
+  })
+
+  await page.goto('/')
+  await page.getByLabel('租户').fill('tenant-1')
+  await page.getByLabel('平台账号').fill('ops@example.invalid')
+  await page.getByLabel('平台密码').fill('development-password')
+  await page.getByLabel('设备标识').fill('ops-device')
+  await page.getByRole('button', { name: '安全登录' }).click()
+
+  await page.getByText('卡池管理', { exact: true }).click()
+  await expect(page.getByText('provider-page-1', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect(page.getByText('provider-page-2', { exact: true })).toBeVisible()
+  await expect(page.getByText('provider-page-1', { exact: true })).toHaveCount(0)
+  expect(cardQueries.some((query) => new URLSearchParams(query).get('cursor') === 'card-next')).toBe(true)
+  await page.getByRole('button', { name: '上一页' }).click()
+  await expect(page.getByText('provider-page-1', { exact: true })).toBeVisible()
+
+  await page.getByText('邮箱池管理', { exact: true }).click()
+  await expect(page.getByText('a***@example.invalid', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect(page.getByText('b***@example.invalid', { exact: true })).toBeVisible()
+  await expect(page.getByText('a***@example.invalid', { exact: true })).toHaveCount(0)
+  expect(mailboxQueries.some((query) => new URLSearchParams(query).get('cursor') === 'mailbox-next')).toBe(true)
 })
 
 test('mailbox mutations cannot refresh through a replacement session', async ({ page }) => {
@@ -4794,7 +4913,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
     }
     if (path === '/api/v1/mailboxes' && request.method() === 'GET') {
       mailboxListAuthorizations.push(request.headers().authorization ?? '')
-      return fulfill([mailbox])
+      return fulfill(poolPage([mailbox]))
     }
     if (path === '/api/v1/admin/mailboxes/mailbox-session' && request.method() === 'PATCH') {
       const isActive = Boolean((request.postDataJSON() as { is_active: boolean }).is_active)
@@ -4972,7 +5091,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'GET') {
       cardListRequests += 1
-      return fulfill(cards)
+      return fulfill(poolPage(cards))
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>
@@ -5036,7 +5155,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     }
     if (path === '/api/v1/mailboxes' && request.method() === 'GET') {
       mailboxListRequests += 1
-      return fulfill(mailboxes)
+      return fulfill(poolPage(mailboxes))
     }
     if (path === '/api/v1/admin/mailboxes' && request.method() === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>
@@ -5391,7 +5510,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   expect(mailboxImportKeys[1]).not.toBe(mailboxImportKeys[0])
   await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
   await expect(page.locator('body')).not.toContainText('vault://secret/mailboxes/imported-mailbox')
-  await expect(page.getByText('有 1 个邮箱连接器不可用')).toBeVisible()
+  await expect(page.getByText('本页有 1 个邮箱连接器不可用')).toBeVisible()
   const unavailableMailboxRow = page.getByRole('row').filter({ hasText: 'd***@example.invalid' })
   await expect(page.getByRole('columnheader', { name: '服务端路由键' })).toBeVisible()
   await expect(unavailableMailboxRow.getByText('password_reset', { exact: true })).toBeVisible()

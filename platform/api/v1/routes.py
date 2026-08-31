@@ -130,6 +130,7 @@ from platform.schemas import (
     LoginRequest,
     LogoutResponse,
     MailCodeResponse,
+    MailboxPageResponse,
     MailboxStatusResponse,
     MailSessionCreateRequest,
     MailSessionCreateResponse,
@@ -160,6 +161,7 @@ from platform.schemas import (
     OperationalPolicyStatusResponse,
     UploadReconcileRequest,
     AdminAuditResponse,
+    AdminCardPageResponse,
     AdminCardResponse,
     AdminDeviceCreate,
     AdminDeviceResponse,
@@ -890,42 +892,181 @@ def _mailbox_status_response(
     )
 
 
+def _normalize_pool_list_search(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        raise HTTPException(
+            status_code=422,
+            detail="Pool list search must contain a non-whitespace character",
+        )
+    return normalized
+
+
+def _pool_list_contains(column: Any, value: str) -> Any:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return func.lower(column).like(f"%{escaped}%", escape="\\")
+
+
+def _pool_list_filter_digest(resource: str, *values: str | None) -> str:
+    payload = json.dumps(
+        [resource, *values], ensure_ascii=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _encode_pool_list_cursor(
+    resource: str,
+    filter_digest: str,
+    created_at: datetime,
+    row_id: str,
+) -> str:
+    normalized_time = _as_utc(created_at).isoformat(timespec="microseconds")
+    payload = json.dumps(
+        [1, resource, filter_digest, normalized_time, row_id],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_pool_list_cursor(
+    value: str,
+    *,
+    resource: str,
+    filter_digest: str,
+) -> tuple[datetime, str]:
+    try:
+        padding = "=" * (-len(value) % 4)
+        decoded = base64.b64decode(
+            value + padding, altchars=b"-_", validate=True
+        ).decode("utf-8")
+        payload = json.loads(decoded)
+        if (
+            not isinstance(payload, list)
+            or len(payload) != 5
+            or payload[0] != 1
+            or payload[1] != resource
+            or payload[2] != filter_digest
+        ):
+            raise ValueError
+        created_at = datetime.fromisoformat(str(payload[3]))
+        row_id = payload[4]
+        if created_at.tzinfo is None or not isinstance(row_id, str):
+            raise ValueError
+        if not 1 <= len(row_id) <= 36 or not all(
+            character.isalnum() or character in "-_" for character in row_id
+        ):
+            raise ValueError
+    except (
+        binascii.Error,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        ValueError,
+        TypeError,
+    ):
+        raise HTTPException(status_code=422, detail="Invalid pool list cursor") from None
+    return _as_utc(created_at), row_id
+
+
 @router.get(
     "/mailboxes",
-    response_model=list[MailboxStatusResponse],
+    response_model=MailboxPageResponse,
     tags=["mail"],
 )
 def list_mailboxes(
+    q: str | None = Query(default=None, min_length=1, max_length=320),
+    status: Literal["available", "busy", "disabled"] | None = Query(default=None),
+    health_status: Literal["unknown", "healthy", "unavailable"] | None = Query(
+        default=None
+    ),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=512),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
-) -> list[MailboxStatusResponse]:
-    """List safe masked mailbox connector status for the current tenant."""
+) -> MailboxPageResponse:
+    """List one stable page of safe masked mailbox connector status."""
 
     now = _utc_now()
-    mailboxes = db.scalars(
-        select(Mailbox)
-        .where(Mailbox.tenant_id == principal.tenant_id)
-        .order_by(Mailbox.created_at.desc(), Mailbox.id)
-    ).all()
-    responses: list[MailboxStatusResponse] = []
-    for mailbox in mailboxes:
-        active_session_count = db.scalar(
-            select(func.count())
-            .select_from(MailSession)
-            .where(
-                MailSession.mailbox_id == mailbox.id,
-                MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
-                MailSession.expires_at > now,
-            )
+    normalized_q = _normalize_pool_list_search(q)
+    filter_digest = _pool_list_filter_digest(
+        "mailboxes", normalized_q, status, health_status
+    )
+    active_counts = (
+        select(
+            MailSession.mailbox_id.label("mailbox_id"),
+            func.count().label("active_session_count"),
         )
-        responses.append(
+        .where(
+            MailSession.tenant_id == principal.tenant_id,
+            MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
+            MailSession.expires_at > now,
+        )
+        .group_by(MailSession.mailbox_id)
+        .subquery()
+    )
+    active_session_count = func.coalesce(active_counts.c.active_session_count, 0)
+    filters: list[Any] = [Mailbox.tenant_id == principal.tenant_id]
+    if normalized_q is not None:
+        filters.append(or_(
+            _pool_list_contains(Mailbox.email_masked, normalized_q),
+            _pool_list_contains(Mailbox.connector_type, normalized_q),
+            _pool_list_contains(Mailbox.task_type, normalized_q),
+        ))
+    if health_status is not None:
+        filters.append(Mailbox.health_status == health_status)
+    if status == "disabled":
+        filters.append(Mailbox.is_active.is_(False))
+    elif status == "busy":
+        filters.extend((Mailbox.is_active.is_(True), active_session_count > 0))
+    elif status == "available":
+        filters.extend((Mailbox.is_active.is_(True), active_session_count == 0))
+    page_filters = list(filters)
+    if cursor is not None:
+        cursor_created_at, cursor_id = _decode_pool_list_cursor(
+            cursor, resource="mailboxes", filter_digest=filter_digest
+        )
+        page_filters.append(or_(
+            Mailbox.created_at < cursor_created_at,
+            and_(Mailbox.created_at == cursor_created_at, Mailbox.id < cursor_id),
+        ))
+    rows = list(db.execute(
+        select(Mailbox, active_session_count.label("active_session_count"))
+        .outerjoin(active_counts, active_counts.c.mailbox_id == Mailbox.id)
+        .where(*page_filters)
+        .order_by(Mailbox.created_at.desc(), Mailbox.id.desc())
+        .limit(limit + 1)
+    ))
+    total_count = int(db.scalar(
+        select(func.count())
+        .select_from(Mailbox)
+        .outerjoin(active_counts, active_counts.c.mailbox_id == Mailbox.id)
+        .where(*filters)
+    ) or 0)
+    page_rows = rows[:limit]
+    has_more = len(rows) > limit
+    return MailboxPageResponse(
+        items=[
             _mailbox_status_response(
-                mailbox, active_session_count=int(active_session_count or 0)
+                mailbox, active_session_count=int(count or 0)
             )
-        )
-    return responses
+            for mailbox, count in page_rows
+        ],
+        total_count=total_count,
+        has_more=has_more,
+        next_cursor=(
+            _encode_pool_list_cursor(
+                "mailboxes",
+                filter_digest,
+                page_rows[-1][0].created_at,
+                page_rows[-1][0].id,
+            )
+            if has_more and page_rows
+            else None
+        ),
+    )
 
 
 @router.post(
@@ -5337,32 +5478,96 @@ def admin_list_audit(
 
 @router.get(
     "/admin/cards",
-    response_model=list[AdminCardResponse],
+    response_model=AdminCardPageResponse,
     tags=["admin"],
 )
 def admin_list_cards(
+    q: str | None = Query(default=None, min_length=1, max_length=160),
+    pool_key: str | None = Query(
+        default=None, min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9._-]{0,79}$"
+    ),
+    status: Literal["available", "allocated", "disabled", "quarantined"] | None = Query(
+        default=None
+    ),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=512),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
-) -> list[AdminCardResponse]:
-    cards = db.scalars(
-        select(Card)
-        .where(Card.tenant_id == principal.tenant_id)
-        .order_by(Card.created_at.desc())
-    ).all()
-    allocated_card_ids = set(
-        db.scalars(
-            select(CardAllocation.card_id).where(
-                CardAllocation.tenant_id == principal.tenant_id,
-                CardAllocation.released_at.is_(None),
-            )
-        )
+) -> AdminCardPageResponse:
+    normalized_q = _normalize_pool_list_search(q)
+    filter_digest = _pool_list_filter_digest(
+        "cards", normalized_q, pool_key, status
     )
-    return [
-        _admin_card_response(card, allocated=card.id in allocated_card_ids)
-        for card in cards
-    ]
+    allocated = exists().where(
+        CardAllocation.card_id == Card.id,
+        CardAllocation.tenant_id == principal.tenant_id,
+        CardAllocation.released_at.is_(None),
+    )
+    filters: list[Any] = [Card.tenant_id == principal.tenant_id]
+    if normalized_q is not None:
+        filters.append(or_(
+            _pool_list_contains(Card.provider_ref, normalized_q),
+            _pool_list_contains(Card.pool_key, normalized_q),
+            _pool_list_contains(Card.region, normalized_q),
+            _pool_list_contains(Card.brand, normalized_q),
+            _pool_list_contains(Card.last4, normalized_q),
+        ))
+    if pool_key is not None:
+        filters.append(Card.pool_key == pool_key)
+    if status == "quarantined":
+        filters.append(Card.quarantined_at.is_not(None))
+    elif status == "disabled":
+        filters.extend((Card.quarantined_at.is_(None), Card.is_active.is_(False)))
+    elif status == "allocated":
+        filters.extend((
+            Card.quarantined_at.is_(None), Card.is_active.is_(True), allocated,
+        ))
+    elif status == "available":
+        filters.extend((
+            Card.quarantined_at.is_(None), Card.is_active.is_(True), ~allocated,
+        ))
+    page_filters = list(filters)
+    if cursor is not None:
+        cursor_created_at, cursor_id = _decode_pool_list_cursor(
+            cursor, resource="cards", filter_digest=filter_digest
+        )
+        page_filters.append(or_(
+            Card.created_at < cursor_created_at,
+            and_(Card.created_at == cursor_created_at, Card.id < cursor_id),
+        ))
+    rows = list(db.execute(
+        select(Card, allocated.label("allocated"))
+        .where(*page_filters)
+        .order_by(Card.created_at.desc(), Card.id.desc())
+        .limit(limit + 1)
+    ))
+    total_count = int(db.scalar(
+        select(func.count())
+        .select_from(Card)
+        .where(*filters)
+    ) or 0)
+    page_rows = rows[:limit]
+    has_more = len(rows) > limit
+    return AdminCardPageResponse(
+        items=[
+            _admin_card_response(card, allocated=bool(is_allocated))
+            for card, is_allocated in page_rows
+        ],
+        total_count=total_count,
+        has_more=has_more,
+        next_cursor=(
+            _encode_pool_list_cursor(
+                "cards",
+                filter_digest,
+                page_rows[-1][0].created_at,
+                page_rows[-1][0].id,
+            )
+            if has_more and page_rows
+            else None
+        ),
+    )
 
 
 def _admin_card_status(

@@ -1522,9 +1522,9 @@ class MailSessionTests(unittest.TestCase):
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         self.assertEqual(unavailable.status_code, 200, unavailable.text)
-        self.assertEqual(unavailable.json()[0]["health_status"], "unavailable")
+        self.assertEqual(unavailable.json()["items"][0]["health_status"], "unavailable")
         self.assertEqual(
-            unavailable.json()[0]["last_error_code"], "connector_unavailable"
+            unavailable.json()["items"][0]["last_error_code"], "connector_unavailable"
         )
         self.assertNotIn(raw_failure, unavailable.text)
 
