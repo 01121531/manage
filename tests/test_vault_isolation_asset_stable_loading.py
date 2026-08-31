@@ -45,7 +45,8 @@ class VaultIsolationAssetStableLoadingTests(unittest.TestCase):
             result,
             (
                 0,
-                "vault-isolation-ok api=cards-only mail=mailboxes-only "
+                "vault-isolation-ok api=cards-read-and-import-receipt-verify "
+                "mail=mailboxes-only "
                 "sub2=sub2-and-cards-only\n",
                 "",
             ),

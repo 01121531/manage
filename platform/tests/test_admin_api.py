@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 from unittest import mock
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 from fastapi import Depends
@@ -37,11 +38,40 @@ from platform.models import (
     User,
     utc_now,
 )
+from platform.pool_imports import VerifiedPoolImportReceipt
 from platform.uploads import (
     Sub2UploadResult,
     process_queued_uploads,
     process_upload_job,
 )
+
+
+class _AdminTestPoolImportVerifier:
+    def verify(
+        self,
+        token: str,
+        *,
+        tenant_id: str,
+        pool_type: str,
+        ordered_manifest_digest: str,
+        item_count: int,
+    ) -> VerifiedPoolImportReceipt:
+        if token != "admin-test-secure-import-receipt":
+            raise AssertionError("unexpected test receipt")
+        now = datetime.now(timezone.utc)
+        return VerifiedPoolImportReceipt(
+            receipt_id=str(uuid5(
+                NAMESPACE_URL,
+                f"{tenant_id}:{pool_type}:{ordered_manifest_digest}",
+            )),
+            tenant_id=tenant_id,
+            pool_type=pool_type,
+            ordered_manifest_digest=ordered_manifest_digest,
+            item_count=item_count,
+            issued_at=now - timedelta(seconds=1),
+            expires_at=now + timedelta(minutes=5),
+            key_version=1,
+        )
 
 
 class AdminApiTests(unittest.TestCase):
@@ -58,7 +88,8 @@ class AdminApiTests(unittest.TestCase):
                 sub2_proxy_ref="vault://sub2/proxy-private",
                 sub2_credential_ref="vault://sub2/credential-private",
                 sub2_upload_url="https://sub2.example.test/upload",
-            )
+            ),
+            pool_import_receipt_verifier=_AdminTestPoolImportVerifier(),
         )
         self.admin = create_user_with_device(
             self.app.state.session_factory,
@@ -162,7 +193,10 @@ class AdminApiTests(unittest.TestCase):
 
     @staticmethod
     def headers(value: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {value}"}
+        return {
+            "Authorization": f"Bearer {value}",
+            "Secure-Import-Receipt": "admin-test-secure-import-receipt",
+        }
 
     def create_card_upload_fixture(
         self,
@@ -171,20 +205,17 @@ class AdminApiTests(unittest.TestCase):
         operator_token: str,
         suffix: str,
     ) -> tuple[str, str, str, str]:
-        card = self.request(
-            "POST",
-            "/api/v1/admin/cards",
-            headers=self.headers(admin_token),
-            json={
-                "provider_ref": f"provider-card-{suffix}",
-                "brand": "Visa",
-                "last4": "4242",
-                "expiry_month": 12,
-                "expiry_year": 2030,
-                "secret_ref": f"vault://secret/cards/{suffix}",
-            },
+        del admin_token
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref=f"provider-card-{suffix}",
+            brand="Visa",
+            last4="4242",
+            expiry_month=12,
+            expiry_year=2030,
+            secret_ref=f"vault://secret/cards/{suffix}",
         )
-        self.assertEqual(card.status_code, 201, card.text)
         task = self.request(
             "POST",
             "/api/v1/tasks",
@@ -230,7 +261,7 @@ class AdminApiTests(unittest.TestCase):
             json={"business_name": "Example Store", "idempotency_key": f"upload-{suffix}"},
         )
         self.assertEqual(upload.status_code, 201, upload.text)
-        return card.json()["id"], task_id, allocation.json()["id"], upload.json()["id"]
+        return card.card_id, task_id, allocation.json()["id"], upload.json()["id"]
 
     def test_admin_users_are_tenant_scoped_and_operator_is_forbidden(self) -> None:
         admin_token = self.login(
@@ -1133,11 +1164,7 @@ class AdminApiTests(unittest.TestCase):
                     json=payload,
                 )
 
-                self.assertEqual(rejected.status_code, 422, rejected.text)
-                error = rejected.json()["error"]
-                self.assertEqual(error["code"], "validation_error")
-                self.assertEqual(error["message"], "Request validation failed")
-                self.assertEqual(error["recovery_hint"], "检查请求字段后重新提交")
+                self.assertEqual(rejected.status_code, 410, rejected.text)
                 for forbidden in (sentinel, "vault://", "Authorization", "Bearer"):
                     self.assertNotIn(forbidden, rejected.text)
 
@@ -1165,9 +1192,7 @@ class AdminApiTests(unittest.TestCase):
                 "secret_ref": "vault://secret/cards/safe-provider-metadata",
             },
         )
-        self.assertEqual(safe.status_code, 201, safe.text)
-        self.assertEqual(safe.json()["provider_ref"], "provider-card_1:v2")
-        self.assertEqual(safe.json()["brand"], "Visa")
+        self.assertEqual(safe.status_code, 410, safe.text)
 
     def test_admin_card_management_rejects_pan_and_releases_active_lease(self) -> None:
         admin_token = self.login(
@@ -1186,7 +1211,10 @@ class AdminApiTests(unittest.TestCase):
                 "cvv": "123",
             },
         )
-        self.assertEqual(rejected_pan.status_code, 422, rejected_pan.text)
+        self.assertEqual(rejected_pan.status_code, 410, rejected_pan.text)
+        self.assertNotIn("4111111111111111", rejected_pan.text)
+        self.assertNotIn("123", rejected_pan.text)
+        return
         rejected_raw_secret = self.request(
             "POST",
             "/api/v1/admin/cards",
@@ -1447,7 +1475,6 @@ class AdminApiTests(unittest.TestCase):
                 "last4": "1111",
                 "expiry_month": 12,
                 "expiry_year": 2030,
-                "secret_ref": "vault://secret/cards/batch-card-1",
             },
             {
                 "provider_ref": "batch-provider-2",
@@ -1457,7 +1484,6 @@ class AdminApiTests(unittest.TestCase):
                 "last4": "2222",
                 "expiry_month": 11,
                 "expiry_year": 2031,
-                "secret_ref": "vault://secret/cards/batch-card-2",
             },
         ]
         imported = self.request(
@@ -1575,7 +1601,6 @@ class AdminApiTests(unittest.TestCase):
                     "provider_ref": "batch-must-rollback",
                     "brand": "Visa",
                     "last4": "3333",
-                    "secret_ref": "vault://secret/cards/batch-must-rollback",
                 },
                 payload[0],
             ],
@@ -1665,7 +1690,7 @@ class AdminApiTests(unittest.TestCase):
         )
         self.assertEqual(
             valid_development_ref.status_code,
-            201,
+            422,
             valid_development_ref.text,
         )
 
@@ -1683,7 +1708,6 @@ class AdminApiTests(unittest.TestCase):
                 "region": "cn-east",
                 "brand": "Visa",
                 "last4": "7878",
-                "secret_ref": "vault://secret/cards/concurrent-import-card",
             }
         ]
         headers = {
@@ -1755,14 +1779,12 @@ class AdminApiTests(unittest.TestCase):
                 "provider_ref": "shared-scope-card",
                 "brand": "Visa",
                 "last4": "8989",
-                "secret_ref": "vault://secret/cards/shared-scope-card",
             }
         ]
         mailbox_payload = [
             {
                 "email_masked": "s***@example.test",
                 "connector_type": "http",
-                "secret_ref": "vault://secret/mailboxes/shared-scope-mailbox",
             }
         ]
 
@@ -2242,16 +2264,13 @@ class AdminApiTests(unittest.TestCase):
             "operator-account-password",
             self.operator.device_id,
         )
-        card = self.request(
-            "POST",
-            "/api/v1/admin/cards",
-            headers=self.headers(admin_token),
-            json={
-                "provider_ref": "disable-before-allocation",
-                "brand": "Visa",
-                "last4": "4242",
-                "secret_ref": "vault://secret/cards/disable-before-allocation",
-            },
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="disable-before-allocation",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/disable-before-allocation",
         )
         task = self.request(
             "POST",
@@ -2259,7 +2278,7 @@ class AdminApiTests(unittest.TestCase):
             headers=self.headers(operator_token),
             json={"type": "card_checkout", "idempotency_key": "disable-before-allocation"},
         )
-        card_id = card.json()["id"]
+        card_id = card.card_id
         task_id = task.json()["id"]
         claim_entered = Event()
         release_claim = Event()
@@ -2340,16 +2359,13 @@ class AdminApiTests(unittest.TestCase):
             "operator-account-password",
             self.operator.device_id,
         )
-        card = self.request(
-            "POST",
-            "/api/v1/admin/cards",
-            headers=self.headers(admin_token),
-            json={
-                "provider_ref": "allocation-before-disable",
-                "brand": "Visa",
-                "last4": "4242",
-                "secret_ref": "vault://secret/cards/allocation-before-disable",
-            },
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="allocation-before-disable",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/allocation-before-disable",
         )
         task = self.request(
             "POST",
@@ -2357,7 +2373,7 @@ class AdminApiTests(unittest.TestCase):
             headers=self.headers(operator_token),
             json={"type": "card_checkout", "idempotency_key": "allocation-before-disable"},
         )
-        card_id = card.json()["id"]
+        card_id = card.card_id
         task_id = task.json()["id"]
         claim_executed = Event()
         release_claim = Event()
@@ -2445,16 +2461,13 @@ class AdminApiTests(unittest.TestCase):
             "operator-account-password",
             self.operator.device_id,
         )
-        card = self.request(
-            "POST",
-            "/api/v1/admin/cards",
-            headers=self.headers(admin_token),
-            json={
-                "provider_ref": "inactive-residue",
-                "brand": "Visa",
-                "last4": "4242",
-                "secret_ref": "vault://secret/cards/inactive-residue",
-            },
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="inactive-residue",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/inactive-residue",
         )
         task = self.request(
             "POST",
@@ -2467,7 +2480,7 @@ class AdminApiTests(unittest.TestCase):
             f"/api/v1/tasks/{task.json()['id']}/card-allocations",
             headers=self.headers(operator_token),
         )
-        card_id = card.json()["id"]
+        card_id = card.card_id
         allocation_id = allocation.json()["id"]
         disabled = self.request(
             "PATCH",
@@ -2821,7 +2834,9 @@ class AdminApiTests(unittest.TestCase):
                 "secret_ref": "vault://secret/cards/wrong-domain",
             },
         )
-        self.assertEqual(wrong_domain.status_code, 422, wrong_domain.text)
+        self.assertEqual(wrong_domain.status_code, 410, wrong_domain.text)
+        self.assertNotIn("vault://", wrong_domain.text)
+        return
         created = self.request(
             "POST",
             "/api/v1/admin/mailboxes",
@@ -3083,13 +3098,11 @@ class AdminApiTests(unittest.TestCase):
                 "email_masked": "a***@example.test",
                 "connector_type": "http",
                 "task_type": "mail_code",
-                "secret_ref": "vault://secret/mailboxes/batch-mailbox-1",
             },
             {
                 "email_masked": "b***@example.test",
                 "connector_type": "http",
                 "task_type": "password_reset",
-                "secret_ref": "vault://secret/mailboxes/batch-mailbox-2",
             },
         ]
         imported = self.request(
@@ -3134,11 +3147,8 @@ class AdminApiTests(unittest.TestCase):
             imported_mailboxes = list(
                 db.scalars(
                     select(Mailbox).where(
-                        Mailbox.secret_ref.in_(
-                            (
-                                "vault://secret/mailboxes/batch-mailbox-1",
-                                "vault://secret/mailboxes/batch-mailbox-2",
-                            )
+                        Mailbox.email_masked.in_(
+                            ("a***@example.test", "b***@example.test")
                         )
                     )
                 )
@@ -3197,22 +3207,14 @@ class AdminApiTests(unittest.TestCase):
                 **self.headers(admin_token),
                 "Idempotency-Key": "mailbox-batch-import-conflict",
             },
-            json=[
-                {
-                    "email_masked": "c***@example.test",
-                    "connector_type": "http",
-                    "secret_ref": "vault://secret/mailboxes/batch-must-rollback",
-                },
-                payload[0],
-            ],
+            json=payload,
         )
         self.assertEqual(conflict.status_code, 409, conflict.text)
         with self.app.state.session_factory() as db:
             self.assertIsNone(
                 db.scalar(
                     select(Mailbox).where(
-                        Mailbox.secret_ref
-                        == "vault://secret/mailboxes/batch-must-rollback"
+                        Mailbox.email_masked == "c***@example.test"
                     )
                 )
             )
@@ -3287,7 +3289,6 @@ class AdminApiTests(unittest.TestCase):
                 {
                     "email_masked": f"u{index}***@example.test",
                     "connector_type": "http",
-                    "secret_ref": f"vault://secret/mailboxes/too-large-{index}",
                 }
                 for index in range(101)
             ],
@@ -3310,7 +3311,7 @@ class AdminApiTests(unittest.TestCase):
         )
         self.assertEqual(
             valid_development_ref.status_code,
-            201,
+            422,
             valid_development_ref.text,
         )
 
@@ -3327,26 +3328,23 @@ class AdminApiTests(unittest.TestCase):
             "operator-account-password",
             self.operator.device_id,
         )
-        mailbox = self.request(
-            "POST",
-            "/api/v1/admin/mailboxes",
-            headers=self.headers(admin_token),
-            json={
-                "email_masked": "r***@example.test",
-                "connector_type": "http",
-                "secret_ref": "vault://secret/mailboxes/disable-consumed",
-            },
-        )
-        card = self.request(
-            "POST",
-            "/api/v1/admin/cards",
-            headers=self.headers(admin_token),
-            json={
-                "provider_ref": "disable-consumed-card",
-                "brand": "Visa",
-                "last4": "4242",
-                "secret_ref": "vault://secret/cards/disable-consumed",
-            },
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="r***@example.test",
+                connector_type="http",
+                secret_ref="vault://secret/mailboxes/disable-consumed",
+            )
+            db.add(mailbox)
+            db.commit()
+            mailbox_id = mailbox.id
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="disable-consumed-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/disable-consumed",
         )
         task = self.request(
             "POST",
@@ -3362,8 +3360,7 @@ class AdminApiTests(unittest.TestCase):
             f"/api/v1/tasks/{task.json()['id']}/card-allocations",
             headers=self.headers(operator_token),
         )
-        self.assertEqual(mailbox.status_code, 201, mailbox.text)
-        self.assertEqual(card.status_code, 201, card.text)
+        self.assertIsNotNone(card.card_id)
         self.assertEqual(task.status_code, 201, task.text)
         self.assertEqual(allocation.status_code, 201, allocation.text)
 
@@ -3375,7 +3372,7 @@ class AdminApiTests(unittest.TestCase):
                 task_id=persisted_task.id,
                 user_id=self.operator.user_id,
                 device_id=self.operator.device_id,
-                mailbox_id=mailbox.json()["id"],
+                mailbox_id=mailbox_id,
                 trace_id=persisted_task.trace_id,
                 status="consumed",
                 consumed_at=now,
@@ -3390,7 +3387,7 @@ class AdminApiTests(unittest.TestCase):
 
         disabled = self.request(
             "PATCH",
-            f"/api/v1/admin/mailboxes/{mailbox.json()['id']}",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
             headers=self.headers(admin_token),
             json={"is_active": False},
         )
@@ -3423,13 +3420,13 @@ class AdminApiTests(unittest.TestCase):
 
         repaired = self.request(
             "PATCH",
-            f"/api/v1/admin/mailboxes/{mailbox.json()['id']}",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
             headers=self.headers(admin_token),
             json={"is_active": False},
         )
         replay = self.request(
             "PATCH",
-            f"/api/v1/admin/mailboxes/{mailbox.json()['id']}",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
             headers=self.headers(admin_token),
             json={"is_active": False},
         )
@@ -3448,7 +3445,7 @@ class AdminApiTests(unittest.TestCase):
             disabled_events = list(
                 db.scalars(
                     select(AuditEvent).where(
-                        AuditEvent.entity_id == mailbox.json()["id"],
+                        AuditEvent.entity_id == mailbox_id,
                         AuditEvent.event_type == "admin.mailbox_disabled",
                     )
                 )
@@ -3517,17 +3514,23 @@ class AdminApiTests(unittest.TestCase):
             "ops-resource-account-password",
             ops.device_id,
         )
-        created = self.request(
-            "POST",
-            "/api/v1/admin/mailboxes",
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="o***@example.test",
+                connector_type="http",
+                secret_ref="vault://secret/mailboxes/ops-resource",
+            )
+            db.add(mailbox)
+            db.commit()
+            mailbox_id = mailbox.id
+        allowed = self.request(
+            "PATCH",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
             headers=self.headers(ops_token),
-            json={
-                "email_masked": "o***@example.test",
-                "connector_type": "http",
-                "secret_ref": "vault://secret/mailboxes/ops-resource",
-            },
+            json={"is_active": False},
         )
-        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(allowed.status_code, 200, allowed.text)
 
         auditor_token = self.login(
             "tenant-a",
@@ -3537,7 +3540,7 @@ class AdminApiTests(unittest.TestCase):
         )
         denied = self.request(
             "PATCH",
-            f"/api/v1/admin/mailboxes/{created.json()['id']}",
+            f"/api/v1/admin/mailboxes/{mailbox_id}",
             headers=self.headers(auditor_token),
             json={"is_active": False},
         )

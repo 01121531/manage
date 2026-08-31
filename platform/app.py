@@ -32,6 +32,10 @@ from platform.rate_limit import (
     RedisRateLimitBackend,
 )
 from platform.secrets import SecretResolver, secret_resolver_from_settings
+from platform.pool_imports import (
+    PoolImportReceiptVerifier,
+    pool_import_receipt_verifier_from_settings,
+)
 from platform.uploads import (
     Sub2Adapter,
     Sub2Policy,
@@ -51,6 +55,7 @@ def create_app(
     sub2_adapter: Sub2Adapter | None = None,
     card_secret_resolver: CardSecretResolver | None = None,
     secret_resolver: SecretResolver | None = None,
+    pool_import_receipt_verifier: PoolImportReceiptVerifier | None = None,
     access_token_verifier: AccessTokenVerifier | None = None,
     rate_limit_backend: RateLimitBackend | None = None,
     rate_limit_clock: Callable[[], float] = time.time,
@@ -184,6 +189,11 @@ def create_app(
         )
     )
     application.state.secret_resolver = resolved_secret_resolver
+    application.state.pool_import_receipt_verifier = (
+        pool_import_receipt_verifier
+        if pool_import_receipt_verifier is not None
+        else pool_import_receipt_verifier_from_settings(resolved_settings)
+    )
     configured_mail_connectors = dict(mail_connectors or {})
     if resolved_settings.mail_api_url and "http" not in configured_mail_connectors:
         configured_mail_connectors["http"] = HttpMailConnector(

@@ -31,7 +31,7 @@ EXPECTED_COMPLETION_CLASSES = {
     0: "repository_boundary_partial_external_inputs_and_target_evidence_pending",
     1: "repository_gate_passed_target_evidence_pending",
     2: "repository_gate_passed_external_inputs_and_target_evidence_pending",
-    3: "repository_boundary_partial_external_inputs_and_target_evidence_pending",
+    3: "repository_gate_passed_external_inputs_and_target_evidence_pending",
     4: "generic_adapter_gate_passed_external_inputs_and_target_evidence_pending",
     5: "repository_gate_passed_external_inputs_and_target_evidence_pending",
     6: "repository_preflight_target_execution_pending",

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "production_acceptance": false,
+  "receipt_authority": "vault-transit",
+  "atomic_consumption": "postgresql-unique-secure-receipt-id",
+  "maximum_receipt_ttl_seconds": 600,
+  "roles": [
+    {
+      "role": "card-importer",
+      "policy": "email-platform-card-importer",
+      "allowed": [
+        "create secret/data/cards/imports/* with cas=0",
+        "update transit/sign/email-platform-card-import-receipt"
+      ],
+      "denied": ["kv read", "kv update", "kv list", "kv delete", "mailbox paths", "transit verify", "transit key export"]
+    },
+    {
+      "role": "mailbox-importer",
+      "policy": "email-platform-mailbox-importer",
+      "allowed": [
+        "create secret/data/mailboxes/imports/* with cas=0",
+        "update transit/sign/email-platform-mailbox-import-receipt"
+      ],
+      "denied": ["kv read", "kv update", "kv list", "kv delete", "card paths", "transit verify", "transit key export"]
+    },
+    {
+      "role": "api-verifier",
+      "policy": "email-platform-api-cards",
+      "allowed": [
+        "update transit/verify/email-platform-card-import-receipt",
+        "update transit/verify/email-platform-mailbox-import-receipt"
+      ],
+      "denied": ["transit sign", "transit key read", "transit key export", "pool secret write"]
+    }
+  ],
+  "required_target_evidence": [
+    "three_distinct_external_principals",
+    "importer_create_only_cas_zero_enforced",
+    "cross_pool_access_denied",
+    "api_sign_denied",
+    "importer_verify_denied",
+    "transit_keys_non_exportable_and_rotated",
+    "vault_audit_trace_reviewed",
+    "database_concurrent_receipt_consumption_verified"
+  ]
+}

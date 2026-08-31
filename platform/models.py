@@ -183,6 +183,23 @@ class PoolImportReceipt(Base):
     )
 
 
+class SecurePoolImportConsumption(Base):
+    """Atomic, globally one-time consumption of a signed Vault receipt."""
+
+    __tablename__ = "secure_pool_import_consumptions"
+
+    receipt_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    pool_import_receipt_id: Mapped[str] = mapped_column(
+        ForeignKey("pool_import_receipts.id"), unique=True
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    key_version: Mapped[int] = mapped_column(Integer)
+    consumed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
 class Mailbox(Base):
     __tablename__ = "mailboxes"
     __table_args__ = (

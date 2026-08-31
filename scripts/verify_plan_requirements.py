@@ -45,7 +45,6 @@ NON_REPOSITORY_CLASSIFICATIONS = {
     "R05.01": "external_input_required",
     "R06.02": "repository_proven",
     "R07.03": "target_evidence_required",
-    "R09.06": "missing_implementation",
     "R11.01": "target_evidence_required",
     "R11.02": "target_evidence_required",
     "R11.03": "target_evidence_required",

@@ -94,6 +94,7 @@ from platform.models import (
     OperationalPolicyDeployment,
     OperationalPolicyVersion,
     PoolImportReceipt,
+    SecurePoolImportConsumption,
     AdminRoleChangeRequest,
     RevokedAccessToken,
     RevokedOidcSession,
@@ -105,18 +106,25 @@ from platform.models import (
     AuditEvent,
     new_id,
 )
+from platform.pool_imports import (
+    PoolImportReceiptBindingMismatch,
+    PoolImportReceiptExpired,
+    PoolImportReceiptInvalid,
+    PoolImportReceiptVerifierUnavailable,
+    pool_import_digest,
+    pool_secret_ref,
+)
 from platform.uploads import transition_upload_phase
 from platform.schemas import (
     ApiErrorResponse,
-    AdminCardCreate,
+    AdminCardImportItem,
     AdminCardAllocationResponse,
     AdminCardEventResponse,
     AdminCardQuarantineRequest,
     AdminCardRecycleRequest,
     AdminCardStateUpdate,
     AdminCardTimelineResponse,
-    AdminMailboxCreate,
-    AdminMailboxSecretRotation,
+    AdminMailboxImportItem,
     AdminMailboxStateUpdate,
     PoolImportReceiptResponse,
     LoginRequest,
@@ -5401,19 +5409,6 @@ def _admin_card_response(card: Card, *, allocated: bool = False) -> AdminCardRes
     )
 
 
-def _pool_import_digest(pool_type: Literal["card", "mailbox"], payload: list[Any]) -> str:
-    canonical_payload = json.dumps(
-        [item.model_dump(mode="json") for item in payload],
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    digest_input = (
-        f"email-platform:pool-import:v1\0{pool_type}\0{canonical_payload}"
-    ).encode("utf-8")
-    return hashlib.sha256(digest_input).hexdigest()
-
-
 def _pool_import_receipt_response(
     receipt: PoolImportReceipt,
 ) -> PoolImportReceiptResponse:
@@ -5445,7 +5440,12 @@ def _replay_pool_import_receipt(
     if receipt is None:
         return None
     if (
-        receipt.created_by != principal.user_id
+        db.scalar(
+            select(SecurePoolImportConsumption.receipt_id).where(
+                SecurePoolImportConsumption.pool_import_receipt_id == receipt.id
+            )
+        ) is None
+        or receipt.created_by != principal.user_id
         or receipt.device_id != principal.device_id
         or receipt.request_digest != request_digest
     ):
@@ -5455,6 +5455,38 @@ def _replay_pool_import_receipt(
         )
     response.status_code = 200
     return _pool_import_receipt_response(receipt)
+
+
+def _verify_pool_import_receipt(
+    request: Request,
+    *,
+    token: str | None,
+    tenant_id: str,
+    pool_type: Literal["card", "mailbox"],
+    request_digest: str,
+    item_count: int,
+):
+    if token is None:
+        raise HTTPException(status_code=422, detail="Secure import receipt is required")
+    try:
+        return request.app.state.pool_import_receipt_verifier.verify(
+            token,
+            tenant_id=tenant_id,
+            pool_type=pool_type,
+            ordered_manifest_digest=request_digest,
+            item_count=item_count,
+        )
+    except PoolImportReceiptExpired:
+        raise HTTPException(status_code=410, detail="Secure import receipt has expired") from None
+    except PoolImportReceiptBindingMismatch:
+        raise HTTPException(
+            status_code=409,
+            detail="Secure import receipt does not match this import",
+        ) from None
+    except PoolImportReceiptInvalid:
+        raise HTTPException(status_code=403, detail="Secure import receipt is invalid") from None
+    except PoolImportReceiptVerifierUnavailable:
+        raise HTTPException(status_code=503, detail="Secure import verifier unavailable") from None
 
 
 def _admin_card_allocation_response(
@@ -5656,63 +5688,17 @@ def admin_get_card_timeline(
     tags=["admin"],
 )
 def admin_create_card(
-    payload: AdminCardCreate,
     request: Request,
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> AdminCardResponse:
-    card = Card(
-        tenant_id=principal.tenant_id,
-        provider_ref=payload.provider_ref,
-        pool_key=payload.pool_key,
-        region=payload.region,
-        brand=payload.brand,
-        last4=payload.last4,
-        expiry_month=payload.expiry_month,
-        expiry_year=payload.expiry_year,
-        secret_ref=payload.secret_ref,
-        is_active=True,
+    del request, principal, db
+    raise HTTPException(
+        status_code=410,
+        detail="Single-card registration is retired; use a secure import bundle",
     )
-    db.add(card)
-    try:
-        db.flush()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Card provider or secret reference already exists",
-        ) from None
-    record_audit(
-        db,
-        tenant_id=principal.tenant_id,
-        user_id=principal.user_id,
-        device_id=principal.device_id,
-        event_type="admin.card_created",
-        entity_type="card",
-        entity_id=card.id,
-        trace_id=request.state.trace_id,
-        details={
-            "provider_ref": card.provider_ref,
-            "pool_key": card.pool_key,
-            "region": card.region,
-            "brand": card.brand,
-            "last4": card.last4,
-        },
-    )
-    record_card_event(
-        db,
-        tenant_id=principal.tenant_id,
-        card_id=card.id,
-        actor_id=principal.user_id,
-        action="card.created",
-        trace_id=request.state.trace_id,
-        after_masked=_masked_card_state(card, status="available"),
-    )
-    db.commit()
-    db.refresh(card)
-    return _admin_card_response(card)
 
 
 @router.post(
@@ -5724,19 +5710,24 @@ def admin_create_card(
 def admin_import_cards(
     request: Request,
     response: Response,
-    payload: list[AdminCardCreate] = Body(min_length=1, max_length=100),
+    payload: list[AdminCardImportItem] = Body(min_length=1, max_length=100),
     idempotency_key: str = Header(
         alias="Idempotency-Key",
         min_length=1,
         max_length=160,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
     ),
+    secure_import_receipt: str | None = Header(
+        default=None,
+        alias="Secure-Import-Receipt",
+        max_length=12 * 1024,
+    ),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> PoolImportReceiptResponse:
-    request_digest = _pool_import_digest("card", payload)
+    request_digest = pool_import_digest("card", payload)
     replay = _replay_pool_import_receipt(
         db,
         principal=principal,
@@ -5747,7 +5738,16 @@ def admin_import_cards(
     )
     if replay is not None:
         return replay
+    verified_receipt = _verify_pool_import_receipt(
+        request,
+        token=secure_import_receipt,
+        tenant_id=principal.tenant_id,
+        pool_type="card",
+        request_digest=request_digest,
+        item_count=len(payload),
+    )
     receipt = PoolImportReceipt(
+        id=new_id(),
         tenant_id=principal.tenant_id,
         pool_type="card",
         idempotency_key=idempotency_key,
@@ -5757,7 +5757,16 @@ def admin_import_cards(
         device_id=principal.device_id,
         trace_id=request.state.trace_id,
     )
-    db.add(receipt)
+    db.add_all([
+        receipt,
+        SecurePoolImportConsumption(
+            receipt_id=verified_receipt.receipt_id,
+            pool_import_receipt_id=receipt.id,
+            issued_at=verified_receipt.issued_at,
+            expires_at=verified_receipt.expires_at,
+            key_version=verified_receipt.key_version,
+        ),
+    ])
     try:
         db.flush()
     except IntegrityError:
@@ -5772,6 +5781,15 @@ def admin_import_cards(
         )
         if replay is not None:
             return replay
+        consumed = db.scalar(
+            select(SecurePoolImportConsumption.receipt_id).where(
+                SecurePoolImportConsumption.receipt_id == verified_receipt.receipt_id
+            )
+        )
+        if consumed is not None:
+            raise HTTPException(
+                status_code=409, detail="Secure import receipt was already consumed"
+            )
         raise HTTPException(status_code=409, detail="Pool import conflict") from None
     cards = [
         Card(
@@ -5783,10 +5801,15 @@ def admin_import_cards(
             last4=item.last4,
             expiry_month=item.expiry_month,
             expiry_year=item.expiry_year,
-            secret_ref=item.secret_ref,
+            secret_ref=pool_secret_ref(
+                "card",
+                tenant_id=principal.tenant_id,
+                receipt_id=verified_receipt.receipt_id,
+                index=index,
+            ),
             is_active=True,
         )
-        for item in payload
+        for index, item in enumerate(payload)
     ]
     db.add_all(cards)
     try:
@@ -6688,47 +6711,17 @@ def admin_release_card_quarantine(
     tags=["admin"],
 )
 def admin_create_mailbox(
-    payload: AdminMailboxCreate,
     request: Request,
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> MailboxStatusResponse:
-    mailbox = Mailbox(
-        tenant_id=principal.tenant_id,
-        email_masked=payload.email_masked,
-        connector_type=payload.connector_type,
-        task_type=payload.task_type,
-        secret_ref=payload.secret_ref,
-        is_active=True,
+    del request, principal, db
+    raise HTTPException(
+        status_code=410,
+        detail="Single-mailbox registration is retired; use a secure import bundle",
     )
-    db.add(mailbox)
-    try:
-        db.flush()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409, detail="Mailbox secret reference already exists"
-        ) from None
-    record_audit(
-        db,
-        tenant_id=principal.tenant_id,
-        user_id=principal.user_id,
-        device_id=principal.device_id,
-        event_type="admin.mailbox_created",
-        entity_type="mailbox",
-        entity_id=mailbox.id,
-        trace_id=request.state.trace_id,
-        details={
-            "email_masked": mailbox.email_masked,
-            "connector_type": mailbox.connector_type,
-            "task_type": mailbox.task_type,
-        },
-    )
-    db.commit()
-    db.refresh(mailbox)
-    return _mailbox_status_response(mailbox, active_session_count=0)
 
 
 @router.post(
@@ -6740,19 +6733,24 @@ def admin_create_mailbox(
 def admin_import_mailboxes(
     request: Request,
     response: Response,
-    payload: list[AdminMailboxCreate] = Body(min_length=1, max_length=100),
+    payload: list[AdminMailboxImportItem] = Body(min_length=1, max_length=100),
     idempotency_key: str = Header(
         alias="Idempotency-Key",
         min_length=1,
         max_length=160,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
     ),
+    secure_import_receipt: str | None = Header(
+        default=None,
+        alias="Secure-Import-Receipt",
+        max_length=12 * 1024,
+    ),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> PoolImportReceiptResponse:
-    request_digest = _pool_import_digest("mailbox", payload)
+    request_digest = pool_import_digest("mailbox", payload)
     replay = _replay_pool_import_receipt(
         db,
         principal=principal,
@@ -6763,7 +6761,16 @@ def admin_import_mailboxes(
     )
     if replay is not None:
         return replay
+    verified_receipt = _verify_pool_import_receipt(
+        request,
+        token=secure_import_receipt,
+        tenant_id=principal.tenant_id,
+        pool_type="mailbox",
+        request_digest=request_digest,
+        item_count=len(payload),
+    )
     receipt = PoolImportReceipt(
+        id=new_id(),
         tenant_id=principal.tenant_id,
         pool_type="mailbox",
         idempotency_key=idempotency_key,
@@ -6773,7 +6780,16 @@ def admin_import_mailboxes(
         device_id=principal.device_id,
         trace_id=request.state.trace_id,
     )
-    db.add(receipt)
+    db.add_all([
+        receipt,
+        SecurePoolImportConsumption(
+            receipt_id=verified_receipt.receipt_id,
+            pool_import_receipt_id=receipt.id,
+            issued_at=verified_receipt.issued_at,
+            expires_at=verified_receipt.expires_at,
+            key_version=verified_receipt.key_version,
+        ),
+    ])
     try:
         db.flush()
     except IntegrityError:
@@ -6788,6 +6804,15 @@ def admin_import_mailboxes(
         )
         if replay is not None:
             return replay
+        consumed = db.scalar(
+            select(SecurePoolImportConsumption.receipt_id).where(
+                SecurePoolImportConsumption.receipt_id == verified_receipt.receipt_id
+            )
+        )
+        if consumed is not None:
+            raise HTTPException(
+                status_code=409, detail="Secure import receipt was already consumed"
+            )
         raise HTTPException(status_code=409, detail="Pool import conflict") from None
     mailboxes = [
         Mailbox(
@@ -6795,10 +6820,15 @@ def admin_import_mailboxes(
             email_masked=item.email_masked,
             connector_type=item.connector_type,
             task_type=item.task_type,
-            secret_ref=item.secret_ref,
+            secret_ref=pool_secret_ref(
+                "mailbox",
+                tenant_id=principal.tenant_id,
+                receipt_id=verified_receipt.receipt_id,
+                index=index,
+            ),
             is_active=True,
         )
-        for item in payload
+        for index, item in enumerate(payload)
     ]
     db.add_all(mailboxes)
     try:
@@ -6907,8 +6937,7 @@ def admin_update_mailbox_state(
     state_changed = mailbox.is_active != payload.is_active
     if state_changed:
         mailbox.is_active = payload.is_active
-        if payload.is_active:
-            reset_mailbox_health(mailbox)
+        reset_mailbox_health(mailbox)
         record_audit(
             db,
             tenant_id=principal.tenant_id,
@@ -6948,92 +6977,16 @@ def admin_update_mailbox_state(
 )
 def admin_rotate_mailbox_secret(
     mailbox_id: str,
-    payload: AdminMailboxSecretRotation,
     request: Request,
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
     db: Session = Depends(get_db),
 ) -> MailboxStatusResponse:
-    mailbox = db.scalar(
-        select(Mailbox)
-        .where(
-            Mailbox.id == mailbox_id,
-            Mailbox.tenant_id == principal.tenant_id,
-        )
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if mailbox is None:
-        raise HTTPException(status_code=404, detail="Mailbox not found")
-    if mailbox.secret_ref != payload.secret_ref:
-        sessions = list(
-            db.scalars(
-                select(MailSession)
-                .where(
-                    MailSession.mailbox_id == mailbox.id,
-                    MailSession.tenant_id == principal.tenant_id,
-                    MailSession.status.in_(_RELEASABLE_MAIL_SESSION_STATUSES),
-                )
-                .order_by(MailSession.id)
-                .with_for_update()
-            )
-        )
-        for session in sessions:
-            session.status = "revoked"
-            session.delivered_code = None
-            session.delivered_message_id_hash = None
-            session.delivered_at = None
-            session.code_expires_at = None
-            session.start_watermark = None
-            session.last_message_hash = None
-            record_audit(
-                db,
-                tenant_id=session.tenant_id,
-                user_id=session.user_id,
-                device_id=session.device_id,
-                actor_id=principal.user_id,
-                event_type="mail_session.revoked",
-                entity_type="mail_session",
-                entity_id=session.id,
-                trace_id=session.trace_id,
-                details={
-                    "task_id": session.task_id,
-                    "reason": "admin_mailbox_secret_rotated",
-                },
-            )
-        mailbox.secret_ref = payload.secret_ref
-        reset_mailbox_health(mailbox)
-        record_audit(
-            db,
-            tenant_id=principal.tenant_id,
-            user_id=principal.user_id,
-            device_id=principal.device_id,
-            event_type="admin.mailbox_secret_rotated",
-            entity_type="mailbox",
-            entity_id=mailbox.id,
-            trace_id=request.state.trace_id,
-            details={"rotation": "completed", "revoked_session_count": len(sessions)},
-        )
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(
-                status_code=409, detail="Mailbox secret reference already exists"
-            ) from None
-        db.refresh(mailbox)
-    active_session_count = db.scalar(
-        select(func.count())
-        .select_from(MailSession)
-        .where(
-            MailSession.mailbox_id == mailbox.id,
-            MailSession.status.in_(_ACTIVE_MAIL_SESSION_STATUSES),
-            MailSession.expires_at > _utc_now(),
-        )
-    )
-    return _mailbox_status_response(
-        mailbox, active_session_count=int(active_session_count or 0)
+    del mailbox_id, request, principal, db
+    raise HTTPException(
+        status_code=410,
+        detail="Mailbox secret-reference rotation is retired; import a new secure bundle",
     )
 
 

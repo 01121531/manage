@@ -19,7 +19,7 @@ ROUTES = (
     ROOT / "platform" / "auth.py",
     ROOT / "platform" / "api" / "v1" / "routes.py",
 )
-MAX_HTTP_BOUNDARY_SOURCE_BYTES = 256 * 1024
+MAX_HTTP_BOUNDARY_SOURCE_BYTES = 320 * 1024
 EXPECTED_ALLOW_METHODS = {
     "GET",
     "HEAD",

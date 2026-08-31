@@ -68,7 +68,7 @@
     {"id":"R09.03","chapter":9,"source_ref":"9.2 操作员工作台","requirement":"工作台展示登录、卡、验证码、上传、trace 和安全清理状态，不暴露内部配置。","classification":"repository_proven","evidence":["frontend/src/App.tsx","frontend/src/AuthenticatedShell.tsx","frontend/src/views/DashboardView.tsx","platform_desktop.py","frontend/e2e/platform.spec.ts","tests/test_platform_desktop.py"],"gap_or_boundary":null},
     {"id":"R09.04","chapter":9,"source_ref":"9.3 交互规则","requirement":"异步按钮防重、未知上传给出核对动作，表格支持键盘焦点、筛选与排序。","classification":"repository_proven","evidence":["frontend/src/views/TasksView.tsx","frontend/src/views/UploadsView.tsx","frontend/src/views/shared.tsx","frontend/src/authenticated.css","frontend/e2e/platform.spec.ts"],"gap_or_boundary":null},
     {"id":"R09.05","chapter":9,"source_ref":"9 视觉方向/9.3 无障碍状态","requirement":"管理端采用安全运营台视觉和响应式布局，焦点可见，状态同时使用文字、图标和颜色表达。","classification":"repository_proven","evidence":["frontend/src/AuthenticatedShell.tsx","frontend/src/views/shared.tsx","frontend/src/authenticated.css","frontend/e2e/platform.spec.ts"],"gap_or_boundary":null},
-    {"id":"R09.06","chapter":9,"source_ref":"9.1 卡池管理安全导入","requirement":"卡池批量导入只接受独立 Card Vault 安全导入流程签发并绑定租户、批次摘要及数量的短期一次性凭据；普通 Web/API/数据库不得接收 PAN/CVV 或调用方任意指定的 secret_ref；普通表格只显示末四位。","classification":"missing_implementation","evidence":["platform/schemas.py","platform/api/v1/routes.py","frontend/src/views/CardsView.tsx","platform/tests/test_admin_api.py","frontend/e2e/platform.spec.ts"],"gap_or_boundary":"当前仓库仅实现已由外部流程预置 Vault 后的脱敏资源引用清单登记；仍缺独立 Card Vault 安全导入器签发、短期一次性收据验证、租户/有序摘要/数量绑定、服务端内部 secret_ref 解析与消费。真实 PAN/CVV ingest 和 PCI 责任边界继续依赖 R05.01 外部批准。"},
+    {"id":"R09.06","chapter":9,"source_ref":"9.1 卡池管理安全导入","requirement":"卡池批量导入只接受独立 Card Vault 安全导入流程签发并绑定租户、批次摘要及数量的短期一次性凭据；普通 Web/API/数据库不得接收 PAN/CVV 或调用方任意指定的 secret_ref；普通表格只显示末四位。","classification":"repository_proven","evidence":["platform/pool_imports.py","scripts/secure_pool_import.py","platform/api/v1/routes.py","frontend/src/views/CardsView.tsx","platform/tests/test_secure_pool_import_api.py","frontend/e2e/platform.spec.ts"],"gap_or_boundary":null},
 
     {"id":"R10.01","chapter":10,"source_ref":"10 API 域","requirement":"身份、任务、卡、邮箱、上传和后台接口按资源归属与角色鉴权。","classification":"repository_proven","evidence":["platform/auth.py","platform/api/v1/routes.py","frontend/openapi.json","platform/tests/test_role_boundaries.py","platform/tests/test_app.py","platform/tests/test_admin_api.py"],"gap_or_boundary":null},
     {"id":"R10.02","chapter":10,"source_ref":"10 统一响应与生成客户端","requirement":"错误统一返回业务 code、message、recovery_hint 与 trace_id，前端类型由 OpenAPI 生成。","classification":"repository_proven","evidence":["platform/errors.py","frontend/openapi.json","frontend/src/generated/openapi.ts","scripts/verify_openapi_client.py"],"gap_or_boundary":null},
@@ -81,13 +81,13 @@
   ],
   "summary": {
     "total": 52,
-    "repository_proven": 43,
+    "repository_proven": 44,
     "indirect_only": 0,
-    "missing_implementation": 1,
+    "missing_implementation": 0,
     "external_input_required": 3,
     "target_evidence_required": 5
   },
   "integrity": {
-    "payload_sha256": "5191bacdf8b63982e2090734cbc5773a72138a176436e3da0aac2f613cd94b43"
+    "payload_sha256": "c7103a3b60c5532b18921cf0f7494296f450ec8576e32805cd163ab821545dd5"
   }
 }

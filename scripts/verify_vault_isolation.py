@@ -30,20 +30,24 @@ SERVICE_TOKEN_DIRECTORIES = {
 TOKEN_DIRECTORY_TARGET = "/run/secrets/email-platform-vault"
 TOKEN_FILE_TARGET = f"{TOKEN_DIRECTORY_TARGET}/token"
 VAULT_ADDR_INPUT = "${PLATFORM_VAULT_ADDR:?set PLATFORM_VAULT_ADDR in .env}"
-POLICY_PATHS = {
-    "email-platform-api-cards.hcl": {"secret/data/cards/*"},
-    "email-platform-mail.hcl": {"secret/data/mailboxes/*"},
+POLICY_RULES = {
+    "email-platform-api-cards.hcl": {
+        "secret/data/cards/*": {"read"},
+        "transit/verify/email-platform-card-import-receipt": {"update"},
+        "transit/verify/email-platform-mailbox-import-receipt": {"update"},
+    },
+    "email-platform-mail.hcl": {"secret/data/mailboxes/*": {"read"}},
     "email-platform-sub2.hcl": {
-        "secret/data/cards/*",
-        "secret/data/sub2/credential",
-        "secret/data/sub2/proxy",
+        "secret/data/cards/*": {"read"},
+        "secret/data/sub2/credential": {"read"},
+        "secret/data/sub2/proxy": {"read"},
     },
 }
 APPROLE_BOOTSTRAP = VAULT_DIR / "configure-approles.sh"
 AUDIT_CONFIG = VAULT_DIR / "configure-audit.sh"
 ASSET_PATHS = (
     ENV_EXAMPLE,
-    *(VAULT_DIR / "policies" / name for name in POLICY_PATHS),
+    *(VAULT_DIR / "policies" / name for name in POLICY_RULES),
     APPROLE_BOOTSTRAP,
     AUDIT_CONFIG,
 )
@@ -90,7 +94,7 @@ def load_assets() -> tuple[dict[str, object], str, dict[str, str], str, str]:
     text_assets = load_text_assets()
     policies = {
         name: text_assets[VAULT_DIR / "policies" / name]
-        for name in POLICY_PATHS
+        for name in POLICY_RULES
     }
     return (
         compose,
@@ -225,19 +229,26 @@ def validate_vault_isolation(
     if len(documented_directories) != len(DEPLOYMENT_TOKEN_DIRECTORIES):
         errors.append("Per-service Vault token directories must be distinct")
 
-    for policy_name, allowed_paths in POLICY_PATHS.items():
+    for policy_name, allowed_rules in POLICY_RULES.items():
         policy = policies.get(policy_name, "")
-        paths = set(re.findall(r'^path\s+"([^"]+)"', policy, re.MULTILINE))
-        if paths != allowed_paths:
+        blocks = re.findall(
+            r'^path\s+"([^"]+)"\s*\{(?P<body>[^}]*)\}',
+            policy,
+            re.MULTILINE | re.DOTALL,
+        )
+        observed_rules = {
+            path: set(re.findall(r'"([^"]+)"', capabilities.group(1)))
+            for path, body in blocks
+            if (capabilities := re.search(
+                r"capabilities\s*=\s*\[([^]]*)\]", body
+            )) is not None
+        }
+        if set(observed_rules) != set(allowed_rules) or len(blocks) != len(allowed_rules):
             errors.append(
-                f"{policy_name} paths must be exactly {sorted(allowed_paths)}"
+                f"{policy_name} paths must be exactly {sorted(allowed_rules)}"
             )
-        capabilities = re.findall(r"capabilities\s*=\s*\[([^]]*)\]", policy)
-        if len(capabilities) != len(allowed_paths) or any(
-            set(re.findall(r'"([^"]+)"', item)) != {"read"}
-            for item in capabilities
-        ):
-            errors.append(f"{policy_name} must grant read only on every path")
+        if observed_rules != allowed_rules:
+            errors.append(f"{policy_name} capabilities do not match the exact policy")
 
     uncommented_bootstrap = "\n".join(
         line for line in bootstrap.splitlines() if not line.lstrip().startswith("#")
@@ -511,7 +522,8 @@ def main() -> int:
             print(error, file=sys.stderr)
         return 1
     print(
-        "vault-isolation-ok api=cards-only mail=mailboxes-only "
+        "vault-isolation-ok api=cards-read-and-import-receipt-verify "
+        "mail=mailboxes-only "
         "sub2=sub2-and-cards-only"
     )
     return 0

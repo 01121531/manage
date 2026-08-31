@@ -1409,31 +1409,6 @@ export interface components {
             /** User Id */
             user_id: string;
         };
-        /** AdminCardCreate */
-        AdminCardCreate: {
-            /** Brand */
-            brand: string;
-            /** Expiry Month */
-            expiry_month?: number | null;
-            /** Expiry Year */
-            expiry_year?: number | null;
-            /** Last4 */
-            last4: string;
-            /**
-             * Pool Key
-             * @default legacy-unclassified
-             */
-            pool_key: string;
-            /** Provider Ref */
-            provider_ref: string;
-            /**
-             * Region
-             * @default legacy-unclassified
-             */
-            region: string;
-            /** Secret Ref */
-            secret_ref: string;
-        };
         /** AdminCardEventResponse */
         AdminCardEventResponse: {
             /** Action */
@@ -1457,6 +1432,32 @@ export interface components {
             reason_code: string | null;
             /** Trace Id */
             trace_id: string;
+        };
+        /**
+         * AdminCardImportItem
+         * @description Secret-free card metadata emitted by the trusted Vault importer.
+         */
+        AdminCardImportItem: {
+            /** Brand */
+            brand: string;
+            /** Expiry Month */
+            expiry_month?: number | null;
+            /** Expiry Year */
+            expiry_year?: number | null;
+            /** Last4 */
+            last4: string;
+            /**
+             * Pool Key
+             * @default legacy-unclassified
+             */
+            pool_key: string;
+            /** Provider Ref */
+            provider_ref: string;
+            /**
+             * Region
+             * @default legacy-unclassified
+             */
+            region: string;
         };
         /** AdminCardQuarantineRequest */
         AdminCardQuarantineRequest: {
@@ -1551,24 +1552,20 @@ export interface components {
             /** User Id */
             user_id: string;
         };
-        /** AdminMailboxCreate */
-        AdminMailboxCreate: {
+        /**
+         * AdminMailboxImportItem
+         * @description Secret-free mailbox metadata emitted by the trusted Vault importer.
+         */
+        AdminMailboxImportItem: {
             /** Connector Type */
             connector_type: string;
             /** Email Masked */
             email_masked: string;
-            /** Secret Ref */
-            secret_ref: string;
             /**
              * Task Type
              * @default mail_code
              */
             task_type: string;
-        };
-        /** AdminMailboxSecretRotation */
-        AdminMailboxSecretRotation: {
-            /** Secret Ref */
-            secret_ref: string;
         };
         /** AdminMailboxStateUpdate */
         AdminMailboxStateUpdate: {
@@ -2696,11 +2693,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminCardCreate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             201: {
@@ -2736,13 +2729,14 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": string;
+                "Secure-Import-Receipt"?: string | null;
             };
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdminCardCreate"][];
+                "application/json": components["schemas"]["AdminCardImportItem"][];
             };
         };
         responses: {
@@ -3078,11 +3072,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminMailboxCreate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             201: {
@@ -3118,13 +3108,14 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": string;
+                "Secure-Import-Receipt"?: string | null;
             };
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdminMailboxCreate"][];
+                "application/json": components["schemas"]["AdminMailboxImportItem"][];
             };
         };
         responses: {
@@ -3210,11 +3201,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminMailboxSecretRotation"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

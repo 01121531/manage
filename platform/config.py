@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     vault_token_file: str | None = None
     vault_namespace: str | None = None
     vault_timeout_seconds: int = Field(default=10, gt=0, le=60)
+    pool_import_receipt_audience: str | None = Field(default=None, max_length=160)
     mail_api_url: str | None = None
     mail_allowed_origins_file: str | None = None
     mail_timeout_seconds: int = Field(default=20, gt=0, le=300)

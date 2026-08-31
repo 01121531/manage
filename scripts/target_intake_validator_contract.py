@@ -136,6 +136,7 @@ SOURCE_FILES = (
     "platform/models.py",
     "platform/operational_policies.py",
     "platform/policies.py",
+    "platform/pool_imports.py",
     "platform/rate_limit.py",
     "platform/schemas.py",
     "platform/secrets.py",

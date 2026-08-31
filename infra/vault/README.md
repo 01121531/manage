@@ -89,6 +89,56 @@ server-side upload payload, so its role deliberately shares the card read path
 with the API. It still has no mailbox access. This does not expose card material
 to the desktop or Web clients.
 
+## Secure card and mailbox pool import
+
+Pool ingestion is a separate trust boundary from the three runtime identities
+above. `scripts/secure_pool_import.py` reads a restricted local input file,
+writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
+pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
+output JSON contains only `receipt_token` plus ordered masked `items`; upload
+that output through the matching card or mailbox pool page. Never upload the
+raw input file through the Web application.
+
+Example (the input, Vault token, optional CA, and output are absolute files;
+the audience must match the API environment):
+
+```sh
+python scripts/secure_pool_import.py card \
+  --input-file /secure-intake/cards.json \
+  --tenant-id tenant-a \
+  --vault-address https://vault.example.invalid \
+  --ca-file /etc/email-platform/internal-ca.pem \
+  --token-file /run/secrets/email-platform-card-importer/token \
+  --audience email-platform:pool-import:production \
+  --receipt-output /secure-intake/card-import-bundle.json
+```
+
+Use `mailbox` with its distinct importer token for the mailbox pool. Raw card
+records may contain PAN and optional expiry but any CVV/CVC/CID/security-code
+alias fails closed. Raw mailbox records place provider credentials under a
+`secret` object; the approved real provider schema is still an R04.02 input.
+The CLI disables proxy inheritance and redirects, requires HTTPS, reads bounded
+stable files, requires restricted POSIX permissions, writes the receipt once
+with mode `0600`, and never prints a secret or receipt token.
+
+The API verifies the Transit signature and exact audience, tenant, pool,
+ordered manifest digest, count, validity interval, UUID and key version. It
+derives every `secret_ref` itself. A globally unique receipt ID is inserted in
+the same PostgreSQL transaction as resources and audit events, so an exact
+idempotent replay remains recoverable after an ambiguous response while the
+same receipt cannot create a second batch. Vault response wrapping may be
+added as transport hardening, but is not the authority: unwrap cannot be made
+atomic with the database commit.
+
+The non-secret [`secure-import-contract.json`](secure-import-contract.json)
+and importer policies define the intended negative capabilities. They are
+preflight assets only. Before production, create two non-exportable Transit
+keys and three distinct external identities (card importer, mailbox importer,
+API verifier), prove create-only/CAS behavior, cross-pool denial, API signing
+denial, key rotation, audit traces, and concurrent database consumption. Keep
+`production_acceptance=false` until those target results and the separate PCI
+and mail-provider decisions are approved.
+
 ## Production audit devices
 
 Vault auditing is a separate production bootstrap step. From an approved

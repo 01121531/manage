@@ -6,7 +6,7 @@
   "ledger_status": "repository_and_preflight_evidence_only",
   "external_evidence_policy": "required_before_production_acceptance",
   "production_acceptance": false,
-  "phase_acceptance_matrix_sha256": "d61ee3e79e1db56facc9aa6f32fc03dd2ef83df88f6de443c397526560a049c8",
+  "phase_acceptance_matrix_sha256": "fb6a9962025d93727e29ce991b28b7e56efd2054e0448188b654fc1715d1efcb",
   "phases": [
     {
       "phase": 0,
@@ -119,8 +119,8 @@
     },
     {
       "phase": 3,
-      "repository_status": "boundary_partial",
-      "completion_class": "repository_boundary_partial_external_inputs_and_target_evidence_pending",
+      "repository_status": "repository_gate_passed",
+      "completion_class": "repository_gate_passed_external_inputs_and_target_evidence_pending",
       "production_acceptance": false,
       "target_evidence_state": "required_external",
       "missing_input_state": "required_external",
@@ -256,6 +256,6 @@
     }
   },
   "integrity": {
-    "payload_sha256": "11b8d381b84d9f5c96ed5466abd626ca116cda9e1aabfcdb2128c0a9a7a169ee"
+    "payload_sha256": "ff152491ce146498585419abce6dab4fbb2761fac1a76df40cde622849df7284"
   }
 }

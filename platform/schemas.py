@@ -373,6 +373,45 @@ class AdminCardCreate(BaseModel):
         return self
 
 
+class AdminCardImportItem(BaseModel):
+    """Secret-free card metadata emitted by the trusted Vault importer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_ref: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+    pool_key: str = Field(
+        default="legacy-unclassified", pattern=r"^[a-z0-9][a-z0-9._-]{0,79}$"
+    )
+    region: str = Field(
+        default="legacy-unclassified", pattern=r"^[a-z0-9][a-z0-9._-]{0,79}$"
+    )
+    brand: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$")
+    last4: str = Field(pattern=r"^\d{4}$")
+    expiry_month: int | None = Field(default=None, ge=1, le=12)
+    expiry_year: int | None = Field(default=None, ge=2000, le=9999)
+
+    @field_validator("provider_ref", "brand", mode="before")
+    @classmethod
+    def normalize_card_text(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized or _contains_pan_like_digits(normalized):
+            raise ValueError("card metadata must not contain a PAN")
+        return normalized
+
+    @field_validator("pool_key", "region", mode="before")
+    @classmethod
+    def normalize_routing_text(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_expiry_pair(self) -> "AdminCardImportItem":
+        if (self.expiry_month is None) != (self.expiry_year is None):
+            raise ValueError("expiry_month and expiry_year must be provided together")
+        return self
+
+
 class AdminCardStateUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -416,6 +455,31 @@ class AdminMailboxCreate(BaseModel):
             vault_prefix="vault://secret/mailboxes/",
             env_prefix="env://MAILBOX_",
         )
+
+
+class AdminMailboxImportItem(BaseModel):
+    """Secret-free mailbox metadata emitted by the trusted Vault importer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email_masked: str = Field(min_length=3, max_length=320)
+    connector_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    task_type: str = Field(
+        default="mail_code", pattern=r"^[a-z][a-z0-9_-]{0,79}$"
+    )
+
+    @field_validator("email_masked")
+    @classmethod
+    def validate_masked_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or "*" not in normalized:
+            raise ValueError("email_masked must contain a masked email address")
+        return normalized
+
+    @field_validator("connector_type", "task_type")
+    @classmethod
+    def normalize_connector_type(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 class AdminMailboxStateUpdate(BaseModel):

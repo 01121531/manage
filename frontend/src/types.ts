@@ -50,14 +50,14 @@ export type AuditFilters = {
 }
 
 export type CardSummary = ApiSchemas['AdminCardResponse']
-export type CardCreate = ApiSchemas['AdminCardCreate']
+export type CardImportItem = ApiSchemas['AdminCardImportItem']
 export type CardAllocationSummary = ApiSchemas['AdminCardAllocationResponse']
 export type CardEventSummary = ApiSchemas['AdminCardEventResponse']
 export type CardTimeline = ApiSchemas['AdminCardTimelineResponse']
 export type PoolImportReceipt = ApiSchemas['PoolImportReceiptResponse']
 
 export type MailboxSummary = ApiSchemas['MailboxStatusResponse']
-export type MailboxCreate = ApiSchemas['AdminMailboxCreate']
+export type MailboxImportItem = ApiSchemas['AdminMailboxImportItem']
 
 export type UploadSummary = Pick<
   ApiSchemas['AdminUploadResponse'],

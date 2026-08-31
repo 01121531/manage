@@ -13,7 +13,8 @@ from platform.audit import bind_audit_request_metadata, reset_audit_request_meta
 
 
 _CORS_ALLOW_HEADERS = (
-    "Authorization, Content-Type, X-Trace-Id, X-Mail-Session-Token"
+    "Authorization, Content-Type, X-Trace-Id, X-Mail-Session-Token, "
+    "Secure-Import-Receipt"
 )
 _CORS_ALLOW_METHODS = "GET, POST, PATCH, DELETE, OPTIONS"
 _CORS_EXPOSE_HEADERS = "X-Trace-Id, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining"

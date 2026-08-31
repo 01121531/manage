@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Form, Input, Modal, Space, Spin, Table, Typography } from 'antd'
+import { Alert, App as AntApp, Button, Card, Empty, Space, Spin, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
-import { createMailbox, importMailboxes, listMailboxes, rotateMailboxSecret, updateMailboxState } from '../admin-api'
-import type { MailboxCreate, MailboxSummary } from '../types'
+import { importMailboxes, listMailboxes, updateMailboxState } from '../admin-api'
+import type { MailboxImportItem, MailboxSummary } from '../types'
 import { readPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { useViewActionScope } from '../useViewActionScope'
@@ -17,15 +17,13 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<MailboxSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [mailboxListError, setMailboxListError] = useState<string>()
-  const [createOpen, setCreateOpen] = useState(false)
-  const [rotateTarget, setRotateTarget] = useState<MailboxSummary | null>(null)
   const [saving, setSaving] = useState(false)
-  const mailboxCreatePendingRef = useRef(false)
   const mailboxImportInputRef = useRef<HTMLInputElement>(null)
   const mailboxImportPendingRef = useRef(false)
   const mailboxImportRetryRef = useRef<{
-    payload: MailboxCreate[]
+    payload: MailboxImportItem[]
     idempotencyKey: string
+    receiptToken: string
   } | null>(null)
   const [mailboxImportRetryAvailable, setMailboxImportRetryAvailable] = useState(false)
   const [mailboxActionKey, setMailboxActionKey] = useState<string | null>(null)
@@ -33,17 +31,13 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const mailboxActionRef = useRef<{
     key: string
     mailboxId: string
-    kind: 'state' | 'rotation'
+    kind: 'state'
     pending: boolean
   } | null>(null)
   const mailboxListGenerationRef = useRef(0)
   const mailboxListPendingRef = useRef(false)
-  const [createForm] = Form.useForm<MailboxCreate>()
-  const [rotateForm] = Form.useForm<{ secret_ref: string }>()
 
   function failClosedMailboxList() {
-    rotateForm.resetFields()
-    setRotateTarget(null)
     setMailboxListError(
       '原因：平台未能读取邮箱连接器真实状态。'
       + '影响：旧连接器记录和所有变更入口已隐藏，活动取码会话与密钥轮换状态无法安全确认。'
@@ -66,34 +60,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       if (alive && mailboxListGenerationRef.current === generation) setLoading(false)
     })
     return () => { alive = false }
-  }, [rotateForm])
-
-  async function submitMailbox(values: MailboxCreate) {
-    if (mailboxCreatePendingRef.current) return
-    const isCurrent = beginViewAction()
-    mailboxCreatePendingRef.current = true
-    setSaving(true)
-    try {
-      await createMailbox(values)
-      if (!isCurrent()) return
-      message.success('邮箱连接器已登记。')
-      createForm.resetFields()
-      setCreateOpen(false)
-      await refreshMailboxRows(isCurrent)
-    } catch (error) {
-      if (!isCurrent()) return
-      message.error(error instanceof Error ? error.message : '邮箱连接器登记失败')
-    } finally {
-      if (!isCurrent()) return
-      mailboxCreatePendingRef.current = false
-      setSaving(false)
-    }
-  }
-
-  function closeCreateMailbox() {
-    createForm.resetFields()
-    setCreateOpen(false)
-  }
+  }, [])
 
   async function importMailboxFile(file: File | undefined) {
     if (!file || mailboxImportPendingRef.current) return
@@ -101,11 +68,17 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     mailboxImportPendingRef.current = true
     setSaving(true)
     try {
-      const payload = await readPoolImportJson<MailboxCreate>(file)
-      const batch = { payload, idempotencyKey: crypto.randomUUID() }
+      const bundle = await readPoolImportJson<MailboxImportItem>(file)
+      const batch = {
+        payload: bundle.items,
+        receiptToken: bundle.receipt_token,
+        idempotencyKey: crypto.randomUUID(),
+      }
       mailboxImportRetryRef.current = batch
       setMailboxImportRetryAvailable(true)
-      const receipt = await importMailboxes(batch.payload, batch.idempotencyKey)
+      const receipt = await importMailboxes(
+        batch.payload, batch.idempotencyKey, batch.receiptToken,
+      )
       if (!isCurrent()) return
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
@@ -139,7 +112,9 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     mailboxImportPendingRef.current = true
     setSaving(true)
     try {
-      const receipt = await importMailboxes(batch.payload, batch.idempotencyKey)
+      const receipt = await importMailboxes(
+        batch.payload, batch.idempotencyKey, batch.receiptToken,
+      )
       if (!isCurrent()) return
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
@@ -159,15 +134,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     }
   }
 
-  function closeSecretRotation() {
-    const action = mailboxActionRef.current
-    if (action?.pending) return
-    rotateForm.resetFields()
-    setRotateTarget(null)
-    if (action?.kind === 'rotation') releaseMailboxAction(action)
-  }
-
-  function reserveMailboxAction(kind: 'state' | 'rotation', mailboxId: string) {
+  function reserveMailboxAction(kind: 'state', mailboxId: string) {
     if (mailboxActionRef.current !== null) return null
     const action = { key: `${kind}:${mailboxId}`, mailboxId, kind, pending: false }
     mailboxActionRef.current = action
@@ -179,7 +146,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   function releaseMailboxAction(action: {
     key: string
     mailboxId: string
-    kind: 'state' | 'rotation'
+    kind: 'state'
     pending: boolean
   }) {
     if (mailboxActionRef.current !== action) return
@@ -241,42 +208,6 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     }
   }
 
-  async function submitRotation(values: { secret_ref: string }) {
-    if (!rotateTarget) return
-    const action = mailboxActionRef.current
-      ?? reserveMailboxAction('rotation', rotateTarget.id)
-    if (
-      !action
-      || action.kind !== 'rotation'
-      || action.mailboxId !== rotateTarget.id
-      || action.pending
-    ) return
-    const isCurrent = beginViewAction()
-    action.pending = true
-    setMailboxActionPending(true)
-    setSaving(true)
-    try {
-      await rotateMailboxSecret(rotateTarget.id, values.secret_ref)
-      if (!isCurrent()) return
-      message.success('密钥引用已轮换。')
-      rotateForm.resetFields()
-      setRotateTarget(null)
-    } catch {
-      if (!isCurrent()) return
-      message.error(
-        '原因：平台未能确认邮箱密钥引用轮换结果。'
-        + '影响：新引用可能已经生效，页面不会按失败响应推断最终状态。'
-        + '下一步：已刷新连接器真实状态；可核对后从同一入口重试。',
-      )
-    } finally {
-      if (!isCurrent()) return
-      await refreshMailboxRows(isCurrent)
-      if (!isCurrent()) return
-      setSaving(false)
-      releaseMailboxAction(action)
-    }
-  }
-
   function confirmDisableMailbox(row: MailboxSummary) {
     const action = reserveMailboxAction('state', row.id)
     if (!action) return
@@ -302,13 +233,6 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     const action = reserveMailboxAction('state', row.id)
     if (!action) return
     void changeState(action, row, true)
-  }
-
-  function openSecretRotation(row: MailboxSummary) {
-    const action = reserveMailboxAction('rotation', row.id)
-    if (!action) return
-    rotateForm.resetFields()
-    setRotateTarget(row)
   }
 
   const unavailableRows = rows.filter((row) => row.health_status === 'unavailable')
@@ -342,12 +266,6 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         aria-label={`${row.is_active ? '停用' : '启用'}邮箱 ${row.email_masked}（${row.id}）`}
         onClick={() => row.is_active ? confirmDisableMailbox(row) : enableMailbox(row)}
       >{row.is_active ? '停用' : '启用'}</Button>
-      <Button
-        loading={mailboxActionPending && mailboxActionKey === `rotation:${row.id}`}
-        disabled={saving || mailboxActionKey !== null}
-        aria-label={`轮换邮箱密钥引用 ${row.email_masked}（${row.id}）`}
-        onClick={() => openSecretRotation(row)}
-      >轮换密钥引用</Button>
     </Space> }] : []),
   ]
   return <>
@@ -357,10 +275,9 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         <Button disabled={saving} onClick={() => { void retryMailboxImport() }}>重试上次邮箱池引用清单</Button>
         <Button disabled={saving} onClick={discardMailboxImportRetry}>放弃并清除上次邮箱池引用清单</Button>
       </> : null}
-      <Button disabled={saving || mailboxActionKey !== null} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池引用清单 JSON</Button>
-      <Button type="primary" disabled={saving || mailboxActionKey !== null} onClick={() => setCreateOpen(true)}>登记邮箱连接器</Button>
+      <Button type="primary" disabled={saving || mailboxActionKey !== null} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池安全包 JSON</Button>
     </Space> : null}</div>
-    <Alert className="section-card" type="info" showIcon message="这里只登记已安全预置的邮箱连接器引用" description="原始邮箱账号和密码必须先由独立 Vault 安全导入流程处理；本页 JSON 只接收脱敏元数据和 vault://secret/mailboxes/ 引用，不是原始凭据上传入口。env://MAILBOX_ 仅限开发和测试。" />
+    <Alert className="section-card" type="info" showIcon message="这里只接收独立安全导入器生成的邮箱池安全包" description="邮箱账号、密码和令牌不进入浏览器或普通 API；安全包只含 m***@example.invalid 这类脱敏元数据和短期 Vault Transit 签名收据，密钥引用由服务端固定派生。单条资源也使用同一安全导入流程。" />
     {unavailableRows.length > 0 ? <Alert
       style={{ marginBottom: 16 }}
       type="error"
@@ -375,23 +292,5 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       description={mailboxListError}
       action={<Button onClick={() => { void refreshMailboxRows() }}>重新获取邮箱连接器真实状态</Button>}
     /> : <Table columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无邮箱连接器" /> }} scroll={{ x: 1220 }} />}</Card>
-    <Modal title="登记邮箱连接器" open={createOpen} onCancel={closeCreateMailbox} onOk={() => createForm.submit()} confirmLoading={saving} okText="登记" cancelText="取消" destroyOnHidden>
-      <Form form={createForm} layout="vertical" onFinish={submitMailbox} requiredMark="optional">
-        <Form.Item label="掩码邮箱" name="email_masked" extra="必须使用掩码地址，例如 m***@example.invalid。" rules={[{ required: true }, { pattern: /^[^@]*\*[^@]*@[^@]+$/, message: '请输入包含 * 的掩码邮箱' }]}><Input autoComplete="off" placeholder="m***@example.invalid" /></Form.Item>
-        <Form.Item label="连接器类型" name="connector_type" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_-]*$/, message: '仅允许小写字母、数字、横线和下划线' }]}><Input placeholder="http" /></Form.Item>
-        <Form.Item label="服务端路由键" name="task_type" initialValue="mail_code" extra="由服务端按任务类型选择邮箱池，普通客户端不能指定连接器或邮箱。" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_-]*$/, message: '仅允许小写字母、数字、横线和下划线' }]}><Input autoComplete="off" placeholder="mail_code" /></Form.Item>
-        <Form.Item label="密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env://MAILBOX_ 仅限开发/测试。请勿填写邮箱账号或密码。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/[A-Za-z0-9]|env:\/\/MAILBOX_[A-Za-z0-9])[A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；开发引用必须使用 env://MAILBOX_' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001" /></Form.Item>
-      </Form>
-    </Modal>
-    <Modal title={rotateTarget ? `轮换邮箱密钥引用 ${rotateTarget.email_masked}` : '轮换邮箱密钥引用'} open={rotateTarget !== null} onCancel={closeSecretRotation} onOk={() => rotateForm.submit()} confirmLoading={saving} okText="确认轮换" cancelText="取消" destroyOnHidden>
-      {rotateTarget ? <Descriptions size="small" column={1}>
-        <Descriptions.Item label="掩码邮箱">{rotateTarget.email_masked}</Descriptions.Item>
-        <Descriptions.Item label="连接器 ID">{rotateTarget.id}</Descriptions.Item>
-      </Descriptions> : null}
-      <Alert type="warning" showIcon message="仅更新密钥引用" description="新凭据应已预先写入服务端密钥管理器；审计只记录轮换动作，不记录引用值。" />
-      <Form className="modal-form" form={rotateForm} layout="vertical" onFinish={submitRotation}>
-        <Form.Item label="新密钥引用" name="secret_ref" extra="生产必须使用 vault://secret/mailboxes/；env://MAILBOX_ 仅限开发/测试。" rules={[{ required: true }, { pattern: /^(vault:\/\/secret\/mailboxes\/[A-Za-z0-9]|env:\/\/MAILBOX_[A-Za-z0-9])[A-Za-z0-9._/-]*$/, message: '生产使用 vault://secret/mailboxes/；开发引用必须使用 env://MAILBOX_' }]}><Input.Password autoComplete="new-password" visibilityToggle={false} placeholder="vault://secret/mailboxes/mail-001-v2" /></Form.Item>
-      </Form>
-    </Modal>
   </>
 }

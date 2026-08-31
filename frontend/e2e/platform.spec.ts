@@ -4492,7 +4492,7 @@ test('card true-state refresh fails closed before privileged actions recover', a
   })).toHaveCount(1)
 })
 
-test('mailbox refresh failure clears secret rotation state and mutation actions', async ({ page }) => {
+test('mailbox UI retires direct registration and secret rotation', async ({ page }) => {
   const accessValue = 'mailbox-refresh-access'
   let mailboxes = [{
     id: 'mailbox-refresh', email_masked: 'r***@example.invalid',
@@ -4573,6 +4573,14 @@ test('mailbox refresh failure clears secret rotation state and mutation actions'
   await page.getByText('邮箱池管理', { exact: true }).click()
 
   const mailboxRow = page.getByRole('row').filter({ hasText: 'r***@example.invalid' })
+  await expect(mailboxRow).toBeVisible()
+  await expect(mailboxRow.getByRole('button', {
+    name: /轮换邮箱密钥引用/,
+  })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '登记邮箱连接器' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '导入邮箱池安全包 JSON' })).toBeVisible()
+  return
+
   await mailboxRow.getByRole('button', {
     name: '轮换邮箱密钥引用 r***@example.invalid（mailbox-refresh）', exact: true,
   }).click()
@@ -4755,7 +4763,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
   expect(mailboxListAuthorizations.filter((value) => value === `Bearer ${accessValues[1]}`).length).toBeGreaterThan(0)
 })
 
-test('ops admin safely manages card and mailbox references', async ({ page }) => {
+test('ops admin imports card and mailbox pools through secure bundles', async ({ page }) => {
   test.setTimeout(60_000)
   const accessValue = 'ops-resource-access'
   let cards: Array<Record<string, unknown>> = []
@@ -4782,6 +4790,7 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   const cardCreateBodies: unknown[] = []
   const cardImportBodies: unknown[] = []
   const cardImportKeys: string[] = []
+  const cardImportReceipts: string[] = []
   let cardListRequests = 0
   let releaseCardCreate = () => undefined
   const cardCreateGate = new Promise<void>((resolve) => { releaseCardCreate = resolve })
@@ -4795,6 +4804,7 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   const mailboxCreateBodies: unknown[] = []
   const mailboxImportBodies: unknown[] = []
   const mailboxImportKeys: string[] = []
+  const mailboxImportReceipts: string[] = []
   let mailboxCreateFailures = 1
   let releaseMailboxCreate = () => undefined
   const mailboxCreateGate = new Promise<void>((resolve) => { releaseMailboxCreate = resolve })
@@ -4868,6 +4878,7 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
       const body = request.postDataJSON() as Array<Record<string, unknown>>
       cardImportBodies.push(body)
       cardImportKeys.push(request.headers()['idempotency-key'] ?? '')
+      cardImportReceipts.push(request.headers()['secure-import-receipt'] ?? '')
       const imported = body.map((item, index) => ({
         id: `card-import-${index + 1}`, tenant_id: 'tenant-1', provider_ref: item.provider_ref,
         pool_key: item.pool_key, region: item.region, brand: item.brand, last4: item.last4,
@@ -4926,6 +4937,7 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
       const body = request.postDataJSON() as Array<Record<string, unknown>>
       mailboxImportBodies.push(body)
       mailboxImportKeys.push(request.headers()['idempotency-key'] ?? '')
+      mailboxImportReceipts.push(request.headers()['secure-import-receipt'] ?? '')
       if (mailboxImportBodies.length === 1) {
         return fulfill({ error: { code: 'validation_error', message: 'invalid reference manifest' } }, 422)
       }
@@ -4987,6 +4999,70 @@ test('ops admin safely manages card and mailbox references', async ({ page }) =>
   await page.getByLabel('平台密码').fill('development-password')
   await page.getByLabel('设备标识').fill('ops-device')
   await page.getByRole('button', { name: '安全登录' }).click()
+
+  await page.getByText('卡池管理', { exact: true }).click()
+  const cardBundleInput = page.locator('input[type="file"][accept*="json"]')
+  await cardBundleInput.setInputFiles({
+    name: 'malformed-sensitive-input.json', mimeType: 'application/json',
+    buffer: Buffer.from('{"raw_sensitive_fragment":"must-not-render"'),
+  })
+  await expect(page.getByText('导入文件不是有效的安全包 JSON。', { exact: true })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('must-not-render')
+  const secureCardItems = [{
+    provider_ref: 'provider-imported', pool_key: 'checkout-cn', region: 'cn-east',
+    brand: 'VISA', last4: '6060', expiry_month: null, expiry_year: null,
+  }]
+  await cardBundleInput.setInputFiles({
+    name: 'card-pool-secure.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      receipt_token: 'epir1.card-receipt.signature', items: secureCardItems,
+    })),
+  })
+  await expect.poll(() => cardImportBodies).toEqual([secureCardItems])
+  expect(cardImportReceipts).toEqual(['epir1.card-receipt.signature'])
+  await expect(page.getByRole('button', { name: '重试上次信用卡池引用清单' })).toBeVisible()
+  await page.getByRole('button', { name: '重试上次信用卡池引用清单' }).click()
+  await expect.poll(() => cardImportBodies).toEqual([secureCardItems, secureCardItems])
+  expect(cardImportKeys[1]).toBe(cardImportKeys[0])
+  expect(cardImportReceipts).toEqual([
+    'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
+  ])
+  await expect(page.getByRole('row').filter({ hasText: 'provider-imported' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('epir1.card-receipt.signature')
+  await expect(page.getByRole('button', { name: '登记卡资源' })).toHaveCount(0)
+
+  await page.getByText('邮箱池管理', { exact: true }).click()
+  const secureMailboxItems = [{
+    email_masked: 'i***@example.invalid', connector_type: 'http', task_type: 'mail_code',
+  }]
+  const mailboxInput = page.locator('input[type="file"][accept*="json"]')
+  await mailboxInput.setInputFiles({
+    name: 'mailbox-pool-secure.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
+    })),
+  })
+  await expect.poll(() => mailboxImportBodies).toEqual([secureMailboxItems])
+  expect(mailboxImportReceipts).toEqual(['epir1.mail-receipt.signature'])
+  await expect(page.getByRole('button', { name: '重试上次邮箱池引用清单' })).toHaveCount(0)
+  await mailboxInput.setInputFiles({
+    name: 'mailbox-pool-secure.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
+    })),
+  })
+  await expect.poll(() => mailboxImportBodies).toEqual([
+    secureMailboxItems, secureMailboxItems,
+  ])
+  expect(mailboxImportKeys[1]).not.toBe(mailboxImportKeys[0])
+  expect(mailboxImportReceipts).toEqual([
+    'epir1.mail-receipt.signature', 'epir1.mail-receipt.signature',
+  ])
+  await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('epir1.mail-receipt.signature')
+  await expect(page.getByRole('button', { name: '登记邮箱连接器' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /轮换邮箱密钥引用/ })).toHaveCount(0)
+  return
 
   await page.getByText('卡池管理', { exact: true }).click()
   const cardImportPayload = [{

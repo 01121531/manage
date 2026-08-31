@@ -63,7 +63,7 @@ AUTHORING_GENERATION_BOUNDARY_MARKERS = (
     "generation-history-semantic-replay=every-generation",
     "generation-receipt-evaluation-time=recorded-host-utc",
     "generation-validator-contract=closed-v5-local-source-payload-runtime-and-execution-profile",
-    "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
+    "generation-validator-on-disk-source-inventory=66-whole-file-sha256-matched",
     "generation-validator-replay-runtime=python-os-stdlib-native-transitive-and-loaded-owner-payload-fingerprint-matched",
     "generation_validator_contract_sha256=",
     "generation-validator-execution-mode=",
@@ -168,6 +168,7 @@ EXPECTED_VALIDATOR_SOURCES = (
     "platform/models.py",
     "platform/operational_policies.py",
     "platform/policies.py",
+    "platform/pool_imports.py",
     "platform/rate_limit.py",
     "platform/schemas.py",
     "platform/secrets.py",
@@ -1675,7 +1676,7 @@ def causality_errors(
                     "generation-history-semantic-replay=every-generation",
                     "generation-receipt-evaluation-time=recorded-host-utc",
                     "generation-validator-contract=closed-v5-local-source-payload-runtime-and-execution-profile",
-                    "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched",
+                    "generation-validator-on-disk-source-inventory=66-whole-file-sha256-matched",
                     "generation-validator-replay-runtime=python-os-stdlib-native-transitive-and-loaded-owner-payload-fingerprint-matched",
                     "generation_validator_contract_sha256=",
                     "generation-validator-execution-mode=",
@@ -2309,7 +2310,7 @@ def main() -> int:
         "generation-history-semantic-replay=every-generation "
         "generation-receipt-evaluation-time=recorded-host-utc "
         "generation-validator-contract=closed-v5-local-source-payload-runtime-and-execution-profile "
-        "generation-validator-on-disk-source-inventory=65-whole-file-sha256-matched "
+        "generation-validator-on-disk-source-inventory=66-whole-file-sha256-matched "
         "generation-validator-replay-runtime="
         "python-os-stdlib-native-transitive-and-loaded-owner-payload-fingerprint-matched "
         "authoring-validation-context-external-handoff=not-consumed "

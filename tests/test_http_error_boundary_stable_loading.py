@@ -17,7 +17,7 @@ FIXED_SOURCE_ERROR = (
     "http-error-boundary-read: "
     "Cannot inspect HTTP error boundary sources\n"
 )
-MAX_HTTP_BOUNDARY_SOURCE_BYTES = 256 * 1024
+MAX_HTTP_BOUNDARY_SOURCE_BYTES = 320 * 1024
 
 
 class HttpErrorBoundaryStableLoadingTests(unittest.TestCase):
@@ -199,7 +199,7 @@ class HttpErrorBoundaryStableLoadingTests(unittest.TestCase):
         )
         self.assertNotIn(".read_text(", source)
         self.assertIn(
-            "MAX_HTTP_BOUNDARY_SOURCE_BYTES = 256 * 1024",
+            "MAX_HTTP_BOUNDARY_SOURCE_BYTES = 320 * 1024",
             source,
         )
         self.assertIn(

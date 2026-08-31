@@ -144,7 +144,7 @@ class TargetIntakeSnapshotLauncherTests(unittest.TestCase):
                 [item["name"] for item in contract["runtime_environment"]["distributions"]],
                 closure["union_names"],
             )
-            self.assertEqual(len(contract["source_files"]), 65)
+            self.assertEqual(len(contract["source_files"]), 66)
             profile = contract["execution_profile"]
             self.assertEqual(
                 profile["mode"],

@@ -235,78 +235,6 @@
         "title": "AdminCardAllocationResponse",
         "type": "object"
       },
-      "AdminCardCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "brand": {
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$",
-            "title": "Brand",
-            "type": "string"
-          },
-          "expiry_month": {
-            "anyOf": [
-              {
-                "maximum": 12.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expiry Month"
-          },
-          "expiry_year": {
-            "anyOf": [
-              {
-                "maximum": 9999.0,
-                "minimum": 2000.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expiry Year"
-          },
-          "last4": {
-            "pattern": "^\\d{4}$",
-            "title": "Last4",
-            "type": "string"
-          },
-          "pool_key": {
-            "default": "legacy-unclassified",
-            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
-            "title": "Pool Key",
-            "type": "string"
-          },
-          "provider_ref": {
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
-            "title": "Provider Ref",
-            "type": "string"
-          },
-          "region": {
-            "default": "legacy-unclassified",
-            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
-            "title": "Region",
-            "type": "string"
-          },
-          "secret_ref": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Secret Ref",
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider_ref",
-          "brand",
-          "last4",
-          "secret_ref"
-        ],
-        "title": "AdminCardCreate",
-        "type": "object"
-      },
       "AdminCardEventResponse": {
         "properties": {
           "action": {
@@ -383,6 +311,72 @@
           "created_at"
         ],
         "title": "AdminCardEventResponse",
+        "type": "object"
+      },
+      "AdminCardImportItem": {
+        "additionalProperties": false,
+        "description": "Secret-free card metadata emitted by the trusted Vault importer.",
+        "properties": {
+          "brand": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$",
+            "title": "Brand",
+            "type": "string"
+          },
+          "expiry_month": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Month"
+          },
+          "expiry_year": {
+            "anyOf": [
+              {
+                "maximum": 9999.0,
+                "minimum": 2000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Year"
+          },
+          "last4": {
+            "pattern": "^\\d{4}$",
+            "title": "Last4",
+            "type": "string"
+          },
+          "pool_key": {
+            "default": "legacy-unclassified",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Pool Key",
+            "type": "string"
+          },
+          "provider_ref": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+            "title": "Provider Ref",
+            "type": "string"
+          },
+          "region": {
+            "default": "legacy-unclassified",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_ref",
+          "brand",
+          "last4"
+        ],
+        "title": "AdminCardImportItem",
         "type": "object"
       },
       "AdminCardQuarantineRequest": {
@@ -681,8 +675,9 @@
         "title": "AdminDeviceResponse",
         "type": "object"
       },
-      "AdminMailboxCreate": {
+      "AdminMailboxImportItem": {
         "additionalProperties": false,
+        "description": "Secret-free mailbox metadata emitted by the trusted Vault importer.",
         "properties": {
           "connector_type": {
             "pattern": "^[a-z][a-z0-9_-]{0,79}$",
@@ -695,12 +690,6 @@
             "title": "Email Masked",
             "type": "string"
           },
-          "secret_ref": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Secret Ref",
-            "type": "string"
-          },
           "task_type": {
             "default": "mail_code",
             "pattern": "^[a-z][a-z0-9_-]{0,79}$",
@@ -710,26 +699,9 @@
         },
         "required": [
           "email_masked",
-          "connector_type",
-          "secret_ref"
+          "connector_type"
         ],
-        "title": "AdminMailboxCreate",
-        "type": "object"
-      },
-      "AdminMailboxSecretRotation": {
-        "additionalProperties": false,
-        "properties": {
-          "secret_ref": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Secret Ref",
-            "type": "string"
-          }
-        },
-        "required": [
-          "secret_ref"
-        ],
-        "title": "AdminMailboxSecretRotation",
+        "title": "AdminMailboxImportItem",
         "type": "object"
       },
       "AdminMailboxStateUpdate": {
@@ -3967,16 +3939,6 @@
       },
       "post": {
         "operationId": "admin_create_card_api_v1_admin_cards_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AdminCardCreate"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "201": {
             "content": {
@@ -4035,6 +3997,23 @@
               "title": "Idempotency-Key",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Secure-Import-Receipt",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 12288,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Secure-Import-Receipt"
+            }
           }
         ],
         "requestBody": {
@@ -4042,7 +4021,7 @@
             "application/json": {
               "schema": {
                 "items": {
-                  "$ref": "#/components/schemas/AdminCardCreate"
+                  "$ref": "#/components/schemas/AdminCardImportItem"
                 },
                 "maxItems": 100,
                 "minItems": 1,
@@ -4590,16 +4569,6 @@
     "/api/v1/admin/mailboxes": {
       "post": {
         "operationId": "admin_create_mailbox_api_v1_admin_mailboxes_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AdminMailboxCreate"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "201": {
             "content": {
@@ -4658,6 +4627,23 @@
               "title": "Idempotency-Key",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Secure-Import-Receipt",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 12288,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Secure-Import-Receipt"
+            }
           }
         ],
         "requestBody": {
@@ -4665,7 +4651,7 @@
             "application/json": {
               "schema": {
                 "items": {
-                  "$ref": "#/components/schemas/AdminMailboxCreate"
+                  "$ref": "#/components/schemas/AdminMailboxImportItem"
                 },
                 "maxItems": 100,
                 "minItems": 1,
@@ -4800,16 +4786,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AdminMailboxSecretRotation"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {

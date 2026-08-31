@@ -1060,7 +1060,7 @@ class MailSessionTests(unittest.TestCase):
             )
             self.assertEqual(code_ready_events, [])
 
-    def test_secret_rotation_makes_slow_worker_result_stale(self) -> None:
+    def test_mailbox_disable_makes_slow_worker_result_stale(self) -> None:
         self.app.state.settings.mail_poll_mode = "worker"
         token = self.login()
         admin_token = self.login(
@@ -1085,10 +1085,10 @@ class MailSessionTests(unittest.TestCase):
             try:
                 self.assertTrue(connector.entered.wait(timeout=5))
                 rotated = self.request(
-                    "POST",
-                    f"/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+                    "PATCH",
+                    f"/api/v1/admin/mailboxes/{mailbox_id}",
                     headers=self.bearer(admin_token),
-                    json={"secret_ref": "vault://secret/mailboxes/mail-owner-v2"},
+                    json={"is_active": False},
                 )
                 self.assertEqual(rotated.status_code, 200, rotated.text)
             finally:
@@ -1112,10 +1112,10 @@ class MailSessionTests(unittest.TestCase):
                 )
             )
             self.assertEqual(len(events), 1)
-            self.assertIn("admin_mailbox_secret_rotated", events[0].details_json)
+            self.assertIn("admin_mailbox_disabled", events[0].details_json)
             self.assertNotIn("vault://", events[0].details_json)
 
-    def test_secret_rotation_makes_slow_api_poll_return_revoked(self) -> None:
+    def test_mailbox_disable_makes_slow_api_poll_return_revoked(self) -> None:
         token = self.login()
         admin_token = self.login(
             self.admin_identity,
@@ -1140,10 +1140,10 @@ class MailSessionTests(unittest.TestCase):
             try:
                 self.assertTrue(connector.entered.wait(timeout=5))
                 rotated = self.request(
-                    "POST",
-                    f"/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+                    "PATCH",
+                    f"/api/v1/admin/mailboxes/{mailbox_id}",
                     headers=self.bearer(admin_token),
-                    json={"secret_ref": "vault://secret/mailboxes/mail-owner-v3"},
+                    json={"is_active": False},
                 )
                 self.assertEqual(rotated.status_code, 200, rotated.text)
             finally:
@@ -1173,7 +1173,7 @@ class MailSessionTests(unittest.TestCase):
                 False,
             )
 
-    def test_secret_rotation_discards_slow_connector_failure_health(self) -> None:
+    def test_mailbox_disable_discards_slow_connector_failure_health(self) -> None:
         token = self.login()
         admin_token = self.login(
             self.admin_identity,
@@ -1198,10 +1198,10 @@ class MailSessionTests(unittest.TestCase):
             try:
                 self.assertTrue(connector.entered.wait(timeout=5))
                 rotated = self.request(
-                    "POST",
-                    f"/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+                    "PATCH",
+                    f"/api/v1/admin/mailboxes/{mailbox_id}",
                     headers=self.bearer(admin_token),
-                    json={"secret_ref": "vault://secret/mailboxes/mail-owner-v4"},
+                    json={"is_active": False},
                 )
                 self.assertEqual(rotated.status_code, 200, rotated.text)
             finally:
