@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Modal, Space, Spin, Table, Select, Timeline, Typography } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Input, Modal, Space, Spin, Table, Select, Timeline, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { getCardTimeline, importCards, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
 import type { CardAllocationSummary, CardEventSummary, CardImportItem, CardSummary, CardTimeline } from '../types'
@@ -18,6 +18,9 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const [rows, setRows] = useState<CardSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [cardListError, setCardListError] = useState<string>()
+  const [cardSearch, setCardSearch] = useState('')
+  const [cardPoolFilter, setCardPoolFilter] = useState<string>()
+  const [cardStatusFilter, setCardStatusFilter] = useState<CardSummary['status']>()
   const [refresh, setRefresh] = useState(0)
   const [saving, setSaving] = useState(false)
   const [quarantineTarget, setQuarantineTarget] = useState<CardSummary | null>(null)
@@ -417,6 +420,20 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     }
   }
 
+  const cardPoolOptions = useMemo(() => Array.from(
+    new Set(rows.map((row) => row.pool_key)),
+  ).sort(compareTableText).map((value) => ({ label: value, value })), [rows])
+  const filteredRows = useMemo(() => {
+    const query = cardSearch.trim().toLocaleLowerCase()
+    return rows.filter((row) => {
+      if (cardPoolFilter && row.pool_key !== cardPoolFilter) return false
+      if (cardStatusFilter && row.status !== cardStatusFilter) return false
+      if (!query) return true
+      return [row.provider_ref, row.pool_key, row.region, row.brand, row.last4]
+        .some((value) => value.toLocaleLowerCase().includes(query))
+    })
+  }, [cardPoolFilter, cardSearch, cardStatusFilter, rows])
+
   const columns: TableColumnsType<CardSummary> = [
     { title: '提供方引用', dataIndex: 'provider_ref', sorter: (left, right) => compareTableText(left.provider_ref, right.provider_ref) },
     { title: '卡池', dataIndex: 'pool_key', sorter: (left, right) => compareTableText(left.pool_key, right.pool_key) },
@@ -426,13 +443,6 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     { title: '有效期', render: (_, row) => row.expiry_month && row.expiry_year ? `${String(row.expiry_month).padStart(2, '0')}/${row.expiry_year}` : '—' },
     {
       title: '状态', dataIndex: 'status',
-      filters: [
-        { text: '可用', value: 'available' },
-        { text: '已分配', value: 'allocated' },
-        { text: '已停用', value: 'disabled' },
-        { text: '已隔离', value: 'quarantined' },
-      ],
-      onFilter: (value, row) => row.status === value,
       render: (value: CardSummary['status']) => <CardStatusTag value={value} />,
     },
     { title: '隔离原因', dataIndex: 'quarantine_reason_code', render: (value: string | null) => value ? (cardQuarantineReasonNames[value] ?? '其他受控原因') : '—' },
@@ -494,7 +504,43 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message="卡资源列表暂不可用"
       description={cardListError}
       action={<Button onClick={refreshCardsFromServer}>重新获取卡资源真实状态</Button>}
-    /> : <Table columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无卡资源" /> }} scroll={{ x: 1100 }} />}</Card>
+    /> : <Space direction="vertical" size={16} className="full-width">
+      <Space wrap>
+        <Input
+          allowClear
+          aria-label="搜索信用卡池"
+          placeholder="搜索提供方引用、卡池、地区、品牌或尾号"
+          value={cardSearch}
+          onChange={(event) => setCardSearch(event.currentTarget.value)}
+          style={{ width: 320 }}
+        />
+        <Select
+          allowClear
+          aria-label="按卡池筛选"
+          placeholder="全部卡池"
+          value={cardPoolFilter}
+          options={cardPoolOptions}
+          onChange={setCardPoolFilter}
+          style={{ minWidth: 160 }}
+        />
+        <Select<CardSummary['status']>
+          allowClear
+          aria-label="按卡状态筛选"
+          placeholder="全部状态"
+          value={cardStatusFilter}
+          options={[
+            { label: '可用', value: 'available' },
+            { label: '已分配', value: 'allocated' },
+            { label: '已停用', value: 'disabled' },
+            { label: '已隔离', value: 'quarantined' },
+          ]}
+          onChange={setCardStatusFilter}
+          style={{ minWidth: 140 }}
+        />
+        <Text type="secondary" role="status" aria-live="polite">显示 {filteredRows.length} / 共 {rows.length} 张卡</Text>
+      </Space>
+      <Table columns={columns} dataSource={filteredRows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的卡资源" /> }} scroll={{ x: 1100 }} />
+    </Space>}</Card>
     {selectedCardId ? <Card
       className="section-card"
       title="卡片分配历史"

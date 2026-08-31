@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, App as AntApp, Button, Card, Empty, Space, Spin, Table, Typography } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, App as AntApp, Button, Card, Empty, Input, Select, Space, Spin, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { importMailboxes, listMailboxes, updateMailboxState } from '../admin-api'
 import type { MailboxImportItem, MailboxSummary } from '../types'
@@ -17,6 +17,9 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<MailboxSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [mailboxListError, setMailboxListError] = useState<string>()
+  const [mailboxSearch, setMailboxSearch] = useState('')
+  const [mailboxStatusFilter, setMailboxStatusFilter] = useState<MailboxSummary['status']>()
+  const [mailboxHealthFilter, setMailboxHealthFilter] = useState<MailboxSummary['health_status']>()
   const [saving, setSaving] = useState(false)
   const mailboxImportInputRef = useRef<HTMLInputElement>(null)
   const mailboxImportPendingRef = useRef(false)
@@ -236,16 +239,22 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   }
 
   const unavailableRows = rows.filter((row) => row.health_status === 'unavailable')
+  const filteredRows = useMemo(() => {
+    const query = mailboxSearch.trim().toLocaleLowerCase()
+    return rows.filter((row) => {
+      if (mailboxStatusFilter && row.status !== mailboxStatusFilter) return false
+      if (mailboxHealthFilter && row.health_status !== mailboxHealthFilter) return false
+      if (!query) return true
+      return [row.email_masked, row.connector_type, row.task_type]
+        .some((value) => value.toLocaleLowerCase().includes(query))
+    })
+  }, [mailboxHealthFilter, mailboxSearch, mailboxStatusFilter, rows])
   const columns: TableColumnsType<MailboxSummary> = [
     { title: '邮箱', dataIndex: 'email_masked', sorter: (left, right) => compareTableText(left.email_masked, right.email_masked) },
     { title: '连接器', dataIndex: 'connector_type', sorter: (left, right) => compareTableText(left.connector_type, right.connector_type) },
     { title: '服务端路由键', dataIndex: 'task_type', sorter: (left, right) => compareTableText(left.task_type, right.task_type) },
     { title: '容量状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: '健康', dataIndex: 'health_status', filters: [
-      { text: '正常', value: 'healthy' },
-      { text: '异常', value: 'unavailable' },
-      { text: '未检测', value: 'unknown' },
-    ], onFilter: (value, row) => row.health_status === value, render: (value, row) => <Space direction="vertical" size={0}>
+    { title: '健康', dataIndex: 'health_status', render: (value, row) => <Space direction="vertical" size={0}>
       <MailboxHealthTag value={value} />
       {row.last_error_code ? <Text type="danger">{mailboxHealthErrorNames[row.last_error_code] ?? '连接器异常'}</Text> : null}
     </Space> },
@@ -253,8 +262,6 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     { title: '等待会话', dataIndex: 'active_session_count', sorter: (left, right) => left.active_session_count - right.active_session_count },
     {
       title: '启用', dataIndex: 'is_active',
-      filters: [{ text: '是', value: 'active' }, { text: '否', value: 'disabled' }],
-      onFilter: (value, row) => (row.is_active ? 'active' : 'disabled') === value,
       render: (value: boolean) => <BooleanStateTag value={value} trueLabel="是" falseLabel="否" />,
     },
     { title: '创建时间', dataIndex: 'created_at', sorter: (left, right) => compareTableDate(left.created_at, right.created_at) },
@@ -291,6 +298,45 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       message="邮箱连接器列表暂不可用"
       description={mailboxListError}
       action={<Button onClick={() => { void refreshMailboxRows() }}>重新获取邮箱连接器真实状态</Button>}
-    /> : <Table columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="暂无邮箱连接器" /> }} scroll={{ x: 1220 }} />}</Card>
+    /> : <Space direction="vertical" size={16} className="full-width">
+      <Space wrap>
+        <Input
+          allowClear
+          aria-label="搜索邮箱池"
+          placeholder="搜索掩码邮箱、连接器或服务端路由键"
+          value={mailboxSearch}
+          onChange={(event) => setMailboxSearch(event.currentTarget.value)}
+          style={{ width: 320 }}
+        />
+        <Select<MailboxSummary['status']>
+          allowClear
+          aria-label="按邮箱容量状态筛选"
+          placeholder="全部容量状态"
+          value={mailboxStatusFilter}
+          options={[
+            { label: '可用', value: 'available' },
+            { label: '忙碌', value: 'busy' },
+            { label: '已停用', value: 'disabled' },
+          ]}
+          onChange={setMailboxStatusFilter}
+          style={{ minWidth: 160 }}
+        />
+        <Select<MailboxSummary['health_status']>
+          allowClear
+          aria-label="按邮箱健康状态筛选"
+          placeholder="全部健康状态"
+          value={mailboxHealthFilter}
+          options={[
+            { label: '正常', value: 'healthy' },
+            { label: '异常', value: 'unavailable' },
+            { label: '未检测', value: 'unknown' },
+          ]}
+          onChange={setMailboxHealthFilter}
+          style={{ minWidth: 160 }}
+        />
+        <Text type="secondary" role="status" aria-live="polite">显示 {filteredRows.length} / 共 {rows.length} 个邮箱</Text>
+      </Space>
+      <Table columns={columns} dataSource={filteredRows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的邮箱连接器" /> }} scroll={{ x: 1220 }} />
+    </Space>}</Card>
   </>
 }

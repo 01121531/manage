@@ -4625,6 +4625,128 @@ test('mailbox UI retires direct registration and secret rotation', async ({ page
   await expect(recoveredDialog.getByLabel('新密钥引用')).toHaveValue('')
 })
 
+test('card and mailbox pools keep masked search and filters separate', async ({ page }) => {
+  const accessValue = 'pool-filter-access'
+  const cards = [
+    {
+      id: 'card-cn', tenant_id: 'tenant-1', provider_ref: 'provider-cn',
+      pool_key: 'checkout-cn', region: 'CN', brand: 'Visa', last4: '4242',
+      expiry_month: 12, expiry_year: 2030, status: 'available',
+      quarantine_reason_code: null, quarantined_at: null, is_active: true,
+      created_at: '2026-08-20T00:00:00Z', pan: '4111111111111111',
+    },
+    {
+      id: 'card-eu', tenant_id: 'tenant-1', provider_ref: 'provider-eu',
+      pool_key: 'checkout-eu', region: 'DE', brand: 'Mastercard', last4: '5454',
+      expiry_month: 11, expiry_year: 2031, status: 'allocated',
+      quarantine_reason_code: null, quarantined_at: null, is_active: true,
+      created_at: '2026-08-19T00:00:00Z',
+    },
+    {
+      id: 'card-held', tenant_id: 'tenant-1', provider_ref: 'provider-held',
+      pool_key: 'checkout-cn', region: 'CN', brand: 'Visa', last4: '9999',
+      expiry_month: null, expiry_year: null, status: 'quarantined',
+      quarantine_reason_code: 'provider_dispute', quarantined_at: '2026-08-20T01:00:00Z',
+      is_active: false, created_at: '2026-08-18T00:00:00Z',
+    },
+  ]
+  const mailboxes = [
+    {
+      id: 'mail-http', email_masked: 'h***@example.invalid', connector_type: 'http',
+      task_type: 'signup-cn', is_active: true, status: 'available',
+      health_status: 'healthy', last_checked_at: '2026-08-20T00:00:00Z',
+      last_error_code: null, active_session_count: 0,
+      created_at: '2026-08-20T00:00:00Z', email_raw: 'hidden@example.com',
+    },
+    {
+      id: 'mail-imap', email_masked: 'i***@example.invalid', connector_type: 'imap',
+      task_type: 'signup-eu', is_active: true, status: 'busy',
+      health_status: 'unavailable', last_checked_at: '2026-08-20T00:00:00Z',
+      last_error_code: 'connector_unavailable', active_session_count: 1,
+      created_at: '2026-08-19T00:00:00Z', password: 'mailbox-secret-value',
+    },
+    {
+      id: 'mail-disabled', email_masked: 'd***@example.invalid', connector_type: 'http',
+      task_type: 'signup-cn', is_active: false, status: 'disabled',
+      health_status: 'unknown', last_checked_at: null, last_error_code: null,
+      active_session_count: 0, created_at: '2026-08-18T00:00:00Z',
+    },
+  ]
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    const fulfill = (value: unknown, status = 200) => route.fulfill({
+      status,
+      contentType: 'application/json',
+      body: JSON.stringify(value),
+    })
+    if (path === '/api/v1/auth/config') {
+      return fulfill({ mode: 'local', issuer: null, client_id: null, desktop_client_id: null, audience: null })
+    }
+    if (path === '/api/v1/auth/login') {
+      return fulfill({ access_token: accessValue, expires_in: 900, token_type: 'bearer' })
+    }
+    expect(request.headers().authorization).toBe(`Bearer ${accessValue}`)
+    if (path === '/api/v1/me') {
+      return fulfill({
+        id: 'ops-user', tenant_id: 'tenant-1', email: 'ops@example.invalid',
+        device_id: 'ops-device', role: 'ops_admin',
+      })
+    }
+    if (path === '/api/v1/dashboard/summary') {
+      return fulfill({
+        scope: 'tenant', generated_at: '2026-08-20T00:00:00Z', active_tasks: 0,
+        allocated_cards: 1, waiting_mail_sessions: 1, queued_uploads: 0,
+        unknown_uploads: 0, task_statuses: {}, mail_session_statuses: {},
+        card_allocation_statuses: {}, upload_statuses: {},
+      })
+    }
+    if (path === '/api/v1/admin/cards') return fulfill(cards)
+    if (path === '/api/v1/mailboxes') return fulfill(mailboxes)
+    return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
+  })
+
+  await page.goto('/')
+  await page.getByLabel('租户').fill('tenant-1')
+  await page.getByLabel('平台账号').fill('ops@example.invalid')
+  await page.getByLabel('平台密码').fill('development-password')
+  await page.getByLabel('设备标识').fill('ops-device')
+  await page.getByRole('button', { name: '安全登录' }).click()
+
+  await page.getByText('卡池管理', { exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: '显示 3 / 共 3 张卡' })).toBeVisible()
+  const cardSearch = page.getByLabel('搜索信用卡池')
+  await cardSearch.fill('4242')
+  await expect(page.getByText('provider-cn', { exact: true })).toBeVisible()
+  await expect(page.getByText('provider-eu', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: '显示 1 / 共 3 张卡' })).toBeVisible()
+  await cardSearch.fill('')
+  const cardPoolFilter = page.getByLabel('按卡池筛选')
+  await cardPoolFilter.click()
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option')
+    .filter({ hasText: 'checkout-eu' }).click()
+  await expect(page.getByText('provider-eu', { exact: true })).toBeVisible()
+  await expect(page.getByText('provider-cn', { exact: true })).toHaveCount(0)
+
+  await page.getByText('邮箱池管理', { exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: '显示 3 / 共 3 个邮箱' })).toBeVisible()
+  const mailboxSearch = page.getByLabel('搜索邮箱池')
+  await mailboxSearch.fill('imap')
+  await expect(page.getByText('i***@example.invalid', { exact: true })).toBeVisible()
+  await expect(page.getByText('h***@example.invalid', { exact: true })).toHaveCount(0)
+  await mailboxSearch.fill('')
+  const mailboxHealthFilter = page.getByLabel('按邮箱健康状态筛选')
+  await mailboxHealthFilter.click()
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option')
+    .filter({ hasText: '异常' }).click()
+  await expect(page.getByText('i***@example.invalid', { exact: true })).toBeVisible()
+  await expect(page.getByText('d***@example.invalid', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('4111111111111111')
+  await expect(page.locator('body')).not.toContainText('hidden@example.com')
+  await expect(page.locator('body')).not.toContainText('mailbox-secret-value')
+})
+
 test('mailbox mutations cannot refresh through a replacement session', async ({ page }) => {
   const accessValues = ['mailbox-old-access', 'mailbox-new-access']
   let loginAttempts = 0
