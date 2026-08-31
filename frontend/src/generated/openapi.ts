@@ -51,8 +51,7 @@ export interface paths {
         /** Admin List Cards */
         get: operations["admin_list_cards_api_v1_admin_cards_get"];
         put?: never;
-        /** Admin Create Card */
-        post: operations["admin_create_card_api_v1_admin_cards_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -195,23 +194,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/mailboxes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Admin Create Mailbox */
-        post: operations["admin_create_mailbox_api_v1_admin_mailboxes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/admin/mailboxes/imports": {
         parameters: {
             query?: never;
@@ -244,23 +226,6 @@ export interface paths {
         head?: never;
         /** Admin Update Mailbox State */
         patch: operations["admin_update_mailbox_state_api_v1_admin_mailboxes__mailbox_id__patch"];
-        trace?: never;
-    };
-    "/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Admin Rotate Mailbox Secret */
-        post: operations["admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/v1/admin/policies/card": {
@@ -2730,44 +2695,6 @@ export interface operations {
             };
         };
     };
-    admin_create_card_api_v1_admin_cards_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminCardResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorResponse"];
-                };
-            };
-            /** @description Stable platform error response */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorResponse"];
-                };
-            };
-        };
-    };
     admin_import_cards_api_v1_admin_cards_imports_post: {
         parameters: {
             query?: never;
@@ -3109,44 +3036,6 @@ export interface operations {
             };
         };
     };
-    admin_create_mailbox_api_v1_admin_mailboxes_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MailboxStatusResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorResponse"];
-                };
-            };
-            /** @description Stable platform error response */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorResponse"];
-                };
-            };
-        };
-    };
     admin_import_mailboxes_api_v1_admin_mailboxes_imports_post: {
         parameters: {
             query?: never;
@@ -3206,46 +3095,6 @@ export interface operations {
                 "application/json": components["schemas"]["AdminMailboxStateUpdate"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MailboxStatusResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorResponse"];
-                };
-            };
-            /** @description Stable platform error response */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorResponse"];
-                };
-            };
-        };
-    };
-    admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                mailbox_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

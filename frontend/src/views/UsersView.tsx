@@ -5,6 +5,7 @@ import { approveRoleChangeRequest, batchDisableUsers, createRoleChangeRequest, d
 import type { UserManager } from 'oidc-client-ts'
 import type { AdminDevice, AdminUser, ManagedUserRole, Principal, RoleChangeRequest } from '../types'
 import { useScopedConfirm } from '../useScopedConfirm'
+import { useViewActionScope } from '../useViewActionScope'
 import { RemoteTable, StatusTag, compareTableDate, compareTableText, formatLocalDateTime, managedUserRoles, roleNames } from './shared'
 
 const { Title, Text } = Typography
@@ -16,6 +17,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
 }) {
   const { message } = AntApp.useApp()
   const confirm = useScopedConfirm()
+  const beginViewAction = useViewActionScope()
   const [rows, setRows] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
   const [userListError, setUserListError] = useState<string>()
@@ -85,11 +87,14 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   ) {
     if (userActionRef.current !== action || action.pending) return
     action.pending = true
+    const isCurrent = beginViewAction()
     try {
       await operation()
+      if (!isCurrent()) return false
       message.success(success)
       return true
     } catch (error) {
+      if (!isCurrent()) return false
       const reason = error instanceof Error ? error.message : '平台未能确认用户变更结果。'
       message.error(
         `原因：${reason} `
@@ -98,9 +103,11 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
       )
       return false
     } finally {
-      refreshUsersFromServer()
-      setDeviceRefresh((value) => value + 1)
-      releaseUserAction(action)
+      if (isCurrent()) {
+        refreshUsersFromServer()
+        setDeviceRefresh((value) => value + 1)
+        releaseUserAction(action)
+      }
     }
   }
 

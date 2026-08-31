@@ -254,6 +254,18 @@ class SecurePoolImportApiTests(unittest.TestCase):
         self.assertEqual(mailbox.status_code, 410, mailbox.text)
         self.assertEqual(rotation.status_code, 410, rotation.text)
 
+    def test_public_contract_exposes_only_secure_pool_import_writes(self) -> None:
+        paths = self.app.openapi()["paths"]
+
+        self.assertNotIn("post", paths["/api/v1/admin/cards"])
+        self.assertNotIn("/api/v1/admin/mailboxes", paths)
+        self.assertNotIn(
+            "/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations",
+            paths,
+        )
+        self.assertIn("post", paths["/api/v1/admin/cards/imports"])
+        self.assertIn("post", paths["/api/v1/admin/mailboxes/imports"])
+
 
 if __name__ == "__main__":
     unittest.main()

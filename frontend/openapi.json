@@ -4131,50 +4131,6 @@
         "tags": [
           "admin"
         ]
-      },
-      "post": {
-        "operationId": "admin_create_card_api_v1_admin_cards_post",
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminCardResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Stable platform error response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Admin Create Card",
-        "tags": [
-          "admin"
-        ]
       }
     },
     "/api/v1/admin/cards/imports": {
@@ -4761,52 +4717,6 @@
         ]
       }
     },
-    "/api/v1/admin/mailboxes": {
-      "post": {
-        "operationId": "admin_create_mailbox_api_v1_admin_mailboxes_post",
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailboxStatusResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Stable platform error response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Admin Create Mailbox",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
     "/api/v1/admin/mailboxes/imports": {
       "post": {
         "operationId": "admin_import_mailboxes_api_v1_admin_mailboxes_imports_post",
@@ -4962,63 +4872,6 @@
           }
         ],
         "summary": "Admin Update Mailbox State",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/admin/mailboxes/{mailbox_id}/secret-rotations": {
-      "post": {
-        "operationId": "admin_rotate_mailbox_secret_api_v1_admin_mailboxes__mailbox_id__secret_rotations_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "mailbox_id",
-            "required": true,
-            "schema": {
-              "title": "Mailbox Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailboxStatusResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Stable platform error response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Admin Rotate Mailbox Secret",
         "tags": [
           "admin"
         ]

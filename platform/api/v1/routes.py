@@ -5901,6 +5901,7 @@ def admin_get_card_timeline(
     response_model=AdminCardResponse,
     status_code=201,
     tags=["admin"],
+    include_in_schema=False,
 )
 def admin_create_card(
     request: Request,
@@ -6939,6 +6940,7 @@ def admin_release_card_quarantine(
     response_model=MailboxStatusResponse,
     status_code=201,
     tags=["admin"],
+    include_in_schema=False,
 )
 def admin_create_mailbox(
     request: Request,
@@ -7219,6 +7221,7 @@ def admin_update_mailbox_state(
     "/admin/mailboxes/{mailbox_id}/secret-rotations",
     response_model=MailboxStatusResponse,
     tags=["admin"],
+    include_in_schema=False,
 )
 def admin_rotate_mailbox_secret(
     mailbox_id: str,
