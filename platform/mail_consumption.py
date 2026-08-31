@@ -5,13 +5,97 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import or_, update
+from sqlalchemy import case, exists, or_, select, update
 from sqlalchemy.orm import Session
 
-from platform.models import MailSession
+from platform.models import MailSession, Task
 
 
 _MESSAGE_ID_HASH_DOMAIN = b"email-platform:mail-message-id:v1\0"
+_TERMINAL_TASK_STATUSES = ("closed", "expired", "cancelled", "completed")
+
+
+def _matching_task_filters() -> tuple[object, ...]:
+    return (
+        Task.id == MailSession.task_id,
+        Task.tenant_id == MailSession.tenant_id,
+        Task.user_id == MailSession.user_id,
+        Task.device_id == MailSession.device_id,
+    )
+
+
+def mail_session_open_task_exists(now: datetime) -> object:
+    """Return the atomic task barrier correlated to a MailSession mutation."""
+
+    return exists(
+        select(Task.id).where(
+            *_matching_task_filters(),
+            ~Task.status.in_(_TERMINAL_TASK_STATUSES),
+            or_(Task.expires_at.is_(None), Task.expires_at > now),
+        )
+    )
+
+
+def open_task_for_mail_session(
+    db: Session,
+    session: MailSession,
+    *,
+    now: datetime,
+) -> Task | None:
+    """Load the exact owning task only while it remains usable by the session."""
+
+    return db.scalar(
+        select(Task).where(
+            Task.id == session.task_id,
+            Task.tenant_id == session.tenant_id,
+            Task.user_id == session.user_id,
+            Task.device_id == session.device_id,
+            ~Task.status.in_(_TERMINAL_TASK_STATUSES),
+            or_(Task.expires_at.is_(None), Task.expires_at > now),
+        )
+    )
+
+
+def retire_mail_session_if_task_unavailable(
+    db: Session,
+    *,
+    session_id: str,
+    now: datetime,
+) -> bool:
+    """Clear an active session whose owning task is terminal, due, or invalid."""
+
+    task_is_expired = exists(
+        select(Task.id).where(
+            *_matching_task_filters(),
+            or_(
+                Task.status == "expired",
+                (
+                    ~Task.status.in_(_TERMINAL_TASK_STATUSES)
+                    & Task.expires_at.is_not(None)
+                    & (Task.expires_at <= now)
+                ),
+            ),
+        )
+    )
+    retired = db.execute(
+        update(MailSession)
+        .where(
+            MailSession.id == session_id,
+            MailSession.status.in_(("initializing", "waiting", "code_ready")),
+            ~mail_session_open_task_exists(now),
+        )
+        .values(
+            status=case((task_is_expired, "expired"), else_="revoked"),
+            delivered_code=None,
+            delivered_message_id_hash=None,
+            delivered_at=None,
+            code_expires_at=None,
+            start_watermark=None,
+            last_message_hash=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return retired.rowcount == 1
 
 
 def hash_message_id(message_id: str) -> str:
@@ -43,6 +127,7 @@ def claim_delivered_code(
             MailSession.code_expires_at.is_not(None),
             MailSession.code_expires_at > now,
             MailSession.expires_at > now,
+            mail_session_open_task_exists(now),
         )
         .values(
             status="consumed",
@@ -73,6 +158,7 @@ def claim_connector_message(
             MailSession.consumed_at.is_(None),
             MailSession.status.not_in(("consumed", "revoked", "expired")),
             MailSession.expires_at > now,
+            mail_session_open_task_exists(now),
             or_(
                 MailSession.last_message_hash.is_(None),
                 MailSession.last_message_hash != message_hash,
@@ -122,4 +208,7 @@ __all__ = [
     "claim_delivered_code",
     "expire_mail_session_if_due",
     "hash_message_id",
+    "mail_session_open_task_exists",
+    "open_task_for_mail_session",
+    "retire_mail_session_if_task_unavailable",
 ]

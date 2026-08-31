@@ -332,6 +332,48 @@ class CardAllocationTests(unittest.TestCase):
         )
         self.assertNotIn("vault://cards/card-1", events[0].details_json)
 
+    def test_allocation_read_never_dereferences_card_after_tenant_relation_changes(
+        self,
+    ) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-tenant-relation-barrier")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocated.json()["id"])
+            self.assertIsNotNone(allocation)
+            card = db.get(Card, allocation.card_id)
+            self.assertIsNotNone(card)
+            card.tenant_id = "tenant-card-foreign"
+            card.last4 = "9876"
+            card.secret_ref = "vault://cards/foreign-tenant-secret"
+            db.commit()
+
+        response = self.request(
+            "GET",
+            f"/api/v1/card-allocations/{allocated.json()['id']}?task_id={task_id}",
+            headers=self.bearer(token),
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("9876", response.text)
+        self.assertNotIn("foreign-tenant-secret", response.text)
+        self.assertEqual(self.card_secret_resolver.secret_refs, [])
+
+        timeline = self.request(
+            "GET",
+            f"/api/v1/tasks/{task_id}/timeline",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(timeline.status_code, 200, timeline.text)
+        self.assertEqual(timeline.json()["card_allocations"], [])
+        self.assertNotIn("9876", timeline.text)
+
     def test_deployed_card_policy_is_frozen_on_allocation_and_reveal(self) -> None:
         with self.app.state.session_factory() as db:
             policy = OperationalPolicyVersion(

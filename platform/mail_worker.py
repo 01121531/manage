@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from platform.audit import record_audit
 from platform.lifecycle import sweep_expired_lifecycle
-from platform.mail_consumption import expire_mail_session_if_due, hash_message_id
+from platform.mail_consumption import (
+    expire_mail_session_if_due,
+    hash_message_id,
+    mail_session_open_task_exists,
+    open_task_for_mail_session,
+    retire_mail_session_if_task_unavailable,
+)
 from platform.mail_connectors import (
     MailboxAccess,
     MailConnector,
@@ -26,7 +32,7 @@ from platform.mail_health import (
     mark_mailbox_healthy,
     mark_mailbox_unavailable,
 )
-from platform.models import Mailbox, MailSession, Task, utc_now
+from platform.models import Mailbox, MailSession, utc_now
 from platform.uploads import write_worker_heartbeat
 from platform.worker_metrics import WorkerMetrics
 
@@ -35,12 +41,57 @@ def _mailbox_access(mailbox: Mailbox) -> MailboxAccess:
     return MailboxAccess(mailbox_id=mailbox.id, secret_ref=mailbox.secret_ref)
 
 
+def _mailbox_for_session(db: Session, session: MailSession) -> Mailbox | None:
+    return db.scalar(
+        select(Mailbox).where(
+            Mailbox.id == session.mailbox_id,
+            Mailbox.tenant_id == session.tenant_id,
+        )
+    )
+
+
 def _mailbox_observation_is_current(
     db: Session, mailbox: Mailbox, observed_access: MailboxAccess
 ) -> bool:
     db.expire(mailbox)
     db.refresh(mailbox, with_for_update=True)
     return mailbox.is_active and mailbox.secret_ref == observed_access.secret_ref
+
+
+def _retire_mail_session_for_unavailable_task(
+    db: Session,
+    session: MailSession,
+    *,
+    now: datetime,
+) -> str | None:
+    if not retire_mail_session_if_task_unavailable(
+        db,
+        session_id=session.id,
+        now=now,
+    ):
+        return None
+    db.expire(session)
+    db.refresh(session)
+    record_audit(
+        db,
+        tenant_id=session.tenant_id,
+        user_id=session.user_id,
+        device_id=session.device_id,
+        actor_id="worker-mail",
+        event_type=(
+            "mail_session.expired"
+            if session.status == "expired"
+            else "mail_session.revoked"
+        ),
+        entity_type="mail_session",
+        entity_id=session.id,
+        trace_id=session.trace_id,
+        details={
+            "status": session.status,
+            "reason": "task_terminal_or_expired_barrier",
+        },
+    )
+    return session.status
 
 
 def _is_expired(value: datetime, now: datetime) -> bool:
@@ -72,6 +123,19 @@ def process_mail_session(
         if code_ttl_seconds <= 0:
             raise ValueError("code_ttl_seconds must be positive")
         if session.status not in {"initializing", "waiting", "code_ready"}:
+            return session.status
+        task = open_task_for_mail_session(db, session, now=now)
+        if task is None:
+            task_barrier_status = _retire_mail_session_for_unavailable_task(
+                db,
+                session,
+                now=now,
+            )
+            db.commit()
+            if task_barrier_status is not None:
+                return task_barrier_status
+            db.expire(session)
+            db.refresh(session)
             return session.status
         if _is_expired(session.expires_at, now):
             expired_now = expire_mail_session_if_due(
@@ -112,6 +176,7 @@ def process_mail_session(
                         MailSession.code_expires_at == session.code_expires_at,
                         MailSession.code_expires_at <= now,
                         MailSession.expires_at > now,
+                        mail_session_open_task_exists(now),
                     )
                     .values(
                         delivered_code=None,
@@ -123,7 +188,14 @@ def process_mail_session(
                     .execution_options(synchronize_session=False)
                 )
                 if expired_code.rowcount != 1:
+                    task_barrier_status = _retire_mail_session_for_unavailable_task(
+                        db,
+                        session,
+                        now=utc_now(),
+                    )
                     db.commit()
+                    if task_barrier_status is not None:
+                        return task_barrier_status
                     db.expire(session)
                     db.refresh(session)
                     return session.status
@@ -143,7 +215,7 @@ def process_mail_session(
                 return "code_expired"
             return "code_ready"
 
-        mailbox = db.get(Mailbox, session.mailbox_id)
+        mailbox = _mailbox_for_session(db, session)
         if mailbox is None or not mailbox.is_active:
             return "mailbox_unavailable"
         connector = connectors.get(mailbox.connector_type)
@@ -162,9 +234,6 @@ def process_mail_session(
             return "connector_unavailable"
 
         mailbox_access = _mailbox_access(mailbox)
-        task = db.get(Task, session.task_id)
-        if task is None:
-            return "task_unavailable"
         try:
             if session.status == "initializing":
                 start_watermark = call_mail_connector(
@@ -191,12 +260,20 @@ def process_mail_session(
                         MailSession.id == session.id,
                         MailSession.status == "initializing",
                         MailSession.expires_at > transition_now,
+                        mail_session_open_task_exists(transition_now),
                     )
                     .values(start_watermark=start_watermark, status="waiting")
                     .execution_options(synchronize_session=False)
                 )
                 if initialized.rowcount != 1:
+                    task_barrier_status = _retire_mail_session_for_unavailable_task(
+                        db,
+                        session,
+                        now=utc_now(),
+                    )
                     db.commit()
+                    if task_barrier_status is not None:
+                        return task_barrier_status
                     return "stale"
                 record_audit(
                     db,
@@ -273,6 +350,7 @@ def process_mail_session(
                 MailSession.id == session.id,
                 MailSession.status == "waiting",
                 MailSession.expires_at > transition_now,
+                mail_session_open_task_exists(transition_now),
                 or_(
                     MailSession.last_message_hash.is_(None),
                     MailSession.last_message_hash != message_hash,
@@ -290,7 +368,14 @@ def process_mail_session(
             .execution_options(synchronize_session=False)
         )
         if delivered.rowcount != 1:
+            task_barrier_status = _retire_mail_session_for_unavailable_task(
+                db,
+                session,
+                now=utc_now(),
+            )
             db.commit()
+            if task_barrier_status is not None:
+                return task_barrier_status
             return "stale"
         record_audit(
             db,

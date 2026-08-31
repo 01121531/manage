@@ -72,6 +72,8 @@ from platform.mail_consumption import (
     claim_delivered_code,
     expire_mail_session_if_due,
     hash_message_id,
+    open_task_for_mail_session,
+    retire_mail_session_if_task_unavailable,
 )
 from platform.lifecycle import (
     ACTIVE_MAIL_SESSION_STATUSES as _ACTIVE_MAIL_SESSION_STATUSES,
@@ -307,6 +309,15 @@ def _mailbox_access(mailbox: Mailbox) -> MailboxAccess:
     return MailboxAccess(mailbox_id=mailbox.id, secret_ref=mailbox.secret_ref)
 
 
+def _mailbox_for_session(db: Session, session: MailSession) -> Mailbox | None:
+    return db.scalar(
+        select(Mailbox).where(
+            Mailbox.id == session.mailbox_id,
+            Mailbox.tenant_id == session.tenant_id,
+        )
+    )
+
+
 def _mailbox_observation_is_current(
     db: Session, mailbox: Mailbox, observed_access: MailboxAccess
 ) -> bool:
@@ -389,6 +400,43 @@ def _require_mail_session_token(
     )
     db.commit()
     raise HTTPException(status_code=404, detail="Mail session not found")
+
+
+def _retire_owned_mail_session_if_task_unavailable(
+    db: Session,
+    session: MailSession,
+    *,
+    now: datetime,
+    principal: AuthPrincipal,
+) -> bool:
+    if not retire_mail_session_if_task_unavailable(
+        db,
+        session_id=session.id,
+        now=now,
+    ):
+        return False
+    db.expire(session)
+    db.refresh(session)
+    record_audit(
+        db,
+        tenant_id=session.tenant_id,
+        user_id=session.user_id,
+        device_id=session.device_id,
+        actor_id=principal.user_id,
+        event_type=(
+            "mail_session.expired"
+            if session.status == "expired"
+            else "mail_session.revoked"
+        ),
+        entity_type="mail_session",
+        entity_id=session.id,
+        trace_id=session.trace_id,
+        details={
+            "status": session.status,
+            "reason": "task_terminal_or_expired_barrier",
+        },
+    )
+    return True
 
 
 def _lock_user(
@@ -1428,7 +1476,13 @@ def get_task_timeline(
 
     mail_row = db.execute(
         select(MailSession, Mailbox.email_masked)
-        .join(Mailbox, Mailbox.id == MailSession.mailbox_id)
+        .join(
+            Mailbox,
+            and_(
+                Mailbox.id == MailSession.mailbox_id,
+                Mailbox.tenant_id == MailSession.tenant_id,
+            ),
+        )
         .where(
             MailSession.task_id == task.id,
             MailSession.tenant_id == task.tenant_id,
@@ -1450,7 +1504,13 @@ def get_task_timeline(
 
     allocation_rows = db.execute(
         select(CardAllocation, Card)
-        .join(Card, Card.id == CardAllocation.card_id)
+        .join(
+            Card,
+            and_(
+                Card.id == CardAllocation.card_id,
+                Card.tenant_id == CardAllocation.tenant_id,
+            ),
+        )
         .where(
             CardAllocation.task_id == task.id,
             CardAllocation.tenant_id == task.tenant_id,
@@ -1719,7 +1779,7 @@ def create_mail_session(
             or existing.device_id != principal.device_id
         ):
             raise HTTPException(status_code=404, detail="Mail session not found")
-        mailbox = db.get(Mailbox, existing.mailbox_id)
+        mailbox = _mailbox_for_session(db, existing)
         if mailbox is None:
             raise HTTPException(status_code=503, detail="Assigned mailbox is unavailable")
         if (
@@ -1997,6 +2057,18 @@ def get_mail_code(
     )
 
     now = _utc_now()
+    if open_task_for_mail_session(db, session, now=now) is None:
+        retired_for_task = _retire_owned_mail_session_if_task_unavailable(
+            db,
+            session,
+            now=now,
+            principal=principal,
+        )
+        if retired_for_task:
+            db.commit()
+            return MailCodeResponse(status=session.status)
+        db.expire(session)
+        db.refresh(session)
     if session.status == "revoked":
         return MailCodeResponse(status="revoked")
     if (
@@ -2110,6 +2182,14 @@ def get_mail_code(
             expected_message_id_hash=delivered_message_id_hash,
             now=now,
         ):
+            if _retire_owned_mail_session_if_task_unavailable(
+                db,
+                session,
+                now=_utc_now(),
+                principal=principal,
+            ):
+                db.commit()
+                return MailCodeResponse(status=session.status)
             db.commit()
             return MailCodeResponse(status="consumed")
         record_audit(
@@ -2146,7 +2226,7 @@ def get_mail_code(
         db.commit()
         return MailCodeResponse(status="waiting")
 
-    mailbox = db.get(Mailbox, session.mailbox_id)
+    mailbox = _mailbox_for_session(db, session)
     if mailbox is None or not mailbox.is_active:
         raise HTTPException(status_code=503, detail="Assigned mailbox is unavailable")
     connector = _mail_connector(request, mailbox.connector_type)
@@ -2269,6 +2349,14 @@ def get_mail_code(
         message_hash=message_hash,
         now=transition_now,
     ):
+        if _retire_owned_mail_session_if_task_unavailable(
+            db,
+            session,
+            now=_utc_now(),
+            principal=principal,
+        ):
+            db.commit()
+            return MailCodeResponse(status=session.status)
         db.expire(session)
         db.refresh(session)
         db.commit()
@@ -2347,7 +2435,7 @@ def revoke_mail_session(
         _require_mail_session_token(
             mail_session_token, current, db=db, principal=principal
         )
-        current_mailbox = db.get(Mailbox, current.mailbox_id)
+        current_mailbox = _mailbox_for_session(db, current)
         if current_mailbox is None:
             raise HTTPException(
                 status_code=503, detail="Assigned mailbox is unavailable"
@@ -2417,7 +2505,7 @@ def revoke_mail_session(
     _require_mail_session_token(
         mail_session_token, session, db=db, principal=principal
     )
-    mailbox = db.get(Mailbox, session.mailbox_id)
+    mailbox = _mailbox_for_session(db, session)
     if mailbox is None:
         db.rollback()
         raise HTTPException(status_code=503, detail="Assigned mailbox is unavailable")
@@ -2640,8 +2728,24 @@ def _owned_card_allocation(
     allocation = db.scalar(select(CardAllocation).where(*ownership))
     if allocation is None:
         return None
-    card = db.get(Card, allocation.card_id)
+    card = _card_for_allocation(db, allocation, tenant_id=principal.tenant_id)
     return (allocation, card) if card is not None else None
+
+
+def _card_for_allocation(
+    db: Session,
+    allocation: CardAllocation,
+    *,
+    tenant_id: str,
+) -> Card | None:
+    if allocation.tenant_id != tenant_id:
+        return None
+    return db.scalar(
+        select(Card).where(
+            Card.id == allocation.card_id,
+            Card.tenant_id == allocation.tenant_id,
+        )
+    )
 
 
 def _card_reveal_unavailable() -> BusinessHTTPException:
@@ -2891,7 +2995,7 @@ def allocate_card(
         )
     )
     if existing is not None:
-        card = db.get(Card, existing.card_id)
+        card = _card_for_allocation(db, existing, tenant_id=principal.tenant_id)
         if card is None or not card.is_active or card.quarantined_at is not None:
             raise HTTPException(status_code=503, detail="Assigned card is unavailable")
         response.status_code = 200
@@ -2977,7 +3081,7 @@ def allocate_card(
             )
         )
         if existing is not None:
-            card = db.get(Card, existing.card_id)
+            card = _card_for_allocation(db, existing, tenant_id=principal.tenant_id)
             if (
                 card is not None
                 and card.is_active
@@ -3048,7 +3152,7 @@ def _card_replacement_for(
     )
     if replacement is None:
         return None
-    card = db.get(Card, replacement.card_id)
+    card = _card_for_allocation(db, replacement, tenant_id=principal.tenant_id)
     return (replacement, card) if card is not None else None
 
 
@@ -3143,7 +3247,13 @@ def replace_card_allocation(
         )
 
     original_card = db.scalar(
-        select(Card).where(Card.id == original.card_id).with_for_update()
+        select(Card)
+        .where(
+            Card.id == original.card_id,
+            Card.tenant_id == original.tenant_id,
+            Card.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
     )
     if original_card is None:
         db.rollback()

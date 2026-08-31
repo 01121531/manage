@@ -228,6 +228,29 @@ class MailSessionTests(unittest.TestCase):
         headers["X-Mail-Session-Token"] = self.session_tokens[session_id]
         return headers
 
+    def seed_terminal_code_ready_residue(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        task_status: str,
+        code: str,
+    ) -> None:
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            session = db.get(MailSession, session_id)
+            task.status = task_status
+            task.closed_at = now
+            session.status = "code_ready"
+            session.delivered_code = code
+            session.delivered_message_id_hash = hashlib.sha256(
+                MESSAGE_ID_HASH_DOMAIN + f"terminal-{task_status}".encode("utf-8")
+            ).hexdigest()
+            session.delivered_at = now
+            session.code_expires_at = now + timedelta(minutes=1)
+            db.commit()
+
     def test_session_response_never_exposes_mailbox_secret(self) -> None:
         token = self.login()
         task_id = self.create_task(token)
@@ -328,6 +351,66 @@ class MailSessionTests(unittest.TestCase):
             self.assertIsNone(
                 db.scalar(select(MailSession).where(MailSession.task_id == task.json()["id"]))
             )
+
+    def test_worker_never_dereferences_mailbox_after_tenant_relation_changes(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        token = self.login()
+        task_id = self.create_task(token, "mailbox-tenant-relation-barrier")
+        created = self.create_session(token, task_id)
+        self.assertEqual(created.status_code, 201, created.text)
+
+        with self.app.state.session_factory() as db:
+            session = db.get(MailSession, created.json()["id"])
+            self.assertIsNotNone(session)
+            mailbox = db.get(Mailbox, session.mailbox_id)
+            self.assertIsNotNone(mailbox)
+            mailbox.tenant_id = "tenant-mail-foreign"
+            mailbox.secret_ref = "vault://mailboxes/foreign-tenant-secret"
+            db.commit()
+
+        result = process_mail_session(
+            self.app.state.session_factory,
+            created.json()["id"],
+            connectors=self.app.state.mail_connectors,
+        )
+
+        self.assertEqual(result, "mailbox_unavailable")
+        self.assertEqual(self.connector.watermark_calls, 0)
+        self.assertEqual(self.connector.find_calls, 0)
+
+    def test_api_never_dereferences_mailbox_after_tenant_relation_changes(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "api-mailbox-tenant-relation-barrier")
+        created = self.create_session(token, task_id)
+        self.assertEqual(created.status_code, 201, created.text)
+        find_calls_before = self.connector.find_calls
+
+        with self.app.state.session_factory() as db:
+            session = db.get(MailSession, created.json()["id"])
+            self.assertIsNotNone(session)
+            mailbox = db.get(Mailbox, session.mailbox_id)
+            self.assertIsNotNone(mailbox)
+            mailbox.tenant_id = "tenant-mail-foreign"
+            mailbox.secret_ref = "vault://mailboxes/foreign-tenant-api-secret"
+            db.commit()
+        self.connector.messages.append(
+            MailCodeMessage(
+                message_id="foreign-mailbox-relation",
+                watermark="1",
+                code="918273",
+            )
+        )
+
+        response = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{created.json()['id']}/code",
+            headers=self.mail_headers(token, created.json()["id"]),
+        )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(self.connector.find_calls, find_calls_before)
+        self.assertNotIn("918273", response.text)
+        self.assertNotIn("foreign-tenant-api-secret", response.text)
 
     def test_mail_session_rejects_client_connector_or_pool_override(self) -> None:
         token = self.login()
@@ -1059,6 +1142,50 @@ class MailSessionTests(unittest.TestCase):
                 )
             )
             self.assertEqual(code_ready_events, [])
+
+    def test_worker_does_not_poll_or_deliver_for_closed_task_residue(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        token = self.login()
+        task_id = self.create_task(token, "worker-closed-task-residue")
+        session = self.create_session(token, task_id)
+        session_id = session.json()["id"]
+        self.assertEqual(
+            process_mail_session(
+                self.app.state.session_factory,
+                session_id,
+                connectors={"fake": self.connector},
+            ),
+            "initialized",
+        )
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            task.status = "closed"
+            task.closed_at = utc_now()
+            db.commit()
+        self.connector.messages.append(
+            MailCodeMessage(
+                message_id="after-closed-task",
+                watermark="1",
+                code="864209",
+            )
+        )
+        find_calls_before = self.connector.find_calls
+
+        result = process_mail_session(
+            self.app.state.session_factory,
+            session_id,
+            connectors={"fake": self.connector},
+        )
+
+        self.assertEqual(self.connector.find_calls, find_calls_before)
+        self.assertNotEqual(result, "code_ready")
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertNotEqual(persisted.status, "code_ready")
+            self.assertIsNone(persisted.delivered_code)
+            self.assertIsNone(persisted.delivered_at)
+            self.assertIsNone(persisted.delivered_message_id_hash)
+            self.assertIsNone(persisted.code_expires_at)
 
     def test_mailbox_disable_makes_slow_worker_result_stale(self) -> None:
         self.app.state.settings.mail_poll_mode = "worker"
@@ -2335,6 +2462,81 @@ class MailSessionTests(unittest.TestCase):
         )
         self.assertEqual(stream.status_code, 200, stream.text)
         self.assertIn("event: revoked", stream.text)
+
+    def test_terminal_task_code_ready_residue_never_exposes_code(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        access_token = self.login()
+        terminal_statuses = ("closed", "completed", "expired", "cancelled")
+
+        for index, task_status in enumerate(terminal_statuses, start=1):
+            with self.subTest(task_status=task_status):
+                task_id = self.create_task(
+                    access_token, f"terminal-code-residue-{task_status}"
+                )
+                session = self.create_session(access_token, task_id)
+                session_id = session.json()["id"]
+                code = f"72{index:04d}"
+                self.seed_terminal_code_ready_residue(
+                    task_id=task_id,
+                    session_id=session_id,
+                    task_status=task_status,
+                    code=code,
+                )
+
+                response = self.request(
+                    "GET",
+                    f"/api/v1/mail-sessions/{session_id}/code",
+                    headers=self.mail_headers(access_token, session_id),
+                )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertNotIn(code, response.text)
+                self.assertIsNone(response.json()["code"])
+                self.assertIsNone(response.json().get("received_at"))
+                self.assertIsNone(response.json().get("message_id_hash"))
+                with self.app.state.session_factory() as db:
+                    consumed_events = list(
+                        db.scalars(
+                            select(AuditEvent).where(
+                                AuditEvent.entity_id == session_id,
+                                AuditEvent.event_type == "mail_session.code_consumed",
+                            )
+                        )
+                    )
+                self.assertEqual(consumed_events, [])
+
+    def test_sse_terminal_task_residue_never_exposes_code(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        access_token = self.login()
+        task_id = self.create_task(access_token, "mail-sse-terminal-residue")
+        session = self.create_session(access_token, task_id)
+        session_id = session.json()["id"]
+        code = "246810"
+        self.seed_terminal_code_ready_residue(
+            task_id=task_id,
+            session_id=session_id,
+            task_status="closed",
+            code=code,
+        )
+
+        stream = self.request(
+            "GET",
+            f"/api/v1/mail-sessions/{session_id}/events",
+            headers=self.mail_headers(access_token, session_id),
+        )
+
+        self.assertEqual(stream.status_code, 200, stream.text)
+        self.assertIn("event: revoked", stream.text)
+        self.assertNotIn(code, stream.text)
+        data_line = next(
+            line.removeprefix("data: ")
+            for line in stream.text.splitlines()
+            if line.startswith("data: ")
+        )
+        payload = json.loads(data_line)
+        self.assertIsNone(payload["code"])
+        self.assertIsNone(payload.get("received_at"))
+        self.assertIsNone(payload.get("message_id_hash"))
 
     def test_sse_success_returns_the_complete_minimal_code_result(self) -> None:
         self.connector.messages.append(
