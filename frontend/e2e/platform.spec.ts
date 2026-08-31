@@ -5144,9 +5144,27 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
       items: [{ ...secureMailboxItems[0], password: 'mailbox-secret-value' }],
     })),
   })
-  await expect(page.getByText('安全包第 1 条邮箱元数据无效；未发送任何数据。', { exact: true })).toBeVisible()
+  await expect(page.getByText(
+    '安全包第 1 条邮箱元数据无效；未发送任何数据。', { exact: true },
+  ).last()).toBeVisible()
   expect(mailboxImportBodies).toEqual([])
   await expect(page.locator('body')).not.toContainText('mailbox-secret-value')
+  const pseudoMaskedEmail = 'alice@example.invalid*'
+  await mailboxInput.setInputFiles({
+    name: 'mailbox-pool-pseudo-mask.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      receipt_token: 'epir1.mail-receipt.signature',
+      items: [{
+        email_masked: pseudoMaskedEmail, connector_type: 'http', task_type: 'mail_code',
+      }],
+    })),
+  })
+  await expect(page.getByText(
+    '安全包第 1 条邮箱元数据无效；未发送任何数据。', { exact: true },
+  ).last()).toBeVisible()
+  expect(mailboxImportBodies).toEqual([])
+  await expect(page.locator('body')).not.toContainText(pseudoMaskedEmail)
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-cancelled.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({

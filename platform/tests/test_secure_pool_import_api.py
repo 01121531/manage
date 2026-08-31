@@ -177,6 +177,42 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(Mailbox)), 1)
             self.assertEqual(db.scalar(select(func.count()).select_from(PoolImportReceipt)), 1)
 
+    def test_mailbox_import_rejects_pseudo_masks_without_side_effects(self) -> None:
+        with self.app.state.session_factory() as db:
+            baseline_audits = db.scalar(select(func.count()).select_from(AuditEvent))
+
+        for email_masked in (
+            "alice@example.test*",
+            "alice*@example.test",
+            "ab***@example.test",
+            "***@example.test",
+            "a***@example.test/credential",
+        ):
+            receipt_id = str(uuid4())
+            with self.subTest(email_masked=email_masked):
+                rejected = self.request(
+                    "POST",
+                    "/api/v1/admin/mailboxes/imports",
+                    headers=self.headers(receipt_id, f"spi:{receipt_id}"),
+                    json=[{
+                        "email_masked": email_masked,
+                        "connector_type": "http",
+                        "task_type": "mail_code",
+                    }],
+                )
+                self.assertEqual(rejected.status_code, 422, rejected.text)
+                self.assertNotIn(email_masked, rejected.text)
+
+        self.assertEqual(self.verifier.calls, 0)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(Mailbox)), 0)
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)), 0
+            )
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(AuditEvent)), baseline_audits
+            )
+
     def test_first_import_requires_submission_key_bound_to_signed_receipt(self) -> None:
         receipt_id = str(uuid4())
         payload = [{

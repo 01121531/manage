@@ -6,7 +6,11 @@ records enter only the mailbox pool. There is no automatic source collection.
 Do not upload the raw card or mailbox source file to
 the browser, ordinary API, issue tracker, chat, or repository. PAN and mailbox
 credentials remain on the approved intake workstation and in Vault; CVV/CVC is
-not accepted at all.
+not accepted at all, including by runtime card-secret resolution. The mailbox
+bundle display value uses the closed `m***@example.invalid` form: exactly one
+visible ASCII local-part character, three asterisks, and a DNS-style domain.
+Values that merely append an asterisk to an address are not masked and must be
+rejected before the first Vault or API mutation.
 
 1. Confirm Vault audit devices are healthy, then apply and read back
    `infra/vault/configure-secure-import.sh`. Issue distinct short-lived card

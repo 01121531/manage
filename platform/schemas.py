@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from platform.pool_imports import MASKED_EMAIL_PATTERN, normalize_masked_email
 from platform.uploads import EXTERNAL_REF_PATTERN
 
 
@@ -446,7 +447,9 @@ class AdminCardQuarantineRequest(BaseModel):
 class AdminMailboxCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    email_masked: str = Field(min_length=3, max_length=320)
+    email_masked: str = Field(
+        min_length=8, max_length=320, pattern=MASKED_EMAIL_PATTERN
+    )
     connector_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,79}$")
     task_type: str = Field(
         default="mail_code", pattern=r"^[a-z][a-z0-9_-]{0,79}$"
@@ -456,10 +459,7 @@ class AdminMailboxCreate(BaseModel):
     @field_validator("email_masked")
     @classmethod
     def validate_masked_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if "@" not in normalized or "*" not in normalized:
-            raise ValueError("email_masked must contain a masked email address")
-        return normalized
+        return normalize_masked_email(value)
 
     @field_validator("connector_type", "task_type")
     @classmethod
@@ -481,7 +481,9 @@ class AdminMailboxImportItem(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    email_masked: str = Field(min_length=3, max_length=320)
+    email_masked: str = Field(
+        min_length=8, max_length=320, pattern=MASKED_EMAIL_PATTERN
+    )
     connector_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,79}$")
     task_type: str = Field(
         default="mail_code", pattern=r"^[a-z][a-z0-9_-]{0,79}$"
@@ -490,10 +492,7 @@ class AdminMailboxImportItem(BaseModel):
     @field_validator("email_masked")
     @classmethod
     def validate_masked_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if "@" not in normalized or "*" not in normalized:
-            raise ValueError("email_masked must contain a masked email address")
-        return normalized
+        return normalize_masked_email(value)
 
     @field_validator("connector_type", "task_type")
     @classmethod

@@ -8,6 +8,7 @@ const ROUTING_VALUE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/
 const CONNECTOR_VALUE_PATTERN = /^[a-z][a-z0-9_-]{0,79}$/
 const PROVIDER_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const CARD_BRAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/
+const MASKED_EMAIL_PATTERN = /^[a-z0-9]\*{3}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
 
 export type PoolImportBundle<T> = {
   schema_version: 2
@@ -88,10 +89,8 @@ function parseMailboxItem(value: unknown, index: number): MailboxImportItem {
   const { email_masked, connector_type, task_type } = value
   if (
     typeof email_masked !== 'string'
-    || email_masked.length < 3
     || email_masked.length > 320
-    || !email_masked.includes('@')
-    || !email_masked.includes('*')
+    || !MASKED_EMAIL_PATTERN.test(email_masked)
     || typeof connector_type !== 'string'
     || !CONNECTOR_VALUE_PATTERN.test(connector_type)
     || typeof task_type !== 'string'

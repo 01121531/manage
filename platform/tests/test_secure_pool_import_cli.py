@@ -96,6 +96,24 @@ class SecurePoolImportCliTests(unittest.TestCase):
         self.assertNotIn("secret", manifest)
         self.assertEqual(secret["password"], "private-password")
 
+    def test_mailbox_parser_rejects_pseudo_masked_addresses(self) -> None:
+        for email_masked in (
+            "alice@example.test*",
+            "alice*@example.test",
+            "ab***@example.test",
+            "***@example.test",
+            "a***@example.test/credential",
+        ):
+            with self.subTest(email_masked=email_masked), self.assertRaises(
+                secure_pool_import.ImportFailure
+            ):
+                secure_pool_import._mailbox_record({
+                    "email_masked": email_masked,
+                    "connector_type": "http",
+                    "task_type": "mail_code",
+                    "secret": {"password": "private-password"},
+                })
+
     def test_vault_address_requires_https_origin(self) -> None:
         with self.assertRaises(secure_pool_import.ImportFailure):
             secure_pool_import.VaultClient("http://vault.example.test", "token", ca_file=None)

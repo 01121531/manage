@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from platform.api.v1 import routes
 from platform.app import create_app
 from platform.bootstrap import create_user_with_device
-from platform.cards import CardSecret, CardSecretUnavailable
+from platform.cards import CardSecret, CardSecretUnavailable, SecretCardSecretResolver
 from platform.config import Settings
 from platform.lifecycle import sweep_expired_lifecycle
 from platform.models import (
@@ -86,7 +86,60 @@ class FakeCardSecretResolver:
 
     def resolve(self, secret_ref: str) -> CardSecret:
         self.secret_refs.append(secret_ref)
-        return CardSecret(pan="4111111111111111", cvv="123")
+        return CardSecret(pan="4111111111111111")
+
+
+class StaticSecretResolver:
+    def __init__(self, value: dict[str, object]) -> None:
+        self.value = value
+
+    def resolve(self, _secret_ref: str) -> dict[str, object]:
+        return self.value
+
+
+class CardSecretBoundaryTests(unittest.TestCase):
+    def test_security_code_aliases_fail_closed_without_retaining_values(self) -> None:
+        aliases = (
+            "cvv",
+            "cvc",
+            "cid",
+            "security_code",
+            "card_verification_value",
+        )
+        for alias in (*aliases, *(alias.upper() for alias in aliases)):
+            with self.subTest(alias=alias):
+                marker = "731"
+                resolver = SecretCardSecretResolver(
+                    StaticSecretResolver({
+                        "pan": "4242 4242 4242 4242", alias: marker,
+                    })
+                )
+                with self.assertRaises(CardSecretUnavailable) as raised:
+                    resolver.resolve("vault://secret/cards/test-card")
+
+                serialized_error = (
+                    f"{raised.exception!r} {raised.exception.__dict__!r}"
+                )
+                self.assertNotIn(marker, serialized_error)
+
+    def test_pan_resolution_ignores_expiry_metadata_and_has_no_security_code_field(
+        self,
+    ) -> None:
+        resolver = SecretCardSecretResolver(
+            StaticSecretResolver(
+                {
+                    "pan": "4242 4242-4242 4242",
+                    "expiry_month": 12,
+                    "expiry_year": 2030,
+                }
+            )
+        )
+
+        secret = resolver.resolve("vault://secret/cards/test-card")
+
+        self.assertEqual(secret.pan, "4242424242424242")
+        self.assertFalse(hasattr(secret, "cvv"))
+        self.assertNotIn(secret.pan, repr(secret))
 
 
 class CardAllocationTests(unittest.TestCase):
@@ -1662,7 +1715,7 @@ class CardAllocationTests(unittest.TestCase):
             "resolve",
             side_effect=[
                 provider_error,
-                CardSecret(pan=leaked_pan, cvv="123"),
+                CardSecret(pan=leaked_pan),
             ],
         ):
             unavailable = self.request(
@@ -1910,7 +1963,7 @@ class CardAllocationTests(unittest.TestCase):
             if call_number == 1:
                 first_resolver_entered.set()
                 self.assertTrue(release_first_resolver.wait(timeout=5))
-            return CardSecret(pan="4111111111111111", cvv="123")
+            return CardSecret(pan="4111111111111111")
 
         with mock.patch.object(
             self.card_secret_resolver,
@@ -2388,7 +2441,7 @@ class CardAllocationTests(unittest.TestCase):
             try:
                 secret = app.state.card_secret_resolver.resolve("env://CARD_ENV_JSON")
                 self.assertEqual(secret.pan, "4242424242424242")
-                self.assertIsNone(secret.cvv)
+                self.assertFalse(hasattr(secret, "cvv"))
             finally:
                 app.state.engine.dispose()
 

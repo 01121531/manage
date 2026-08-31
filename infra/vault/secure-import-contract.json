@@ -1,11 +1,13 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
     "automatic_collection": false,
     "raw_source_transport": "approved_intake_workstation_to_vault_only",
     "browser_input": "secret-free-signed-bundle_only",
+    "mailbox_display_format": "one_visible_ascii_local_character_then_three_asterisks_and_dns_domain",
+    "card_security_codes": "rejected_at_import_and_runtime_resolution",
     "pools": {
       "card": "credit_card_pool",
       "mailbox": "mailbox_pool"

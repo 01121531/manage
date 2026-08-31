@@ -173,6 +173,18 @@ class PlanRequirementInventoryTests(unittest.TestCase):
                     [],
                 )
 
+    def test_mailbox_credential_boundary_includes_secure_import_evidence(self) -> None:
+        entry = next(
+            item for item in self.inventory["requirements"] if item["id"] == "R01.02"
+        )
+        self.assertEqual(entry["classification"], "repository_proven")
+        self.assertTrue({
+            "platform/pool_imports.py",
+            "scripts/secure_pool_import.py",
+            "platform/tests/test_secure_pool_import_api.py",
+            "platform/tests/test_secure_pool_import_cli.py",
+        }.issubset(set(entry["evidence"])))
+
     def test_t171_entries_preserve_the_source_semantic_scope(self) -> None:
         entries = {item["id"]: item for item in self.inventory["requirements"]}
         required_terms = {

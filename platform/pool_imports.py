@@ -38,6 +38,12 @@ _MAX_RECEIPT_TTL_SECONDS = 600
 _MAX_FUTURE_SKEW_SECONDS = 60
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _TRANSIT_SIGNATURE_RE = re.compile(r"^vault:v([1-9][0-9]*):[A-Za-z0-9+/=_-]+$")
+MASKED_EMAIL_PATTERN = (
+    r"^[a-z0-9]\*{3}@"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+_MASKED_EMAIL_RE = re.compile(MASKED_EMAIL_PATTERN)
 _CLAIM_KEYS = {
     "schema_version",
     "audience",
@@ -66,6 +72,15 @@ class PoolImportReceiptBindingMismatch(ValueError):
 
 class PoolImportReceiptVerifierUnavailable(RuntimeError):
     """The external receipt verifier cannot currently be reached."""
+
+
+def normalize_masked_email(value: str) -> str:
+    """Return the one-visible-character mailbox display form or fail closed."""
+
+    normalized = value.strip().lower()
+    if len(normalized) > 320 or _MASKED_EMAIL_RE.fullmatch(normalized) is None:
+        raise ValueError("email_masked must be a strictly masked email address")
+    return normalized
 
 
 @dataclass(frozen=True)

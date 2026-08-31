@@ -37,6 +37,7 @@ from platform.pool_imports import (
     pool_import_digest,
     pool_import_submission_key,
     pool_secret_ref,
+    normalize_masked_email,
 )
 from platform.pool_import_execution import (
     build_execution_event,
@@ -217,14 +218,14 @@ def _mailbox_record(value: object) -> tuple[dict[str, object], dict[str, object]
         raw_masked, raw_connector, raw_task_type,
     )):
         raise ImportFailure("Mailbox input schema is invalid")
-    masked = raw_masked.strip().lower()
+    try:
+        masked = normalize_masked_email(raw_masked)
+    except ValueError:
+        raise ImportFailure("Mailbox input schema is invalid") from None
     connector = raw_connector.strip().lower()
     task_type = raw_task_type.strip().lower()
     if (
-        "@" not in masked
-        or "*" not in masked
-        or len(masked) > 320
-        or re.fullmatch(r"[a-z][a-z0-9_-]{0,79}", connector) is None
+        re.fullmatch(r"[a-z][a-z0-9_-]{0,79}", connector) is None
         or re.fullmatch(r"[a-z][a-z0-9_-]{0,79}", task_type) is None
         or not isinstance(secret, dict)
         or not secret

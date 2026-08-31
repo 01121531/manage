@@ -6,6 +6,11 @@ from typing import Protocol
 from platform.secrets import SecretResolver, SecretResolverUnavailable
 
 
+_SECURITY_CODE_ALIASES = frozenset(
+    {"cvv", "cvc", "cid", "security_code", "card_verification_value"}
+)
+
+
 class CardSecretUnavailable(RuntimeError):
     """The server cannot resolve the card secret reference."""
 
@@ -13,7 +18,6 @@ class CardSecretUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class CardSecret:
     pan: str = field(repr=False)
-    cvv: str | None = field(default=None, repr=False)
 
 
 class CardSecretResolver(Protocol):
@@ -27,7 +31,7 @@ class UnconfiguredCardSecretResolver:
 
 
 class SecretCardSecretResolver:
-    """Resolve card PAN/CVV through the shared server-side secret resolver."""
+    """Resolve a card PAN while rejecting all security-code material."""
 
     def __init__(self, secret_resolver: SecretResolver) -> None:
         self.secret_resolver = secret_resolver
@@ -37,18 +41,15 @@ class SecretCardSecretResolver:
             value = self.secret_resolver.resolve(secret_ref)
         except SecretResolverUnavailable as error:
             raise CardSecretUnavailable(str(error)) from error
+        if any(
+            isinstance(key, str) and key.casefold() in _SECURITY_CODE_ALIASES
+            for key in value
+        ):
+            raise CardSecretUnavailable("Card security codes are not supported")
         pan = value.get("pan") or value.get("card_number") or value.get("number")
-        cvv = value.get("cvv") or value.get("cvc") or value.get("security_code")
         if not isinstance(pan, str) or not pan.strip():
             raise CardSecretUnavailable("Card PAN is missing")
         normalized_pan = pan.replace(" ", "").replace("-", "")
         if not normalized_pan.isdigit() or not 12 <= len(normalized_pan) <= 19:
             raise CardSecretUnavailable("Card PAN is invalid")
-        normalized_cvv = None
-        if cvv is not None:
-            if not isinstance(cvv, str):
-                raise CardSecretUnavailable("Card CVV is invalid")
-            normalized_cvv = cvv.strip()
-            if not normalized_cvv.isdigit() or not 3 <= len(normalized_cvv) <= 4:
-                raise CardSecretUnavailable("Card CVV is invalid")
-        return CardSecret(pan=normalized_pan, cvv=normalized_cvv)
+        return CardSecret(pan=normalized_pan)

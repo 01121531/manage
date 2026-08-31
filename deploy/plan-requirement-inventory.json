@@ -17,7 +17,7 @@
   ],
   "requirements": [
     {"id":"R01.01","chapter":1,"source_ref":"1.1 登录与撤销","requirement":"用户登录后方可使用；注销、账号禁用或设备撤销后立即停止新请求，并由同步终止或补偿扫描回收任务、卡、邮箱会话和上传资源。","classification":"repository_proven","evidence":["platform/lifecycle.py","platform/api/v1/routes.py","platform/tests/test_lifecycle.py","platform/tests/test_logout.py","platform/tests/test_device_limits.py"],"gap_or_boundary":null},
-    {"id":"R01.02","chapter":1,"source_ref":"1.1 邮箱凭据边界","requirement":"邮箱账号和密码不得进入 EXE 输入、日志、崩溃报告或 API 响应；EXE 只绑定 mailbox_id/session_id。","classification":"repository_proven","evidence":["platform/mail_connectors.py","platform/errors.py","tests/test_desktop_package_boundary.py","tests/test_platform_desktop.py","tests/test_http_error_boundary_assets.py","platform/tests/test_mail_sessions.py"],"gap_or_boundary":null},
+    {"id":"R01.02","chapter":1,"source_ref":"1.1 邮箱凭据边界","requirement":"邮箱账号和密码不得进入 EXE 输入、日志、崩溃报告或 API 响应；EXE 只绑定 mailbox_id/session_id。","classification":"repository_proven","evidence":["platform/mail_connectors.py","platform/pool_imports.py","scripts/secure_pool_import.py","platform/tests/test_secure_pool_import_api.py","platform/tests/test_secure_pool_import_cli.py","tests/test_desktop_package_boundary.py"],"gap_or_boundary":null},
     {"id":"R01.03","chapter":1,"source_ref":"1.1 卡资源边界","requirement":"卡分配、查看、释放、替换和异常均绑定用户与任务。","classification":"repository_proven","evidence":["platform/models.py","platform/api/v1/routes.py","platform/migrations/versions/0029_card_replacement.py","platform/tests/test_cards.py","platform/tests/test_migration_0029.py"],"gap_or_boundary":null},
     {"id":"R01.04","chapter":1,"source_ref":"1.1 Sub2 策略边界","requirement":"Sub2 账号、代理、分组、并发和模型仅由服务端版本化策略读取；客户端不得查看或覆盖。","classification":"repository_proven","evidence":["platform/schemas.py","platform/uploads.py","platform/tests/test_uploads.py"],"gap_or_boundary":null},
     {"id":"R01.05","chapter":1,"source_ref":"1.1 可追溯性","requirement":"卡、邮箱和上传动作可按用户、设备、任务、时间与 trace_id 回放。","classification":"repository_proven","evidence":["platform/api/v1/routes.py","frontend/src/views/AuditView.tsx","frontend/src/admin-api.ts","platform/tests/test_audit_resource_filters.py","frontend/e2e/platform.spec.ts"],"gap_or_boundary":null},
@@ -88,6 +88,6 @@
     "target_evidence_required": 5
   },
   "integrity": {
-    "payload_sha256": "d133319cf525897223ec73c132816d40f5b821073b9aafc16c92bf98fb3945a8"
+    "payload_sha256": "ab0c039a18a677802fb6e39070e4c2a28330ada712d2de5d53d716ba994d1e71"
   }
 }
