@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "production_acceptance": false,
   "receipt_authority": "vault-transit",
   "atomic_consumption": "postgresql-unique-secure-receipt-id",
@@ -31,7 +31,7 @@
       "approle": "email-platform-card-importer",
       "policy": "email-platform-card-importer",
       "allowed": [
-        "create secret/data/cards/imports/* with cas=0",
+        "create-only secret/data/cards/imports/*; importer request uses cas=0",
         "update transit/sign/email-platform-card-import-receipt"
       ],
       "denied": ["kv read", "kv update", "kv list", "kv delete", "mailbox paths", "transit verify", "transit key export"]
@@ -41,7 +41,7 @@
       "approle": "email-platform-mailbox-importer",
       "policy": "email-platform-mailbox-importer",
       "allowed": [
-        "create secret/data/mailboxes/imports/* with cas=0",
+        "create-only secret/data/mailboxes/imports/*; importer request uses cas=0",
         "update transit/sign/email-platform-mailbox-import-receipt"
       ],
       "denied": ["kv read", "kv update", "kv list", "kv delete", "card paths", "transit verify", "transit key export"]
@@ -59,7 +59,7 @@
   ],
   "required_target_evidence": [
     "three_distinct_external_principals",
-    "importer_create_only_cas_zero_enforced",
+    "importer_create_only_effective_capability_and_cli_cas_zero_observed",
     "cross_pool_access_denied",
     "api_sign_denied",
     "importer_verify_denied",

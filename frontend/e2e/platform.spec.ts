@@ -5135,11 +5135,39 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     brand: 'VISA', last4: '6060', expiry_month: null, expiry_year: null,
   }]
   await cardBundleInput.setInputFiles({
+    name: 'wrong-mailbox-pool.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'mailbox',
+      receipt_token: 'epir1.wrong-pool.signature',
+      items: [{ email_masked: 'w***@example.invalid', connector_type: 'http', task_type: 'mail_code' }],
+    })),
+  })
+  await expect(page.getByText('该安全包属于邮箱池，不能导入信用卡池。', { exact: true })).toBeVisible()
+  expect(cardImportBodies).toEqual([])
+  await cardBundleInput.setInputFiles({
+    name: 'card-pool-with-secret.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'card',
+      receipt_token: 'epir1.card-receipt.signature',
+      items: [{ ...secureCardItems[0], pan: '4111111111111111' }],
+    })),
+  })
+  await expect(page.getByText('安全包第 1 条信用卡元数据无效；未发送任何数据。', { exact: true })).toBeVisible()
+  expect(cardImportBodies).toEqual([])
+  await expect(page.locator('body')).not.toContainText('4111111111111111')
+  await cardBundleInput.setInputFiles({
     name: 'card-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'card',
       receipt_token: 'epir1.card-receipt.signature', items: secureCardItems,
     })),
   })
+  const cardPreview = page.getByRole('dialog', { name: '确认导入信用卡池安全包？' })
+  await expect(cardPreview).toContainText('card-pool-secure.json')
+  await expect(cardPreview).toContainText('脱敏资源：1 条')
+  await expect(cardPreview).toContainText('目标卡池：checkout-cn')
+  expect(cardImportBodies).toEqual([])
+  await cardPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => cardImportBodies).toEqual([secureCardItems])
   expect(cardImportReceipts).toEqual(['epir1.card-receipt.signature'])
   await expect(page.getByRole('button', { name: '重试上次信用卡池引用清单' })).toBeVisible()
@@ -5150,6 +5178,9 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
   ])
   await expect(page.getByRole('row').filter({ hasText: 'provider-imported' })).toBeVisible()
+  await expect(page.getByText('最近一次信用卡池导入已确认：1 条', { exact: true })).toBeVisible()
+  await expect(page.getByText('card-import-receipt', { exact: true })).toBeVisible()
+  await expect(page.getByText('card-import-trace', { exact: true })).toBeVisible()
   await expect(page.locator('body')).not.toContainText('epir1.card-receipt.signature')
   await expect(page.getByRole('button', { name: '登记卡资源' })).toHaveCount(0)
 
@@ -5159,20 +5190,51 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   }]
   const mailboxInput = page.locator('input[type="file"][accept*="json"]')
   await mailboxInput.setInputFiles({
-    name: 'mailbox-pool-secure.json', mimeType: 'application/json',
+    name: 'mailbox-pool-with-secret.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'mailbox',
+      receipt_token: 'epir1.mail-receipt.signature',
+      items: [{ ...secureMailboxItems[0], password: 'mailbox-secret-value' }],
+    })),
+  })
+  await expect(page.getByText('安全包第 1 条邮箱元数据无效；未发送任何数据。', { exact: true })).toBeVisible()
+  expect(mailboxImportBodies).toEqual([])
+  await expect(page.locator('body')).not.toContainText('mailbox-secret-value')
+  await mailboxInput.setInputFiles({
+    name: 'mailbox-pool-cancelled.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'mailbox',
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
+  let mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' })
+  await mailboxPreview.getByRole('button', { name: /取\s*消/ }).click()
+  await expect(mailboxPreview).toBeHidden()
+  expect(mailboxImportBodies).toEqual([])
+  await mailboxInput.setInputFiles({
+    name: 'mailbox-pool-secure.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'mailbox',
+      receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
+    })),
+  })
+  mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' })
+  await expect(mailboxPreview).toContainText('mailbox-pool-secure.json')
+  await expect(mailboxPreview).toContainText('服务端路由：mail_code')
+  expect(mailboxImportBodies).toEqual([])
+  await mailboxPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => mailboxImportBodies).toEqual([secureMailboxItems])
   expect(mailboxImportReceipts).toEqual(['epir1.mail-receipt.signature'])
   await expect(page.getByRole('button', { name: '重试上次邮箱池引用清单' })).toHaveCount(0)
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
+      schema_version: 1, pool_type: 'mailbox',
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
+  mailboxPreview = page.getByRole('dialog', { name: '确认导入邮箱池安全包？' })
+  await mailboxPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => mailboxImportBodies).toEqual([
     secureMailboxItems, secureMailboxItems,
   ])
@@ -5181,6 +5243,9 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     'epir1.mail-receipt.signature', 'epir1.mail-receipt.signature',
   ])
   await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
+  await expect(page.getByText('最近一次邮箱池导入已确认：1 条', { exact: true })).toBeVisible()
+  await expect(page.getByText('mailbox-import-receipt', { exact: true })).toBeVisible()
+  await expect(page.getByText('mailbox-import-trace', { exact: true })).toBeVisible()
   await expect(page.locator('body')).not.toContainText('epir1.mail-receipt.signature')
   await expect(page.getByRole('button', { name: '登记邮箱连接器' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /轮换邮箱密钥引用/ })).toHaveCount(0)

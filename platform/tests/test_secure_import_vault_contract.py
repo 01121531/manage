@@ -26,6 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
+        self.assertEqual(contract["schema_version"], 2)
         self.assertFalse(contract["production_acceptance"])
         roles = {item["role"]: item for item in contract["roles"]}
         self.assertEqual(set(roles), {"card-importer", "mailbox-importer", "api-verifier"})
@@ -72,8 +73,12 @@ class SecureImportVaultContractTests(unittest.TestCase):
             "secret/data/mailboxes/imports/*": {"create"},
             "transit/sign/email-platform-mailbox-import-receipt": {"update"},
         })
-        self.assertIn('required_parameters = ["data", "options"]', card_policy)
-        self.assertIn('required_parameters = ["data", "options"]', mailbox_policy)
+        self.assertNotIn("required_parameters", card_policy)
+        self.assertNotIn("required_parameters", mailbox_policy)
+        self.assertIn(
+            "importer_create_only_effective_capability_and_cli_cas_zero_observed",
+            contract["required_target_evidence"],
+        )
         self.assertIn("transit/verify/email-platform-card-import-receipt", api_policy)
         self.assertIn("transit/verify/email-platform-mailbox-import-receipt", api_policy)
         self.assertNotIn("transit/sign/", api_policy)

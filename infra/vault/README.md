@@ -96,9 +96,12 @@ Pool ingestion is a separate trust boundary from the three runtime identities
 above. `scripts/secure_pool_import.py` reads a restricted local input file,
 writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
 pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
-output JSON contains only `receipt_token` plus ordered masked `items`; upload
-that output through the matching card or mailbox pool page. Never upload the
-raw input file through the Web application.
+output JSON contains `schema_version: 1`, an explicit `pool_type`, the
+`receipt_token`, and ordered masked `items`; upload that output through the
+matching card or mailbox pool page. The page rejects a wrong-pool bundle or
+any item with an extra field before making an API request, then shows a
+secret-free preview for confirmation. Never upload the raw input file through
+the Web application.
 
 Example (the input, Vault token, optional CA, and output are absolute files;
 the audience must match the API environment):
@@ -142,6 +145,15 @@ plaintext backups and deletion, and are configured for 30-day automatic
 rotation. The helper never enables mounts, logs in, generates or reads RoleIDs,
 SecretIDs or tokens, or accesses private keys and pool data.
 
+The KV v2 policies grant only `create` on their own pool paths, so an existing
+secret cannot be updated by either importer. The CLI additionally sends
+`options.cas=0` for every write. Vault KV v2 does not support
+`allowed_parameters`, `denied_parameters`, or `required_parameters` in ACL
+policies, so the repository does not claim that the policy itself requires the
+CAS field. If a deployment requires provider-side rejection when CAS is
+omitted, use a separately governed KV v2 import mount with `cas_required=true`
+and capture that target configuration as external evidence.
+
 Bind and deliver credentials for `email-platform-card-importer`,
 `email-platform-mailbox-importer`, and `email-platform-api-cards` as three
 distinct external identities. After their short-lived tokens are delivered to
@@ -166,6 +178,8 @@ The smoke test creates one synthetic canary under each import path and proves
 24 positive and negative operations: create with `cas=0`, replay and wrong-CAS
 rejection, cross-pool and cross-key denial, importer sign/verify separation,
 API verify/sign separation, and denial of key reads and API pool writes. It
+does not test omission of the CAS field and therefore does not prove
+mount-level `cas_required` configuration. It
 disables redirects and proxy inheritance and writes only status codes, path
 identifiers and an origin digest; tokens, signatures and response bodies are
 not retained. A privileged operator must remove the two `canary_paths` listed

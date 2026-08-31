@@ -334,6 +334,8 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         if int(signature.split(":", 2)[1].removeprefix("v")) != key_version:
             raise ImportFailure("Transit key rotated during receipt signing; retry safely")
     _write_bundle(output_path, {
+        "schema_version": 1,
+        "pool_type": pool_type,
         "receipt_token": encode_receipt_token(unsigned, signature),
         "items": manifest,
     })

@@ -1,8 +1,11 @@
 import argparse
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,6 +121,54 @@ class SecurePoolImportCliTests(unittest.TestCase):
             secure_pool_import.run(
                 self._args(receipt_output=str(output.resolve()))
             )
+
+    def test_generated_bundle_declares_version_and_exact_pool_type(self) -> None:
+        class FakeVaultClient:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                pass
+
+            def sign(self, _pool_type: str, _payload: bytes) -> str:
+                return "vault:v1:test-signature"
+
+        records = {
+            "card": [{
+                "provider_ref": "provider-card-1",
+                "pool_key": "checkout-cn",
+                "region": "cn-east",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }],
+            "mailbox": [{
+                "email_masked": "m***@example.test",
+                "connector_type": "http",
+                "task_type": "mail_code",
+                "secret": {"username": "private", "password": "private-password"},
+            }],
+        }
+        for pool_type, source_records in records.items():
+            with self.subTest(pool_type=pool_type), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                input_file = root / "input.json"
+                token_file = root / "vault.token"
+                receipt_output = root / "receipt.json"
+                input_file.write_text(json.dumps(source_records), encoding="utf-8")
+                token_file.write_text("test-vault-token", encoding="utf-8")
+                with patch.object(secure_pool_import, "VaultClient", FakeVaultClient):
+                    secure_pool_import.run(self._args(
+                        pool_type=pool_type,
+                        input_file=str(input_file.resolve()),
+                        token_file=str(token_file.resolve()),
+                        receipt_output=str(receipt_output.resolve()),
+                    ))
+                bundle = json.loads(receipt_output.read_text(encoding="utf-8"))
+                self.assertEqual(set(bundle), {
+                    "schema_version", "pool_type", "receipt_token", "items",
+                })
+                self.assertEqual(bundle["schema_version"], 1)
+                self.assertEqual(bundle["pool_type"], pool_type)
 
 
 if __name__ == "__main__":

@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Empty, Input, Select, Space, Spin, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { importMailboxes, listMailboxes, updateMailboxState } from '../admin-api'
-import type { MailboxImportItem, MailboxSummary } from '../types'
-import { readPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
+import type { MailboxImportItem, MailboxSummary, PoolImportReceipt } from '../types'
+import { readMailboxPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { useViewActionScope } from '../useViewActionScope'
-import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableDate, compareTableText, mailboxHealthErrorNames } from './shared'
+import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableDate, compareTableText, formatLocalDateTime, mailboxHealthErrorNames } from './shared'
 
 const { Title, Text } = Typography
 
@@ -29,6 +29,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     receiptToken: string
   } | null>(null)
   const [mailboxImportRetryAvailable, setMailboxImportRetryAvailable] = useState(false)
+  const [lastMailboxImportReceipt, setLastMailboxImportReceipt] = useState<PoolImportReceipt>()
   const [mailboxActionKey, setMailboxActionKey] = useState<string | null>(null)
   const [mailboxActionPending, setMailboxActionPending] = useState(false)
   const mailboxActionRef = useRef<{
@@ -71,7 +72,32 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     mailboxImportPendingRef.current = true
     setSaving(true)
     try {
-      const bundle = await readPoolImportJson<MailboxImportItem>(file)
+      const bundle = await readMailboxPoolImportJson(file)
+      const taskTypes = Array.from(new Set(bundle.items.map((item) => item.task_type))).sort(compareTableText)
+      const confirmed = await new Promise<boolean>((resolve) => {
+        let settled = false
+        const settle = (value: boolean) => {
+          if (settled) return
+          settled = true
+          resolve(value)
+        }
+        confirm({
+          title: '确认导入邮箱池安全包？',
+          content: <Space direction="vertical" size={8}>
+            <Text>文件：{file.name}</Text>
+            <Text>格式：安全包 v{bundle.schema_version} / 邮箱池</Text>
+            <Text>脱敏资源：{bundle.items.length} 条</Text>
+            <Text>服务端路由：{taskTypes.slice(0, 5).join('、')}{taskTypes.length > 5 ? ` 等 ${taskTypes.length} 个路由` : ''}</Text>
+            <Text type="warning">整批原子导入：任一条校验失败时，本批 0 条入池。确认后才会发送掩码地址和路由元数据；邮箱账号、密码和收据内容不会显示。</Text>
+          </Space>,
+          okText: `确认导入 ${bundle.items.length} 条`,
+          cancelText: '取消',
+          onOk: () => settle(true),
+          onCancel: () => settle(false),
+          afterClose: () => settle(false),
+        })
+      })
+      if (!confirmed || !isCurrent()) return
       const batch = {
         payload: bundle.items,
         receiptToken: bundle.receipt_token,
@@ -83,8 +109,12 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         batch.payload, batch.idempotencyKey, batch.receiptToken,
       )
       if (!isCurrent()) return
+      if (receipt.pool_type !== 'mailbox' || receipt.imported_count !== batch.payload.length) {
+        throw new Error('平台返回的邮箱池导入回执绑定无效；请使用同一批次重试核对。')
+      }
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
+      setLastMailboxImportReceipt(receipt)
       message.success(`已向邮箱池登记 ${receipt.imported_count} 条资源引用。`)
       await refreshMailboxRows(isCurrent)
     } catch (error) {
@@ -119,8 +149,12 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         batch.payload, batch.idempotencyKey, batch.receiptToken,
       )
       if (!isCurrent()) return
+      if (receipt.pool_type !== 'mailbox' || receipt.imported_count !== batch.payload.length) {
+        throw new Error('平台返回的邮箱池导入回执绑定无效；请使用同一批次重试核对。')
+      }
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
+      setLastMailboxImportReceipt(receipt)
       message.success(`已确认邮箱池引用清单，共 ${receipt.imported_count} 条资源。`)
       await refreshMailboxRows(isCurrent)
     } catch (error) {
@@ -282,9 +316,20 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         <Button disabled={saving} onClick={() => { void retryMailboxImport() }}>重试上次邮箱池引用清单</Button>
         <Button disabled={saving} onClick={discardMailboxImportRetry}>放弃并清除上次邮箱池引用清单</Button>
       </> : null}
-      <Button type="primary" disabled={saving || mailboxActionKey !== null} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池安全包 JSON</Button>
+      <Button type="primary" loading={saving} disabled={mailboxActionKey !== null} onClick={() => mailboxImportInputRef.current?.click()}>导入邮箱池安全包 JSON</Button>
     </Space> : null}</div>
     <Alert className="section-card" type="info" showIcon message="这里只接收独立安全导入器生成的邮箱池安全包" description="邮箱账号、密码和令牌不进入浏览器或普通 API；安全包只含 m***@example.invalid 这类脱敏元数据和短期 Vault Transit 签名收据，密钥引用由服务端固定派生。单条资源也使用同一安全导入流程。" />
+    {lastMailboxImportReceipt ? <Alert
+      className="section-card"
+      type="success"
+      showIcon
+      message={`最近一次邮箱池导入已确认：${lastMailboxImportReceipt.imported_count} 条`}
+      description={<Space wrap>
+        <Text>回执 ID：</Text><Text code copyable>{lastMailboxImportReceipt.id}</Text>
+        <Text>Trace ID：</Text><Text code copyable>{lastMailboxImportReceipt.trace_id}</Text>
+        <Text>时间：{formatLocalDateTime(lastMailboxImportReceipt.created_at)}</Text>
+      </Space>}
+    /> : null}
     {unavailableRows.length > 0 ? <Alert
       style={{ marginBottom: 16 }}
       type="error"

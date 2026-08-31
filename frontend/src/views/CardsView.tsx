@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Input, Modal, Space, Spin, Table, Select, Timeline, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { getCardTimeline, importCards, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
-import type { CardAllocationSummary, CardEventSummary, CardImportItem, CardSummary, CardTimeline } from '../types'
-import { readPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
+import type { CardAllocationSummary, CardEventSummary, CardImportItem, CardSummary, CardTimeline, PoolImportReceipt } from '../types'
+import { readCardPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { CardStatusTag, StatusTag, cardAllocationReasonNames, cardEventActionNames, cardQuarantineReasonNames, compareTableText, formatLocalDateTime, maskedStateLabel } from './shared'
 
@@ -34,6 +34,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     receiptToken: string
   } | null>(null)
   const [cardImportRetryAvailable, setCardImportRetryAvailable] = useState(false)
+  const [lastCardImportReceipt, setLastCardImportReceipt] = useState<PoolImportReceipt>()
   const [cardActionId, setCardActionId] = useState<string | null>(null)
   const cardActionRef = useRef<{ cardId: string; pending: boolean } | null>(null)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
@@ -119,7 +120,32 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     cardImportPendingRef.current = true
     setSaving(true)
     try {
-      const bundle = await readPoolImportJson<CardImportItem>(file)
+      const bundle = await readCardPoolImportJson(file)
+      const poolKeys = Array.from(new Set(bundle.items.map((item) => item.pool_key))).sort(compareTableText)
+      const confirmed = await new Promise<boolean>((resolve) => {
+        let settled = false
+        const settle = (value: boolean) => {
+          if (settled) return
+          settled = true
+          resolve(value)
+        }
+        confirm({
+          title: '确认导入信用卡池安全包？',
+          content: <Space direction="vertical" size={8}>
+            <Text>文件：{file.name}</Text>
+            <Text>格式：安全包 v{bundle.schema_version} / 信用卡池</Text>
+            <Text>脱敏资源：{bundle.items.length} 条</Text>
+            <Text>目标卡池：{poolKeys.slice(0, 5).join('、')}{poolKeys.length > 5 ? ` 等 ${poolKeys.length} 个卡池` : ''}</Text>
+            <Text type="warning">整批原子导入：任一条校验失败时，本批 0 条入池。确认后才会发送脱敏元数据；PAN/CVV 和收据内容不会显示。</Text>
+          </Space>,
+          okText: `确认导入 ${bundle.items.length} 条`,
+          cancelText: '取消',
+          onOk: () => settle(true),
+          onCancel: () => settle(false),
+          afterClose: () => settle(false),
+        })
+      })
+      if (!confirmed) return
       const batch = {
         payload: bundle.items,
         receiptToken: bundle.receipt_token,
@@ -130,8 +156,12 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const receipt = await importCards(
         batch.payload, batch.idempotencyKey, batch.receiptToken,
       )
+      if (receipt.pool_type !== 'card' || receipt.imported_count !== batch.payload.length) {
+        throw new Error('平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。')
+      }
       cardImportRetryRef.current = null
       setCardImportRetryAvailable(false)
+      setLastCardImportReceipt(receipt)
       message.success(`已向信用卡池登记 ${receipt.imported_count} 条资源引用。`)
       refreshCardsFromServer()
     } catch (error) {
@@ -162,8 +192,12 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const receipt = await importCards(
         batch.payload, batch.idempotencyKey, batch.receiptToken,
       )
+      if (receipt.pool_type !== 'card' || receipt.imported_count !== batch.payload.length) {
+        throw new Error('平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。')
+      }
       cardImportRetryRef.current = null
       setCardImportRetryAvailable(false)
+      setLastCardImportReceipt(receipt)
       message.success(`已确认信用卡池引用清单，共 ${receipt.imported_count} 条资源。`)
       refreshCardsFromServer()
     } catch (error) {
@@ -495,9 +529,20 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         <Button disabled={saving} onClick={() => { void retryCardImport() }}>重试上次信用卡池引用清单</Button>
         <Button disabled={saving} onClick={discardCardImportRetry}>放弃并清除上次信用卡池引用清单</Button>
       </> : null}
-      <Button type="primary" disabled={saving || loading || cardListError !== undefined || cardActionId !== null} onClick={() => cardImportInputRef.current?.click()}>导入信用卡池安全包 JSON</Button>
+      <Button type="primary" loading={saving} disabled={loading || cardListError !== undefined || cardActionId !== null} onClick={() => cardImportInputRef.current?.click()}>导入信用卡池安全包 JSON</Button>
     </Space> : null}</div>
     <Alert className="section-card" type="info" showIcon message="这里只接收独立安全导入器生成的卡池安全包" description="PAN/CVV 不进入浏览器或普通 API；安全包只含脱敏元数据和短期 Vault Transit 签名收据，密钥引用由服务端固定派生。单条资源也使用同一安全导入流程。" />
+    {lastCardImportReceipt ? <Alert
+      className="section-card"
+      type="success"
+      showIcon
+      message={`最近一次信用卡池导入已确认：${lastCardImportReceipt.imported_count} 条`}
+      description={<Space wrap>
+        <Text>回执 ID：</Text><Text code copyable>{lastCardImportReceipt.id}</Text>
+        <Text>Trace ID：</Text><Text code copyable>{lastCardImportReceipt.trace_id}</Text>
+        <Text>时间：{formatLocalDateTime(lastCardImportReceipt.created_at)}</Text>
+      </Space>}
+    /> : null}
     <Card className="section-card">{loading ? <div className="centered"><Spin /></div> : cardListError ? <Alert
       type="warning"
       showIcon
