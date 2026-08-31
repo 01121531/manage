@@ -69,7 +69,7 @@
       "production_acceptance": false,
       "target_evidence_required": [
         "real Sub2 balance-check, authorization-exchange, create success/failure/timeout, five status outcomes, same-key replay and unknown-reconciliation evidence",
-        "target Vault-path denial and domain egress-policy evidence"
+        "target Vault-path denial, domain egress-policy and secure dual-pool import evidence"
       ],
       "missing_inputs": [
         "real Sub2 balance-check, authorization-exchange, create and status-query mappings with idempotency scope/retention and consistency semantics"

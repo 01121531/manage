@@ -728,6 +728,18 @@ destination allowed and an unapproved destination denied by the target
 firewall/proxy policy). Application validation is not network enforcement, and
 neither substitutes for target DNS resolution, TLS-chain, or hostname checks.
 
+Execute all 12 secure import scenarios against the same target release. Prove
+three distinct external principals; importer create-only capability with an
+observed CLI `cas=0` request; cross-pool denial; API signing denial; importer
+verification denial; non-exportable Transit-key rotation; independently
+reviewed Vault audit traces; one-time database receipt consumption under
+concurrency; and an exact-run canary cleanup receipt. Then commit one
+administrator card pool batch and one administrator mailbox pool batch through
+their separate secure-import paths, and run the read-only recovery assessor for
+both execution records without automatic resume. Evidence objects must remain
+metadata-only in this index; do not copy a source row, Vault response, Transit
+token, receipt token, Vault path, PAN/CVV, mailbox address, or mailbox password.
+
 For every scenario record only opaque execution, executor, independent
 reviewer, trace and immutable evidence-object references, canonical UTC time,
 the fixed observation, artifact SHA-256, `result=passed`, and explicit

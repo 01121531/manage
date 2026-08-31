@@ -201,13 +201,13 @@
       "phases": [
         4
       ],
-      "purpose": "Repository-external evidence index for target Vault cross-path denial and Sub2 domain egress-policy enforcement, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
+      "purpose": "Repository-external evidence index for target Vault cross-path denial, Sub2 domain egress-policy enforcement, secure dual-pool import controls, manual card and mailbox batch commits, exact canary cleanup, read-only recovery assessment and receipt-concurrency enforcement, with a sealed post-window aggregate review and exclusive validity deadline projected into the same intake manifest.",
       "artifact_policy": "redacted_evidence_index",
       "matrix_refs": [
         {
           "phase": 4,
           "category": "target_evidence_required",
-          "value": "target Vault-path denial and domain egress-policy evidence"
+          "value": "target Vault-path denial, domain egress-policy and secure dual-pool import evidence"
         }
       ]
     },

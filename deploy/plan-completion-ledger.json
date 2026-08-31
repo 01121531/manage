@@ -6,7 +6,7 @@
   "ledger_status": "repository_and_preflight_evidence_only",
   "external_evidence_policy": "required_before_production_acceptance",
   "production_acceptance": false,
-  "phase_acceptance_matrix_sha256": "fb6a9962025d93727e29ce991b28b7e56efd2054e0448188b654fc1715d1efcb",
+  "phase_acceptance_matrix_sha256": "dd5b823aa0a88c7e8335e456ef86b506c9b33d94bf97987bde5fff25fbca36eb",
   "phases": [
     {
       "phase": 0,
@@ -256,6 +256,6 @@
     }
   },
   "integrity": {
-    "payload_sha256": "ff152491ce146498585419abce6dab4fbb2761fac1a76df40cde622849df7284"
+    "payload_sha256": "17991f87d558baafdc6901f9dc30f08887c5f7998cacfcdce6561874d580aafa"
   }
 }

@@ -128,7 +128,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
         self.assertIn("python scripts/vault_egress_evidence.py verify-repository", gate)
 
     def test_inventory_is_exact_full_vault_matrix_plus_egress_controls(self) -> None:
-        self.assertEqual(len(REQUIRED_SCENARIO_OBSERVATIONS), 18)
+        self.assertEqual(len(REQUIRED_SCENARIO_OBSERVATIONS), 30)
         self.assertEqual(
             {name for name in REQUIRED_SCENARIO_OBSERVATIONS if name.startswith("vault_")},
             {
@@ -144,6 +144,27 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                 "vault_sub2_mailboxes_denied",
                 "vault_sub2_credential_allowed",
                 "vault_sub2_proxy_allowed",
+            },
+        )
+        self.assertEqual(
+            {
+                name: observation
+                for name, observation in REQUIRED_SCENARIO_OBSERVATIONS.items()
+                if name.startswith("secure_import_")
+            },
+            {
+                "secure_import_principals_distinct": "three_external_principals_verified",
+                "secure_import_create_only_cas": "importer_create_only_and_cas_zero_observed",
+                "secure_import_cross_pool_denied": "card_and_mailbox_cross_pool_access_denied",
+                "secure_import_api_sign_denied": "api_transit_sign_permission_denied",
+                "secure_import_importer_verify_denied": "importer_transit_verify_permission_denied",
+                "secure_import_transit_rotation": "non_exportable_transit_keys_rotated",
+                "secure_import_vault_audit": "vault_audit_trace_independently_reviewed",
+                "secure_import_receipt_concurrency": "single_receipt_consumed_once_under_concurrency",
+                "secure_import_canary_cleanup": "exact_run_canaries_permanently_deleted_with_receipt",
+                "secure_import_card_manual_batch": "administrator_card_pool_batch_committed",
+                "secure_import_mailbox_manual_batch": "administrator_mailbox_pool_batch_committed",
+                "secure_import_recovery_read_only": "both_pool_execution_records_assessed_without_automatic_resume",
             },
         )
 
@@ -318,11 +339,29 @@ class VaultEgressEvidenceTests(unittest.TestCase):
         for expected in (
             "vault_egress_evidence.py check",
             "12-cell vault identity/path matrix",
+            "12 secure import scenarios",
+            "administrator card pool batch",
+            "administrator mailbox pool batch",
+            "exact-run canary cleanup receipt",
             "application origin validation",
             "network egress enforcement",
             "does not verify the external evidence content",
         ):
             self.assertIn(expected, text)
+
+        requirements = json.loads(
+            Path("deploy/target-intake-requirements.json").read_text(encoding="utf-8")
+        )
+        requirement = next(
+            item for item in requirements["requirements"]
+            if item["id"] == "vault_egress_evidence"
+        )
+        for expected in (
+            "secure dual-pool import",
+            "manual card and mailbox batch commits",
+            "exact canary cleanup",
+        ):
+            self.assertIn(expected, requirement["purpose"])
 
 
 if __name__ == "__main__":

@@ -65,6 +65,12 @@ not accepted at all.
    `production_acceptance=false` until real AppRole provenance, Vault audit,
    canary cleanup/readback, key rotation with old-receipt verification, actual
    dual-pool import and independent review are complete.
+9. Record those completed target checks as the 12 `secure_import_*` scenarios in
+   the repository-external `vault_egress_evidence` index described by
+   `deploy/runbooks/target-intake-preflight.md`. Use only opaque references,
+   timestamps, fixed observations and digests. The index must reference the
+   write-once smoke, cleanup, import, recovery, database-concurrency and audit
+   objects; it must not embed their sensitive payloads.
 
 The stable submission key prevents blind duplicate batches after an HTTP 5xx,
 network loss, page navigation, or refresh. It does not recover a secure importer
