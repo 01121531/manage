@@ -345,6 +345,29 @@ class RuntimeFileBoundaryTests(unittest.TestCase):
                 self.assertEqual(calls, 2)
                 self.assertNotIn(str(path), str(raised.exception))
 
+    def test_permission_fingerprint_drift_is_rejected_on_the_open_descriptor(
+        self,
+    ) -> None:
+        boundary = self._boundary()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private-input"
+            path.write_bytes(b"private-value")
+            observations: list[tuple[int, int]] = []
+
+            def permissions(descriptor: int, metadata: os.stat_result) -> str:
+                observations.append((descriptor, metadata.st_ino))
+                return "private" if len(observations) == 1 else "broadened"
+
+            with self.assertRaises(boundary.RuntimeFileError):
+                boundary.read_stable_runtime_bytes_with_metadata(
+                    path,
+                    max_bytes=1024,
+                    permission_validator=permissions,
+                )
+
+            self.assertEqual(len(observations), 2)
+            self.assertEqual(observations[0], observations[1])
+
     def test_missing_files_keep_existing_unavailable_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             for label, path, _, load, _, read_error, _ in self._cases(Path(directory)):

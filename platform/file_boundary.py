@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -105,6 +105,7 @@ def read_stable_runtime_bytes_with_metadata(
     *,
     max_bytes: int,
     allow_empty: bool = False,
+    permission_validator: Callable[[int, os.stat_result], object] | None = None,
 ) -> tuple[bytes, os.stat_result]:
     """Read one stable regular-file snapshot, including projected-volume links."""
 
@@ -113,14 +114,25 @@ def read_stable_runtime_bytes_with_metadata(
         max_bytes=max_bytes,
         allow_empty=allow_empty,
     ) as (descriptor, opened):
+        permission_identity = (
+            permission_validator(descriptor, opened)
+            if permission_validator is not None
+            else None
+        )
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
             raw = stream.read(max_bytes + 1)
         final_opened = os.fstat(descriptor)
+        final_permission_identity = (
+            permission_validator(descriptor, final_opened)
+            if permission_validator is not None
+            else None
+        )
         if (
             len(raw) != opened.st_size
             or _file_shape(opened) != _file_shape(final_opened)
             or _stable_mode(opened) != _stable_mode(final_opened)
             or opened.st_mtime_ns != final_opened.st_mtime_ns
+            or final_permission_identity != permission_identity
         ):
             raise RuntimeFileError("runtime file changed during read")
     return raw, final_opened

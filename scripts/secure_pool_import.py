@@ -48,6 +48,10 @@ from platform.pool_import_execution import (
     canonical_bytes as execution_canonical_bytes,
     execution_plan_errors,
 )
+from scripts.backup_crypto import (
+    BackupCryptoError,
+    validate_private_file_permissions,
+)
 from scripts.backup_output_policy import (
     create_write_once_directory,
     prepare_write_once_file,
@@ -150,9 +154,36 @@ def _absolute_file(value: str, *, label: str) -> Path:
     return path
 
 
-def _read_json(path: Path, *, require_single_link: bool = False) -> object:
+def _private_file_permission_fingerprint(
+    descriptor: int,
+    metadata: os.stat_result,
+) -> object:
+    if os.name != "nt":
+        return None
     try:
-        raw, metadata = read_stable_runtime_bytes_with_metadata(path, max_bytes=MAX_INPUT_BYTES)
+        return validate_private_file_permissions(descriptor, metadata)
+    except BackupCryptoError:
+        raise OSError from None
+
+
+def _read_json(
+    path: Path,
+    *,
+    require_single_link: bool = False,
+    require_private_permissions: bool = False,
+) -> object:
+    try:
+        if require_private_permissions:
+            raw, metadata = read_stable_runtime_bytes_with_metadata(
+                path,
+                max_bytes=MAX_INPUT_BYTES,
+                permission_validator=_private_file_permission_fingerprint,
+            )
+        else:
+            raw, metadata = read_stable_runtime_bytes_with_metadata(
+                path,
+                max_bytes=MAX_INPUT_BYTES,
+            )
         if (
             (require_single_link and metadata.st_nlink != 1)
             or (os.name != "nt" and metadata.st_mode & 0o077)
@@ -165,7 +196,11 @@ def _read_json(path: Path, *, require_single_link: bool = False) -> object:
 
 def _read_approle_value(path: Path) -> str:
     try:
-        raw, metadata = read_stable_runtime_bytes_with_metadata(path, max_bytes=MAX_TOKEN_BYTES)
+        raw, metadata = read_stable_runtime_bytes_with_metadata(
+            path,
+            max_bytes=MAX_TOKEN_BYTES,
+            permission_validator=_private_file_permission_fingerprint,
+        )
         if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o077):
             raise OSError
         value = raw.decode("utf-8").strip()
@@ -293,7 +328,9 @@ def _read_vault_approle_token(
 def _read_platform_access_token(path: Path) -> str:
     try:
         raw, metadata = read_stable_runtime_bytes_with_metadata(
-            path, max_bytes=MAX_TOKEN_BYTES
+            path,
+            max_bytes=MAX_TOKEN_BYTES,
+            permission_validator=_private_file_permission_fingerprint,
         )
         if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o022):
             raise OSError
@@ -808,7 +845,11 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         raise ImportFailure(
             "Input, AppRole, platform token, CA, and receipt output paths must be separate"
         )
-    value = _read_json(input_path, require_single_link=True)
+    value = _read_json(
+        input_path,
+        require_single_link=True,
+        require_private_permissions=True,
+    )
     if not isinstance(value, list) or not 1 <= len(value) <= 100:
         raise ImportFailure("Input must contain 1 to 100 records")
     pool_type: Literal["card", "mailbox"] = args.pool_type

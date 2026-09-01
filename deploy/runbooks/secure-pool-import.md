@@ -44,9 +44,15 @@ rejected before the first Vault or API mutation.
    files. The raw input and platform-token files must each be a stable regular
    file with exactly one hard link; the importer rejects either file before any
    platform call, Vault login, execution-record creation, or receipt write if
-   another filesystem name already points to the same content. On Windows this
-   link-count check does not replace the approved workstation ACL and cleanup
-   procedure. Run `scripts/secure_pool_import.py card` or `mailbox` with the exact
+   another filesystem name already points to the same content. On Windows the
+   importer also evaluates each raw-input, platform-token, RoleID and SecretID
+   ACL through the same already-open file handle before and after its bounded
+   read. The DACL must be protected, contain only explicit non-inherited Allow
+   entries for the current operator, SYSTEM and local Administrators, and be
+   owned by one of those principals; an inherited or broadened ACL fails closed.
+   This does not replace the approved workstation cleanup procedure or prove
+   secure erasure after the process exits. Run `scripts/secure_pool_import.py`
+   `card` or `mailbox` with the exact
    HTTPS `--platform-address`, `--platform-token-file`,
    `--expected-tenant-id`, and `--expected-audience`, plus the matching
    `--approle-role-id-file`, `--approle-secret-id-file`, Vault address, and

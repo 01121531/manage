@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 11)
+        self.assertEqual(contract["schema_version"], 12)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -50,6 +50,28 @@ class SecureImportVaultContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(contract["bundle_schema_version"], 3)
+        self.assertEqual(
+            contract["windows_private_file_permissions"],
+            {
+                "applies_to": [
+                    "raw_source_file",
+                    "platform_access_token_file",
+                    "approle_role_id_file",
+                    "approle_secret_id_file",
+                ],
+                "acl": (
+                    "protected_explicit_allow_current_operator_system_"
+                    "local_administrators_only"
+                ),
+                "owner": (
+                    "current_operator_system_or_local_administrators"
+                ),
+                "inherited_aces_allowed": False,
+                "descriptor_binding": (
+                    "same_open_descriptor_before_and_after_bounded_read"
+                ),
+            },
+        )
         self.assertEqual(
             contract["credential_exchange"],
             {

@@ -23,6 +23,9 @@ secure_pool_import = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = secure_pool_import
 SPEC.loader.exec_module(secure_pool_import)
 READ_PLATFORM_ACCESS_TOKEN = secure_pool_import._read_platform_access_token
+PRIVATE_FILE_PERMISSION_FINGERPRINT = (
+    secure_pool_import._private_file_permission_fingerprint
+)
 
 
 class SecurePoolImportCliTests(unittest.TestCase):
@@ -76,12 +79,19 @@ class SecurePoolImportCliTests(unittest.TestCase):
             "_read_vault_approle_token",
             return_value="test-vault-token",
         )
+        self.private_permissions_patch = patch.object(
+            secure_pool_import,
+            "_private_file_permission_fingerprint",
+            return_value="test-private-permissions",
+        )
         self.platform_context_patch.start()
         self.platform_token_patch.start()
         self.platform_renewal_patch.start()
         self.vault_approle_patch.start()
+        self.private_permissions_patch.start()
 
     def tearDown(self) -> None:
+        self.private_permissions_patch.stop()
         self.vault_approle_patch.stop()
         self.platform_renewal_patch.stop()
         self.platform_token_patch.stop()
@@ -720,6 +730,141 @@ class SecurePoolImportCliTests(unittest.TestCase):
             )
             self.assertFalse(execution_directory.exists())
             self.assertFalse(receipt_output.exists())
+
+    def test_raw_input_permission_failure_precedes_remote_or_local_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+
+            with patch.object(
+                secure_pool_import,
+                "_private_file_permission_fingerprint",
+                side_effect=OSError,
+                create=True,
+            ) as permissions, patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=AssertionError("Platform must not be called"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(
+                str(raised.exception),
+                "Input file is unavailable or invalid",
+            )
+            self.assertEqual(permissions.call_count, 1)
+            self.assertFalse(execution_directory.exists())
+            self.assertFalse(receipt_output.exists())
+
+    def test_platform_token_permission_failure_precedes_remote_or_local_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            platform_token_file = root / "platform.token"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            platform_token_file.write_text("platform-access-token", encoding="utf-8")
+
+            with patch.object(
+                secure_pool_import,
+                "_private_file_permission_fingerprint",
+                side_effect=("private", "private", OSError()),
+                create=True,
+            ) as permissions, patch.object(
+                secure_pool_import,
+                "_read_platform_access_token",
+                new=READ_PLATFORM_ACCESS_TOKEN,
+            ), patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=AssertionError("Platform must not be called"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    platform_token_file=str(platform_token_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(
+                str(raised.exception),
+                "Platform access token file is unavailable",
+            )
+            self.assertEqual(permissions.call_count, 3)
+            self.assertFalse(execution_directory.exists())
+            self.assertFalse(receipt_output.exists())
+
+    def test_approle_permission_failure_precedes_credential_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "role-id"
+            path.write_text("private-role-id", encoding="utf-8")
+            with patch.object(
+                secure_pool_import,
+                "_private_file_permission_fingerprint",
+                side_effect=OSError,
+                create=True,
+            ) as permissions, self.assertRaises(
+                secure_pool_import.ImportFailure
+            ) as raised:
+                secure_pool_import._read_approle_value(path)
+
+            self.assertEqual(
+                str(raised.exception),
+                "Vault AppRole credential file is unavailable",
+            )
+            self.assertEqual(permissions.call_count, 1)
+
+    def test_windows_private_permission_adapter_is_handle_bound_and_redacted(
+        self,
+    ) -> None:
+        metadata = object()
+        fingerprint = object()
+        with patch.object(
+            secure_pool_import.os,
+            "name",
+            "nt",
+        ), patch.object(
+            secure_pool_import,
+            "validate_private_file_permissions",
+            return_value=fingerprint,
+        ) as validate:
+            self.assertIs(
+                PRIVATE_FILE_PERMISSION_FINGERPRINT(17, metadata),
+                fingerprint,
+            )
+        validate.assert_called_once_with(17, metadata)
+
+        with patch.object(
+            secure_pool_import.os,
+            "name",
+            "nt",
+        ), patch.object(
+            secure_pool_import,
+            "validate_private_file_permissions",
+            side_effect=secure_pool_import.BackupCryptoError(
+                "private ACL detail"
+            ),
+        ), self.assertRaises(OSError) as raised:
+            PRIVATE_FILE_PERMISSION_FINGERPRINT(17, metadata)
+        self.assertNotIn("private ACL detail", str(raised.exception))
 
     def test_run_requires_ca_path_to_be_distinct_from_secret_inputs(self) -> None:
         role_id_file = str((ROOT / "vault.role-id").resolve())

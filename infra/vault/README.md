@@ -116,8 +116,11 @@ absolute paths; tenant and audience must match the target API environment).
 The raw input and platform-token files must each be stable regular files with
 exactly one hard link. A pre-existing hard-link alias fails before the platform
 request, Vault login, execution-record creation, or receipt write. On Windows,
-this link-count check supplements rather than verifies the approved workstation
-ACL and cleanup procedure:
+the raw input, platform token, RoleID and SecretID must also have a protected
+DACL owned by the current operator, SYSTEM or local Administrators, with only
+explicit non-inherited Allow entries for those three principals. The importer
+checks the ACL through the same open handle before and after each bounded read;
+it does not claim secure erasure or replace the approved cleanup procedure:
 
 ```sh
 python scripts/secure_pool_import.py card \
