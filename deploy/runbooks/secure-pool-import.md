@@ -53,6 +53,11 @@ rejected before the first Vault or API mutation.
    permissions. Supply a new external `--execution-directory`; the importer
    publishes `plan.json` before the first Vault write, a write intent before
    each mutation, and a confirmation only after Vault acknowledges version 1.
+   After every write is confirmed, it renews the same target-issued context
+   before Transit signing. Renewal never rotates the token or receipt UUID, is
+   bound to the same authenticated user/device/tenant/audience, and is capped
+   by the configured absolute renewal window (24 hours by default, no more than
+   seven days).
 6. If the importer is interrupted, run
    `scripts/secure_pool_import_recovery.py` against that execution directory and
    the intended receipt output. This is a read-only assessment with no network
@@ -62,24 +67,33 @@ rejected before the first Vault or API mutation.
    create-only/CAS 0 rejection cannot prove an existing secret equals the
    original input. Preserve the source and records under incident procedure for
    operator reconciliation.
-7. On the matching administration page, select the safe bundle, review the
+7. If the five-minute Transit receipt expires after recovery reports
+   `completed`, rerun `secure_pool_import.py` with `--reissue-from` pointing to
+   the original safe bundle, the same `--execution-directory`, and a new
+   `--receipt-output`; omit `--input-file`. The command validates the closed
+   execution record, renews its existing target context, and invokes Transit
+   signing only. It does not read the raw source, write KV, or modify the
+   original execution directory. A partial, unknown, consumed, caller-mismatched
+   or out-of-window context is refused. Preserve the original bundle, fresh
+   bundle and execution record; never overwrite any of them.
+8. On the matching administration page, select the safe bundle, review the
    pool type, count and routing preview, then confirm once. If the page reports
    “结果尚未确认”, do not select a different bundle. Use the same-batch recovery
    action. After a refresh or navigation, selecting the exact same bundle is
    also safe: its stable key lets the API return the committed receipt without
    consuming the Transit receipt again.
-8. A committed result must show the platform receipt ID, trace ID, pool/count,
+9. A committed result must show the platform receipt ID, trace ID, pool/count,
    `ordered_manifest_digest`, `secure_receipt_fingerprint`, Transit key version
    and timestamps. These are secret-free correlation fields, not proof that the
    target Vault, audit custody, reviewer identity or source secret values are
    authentic.
-9. Preserve the platform receipt and audit export according to the evidence
+10. Preserve the platform receipt and audit export according to the evidence
    policy. Destroy temporary raw input and bundle copies only under the approved
    intake retention procedure. Never print or paste a receipt token. Keep
    `production_acceptance=false` until real AppRole provenance, Vault audit,
    canary cleanup/readback, key rotation with old-receipt verification, actual
    dual-pool import and independent review are complete.
-10. Record those completed target checks as the 13 `secure_import_*` scenarios in
+11. Record those completed target checks as the 13 `secure_import_*` scenarios in
    the repository-external `vault_egress_evidence` index described by
    `deploy/runbooks/target-intake-preflight.md`. Use only opaque references,
    timestamps, fixed observations and digests. The index must reference the

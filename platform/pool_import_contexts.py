@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from sqlalchemy import select
@@ -32,6 +32,10 @@ class PoolImportContextConsumed(ValueError):
     pass
 
 
+class PoolImportContextRenewalExpired(ValueError):
+    pass
+
+
 def configured_pool_import_audience(settings: Any) -> str:
     configured = getattr(settings, "pool_import_receipt_audience", None)
     if configured:
@@ -44,6 +48,58 @@ def pool_import_context_token_hash(token: str) -> str:
     if not isinstance(token, str) or _TOKEN_RE.fullmatch(token) is None:
         raise PoolImportContextInvalid("Secure import context is invalid")
     return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+def renew_pool_import_context(
+    db: Session,
+    token: str,
+    *,
+    tenant_id: str,
+    user_id: str,
+    device_id: str,
+    audience: str,
+    ttl_seconds: int,
+    renewal_window_seconds: int,
+    now: datetime,
+) -> PoolImportContext:
+    """Extend one caller-bound context without rotating its retry token."""
+
+    token_hash = pool_import_context_token_hash(token)
+    context = db.scalar(
+        select(PoolImportContext)
+        .where(PoolImportContext.context_token_hash == token_hash)
+        .with_for_update()
+    )
+    if context is None:
+        raise PoolImportContextInvalid("Secure import context is invalid")
+    if context.consumed_at is not None or context.pool_import_receipt_id is not None:
+        raise PoolImportContextConsumed("Secure import context was already consumed")
+    if (
+        context.tenant_id != tenant_id
+        or context.created_by != user_id
+        or context.device_id != device_id
+        or context.audience != audience
+    ):
+        raise PoolImportContextBindingMismatch(
+            "Secure import context does not match this caller"
+        )
+    current = _aware_utc(now)
+    renewal_deadline = _aware_utc(context.created_at) + timedelta(
+        seconds=renewal_window_seconds
+    )
+    if renewal_deadline <= current:
+        raise PoolImportContextRenewalExpired(
+            "Secure import context renewal window has expired"
+        )
+    context.expires_at = min(
+        current + timedelta(seconds=ttl_seconds),
+        renewal_deadline,
+    )
+    return context
 
 
 class PoolImportContextVerifier(Protocol):
@@ -89,9 +145,7 @@ class DatabasePoolImportContextVerifier:
         )
         if context is None:
             raise PoolImportContextInvalid("Secure import context is invalid")
-        expires_at = context.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = _aware_utc(context.expires_at)
         if expires_at <= self._clock():
             raise PoolImportContextExpired("Secure import context has expired")
         if context.consumed_at is not None or context.pool_import_receipt_id is not None:

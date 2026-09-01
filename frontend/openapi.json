@@ -6030,6 +6030,70 @@
         ]
       }
     },
+    "/api/v1/admin/pool-import-contexts/renew": {
+      "post": {
+        "operationId": "admin_renew_pool_import_context_api_v1_admin_pool_import_contexts_renew_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Secure-Import-Context",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Secure-Import-Context"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolImportContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Stable platform error response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Renew Pool Import Context",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/role-change-requests": {
       "get": {
         "operationId": "admin_list_role_change_requests_api_v1_admin_role_change_requests_get",

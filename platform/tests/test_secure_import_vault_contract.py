@@ -63,6 +63,15 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 ],
                 "default_ttl_seconds": 900,
                 "maximum_ttl_seconds": 3600,
+                "renewal_endpoint": (
+                    "POST /api/v1/admin/pool-import-contexts/renew"
+                ),
+                "renewal_token_rotation": False,
+                "renewal_requires_same_user_device_tenant_audience": True,
+                "default_renewal_window_seconds": 86_400,
+                "maximum_renewal_window_seconds": 604_800,
+                "renewal_rejects_consumed_context": True,
+                "post_write_pre_sign_renewal": True,
                 "storage": "sha256-token-only",
                 "first_vault_write_requires_validated_context": True,
                 "final_submission_header": "Secure-Import-Context",
@@ -84,6 +93,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "assessment": "read_only",
                 "automatic_resume_allowed": False,
                 "existing_create_only_secret_equivalence_assumed": False,
+                "completed_receipt_reissue": "transit_sign_only_no_kv_rewrite",
+                "reissue_requires_completed_execution": True,
+                "original_execution_record_mutation": False,
             },
         )
         self.assertEqual(

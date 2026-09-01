@@ -202,6 +202,124 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertEqual(row.audience, "email-platform:pool-import:test")
             self.assertNotEqual(row.context_token_hash, context["context_token"])
 
+    def test_expired_context_can_be_idempotently_renewed_within_bounded_window(self) -> None:
+        digest = "a" * 64
+        issued = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": digest,
+                "item_count": 1,
+            },
+        )
+        self.assertEqual(issued.status_code, 201, issued.text)
+        original = issued.json()
+        with self.app.state.session_factory() as db:
+            row = db.get(PoolImportContext, original["receipt_id"])
+            assert row is not None
+            original_hash = row.context_token_hash
+            row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            row.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+            db.commit()
+
+        renewed = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts/renew",
+            headers={
+                "Authorization": self.authorization,
+                "Secure-Import-Context": original["context_token"],
+            },
+        )
+
+        self.assertEqual(renewed.status_code, 200, renewed.text)
+        replacement = renewed.json()
+        self.assertEqual(replacement["context_token"], original["context_token"])
+        self.assertEqual(replacement["receipt_id"], original["receipt_id"])
+        self.assertEqual(replacement["ordered_manifest_digest"], digest)
+        renewed_expiry = datetime.fromisoformat(replacement["expires_at"])
+        if renewed_expiry.tzinfo is None:
+            renewed_expiry = renewed_expiry.replace(tzinfo=timezone.utc)
+        self.assertGreater(renewed_expiry, datetime.now(timezone.utc))
+        retried = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts/renew",
+            headers={
+                "Authorization": self.authorization,
+                "Secure-Import-Context": original["context_token"],
+            },
+        )
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertEqual(retried.json()["context_token"], original["context_token"])
+        self.assertEqual(retried.json()["receipt_id"], original["receipt_id"])
+        with self.app.state.session_factory() as db:
+            row = db.get(PoolImportContext, original["receipt_id"])
+            assert row is not None
+            self.assertEqual(row.context_token_hash, original_hash)
+            renew_audits = list(db.scalars(select(AuditEvent).where(
+                AuditEvent.event_type == "admin.pool_import_context_renewed"
+            )))
+            self.assertEqual(len(renew_audits), 2)
+            self.assertTrue(all(
+                original["context_token"] not in audit.details_json
+                for audit in renew_audits
+            ))
+
+    def test_context_renewal_rejects_consumed_or_out_of_window_context(self) -> None:
+        payload = [{
+            "provider_ref": "provider-renew-consumed",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        receipt_id, import_headers = self.import_headers("card", payload)
+        consumed = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=import_headers,
+            json=payload,
+        )
+        self.assertEqual(consumed.status_code, 201, consumed.text)
+        consumed_renewal = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts/renew",
+            headers={
+                "Authorization": self.authorization,
+                "Secure-Import-Context": import_headers["Secure-Import-Context"],
+            },
+        )
+        self.assertEqual(consumed_renewal.status_code, 409, consumed_renewal.text)
+
+        issued = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "mailbox",
+                "ordered_manifest_digest": "b" * 64,
+                "item_count": 1,
+            },
+        )
+        self.assertEqual(issued.status_code, 201, issued.text)
+        context = issued.json()
+        with self.app.state.session_factory() as db:
+            row = db.get(PoolImportContext, context["receipt_id"])
+            assert row is not None
+            row.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+            row.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+            db.commit()
+        out_of_window = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts/renew",
+            headers={
+                "Authorization": self.authorization,
+                "Secure-Import-Context": context["context_token"],
+            },
+        )
+        self.assertEqual(out_of_window.status_code, 410, out_of_window.text)
+
     def test_card_import_derives_refs_and_replays_without_reverification(self) -> None:
         payload = [{
             "provider_ref": "provider-card-1",
@@ -453,6 +571,7 @@ class SecurePoolImportApiTests(unittest.TestCase):
         self.assertIn("post", paths["/api/v1/admin/cards/imports"])
         self.assertIn("post", paths["/api/v1/admin/mailboxes/imports"])
         self.assertIn("post", paths["/api/v1/admin/pool-import-contexts"])
+        self.assertIn("post", paths["/api/v1/admin/pool-import-contexts/renew"])
 
 
 if __name__ == "__main__":

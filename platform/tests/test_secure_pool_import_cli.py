@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -32,7 +33,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
             digest: str,
             item_count: int,
         ) -> object:
-            return secure_pool_import.PoolImportContext(
+            context = secure_pool_import.PoolImportContext(
                 schema_version=1,
                 context_token="c" * 43,
                 receipt_id=self.receipt_id,
@@ -41,6 +42,16 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 pool_type=pool_type,
                 ordered_manifest_digest=digest,
                 item_count=item_count,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+            self.issued_context = context
+            return context
+
+        def renew_context(_client: object, context_token: str) -> object:
+            self.assertEqual(context_token, self.issued_context.context_token)
+            return replace(
+                self.issued_context,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
             )
 
         self.platform_context_patch = patch.object(
@@ -53,10 +64,17 @@ class SecurePoolImportCliTests(unittest.TestCase):
             "_read_platform_access_token",
             return_value="platform-access-token",
         )
+        self.platform_renewal_patch = patch.object(
+            secure_pool_import.PlatformClient,
+            "renew_context",
+            new=renew_context,
+        )
         self.platform_context_patch.start()
         self.platform_token_patch.start()
+        self.platform_renewal_patch.start()
 
     def tearDown(self) -> None:
+        self.platform_renewal_patch.stop()
         self.platform_token_patch.stop()
         self.platform_context_patch.stop()
 
@@ -65,6 +83,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
         values = {
             "pool_type": "card",
             "input_file": str((ROOT / "input.json").resolve()),
+            "reissue_from": None,
             "platform_address": "https://platform.example.test",
             "platform_token_file": str((ROOT / "platform.token").resolve()),
             "expected_tenant_id": "tenant-1",
@@ -217,6 +236,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     }],
                 ),
                 item_count=1,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
             )
             mismatches = (
                 replace(valid, tenant_id="tenant-2"),
@@ -388,6 +408,197 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertNotIn("first-private-password", execution_text)
             self.assertNotIn("second-private-password", execution_text)
             self.assertNotIn("test-vault-token", execution_text)
+
+    def test_context_is_renewed_after_all_writes_before_transit_sign(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            token_file = root / "vault.token"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-renew-order",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            token_file.write_text("test-vault-token", encoding="utf-8")
+            order: list[str] = []
+
+            class OrderedVaultClient:
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                    order.append("write")
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    order.append("sign")
+                    return "vault:v1:test-signature"
+
+            def renew_context(client: object, context_token: str) -> object:
+                del client
+                order.append("renew")
+                self.assertEqual(context_token, "c" * 43)
+                return secure_pool_import.PoolImportContext(
+                    schema_version=1,
+                    context_token=context_token,
+                    receipt_id=self.receipt_id,
+                    tenant_id="tenant-1",
+                    audience="email-platform:pool-import:production",
+                    pool_type="card",
+                    ordered_manifest_digest=secure_pool_import.pool_import_digest(
+                        "card",
+                        [{
+                            "provider_ref": "provider-renew-order",
+                            "pool_key": "legacy-unclassified",
+                            "region": "legacy-unclassified",
+                            "brand": "Visa",
+                            "last4": "1111",
+                            "expiry_month": None,
+                            "expiry_year": None,
+                        }],
+                    ),
+                    item_count=1,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+                )
+
+            with patch.object(
+                secure_pool_import.PlatformClient,
+                "renew_context",
+                new=renew_context,
+                create=True,
+            ), patch.object(secure_pool_import, "VaultClient", OrderedVaultClient):
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    token_file=str(token_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(order, ["write", "renew", "sign"])
+
+    def test_completed_bundle_can_be_reissued_without_raw_input_or_kv_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            token_file = root / "vault.token"
+            original_bundle = root / "receipt-original.json"
+            fresh_bundle = root / "receipt-fresh.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-reissue",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            token_file.write_text("test-vault-token", encoding="utf-8")
+
+            class InitialVaultClient:
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                    pass
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    return "vault:v1:original-signature"
+
+            with patch.object(secure_pool_import, "VaultClient", InitialVaultClient):
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    token_file=str(token_file.resolve()),
+                    receipt_output=str(original_bundle.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+            execution_snapshot = {
+                path.name: path.read_bytes() for path in execution_directory.iterdir()
+            }
+            input_file.unlink()
+
+            class ReissueVaultClient:
+                writes = 0
+
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                    type(self).writes += 1
+                    raise AssertionError("KV write must not run during receipt reissue")
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    return "vault:v1:fresh-signature"
+
+            with patch.object(secure_pool_import, "VaultClient", ReissueVaultClient):
+                result = secure_pool_import.reissue_completed(self._args(
+                    input_file=None,
+                    reissue_from=str(original_bundle.resolve()),
+                    token_file=str(token_file.resolve()),
+                    receipt_output=str(fresh_bundle.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(result, (self.receipt_id, 1))
+            self.assertEqual(ReissueVaultClient.writes, 0)
+            original = json.loads(original_bundle.read_text(encoding="utf-8"))
+            fresh = json.loads(fresh_bundle.read_text(encoding="utf-8"))
+            for key in ("pool_type", "submission_key", "context_token", "items"):
+                self.assertEqual(fresh[key], original[key])
+            self.assertNotEqual(fresh["receipt_token"], original["receipt_token"])
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in execution_directory.iterdir()},
+                execution_snapshot,
+            )
+
+    def test_reissue_refuses_incomplete_execution_before_reading_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            token_file = root / "vault.token"
+            absent_bundle = root / "receipt-missing.json"
+            fresh_bundle = root / "receipt-fresh.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-incomplete",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            token_file.write_text("test-vault-token", encoding="utf-8")
+
+            class InterruptedVaultClient:
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
+                    raise KeyboardInterrupt
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    raise AssertionError("sign must not run")
+
+            with patch.object(secure_pool_import, "VaultClient", InterruptedVaultClient):
+                with self.assertRaises(KeyboardInterrupt):
+                    secure_pool_import.run(self._args(
+                        input_file=str(input_file.resolve()),
+                        token_file=str(token_file.resolve()),
+                        receipt_output=str(absent_bundle.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
+                    ))
+
+            with patch.object(
+                secure_pool_import,
+                "_read_platform_access_token",
+                side_effect=AssertionError("Platform token must not be read"),
+            ), patch.object(
+                secure_pool_import,
+                "_read_token",
+                side_effect=AssertionError("Vault token must not be read"),
+            ), self.assertRaises(secure_pool_import.ImportFailure):
+                secure_pool_import.reissue_completed(self._args(
+                    input_file=None,
+                    reissue_from=str(absent_bundle.resolve()),
+                    token_file=str(token_file.resolve()),
+                    receipt_output=str(fresh_bundle.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+            self.assertFalse(fresh_bundle.exists())
 
     def test_crash_after_vault_attempt_is_classified_commit_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

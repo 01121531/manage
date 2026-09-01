@@ -123,7 +123,9 @@ from platform.pool_import_contexts import (
     PoolImportContextConsumed,
     PoolImportContextExpired,
     PoolImportContextInvalid,
+    PoolImportContextRenewalExpired,
     pool_import_context_token_hash,
+    renew_pool_import_context,
 )
 from platform.uploads import transition_upload_phase
 from platform.schemas import (
@@ -5791,6 +5793,87 @@ def admin_create_pool_import_context(
     db.refresh(context)
     return PoolImportContextResponse(
         context_token=context_token,
+        receipt_id=context.id,
+        tenant_id=context.tenant_id,
+        audience=context.audience,
+        pool_type=context.pool_type,
+        ordered_manifest_digest=context.ordered_manifest_digest,
+        item_count=context.item_count,
+        expires_at=context.expires_at,
+    )
+
+
+@router.post(
+    "/admin/pool-import-contexts/renew",
+    response_model=PoolImportContextResponse,
+    tags=["admin"],
+)
+def admin_renew_pool_import_context(
+    request: Request,
+    secure_import_context: str | None = Header(
+        default=None,
+        alias="Secure-Import-Context",
+    ),
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> PoolImportContextResponse:
+    if secure_import_context is None:
+        raise HTTPException(status_code=422, detail="Secure import context is required")
+    now = _utc_now()
+    try:
+        context = renew_pool_import_context(
+            db,
+            secure_import_context,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            audience=request.app.state.pool_import_context_audience,
+            ttl_seconds=request.app.state.settings.pool_import_context_ttl_seconds,
+            renewal_window_seconds=(
+                request.app.state.settings.pool_import_context_renewal_window_seconds
+            ),
+            now=now,
+        )
+    except PoolImportContextConsumed:
+        raise HTTPException(
+            status_code=409, detail="Secure import context was already consumed"
+        ) from None
+    except PoolImportContextBindingMismatch:
+        raise HTTPException(
+            status_code=409,
+            detail="Secure import context does not match this caller",
+        ) from None
+    except PoolImportContextRenewalExpired:
+        raise HTTPException(
+            status_code=410,
+            detail="Secure import context renewal window has expired",
+        ) from None
+    except PoolImportContextInvalid:
+        raise HTTPException(status_code=403, detail="Secure import context is invalid") from None
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="admin.pool_import_context_renewed",
+        entity_type=f"{context.pool_type}_pool",
+        entity_id=context.id,
+        trace_id=request.state.trace_id,
+        details={
+            "pool_type": context.pool_type,
+            "item_count": context.item_count,
+            "ordered_manifest_digest": context.ordered_manifest_digest,
+            "context_fingerprint": hashlib.sha256(
+                context.id.encode("ascii")
+            ).hexdigest(),
+        },
+    )
+    db.commit()
+    db.refresh(context)
+    return PoolImportContextResponse(
+        context_token=secure_import_context,
         receipt_id=context.id,
         tenant_id=context.tenant_id,
         audience=context.audience,

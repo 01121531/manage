@@ -20,6 +20,13 @@
     "server_authoritative_fields": ["receipt_id", "tenant_id", "audience"],
     "default_ttl_seconds": 900,
     "maximum_ttl_seconds": 3600,
+    "renewal_endpoint": "POST /api/v1/admin/pool-import-contexts/renew",
+    "renewal_token_rotation": false,
+    "renewal_requires_same_user_device_tenant_audience": true,
+    "default_renewal_window_seconds": 86400,
+    "maximum_renewal_window_seconds": 604800,
+    "renewal_rejects_consumed_context": true,
+    "post_write_pre_sign_renewal": true,
     "storage": "sha256-token-only",
     "first_vault_write_requires_validated_context": true,
     "final_submission_header": "Secure-Import-Context",
@@ -35,7 +42,10 @@
     "states": ["unwritten", "partial_written", "commit_unknown", "completed"],
     "assessment": "read_only",
     "automatic_resume_allowed": false,
-    "existing_create_only_secret_equivalence_assumed": false
+    "existing_create_only_secret_equivalence_assumed": false,
+    "completed_receipt_reissue": "transit_sign_only_no_kv_rewrite",
+    "reissue_requires_completed_execution": true,
+    "original_execution_record_mutation": false
   },
   "canary_cleanup": {
     "policy_scope": "exact_per_run_paths_only",

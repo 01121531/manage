@@ -509,6 +509,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/pool-import-contexts/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Renew Pool Import Context */
+        post: operations["admin_renew_pool_import_context_api_v1_admin_pool_import_contexts_renew_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/role-change-requests": {
         parameters: {
             query?: never;
@@ -3922,6 +3939,46 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolImportContextResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_renew_pool_import_context_api_v1_admin_pool_import_contexts_renew_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Secure-Import-Context"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

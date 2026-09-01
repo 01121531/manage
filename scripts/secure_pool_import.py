@@ -44,12 +44,17 @@ from platform.pool_import_execution import (
     build_execution_event,
     build_execution_plan,
     canonical_bytes as execution_canonical_bytes,
+    execution_plan_errors,
 )
 from scripts.backup_output_policy import (
     create_write_once_directory,
     prepare_write_once_file,
     publish_write_once_file,
     write_fsynced_temporary_bytes,
+)
+from scripts.secure_pool_import_recovery import (
+    RecoveryFailure,
+    assess_execution_directory,
 )
 
 
@@ -343,6 +348,67 @@ class PoolImportContext:
     pool_type: Literal["card", "mailbox"]
     ordered_manifest_digest: str
     item_count: int
+    expires_at: datetime
+
+
+def _parse_platform_context(raw: bytes) -> PoolImportContext:
+    try:
+        value = parse_unique_json_bytes(raw)
+    except JsonBoundaryError:
+        raise ImportFailure("Platform returned an invalid import context") from None
+    expected_keys = {
+        "schema_version",
+        "context_token",
+        "receipt_id",
+        "tenant_id",
+        "audience",
+        "pool_type",
+        "ordered_manifest_digest",
+        "item_count",
+        "expires_at",
+    }
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise ImportFailure("Platform returned an invalid import context")
+    try:
+        receipt_id = str(UUID(value["receipt_id"]))
+        expires_at = datetime.fromisoformat(
+            str(value["expires_at"]).replace("Z", "+00:00")
+        )
+    except (ValueError, TypeError, AttributeError):
+        raise ImportFailure("Platform returned an invalid import context") from None
+    now = datetime.now(timezone.utc)
+    if (
+        value["schema_version"] != 1
+        or isinstance(value["schema_version"], bool)
+        or not isinstance(value["context_token"], str)
+        or re.fullmatch(r"[A-Za-z0-9_-]{43,128}", value["context_token"]) is None
+        or value["receipt_id"] != receipt_id
+        or not isinstance(value["tenant_id"], str)
+        or not 1 <= len(value["tenant_id"]) <= 64
+        or not isinstance(value["audience"], str)
+        or not 1 <= len(value["audience"]) <= 160
+        or value["pool_type"] not in {"card", "mailbox"}
+        or not isinstance(value["ordered_manifest_digest"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["ordered_manifest_digest"]) is None
+        or type(value["item_count"]) is not int
+        or not 1 <= value["item_count"] <= 100
+        or not isinstance(value["expires_at"], str)
+        or expires_at.utcoffset() is None
+        or expires_at <= now
+        or expires_at > now + timedelta(seconds=3_660)
+    ):
+        raise ImportFailure("Platform returned an invalid import context")
+    return PoolImportContext(
+        schema_version=1,
+        context_token=value["context_token"],
+        receipt_id=receipt_id,
+        tenant_id=value["tenant_id"],
+        audience=value["audience"],
+        pool_type=value["pool_type"],
+        ordered_manifest_digest=value["ordered_manifest_digest"],
+        item_count=value["item_count"],
+        expires_at=expires_at,
+    )
 
 
 class PlatformClient:
@@ -390,62 +456,34 @@ class PlatformClient:
             raise ImportFailure("Platform import context request failed") from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise ImportFailure("Platform import context request failed") from None
-        try:
-            value = parse_unique_json_bytes(raw)
-        except JsonBoundaryError:
-            raise ImportFailure("Platform returned an invalid import context") from None
-        expected_keys = {
-            "schema_version",
-            "context_token",
-            "receipt_id",
-            "tenant_id",
-            "audience",
-            "pool_type",
-            "ordered_manifest_digest",
-            "item_count",
-            "expires_at",
-        }
-        if not isinstance(value, dict) or set(value) != expected_keys:
-            raise ImportFailure("Platform returned an invalid import context")
-        try:
-            receipt_id = str(UUID(value["receipt_id"]))
-            expires_at = datetime.fromisoformat(
-                str(value["expires_at"]).replace("Z", "+00:00")
-            )
-        except (ValueError, TypeError, AttributeError):
-            raise ImportFailure("Platform returned an invalid import context") from None
-        now = datetime.now(timezone.utc)
-        if (
-            value["schema_version"] != 1
-            or isinstance(value["schema_version"], bool)
-            or not isinstance(value["context_token"], str)
-            or re.fullmatch(r"[A-Za-z0-9_-]{43,128}", value["context_token"]) is None
-            or value["receipt_id"] != receipt_id
-            or not isinstance(value["tenant_id"], str)
-            or not 1 <= len(value["tenant_id"]) <= 64
-            or not isinstance(value["audience"], str)
-            or not 1 <= len(value["audience"]) <= 160
-            or value["pool_type"] not in {"card", "mailbox"}
-            or not isinstance(value["ordered_manifest_digest"], str)
-            or re.fullmatch(r"[0-9a-f]{64}", value["ordered_manifest_digest"]) is None
-            or type(value["item_count"]) is not int
-            or not 1 <= value["item_count"] <= 100
-            or not isinstance(value["expires_at"], str)
-            or expires_at.utcoffset() is None
-            or expires_at <= now
-            or expires_at > now + timedelta(seconds=3_660)
-        ):
-            raise ImportFailure("Platform returned an invalid import context")
-        return PoolImportContext(
-            schema_version=1,
-            context_token=value["context_token"],
-            receipt_id=receipt_id,
-            tenant_id=value["tenant_id"],
-            audience=value["audience"],
-            pool_type=value["pool_type"],
-            ordered_manifest_digest=value["ordered_manifest_digest"],
-            item_count=value["item_count"],
+        return _parse_platform_context(raw)
+
+    def renew_context(self, context_token: str) -> PoolImportContext:
+        request = urllib.request.Request(
+            self.addr + "/api/v1/admin/pool-import-contexts/renew",
+            data=b"",
+            method="POST",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.access_token}",
+                "Secure-Import-Context": context_token,
+            },
         )
+        try:
+            with self.opener.open(request, timeout=20) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ImportFailure("Platform returned an invalid import context")
+        except urllib.error.HTTPError as error:
+            if error.code in {401, 403, 409, 410}:
+                raise ImportFailure("Platform rejected import context renewal") from None
+            raise ImportFailure("Platform import context renewal failed") from None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise ImportFailure("Platform import context renewal failed") from None
+        context = _parse_platform_context(raw)
+        if context.context_token != context_token:
+            raise ImportFailure("Platform rotated an idempotent import context")
+        return context
 
 
 def _write_execution_record(path: Path, document: dict[str, object]) -> None:
@@ -471,7 +509,73 @@ def _write_bundle(path: Path, bundle: dict[str, object]) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _context_matches(
+    context: PoolImportContext,
+    *,
+    context_token: str,
+    receipt_id: str,
+    tenant_id: str,
+    audience: str,
+    pool_type: Literal["card", "mailbox"],
+    digest: str,
+    item_count: int,
+) -> bool:
+    return (
+        context.schema_version == 1
+        and context.context_token == context_token
+        and context.receipt_id == receipt_id
+        and context.tenant_id == tenant_id
+        and context.audience == audience
+        and context.pool_type == pool_type
+        and context.ordered_manifest_digest == digest
+        and context.item_count == item_count
+        and context.expires_at > datetime.now(timezone.utc)
+    )
+
+
+def _signed_bundle(
+    client: VaultClient,
+    *,
+    context: PoolImportContext,
+    manifest: list[dict[str, object]],
+) -> dict[str, object]:
+    now = int(datetime.now(timezone.utc).timestamp())
+    claims = {
+        "schema_version": 1,
+        "audience": context.audience,
+        "receipt_id": context.receipt_id,
+        "tenant_id": context.tenant_id,
+        "pool_type": context.pool_type,
+        "ordered_manifest_digest": context.ordered_manifest_digest,
+        "item_count": len(manifest),
+        "issued_at": now,
+        "expires_at": now + RECEIPT_TTL_SECONDS,
+        "key_version": 1,
+    }
+    unsigned = canonical_receipt_claims(claims)
+    signature = client.sign(context.pool_type, unsigned)
+    key_version = int(signature.split(":", 2)[1].removeprefix("v"))
+    if key_version != claims["key_version"]:
+        claims["key_version"] = key_version
+        unsigned = canonical_receipt_claims(claims)
+        signature = client.sign(context.pool_type, unsigned)
+        if int(signature.split(":", 2)[1].removeprefix("v")) != key_version:
+            raise ImportFailure(
+                "Transit key changed during signing; inspect the execution record"
+            )
+    return {
+        "schema_version": 3,
+        "pool_type": context.pool_type,
+        "submission_key": pool_import_submission_key(context.receipt_id),
+        "context_token": context.context_token,
+        "receipt_token": encode_receipt_token(unsigned, signature),
+        "items": manifest,
+    }
+
+
 def run(args: argparse.Namespace) -> tuple[str, int]:
+    if not getattr(args, "input_file", None) or getattr(args, "reissue_from", None):
+        raise ImportFailure("Raw import requires one input file and no reissue bundle")
     input_path = _absolute_file(args.input_file, label="Input file")
     platform_token_path = _absolute_file(
         args.platform_token_file, label="Platform access token file"
@@ -591,38 +695,19 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
                 occurred_at=_utc_now(),
             ),
         )
-    now = int(datetime.now(timezone.utc).timestamp())
-    claims = {
-        "schema_version": 1,
-        "audience": audience,
-        "receipt_id": receipt_id,
-        "tenant_id": tenant_id,
-        "pool_type": pool_type,
-        "ordered_manifest_digest": digest,
-        "item_count": len(manifest),
-        "issued_at": now,
-        "expires_at": now + RECEIPT_TTL_SECONDS,
-        "key_version": 1,
-    }
-    unsigned = canonical_receipt_claims(claims)
-    signature = client.sign(pool_type, unsigned)
-    key_version = int(signature.split(":", 2)[1].removeprefix("v"))
-    if key_version != claims["key_version"]:
-        claims["key_version"] = key_version
-        unsigned = canonical_receipt_claims(claims)
-        signature = client.sign(pool_type, unsigned)
-        if int(signature.split(":", 2)[1].removeprefix("v")) != key_version:
-            raise ImportFailure(
-                "Transit key changed during signing; inspect the execution record"
-            )
-    bundle = {
-        "schema_version": 3,
-        "pool_type": pool_type,
-        "submission_key": pool_import_submission_key(receipt_id),
-        "context_token": context.context_token,
-        "receipt_token": encode_receipt_token(unsigned, signature),
-        "items": manifest,
-    }
+    renewed_context = platform_client.renew_context(context.context_token)
+    if not _context_matches(
+        renewed_context,
+        context_token=context.context_token,
+        receipt_id=receipt_id,
+        tenant_id=tenant_id,
+        audience=audience,
+        pool_type=pool_type,
+        digest=digest,
+        item_count=len(manifest),
+    ):
+        raise ImportFailure("Renewed platform context does not match this execution")
+    bundle = _signed_bundle(client, context=renewed_context, manifest=manifest)
     _write_execution_record(
         execution_directory / "bundle.intent.json",
         build_execution_event(
@@ -647,10 +732,129 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     return receipt_id, len(manifest)
 
 
+def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
+    if getattr(args, "input_file", None) or not getattr(args, "reissue_from", None):
+        raise ImportFailure("Receipt reissue requires one completed bundle and no raw input")
+    source_bundle_path = _absolute_file(args.reissue_from, label="Reissue bundle")
+    platform_token_path = _absolute_file(
+        args.platform_token_file, label="Platform access token file"
+    )
+    token_path = _absolute_file(args.token_file, label="Vault token file")
+    output_path = _absolute_file(args.receipt_output, label="Receipt output")
+    execution_path = Path(args.execution_directory)
+    if not execution_path.is_absolute():
+        raise ImportFailure("Execution record directory must be an absolute path")
+    ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
+    expected_tenant_id = args.expected_tenant_id.strip()
+    expected_audience = args.expected_audience.strip()
+    if (
+        expected_tenant_id != args.expected_tenant_id
+        or not 1 <= len(expected_tenant_id) <= 64
+    ):
+        raise ImportFailure("Expected tenant ID is invalid")
+    if (
+        expected_audience != args.expected_audience
+        or not 1 <= len(expected_audience) <= 160
+    ):
+        raise ImportFailure("Expected receipt audience is invalid")
+    if output_path.exists() or not output_path.parent.is_dir():
+        raise ImportFailure("Receipt output must be a new file in an existing directory")
+    resolved_execution = execution_path.resolve()
+    resolved_output = output_path.resolve()
+    if resolved_output == resolved_execution or resolved_execution in resolved_output.parents:
+        raise ImportFailure("Reissued receipt output must be outside the execution record")
+    distinct_paths = [
+        source_bundle_path,
+        platform_token_path,
+        token_path,
+        output_path,
+        execution_path,
+    ]
+    if ca_file is not None:
+        distinct_paths.append(ca_file)
+    if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
+        raise ImportFailure("Bundle, token, CA, execution, and output paths must be separate")
+    try:
+        assessment = assess_execution_directory(execution_path, source_bundle_path)
+    except (OSError, ValueError, RecoveryFailure):
+        raise ImportFailure("Completed execution record is invalid") from None
+    if assessment["status"] != "completed":
+        raise ImportFailure("Only a completed execution can be reissued")
+    plan_value = _read_json(execution_path / "plan.json")
+    bundle_value = _read_json(source_bundle_path)
+    if (
+        not isinstance(plan_value, dict)
+        or execution_plan_errors(plan_value)
+        or not isinstance(bundle_value, dict)
+        or set(bundle_value) != {
+            "schema_version",
+            "pool_type",
+            "submission_key",
+            "context_token",
+            "receipt_token",
+            "items",
+        }
+    ):
+        raise ImportFailure("Completed execution evidence is invalid")
+    plan = dict(plan_value)
+    bundle = dict(bundle_value)
+    pool_type: Literal["card", "mailbox"] = args.pool_type
+    items = bundle.get("items")
+    try:
+        receipt_id = str(UUID(str(plan["execution_id"])))
+        digest = pool_import_digest(pool_type, items)
+    except (KeyError, TypeError, ValueError):
+        raise ImportFailure("Completed execution evidence is invalid") from None
+    context_token = bundle.get("context_token")
+    vault_origin = _vault_origin(args.vault_address)
+    platform_origin = _platform_origin(args.platform_address)
+    if (
+        plan.get("pool_type") != pool_type
+        or bundle.get("schema_version") != 3
+        or bundle.get("pool_type") != pool_type
+        or bundle.get("submission_key") != pool_import_submission_key(receipt_id)
+        or not isinstance(context_token, str)
+        or re.fullmatch(r"[A-Za-z0-9_-]{43,128}", context_token) is None
+        or not isinstance(items, list)
+        or len(items) != plan.get("item_count")
+        or digest != plan.get("ordered_manifest_digest")
+        or plan.get("vault_origin_sha256")
+        != hashlib.sha256(vault_origin.encode("utf-8")).hexdigest()
+        or plan.get("tenant_scope_sha256")
+        != hashlib.sha256(expected_tenant_id.encode("utf-8")).hexdigest()
+        or plan.get("audience_sha256")
+        != hashlib.sha256(expected_audience.encode("utf-8")).hexdigest()
+    ):
+        raise ImportFailure("Completed execution does not match this reissue request")
+    platform_client = PlatformClient(
+        platform_origin,
+        _read_platform_access_token(platform_token_path),
+        ca_file=ca_file,
+    )
+    renewed_context = platform_client.renew_context(context_token)
+    if not _context_matches(
+        renewed_context,
+        context_token=context_token,
+        receipt_id=receipt_id,
+        tenant_id=expected_tenant_id,
+        audience=expected_audience,
+        pool_type=pool_type,
+        digest=digest,
+        item_count=len(items),
+    ):
+        raise ImportFailure("Renewed platform context does not match this execution")
+    client = VaultClient(vault_origin, _read_token(token_path), ca_file=ca_file)
+    fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
+    _write_bundle(output_path, fresh_bundle)
+    return receipt_id, len(items)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Securely import one card or mailbox pool")
     parser.add_argument("pool_type", choices=("card", "mailbox"))
-    parser.add_argument("--input-file", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input-file")
+    source.add_argument("--reissue-from")
     parser.add_argument("--platform-address", required=True)
     parser.add_argument("--platform-token-file", required=True)
     parser.add_argument("--expected-tenant-id", required=True)
@@ -665,7 +869,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     try:
-        receipt_id, count = run(build_parser().parse_args())
+        arguments = build_parser().parse_args()
+        action = reissue_completed if arguments.reissue_from else run
+        receipt_id, count = action(arguments)
     except ImportFailure as error:
         print(
             f"secure-pool-import-failed: {error}; run the read-only execution assessment",
