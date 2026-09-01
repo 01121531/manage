@@ -1,5 +1,5 @@
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -27,6 +27,8 @@
     "revocation_endpoint": "POST /v1/auth/token/revoke-self",
     "revocation_acknowledgement": "empty_http_204",
     "revocation_attempt_scope": "every_controlled_exit_after_token_exchange",
+    "authentication_validation_failure_revocation": "attempt_for_visible_ascii_issued_token",
+    "unsafe_authentication_token_header_reuse": false,
     "primary_failure_precedence": true,
     "revocation_attempt_survives_evidence_failure": true,
     "raw_import_revocation_evidence": "write_once_intent_then_confirmation",

@@ -55,12 +55,16 @@ rejected before the first Vault or API mutation.
    CLI exchanges the AppRole values in memory and accepts only the exact
    pool-specific policy and role, a service token without default or identity
    policies, and an initial TTL no greater than 15 minutes. It never persists
-   the returned Vault token. The token does not need an operator-supplied
-   accessor: on every controlled exit after token exchange, whether the bounded
-   operation succeeds or fails, the CLI calls Vault's self-revocation endpoint
-   and clears the token from memory. A cleanup failure never replaces the
-   original import, reissue or process-control exception. TTL expiry remains
-   the fail-safe for a hard process termination or ambiguous network response.
+   the returned Vault token. If a visible-ASCII token was issued but any
+   identity or lease validation fails, the exchange path attempts immediate
+   self-revocation before returning the fixed validation error; an unsafe token
+   value is never copied into a request header. The token does not need an
+   operator-supplied accessor: on every controlled exit after successful
+   validation, whether the bounded operation succeeds or fails, the CLI calls
+   Vault's self-revocation endpoint and clears the token from memory. A cleanup
+   failure never replaces the original validation, import, reissue or
+   process-control exception. TTL expiry remains the fail-safe for a hard
+   process termination, unusable token value or ambiguous network response.
 5. The importer emits a browser-safe `schema_version: 3` bundle containing
    masked items, the target context token, a Transit receipt, and a
    `submission_key` of the form `spi:<signed receipt UUID>`. Keep the raw input,

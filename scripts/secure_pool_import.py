@@ -173,6 +173,32 @@ def _read_approle_value(path: Path) -> str:
         raise ImportFailure("Vault AppRole credential file is unavailable") from None
 
 
+def _safe_vault_token(value: object) -> str | None:
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= MAX_TOKEN_BYTES
+        and re.fullmatch(r"[\x21-\x7e]+", value) is not None
+    ):
+        return value
+    return None
+
+
+def _revoke_vault_token(vault_origin: str, token: str, opener: Any) -> None:
+    request = urllib.request.Request(
+        vault_origin + "/v1/auth/token/revoke-self",
+        method="POST",
+        headers={"Accept": "application/json", "X-Vault-Token": token},
+    )
+    try:
+        with opener.open(request, timeout=20) as response:
+            status = response.getcode()
+            raw = response.read(1)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ImportFailure("Vault token revocation is unconfirmed") from None
+    if status != 204 or raw:
+        raise ImportFailure("Vault token revocation acknowledgement is invalid")
+
+
 def _exchange_approle_token(
     vault_origin: str,
     *,
@@ -215,11 +241,10 @@ def _exchange_approle_token(
     auth = value.get("auth") if isinstance(value, dict) else None
     metadata = auth.get("metadata") if isinstance(auth, dict) else None
     token = auth.get("client_token") if isinstance(auth, dict) else None
+    safe_token = _safe_vault_token(token)
     if (
         not isinstance(auth, dict)
-        or not isinstance(token, str)
-        or not 1 <= len(token.encode("utf-8")) <= MAX_TOKEN_BYTES
-        or any(character.isspace() for character in token)
+        or safe_token is None
         or auth.get("policies") != [expected_policy]
         or auth.get("token_policies") != [expected_policy]
         or auth.get("identity_policies") != []
@@ -231,8 +256,16 @@ def _exchange_approle_token(
         or not isinstance(metadata, dict)
         or metadata.get("role_name") != expected_role
     ):
-        raise ImportFailure("Vault AppRole response is invalid")
-    return token
+        primary_error = ImportFailure("Vault AppRole response is invalid")
+        if safe_token is not None:
+            try:
+                _revoke_vault_token(vault_origin, safe_token, opener)
+            except ImportFailure:
+                primary_error.add_note(_REVOCATION_FAILURE_NOTE)
+            finally:
+                safe_token = ""
+        raise primary_error
+    return safe_token
 
 
 def _read_vault_approle_token(
@@ -447,21 +480,10 @@ class VaultClient:
         return signature
 
     def revoke_self(self) -> None:
-        request = urllib.request.Request(
-            self.addr + "/v1/auth/token/revoke-self",
-            method="POST",
-            headers={"Accept": "application/json", "X-Vault-Token": self.token},
-        )
         try:
-            with self.opener.open(request, timeout=20) as response:
-                status = response.getcode()
-                raw = response.read(1)
-        except (urllib.error.URLError, TimeoutError, OSError):
-            raise ImportFailure("Vault token revocation is unconfirmed") from None
+            _revoke_vault_token(self.addr, self.token, self.opener)
         finally:
             self.token = ""
-        if status != 204 or raw:
-            raise ImportFailure("Vault token revocation acknowledgement is invalid")
 
 
 def _revoke_import_token(

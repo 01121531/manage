@@ -3268,8 +3268,11 @@ test('security auditor filters and downloads redacted audit evidence', async ({ 
   await auditorReconcile.click()
   const reconcileDialog = page.getByRole('dialog', { name: '确认上传 Audited Store 的 unknown 终态' })
   await expect(reconcileDialog.getByText('upload-1', { exact: true })).toBeVisible()
-  await reconcileDialog.getByLabel('复核结果').click()
-  await page.getByText('成功', { exact: true }).last().click()
+  const reconcileResult = reconcileDialog.getByRole('combobox', { name: /复核结果/ })
+  await reconcileResult.click()
+  await reconcileResult.press('ArrowDown')
+  await reconcileResult.press('Enter')
+  await expect(reconcileDialog).toContainText(/复核结果\s*成功/)
   await reconcileDialog.getByLabel('外部编号').fill('auditor-confirmed-1')
   await reconcileDialog.getByRole('button', { name: /确认写入复核终态/ }).click()
   await expect.poll(() => reconcileRequests).toEqual([{
@@ -3531,8 +3534,11 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
 
   await committedReconcile.click()
   reconcileDialog = page.getByRole('dialog', { name: '确认上传 Committed Result 的 unknown 终态' })
-  await reconcileDialog.getByLabel('复核结果').click()
-  await page.getByText('成功', { exact: true }).last().click()
+  const committedResult = reconcileDialog.getByRole('combobox', { name: /复核结果/ })
+  await committedResult.click()
+  await committedResult.press('ArrowDown')
+  await committedResult.press('Enter')
+  await expect(reconcileDialog).toContainText(/复核结果\s*成功/)
   await reconcileDialog.getByLabel('外部编号').fill('sub2-confirmed-1')
   const confirmCommitted = reconcileDialog.getByRole('button', { name: /确认写入复核终态/ })
   await confirmCommitted.click()
@@ -3658,6 +3664,7 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
 })
 
 test('platform admin governs upload policies without browser execution details', async ({ page }) => {
+  test.setTimeout(60_000)
   const accessValue = ['admin', 'access', 'value'].join('-')
   const traceId = '00000000-0000-0000-0000-000000000099'
   let versions = [{

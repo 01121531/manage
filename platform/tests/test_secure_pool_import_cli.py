@@ -155,8 +155,18 @@ class SecurePoolImportCliTests(unittest.TestCase):
         return json.dumps({"auth": auth}).encode("utf-8")
 
     @staticmethod
-    def _approle_opener(response_body: bytes, captured: dict[str, object]) -> object:
+    def _approle_opener(
+        response_body: bytes,
+        captured: dict[str, object],
+        *,
+        revoke_status: int = 204,
+        revoke_body: bytes = b"",
+    ) -> object:
         class FakeResponse:
+            def __init__(self, body: bytes, status: int) -> None:
+                self.body = body
+                self.status = status
+
             def __enter__(self) -> "FakeResponse":
                 return self
 
@@ -164,13 +174,20 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 pass
 
             def read(self, _limit: int) -> bytes:
-                return response_body
+                return self.body
+
+            def getcode(self) -> int:
+                return self.status
 
         class FakeOpener:
             def open(self, request: object, timeout: int) -> FakeResponse:
-                captured["request"] = request
-                captured["timeout"] = timeout
-                return FakeResponse()
+                if request.full_url.endswith("/v1/auth/approle/login"):
+                    captured["request"] = request
+                    captured["timeout"] = timeout
+                    return FakeResponse(response_body, 200)
+                captured["revocation_request"] = request
+                captured["revocation_timeout"] = timeout
+                return FakeResponse(revoke_body, revoke_status)
 
         return FakeOpener()
 
@@ -230,6 +247,97 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 self.assertNotIn("sensitive-role-id", message)
                 self.assertNotIn("sensitive-secret-id", message)
                 self.assertNotIn("vault-service-token", message)
+
+    def test_approle_identity_drift_revokes_an_issued_safe_token(self) -> None:
+        captured: dict[str, object] = {}
+        opener = self._approle_opener(
+            self._approle_response(
+                policies=["email-platform-mailbox-importer"],
+            ),
+            captured,
+        )
+        with patch.object(
+            secure_pool_import.urllib.request,
+            "build_opener",
+            return_value=opener,
+        ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+            secure_pool_import._exchange_approle_token(
+                "https://vault.example.test",
+                role_id="sensitive-role-id",
+                secret_id="sensitive-secret-id",
+                expected_role="email-platform-card-importer",
+                expected_policy="email-platform-card-importer",
+                ca_file=None,
+            )
+
+        self.assertEqual(str(raised.exception), "Vault AppRole response is invalid")
+        request = captured["revocation_request"]
+        self.assertEqual(
+            request.full_url,
+            "https://vault.example.test/v1/auth/token/revoke-self",
+        )
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(captured["revocation_timeout"], 20)
+        self.assertEqual(request.get_header("X-vault-token"), "vault-service-token")
+
+    def test_approle_validation_error_stays_primary_when_revoke_is_unconfirmed(
+        self,
+    ) -> None:
+        captured: dict[str, object] = {}
+        opener = self._approle_opener(
+            self._approle_response(token_type="batch"),
+            captured,
+            revoke_status=500,
+        )
+        with patch.object(
+            secure_pool_import.urllib.request,
+            "build_opener",
+            return_value=opener,
+        ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+            secure_pool_import._exchange_approle_token(
+                "https://vault.example.test",
+                role_id="sensitive-role-id",
+                secret_id="sensitive-secret-id",
+                expected_role="email-platform-card-importer",
+                expected_policy="email-platform-card-importer",
+                ca_file=None,
+            )
+
+        self.assertEqual(str(raised.exception), "Vault AppRole response is invalid")
+        self.assertEqual(
+            raised.exception.__notes__,
+            [secure_pool_import._REVOCATION_FAILURE_NOTE],
+        )
+        self.assertNotIn("vault-service-token", str(raised.exception))
+        self.assertIn("revocation_request", captured)
+
+    def test_approle_never_sends_an_invalid_token_as_a_revocation_header(self) -> None:
+        for invalid_token in ("unsafe token", "\ud800", "\x00", "non-ascii-é"):
+            with self.subTest(invalid_token=ascii(invalid_token)):
+                captured: dict[str, object] = {}
+                opener = self._approle_opener(
+                    self._approle_response(client_token=invalid_token),
+                    captured,
+                )
+                with patch.object(
+                    secure_pool_import.urllib.request,
+                    "build_opener",
+                    return_value=opener,
+                ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                    secure_pool_import._exchange_approle_token(
+                        "https://vault.example.test",
+                        role_id="sensitive-role-id",
+                        secret_id="sensitive-secret-id",
+                        expected_role="email-platform-card-importer",
+                        expected_policy="email-platform-card-importer",
+                        ca_file=None,
+                    )
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "Vault AppRole response is invalid",
+                )
+                self.assertNotIn("revocation_request", captured)
 
     def test_card_parser_derives_last4_and_never_emits_pan_in_manifest(self) -> None:
         manifest, secret = secure_pool_import._card_record({
