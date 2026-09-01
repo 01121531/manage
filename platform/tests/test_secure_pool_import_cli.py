@@ -69,11 +69,18 @@ class SecurePoolImportCliTests(unittest.TestCase):
             "renew_context",
             new=renew_context,
         )
+        self.vault_approle_patch = patch.object(
+            secure_pool_import,
+            "_read_vault_approle_token",
+            return_value="test-vault-token",
+        )
         self.platform_context_patch.start()
         self.platform_token_patch.start()
         self.platform_renewal_patch.start()
+        self.vault_approle_patch.start()
 
     def tearDown(self) -> None:
+        self.vault_approle_patch.stop()
         self.platform_renewal_patch.stop()
         self.platform_token_patch.stop()
         self.platform_context_patch.stop()
@@ -89,13 +96,140 @@ class SecurePoolImportCliTests(unittest.TestCase):
             "expected_tenant_id": "tenant-1",
             "expected_audience": "email-platform:pool-import:production",
             "vault_address": "https://vault.example.test",
-            "token_file": str((ROOT / "vault.token").resolve()),
+            "approle_role_id_file": str((ROOT / "vault.role-id").resolve()),
+            "approle_secret_id_file": str((ROOT / "vault.secret-id").resolve()),
             "receipt_output": str((ROOT / "receipt.json").resolve()),
             "execution_directory": str((ROOT / "secure-import-execution").resolve()),
             "ca_file": None,
         }
         values.update(overrides)
         return argparse.Namespace(**values)
+
+    @staticmethod
+    def _parser_arguments(*credentials: str) -> list[str]:
+        return [
+            "card",
+            "--input-file", str((ROOT / "input.json").resolve()),
+            "--platform-address", "https://platform.example.test",
+            "--platform-token-file", str((ROOT / "platform.token").resolve()),
+            "--expected-tenant-id", "tenant-1",
+            "--expected-audience", "email-platform:pool-import:production",
+            "--vault-address", "https://vault.example.test",
+            *credentials,
+            "--receipt-output", str((ROOT / "receipt.json").resolve()),
+            "--execution-directory", str((ROOT / "execution").resolve()),
+        ]
+
+    def test_parser_requires_separate_approle_files_and_retires_token_file(self) -> None:
+        parsed = secure_pool_import.build_parser().parse_args(
+            self._parser_arguments(
+                "--approle-role-id-file", str((ROOT / "vault.role-id").resolve()),
+                "--approle-secret-id-file", str((ROOT / "vault.secret-id").resolve()),
+            )
+        )
+        self.assertIsNone(getattr(parsed, "token_file", None))
+        self.assertEqual(parsed.approle_role_id_file, str((ROOT / "vault.role-id").resolve()))
+        with self.assertRaises(SystemExit):
+            secure_pool_import.build_parser().parse_args(
+                self._parser_arguments(
+                    "--approle-role-id-file", str((ROOT / "vault.role-id").resolve()),
+                    "--approle-secret-id-file", str((ROOT / "vault.secret-id").resolve()),
+                    "--token-file", str((ROOT / "vault.token").resolve()),
+                )
+            )
+
+    @staticmethod
+    def _approle_response(**auth_overrides: object) -> bytes:
+        auth = {
+            "client_token": "vault-service-token",
+            "policies": ["email-platform-card-importer"],
+            "token_policies": ["email-platform-card-importer"],
+            "identity_policies": [],
+            "lease_duration": 900,
+            "token_type": "service",
+            "orphan": True,
+            "num_uses": 0,
+            "metadata": {"role_name": "email-platform-card-importer"},
+        }
+        auth.update(auth_overrides)
+        return json.dumps({"auth": auth}).encode("utf-8")
+
+    @staticmethod
+    def _approle_opener(response_body: bytes, captured: dict[str, object]) -> object:
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                pass
+
+            def read(self, _limit: int) -> bytes:
+                return response_body
+
+        class FakeOpener:
+            def open(self, request: object, timeout: int) -> FakeResponse:
+                captured["request"] = request
+                captured["timeout"] = timeout
+                return FakeResponse()
+
+        return FakeOpener()
+
+    def test_approle_exchange_posts_credentials_and_keeps_token_in_memory(self) -> None:
+        captured: dict[str, object] = {}
+        opener = self._approle_opener(self._approle_response(), captured)
+        with patch.object(secure_pool_import.urllib.request, "build_opener", return_value=opener):
+            token = secure_pool_import._exchange_approle_token(
+                "https://vault.example.test",
+                role_id="role-id-value",
+                secret_id="single-use-secret-id",
+                expected_role="email-platform-card-importer",
+                expected_policy="email-platform-card-importer",
+                ca_file=None,
+            )
+
+        self.assertEqual(token, "vault-service-token")
+        request = captured["request"]
+        self.assertEqual(request.full_url, "https://vault.example.test/v1/auth/approle/login")
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(captured["timeout"], 20)
+        self.assertEqual(
+            json.loads(request.data),
+            {"role_id": "role-id-value", "secret_id": "single-use-secret-id"},
+        )
+        self.assertNotIn("x-vault-token", {name.lower() for name, _ in request.header_items()})
+
+    def test_approle_exchange_rejects_identity_or_lease_drift_without_secret_leak(self) -> None:
+        invalid_responses = (
+            {"policies": ["email-platform-mailbox-importer"]},
+            {"token_policies": ["email-platform-card-importer", "default"]},
+            {"identity_policies": ["unexpected-identity-policy"]},
+            {"lease_duration": 901},
+            {"token_type": "batch"},
+            {"orphan": False},
+            {"num_uses": 1},
+            {"metadata": {"role_name": "email-platform-mailbox-importer"}},
+        )
+        for overrides in invalid_responses:
+            with self.subTest(overrides=overrides):
+                opener = self._approle_opener(self._approle_response(**overrides), {})
+                with patch.object(
+                    secure_pool_import.urllib.request,
+                    "build_opener",
+                    return_value=opener,
+                ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                    secure_pool_import._exchange_approle_token(
+                        "https://vault.example.test",
+                        role_id="sensitive-role-id",
+                        secret_id="sensitive-secret-id",
+                        expected_role="email-platform-card-importer",
+                        expected_policy="email-platform-card-importer",
+                        ca_file=None,
+                    )
+                message = str(raised.exception)
+                self.assertEqual(message, "Vault AppRole response is invalid")
+                self.assertNotIn("sensitive-role-id", message)
+                self.assertNotIn("sensitive-secret-id", message)
+                self.assertNotIn("vault-service-token", message)
 
     def test_card_parser_derives_last4_and_never_emits_pan_in_manifest(self) -> None:
         manifest, secret = secure_pool_import._card_record({
@@ -252,8 +386,8 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     return_value=context,
                 ), patch.object(
                     secure_pool_import,
-                    "_read_token",
-                    side_effect=AssertionError("Vault token must not be read"),
+                    "_read_vault_approle_token",
+                    side_effect=AssertionError("Vault AppRole files must not be read"),
                 ), patch.object(
                     secure_pool_import,
                     "VaultClient",
@@ -262,7 +396,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     secure_pool_import.run(self._args(
                         input_file=str(input_file.resolve()),
                         platform_token_file=str(platform_token_file.resolve()),
-                        token_file=str(vault_token_file.resolve()),
+                        approle_secret_id_file=str(vault_token_file.resolve()),
                         receipt_output=str(receipt_output.resolve()),
                         execution_directory=str(execution_directory.resolve()),
                     ))
@@ -270,10 +404,13 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 self.assertFalse(receipt_output.exists())
 
     def test_run_requires_ca_path_to_be_distinct_from_secret_inputs(self) -> None:
-        token_file = str((ROOT / "vault.token").resolve())
+        role_id_file = str((ROOT / "vault.role-id").resolve())
         with self.assertRaises(secure_pool_import.ImportFailure):
             secure_pool_import.run(
-                self._args(token_file=token_file, ca_file=token_file)
+                self._args(
+                    approle_role_id_file=role_id_file,
+                    ca_file=role_id_file,
+                )
             )
 
     def test_run_requires_precreated_receipt_directory(self) -> None:
@@ -322,7 +459,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     secure_pool_import.run(self._args(
                         pool_type=pool_type,
                         input_file=str(input_file.resolve()),
-                        token_file=str(token_file.resolve()),
+                        approle_secret_id_file=str(token_file.resolve()),
                         receipt_output=str(receipt_output.resolve()),
                         execution_directory=str(execution_directory.resolve()),
                     ))
@@ -389,7 +526,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 secure_pool_import.run(self._args(
                     pool_type="mailbox",
                     input_file=str(input_file.resolve()),
-                    token_file=str(token_file.resolve()),
+                    approle_secret_id_file=str(token_file.resolve()),
                     receipt_output=str(receipt_output.resolve()),
                     execution_directory=str(execution_directory.resolve()),
                 ))
@@ -462,20 +599,30 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
                 )
 
+            def read_approle_token(*_args: object, **_kwargs: object) -> str:
+                self.assertTrue((execution_directory / "plan.json").is_file())
+                order.append("approle")
+                return "test-vault-token"
+
             with patch.object(
                 secure_pool_import.PlatformClient,
                 "renew_context",
                 new=renew_context,
                 create=True,
+            ), patch.object(
+                secure_pool_import,
+                "_read_vault_approle_token",
+                new=read_approle_token,
+                create=True,
             ), patch.object(secure_pool_import, "VaultClient", OrderedVaultClient):
                 secure_pool_import.run(self._args(
                     input_file=str(input_file.resolve()),
-                    token_file=str(token_file.resolve()),
+                    approle_secret_id_file=str(token_file.resolve()),
                     receipt_output=str(receipt_output.resolve()),
                     execution_directory=str(execution_directory.resolve()),
                 ))
 
-            self.assertEqual(order, ["write", "renew", "sign"])
+            self.assertEqual(order, ["approle", "write", "renew", "sign"])
 
     def test_completed_bundle_can_be_reissued_without_raw_input_or_kv_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -505,7 +652,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
             with patch.object(secure_pool_import, "VaultClient", InitialVaultClient):
                 secure_pool_import.run(self._args(
                     input_file=str(input_file.resolve()),
-                    token_file=str(token_file.resolve()),
+                    approle_secret_id_file=str(token_file.resolve()),
                     receipt_output=str(original_bundle.resolve()),
                     execution_directory=str(execution_directory.resolve()),
                 ))
@@ -531,7 +678,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 result = secure_pool_import.reissue_completed(self._args(
                     input_file=None,
                     reissue_from=str(original_bundle.resolve()),
-                    token_file=str(token_file.resolve()),
+                    approle_secret_id_file=str(token_file.resolve()),
                     receipt_output=str(fresh_bundle.resolve()),
                     execution_directory=str(execution_directory.resolve()),
                 ))
@@ -577,7 +724,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     secure_pool_import.run(self._args(
                         input_file=str(input_file.resolve()),
-                        token_file=str(token_file.resolve()),
+                        approle_secret_id_file=str(token_file.resolve()),
                         receipt_output=str(absent_bundle.resolve()),
                         execution_directory=str(execution_directory.resolve()),
                     ))
@@ -588,13 +735,13 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 side_effect=AssertionError("Platform token must not be read"),
             ), patch.object(
                 secure_pool_import,
-                "_read_token",
-                side_effect=AssertionError("Vault token must not be read"),
+                "_read_vault_approle_token",
+                side_effect=AssertionError("Vault AppRole files must not be read"),
             ), self.assertRaises(secure_pool_import.ImportFailure):
                 secure_pool_import.reissue_completed(self._args(
                     input_file=None,
                     reissue_from=str(absent_bundle.resolve()),
-                    token_file=str(token_file.resolve()),
+                    approle_secret_id_file=str(token_file.resolve()),
                     receipt_output=str(fresh_bundle.resolve()),
                     execution_directory=str(execution_directory.resolve()),
                 ))
@@ -628,7 +775,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     secure_pool_import.run(self._args(
                         input_file=str(input_file.resolve()),
-                        token_file=str(token_file.resolve()),
+                        approle_secret_id_file=str(token_file.resolve()),
                         receipt_output=str(receipt_output.resolve()),
                         execution_directory=str(execution_directory.resolve()),
                     ))

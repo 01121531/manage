@@ -100,7 +100,7 @@ enter only the mailbox pool. `scripts/secure_pool_import.py` reads the matching
 restricted local input file,
 writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
 pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
-output JSON contains `schema_version: 2`, an explicit `pool_type`, a stable
+output JSON contains `schema_version: 3`, an explicit `pool_type`, a stable
 `submission_key` derived from the signed receipt UUID, the `receipt_token`, and
 ordered masked `items`; upload that output through the matching card or mailbox
 pool page. The API verifies that the submission key matches the signed receipt,
@@ -110,22 +110,33 @@ any item with an extra field before making an API request, then shows a
 secret-free preview for confirmation. Never upload the raw input file through
 the Web application.
 
-Example (the input, Vault token, optional CA, and output are absolute files;
-the audience must match the API environment):
+Example (the input, target-platform token, pool-specific AppRole RoleID and
+single-use SecretID, optional CA, execution directory, and output use distinct
+absolute paths; tenant and audience must match the target API environment):
 
 ```sh
 python scripts/secure_pool_import.py card \
   --input-file /secure-intake/cards.json \
-  --tenant-id tenant-a \
+  --platform-address https://platform.example.invalid \
+  --platform-token-file /run/secrets/email-platform-admin/token \
+  --expected-tenant-id tenant-a \
+  --expected-audience email-platform:pool-import:production \
   --vault-address https://vault.example.invalid \
   --ca-file /etc/email-platform/internal-ca.pem \
-  --token-file /run/secrets/email-platform-card-importer/token \
-  --audience email-platform:pool-import:production \
+  --approle-role-id-file /run/secrets/email-platform-card-importer/role-id \
+  --approle-secret-id-file /run/secrets/email-platform-card-importer/secret-id \
   --execution-directory /secure-evidence/card-import-execution-20260831 \
   --receipt-output /secure-intake/card-import-bundle.json
 ```
 
-Use `mailbox` with its distinct importer token for the mailbox pool. Raw card
+Use `mailbox` with its distinct mailbox AppRole files for the mailbox pool. The
+CLI validates the target-issued context and publishes the execution plan before
+reading those AppRole files. It then logs in through AppRole, verifies the exact
+pool policy, role name, service-token type, no default or identity policies, and
+an initial TTL no greater than 15 minutes. The returned Vault token remains only
+in process memory; the retired `--token-file` option is rejected. Each SecretID
+has a 10-minute TTL and one use, so receipt reissue requires a fresh SecretID.
+Raw card
 records may contain PAN and optional expiry but any CVV/CVC/CID/security-code
 alias fails closed. Raw mailbox records place provider credentials under a
 `secret` object; the approved real provider schema is still an R04.02 input.
@@ -160,14 +171,23 @@ The non-secret [`secure-import-contract.json`](secure-import-contract.json)
 and importer policies define the intended negative capabilities. They are
 preflight assets only. Run `configure-secure-import.sh` from an approved,
 already-authenticated administrator workstation after the AppRole and Transit
-mounts exist. It installs and exactly reads back the two importer policies plus
-the existing API policy, reconciles three AppRoles, and creates or verifies two
+mounts exist. It installs and exactly reads back the two importer policies, the
+existing API policy, and two pool-specific credential-issuer policies;
+reconciles three AppRoles; and creates or verifies two
 pool-specific Ed25519 signing keys. Both keys are non-exportable, disallow
 plaintext backups and deletion, and are configured for 30-day automatic
 rotation. The helper never enables mounts, logs in, generates or reads RoleIDs,
 SecretIDs or tokens, or accesses private keys and pool data.
 
-The contract's ordered `required_target_evidence` list is the exact 12-scenario
+Assign `email-platform-secure-import-card-issuer` and
+`email-platform-secure-import-mailbox-issuer` to separate external delivery
+principals. Each may read only its matching importer RoleID and create only its
+matching SecretID; neither can issue credentials for the other pool. Deliver
+RoleID and SecretID through separate restricted files, and revoke the issuing
+principal or importer token through the approved incident procedure when
+custody is uncertain.
+
+The contract's ordered `required_target_evidence` list is the exact 13-scenario
 secure-import portion of the repository-external `vault_egress_evidence`
 index. Repository verification fails if either side is missing, reordered or
 renamed. This binds evidence coverage only; it does not authenticate the

@@ -1,7 +1,8 @@
 """Write raw pool secrets to Vault and emit a secret-free signed import bundle.
 
-Raw input, the Vault token, and the output path must be absolute files.  Secrets
-are never accepted on argv/stdin/environment and are never printed.
+Raw input, AppRole credentials, and output paths must be absolute files. Secret
+values are never accepted on argv/stdin/environment or printed; the exchanged
+Vault token is retained only in process memory.
 """
 
 from __future__ import annotations
@@ -69,6 +70,13 @@ _CARD_KEYS = {
 }
 _MAILBOX_KEYS = {"email_masked", "connector_type", "task_type", "secret"}
 _CVV_ALIASES = {"cvv", "cvc", "cid", "security_code", "card_verification_value"}
+_APPROLE_IDENTITIES = {
+    "card": ("email-platform-card-importer", "email-platform-card-importer"),
+    "mailbox": (
+        "email-platform-mailbox-importer",
+        "email-platform-mailbox-importer",
+    ),
+}
 
 
 class ImportFailure(RuntimeError):
@@ -132,17 +140,98 @@ def _read_json(path: Path) -> object:
         raise ImportFailure("Input file is unavailable or invalid") from None
 
 
-def _read_token(path: Path) -> str:
+def _read_approle_value(path: Path) -> str:
     try:
         raw, metadata = read_stable_runtime_bytes_with_metadata(path, max_bytes=MAX_TOKEN_BYTES)
-        if os.name != "nt" and metadata.st_mode & 0o022:
+        if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o077):
             raise OSError
-        token = raw.decode("utf-8").strip()
-        if not token or any(character.isspace() for character in token):
+        value = raw.decode("utf-8").strip()
+        if not value or any(character.isspace() for character in value):
             raise ValueError
-        return token
+        return value
     except (OSError, UnicodeError, ValueError):
-        raise ImportFailure("Vault token file is unavailable") from None
+        raise ImportFailure("Vault AppRole credential file is unavailable") from None
+
+
+def _exchange_approle_token(
+    vault_origin: str,
+    *,
+    role_id: str,
+    secret_id: str,
+    expected_role: str,
+    expected_policy: str,
+    ca_file: Path | None,
+) -> str:
+    context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=context),
+        _NoRedirect(),
+    )
+    request = urllib.request.Request(
+        vault_origin + "/v1/auth/approle/login",
+        data=json.dumps(
+            {"role_id": role_id, "secret_id": secret_id},
+            separators=(",", ":"),
+        ).encode("utf-8"),
+        method="POST",
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+    )
+    try:
+        with opener.open(request, timeout=20) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                raise ImportFailure("Vault AppRole response is invalid")
+    except urllib.error.HTTPError as error:
+        if error.code in {400, 401, 403}:
+            raise ImportFailure("Vault rejected AppRole authentication") from None
+        raise ImportFailure("Vault AppRole authentication failed") from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ImportFailure("Vault AppRole authentication failed") from None
+    try:
+        value = parse_unique_json_bytes(raw)
+    except JsonBoundaryError:
+        raise ImportFailure("Vault AppRole response is invalid") from None
+    auth = value.get("auth") if isinstance(value, dict) else None
+    metadata = auth.get("metadata") if isinstance(auth, dict) else None
+    token = auth.get("client_token") if isinstance(auth, dict) else None
+    if (
+        not isinstance(auth, dict)
+        or not isinstance(token, str)
+        or not 1 <= len(token.encode("utf-8")) <= MAX_TOKEN_BYTES
+        or any(character.isspace() for character in token)
+        or auth.get("policies") != [expected_policy]
+        or auth.get("token_policies") != [expected_policy]
+        or auth.get("identity_policies") != []
+        or type(auth.get("lease_duration")) is not int
+        or not 1 <= auth["lease_duration"] <= 900
+        or auth.get("token_type") != "service"
+        or auth.get("orphan") is not True
+        or auth.get("num_uses") != 0
+        or not isinstance(metadata, dict)
+        or metadata.get("role_name") != expected_role
+    ):
+        raise ImportFailure("Vault AppRole response is invalid")
+    return token
+
+
+def _read_vault_approle_token(
+    vault_origin: str,
+    *,
+    pool_type: Literal["card", "mailbox"],
+    role_id_path: Path,
+    secret_id_path: Path,
+    ca_file: Path | None,
+) -> str:
+    expected_role, expected_policy = _APPROLE_IDENTITIES[pool_type]
+    return _exchange_approle_token(
+        vault_origin,
+        role_id=_read_approle_value(role_id_path),
+        secret_id=_read_approle_value(secret_id_path),
+        expected_role=expected_role,
+        expected_policy=expected_policy,
+        ca_file=ca_file,
+    )
 
 
 def _read_platform_access_token(path: Path) -> str:
@@ -580,7 +669,12 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     platform_token_path = _absolute_file(
         args.platform_token_file, label="Platform access token file"
     )
-    token_path = _absolute_file(args.token_file, label="Vault token file")
+    role_id_path = _absolute_file(
+        args.approle_role_id_file, label="Vault AppRole RoleID file"
+    )
+    secret_id_path = _absolute_file(
+        args.approle_secret_id_file, label="Vault AppRole SecretID file"
+    )
     output_path = _absolute_file(args.receipt_output, label="Receipt output")
     execution_path = Path(args.execution_directory)
     if not execution_path.is_absolute():
@@ -605,14 +699,17 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     distinct_paths = [
         input_path,
         platform_token_path,
-        token_path,
+        role_id_path,
+        secret_id_path,
         output_path,
         execution_path,
     ]
     if ca_file is not None:
         distinct_paths.append(ca_file)
     if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
-        raise ImportFailure("Input, token, CA, and receipt output must be separate files")
+        raise ImportFailure(
+            "Input, AppRole, platform token, CA, and receipt output paths must be separate"
+        )
     value = _read_json(input_path)
     if not isinstance(value, list) or not 1 <= len(value) <= 100:
         raise ImportFailure("Input must contain 1 to 100 records")
@@ -672,7 +769,17 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     )
     _write_execution_record(execution_directory / "plan.json", plan)
 
-    client = VaultClient(vault_origin, _read_token(token_path), ca_file=ca_file)
+    client = VaultClient(
+        vault_origin,
+        _read_vault_approle_token(
+            vault_origin,
+            pool_type=pool_type,
+            role_id_path=role_id_path,
+            secret_id_path=secret_id_path,
+            ca_file=ca_file,
+        ),
+        ca_file=ca_file,
+    )
     for index, (secret_ref, secret) in enumerate(zip(secret_refs, secrets, strict=True)):
         _write_execution_record(
             execution_directory / f"write-{index:03d}.intent.json",
@@ -739,7 +846,12 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     platform_token_path = _absolute_file(
         args.platform_token_file, label="Platform access token file"
     )
-    token_path = _absolute_file(args.token_file, label="Vault token file")
+    role_id_path = _absolute_file(
+        args.approle_role_id_file, label="Vault AppRole RoleID file"
+    )
+    secret_id_path = _absolute_file(
+        args.approle_secret_id_file, label="Vault AppRole SecretID file"
+    )
     output_path = _absolute_file(args.receipt_output, label="Receipt output")
     execution_path = Path(args.execution_directory)
     if not execution_path.is_absolute():
@@ -766,14 +878,17 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     distinct_paths = [
         source_bundle_path,
         platform_token_path,
-        token_path,
+        role_id_path,
+        secret_id_path,
         output_path,
         execution_path,
     ]
     if ca_file is not None:
         distinct_paths.append(ca_file)
     if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
-        raise ImportFailure("Bundle, token, CA, execution, and output paths must be separate")
+        raise ImportFailure(
+            "Bundle, AppRole, platform token, CA, execution, and output paths must be separate"
+        )
     try:
         assessment = assess_execution_directory(execution_path, source_bundle_path)
     except (OSError, ValueError, RecoveryFailure):
@@ -843,7 +958,17 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         item_count=len(items),
     ):
         raise ImportFailure("Renewed platform context does not match this execution")
-    client = VaultClient(vault_origin, _read_token(token_path), ca_file=ca_file)
+    client = VaultClient(
+        vault_origin,
+        _read_vault_approle_token(
+            vault_origin,
+            pool_type=pool_type,
+            role_id_path=role_id_path,
+            secret_id_path=secret_id_path,
+            ca_file=ca_file,
+        ),
+        ca_file=ca_file,
+    )
     fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
     _write_bundle(output_path, fresh_bundle)
     return receipt_id, len(items)
@@ -860,7 +985,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-tenant-id", required=True)
     parser.add_argument("--expected-audience", required=True)
     parser.add_argument("--vault-address", required=True)
-    parser.add_argument("--token-file", required=True)
+    parser.add_argument("--approle-role-id-file", required=True)
+    parser.add_argument("--approle-secret-id-file", required=True)
     parser.add_argument("--receipt-output", required=True)
     parser.add_argument("--execution-directory", required=True)
     parser.add_argument("--ca-file")

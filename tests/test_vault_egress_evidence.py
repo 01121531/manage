@@ -133,7 +133,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
         with mock.patch(
             "scripts.vault_egress_evidence.load_unique_json",
             return_value={
-                "schema_version": 3,
+                "schema_version": 5,
                 "production_acceptance": False,
                 "required_target_evidence": [
                     "three_distinct_external_principals",

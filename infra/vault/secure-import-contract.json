@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -14,6 +14,31 @@
     }
   },
   "receipt_authority": "vault-transit",
+  "credential_exchange": {
+    "auth_method": "approle",
+    "preissued_token_file_allowed": false,
+    "token_persistence": "process_memory_only",
+    "role_id_file": "required_separate_absolute_restricted_file",
+    "secret_id_file": "required_separate_absolute_restricted_file",
+    "secret_id_num_uses": 1,
+    "secret_id_ttl_seconds": 600,
+    "initial_token_ttl_max_seconds": 900,
+    "token_explicit_max_ttl_seconds": 3600,
+    "default_policy_allowed": false,
+    "identity_policy_count": 0,
+    "pool_bindings": {
+      "card": {
+        "issuer_policy": "email-platform-secure-import-card-issuer",
+        "approle": "email-platform-card-importer",
+        "token_policy": "email-platform-card-importer"
+      },
+      "mailbox": {
+        "issuer_policy": "email-platform-secure-import-mailbox-issuer",
+        "approle": "email-platform-mailbox-importer",
+        "token_policy": "email-platform-mailbox-importer"
+      }
+    }
+  },
   "target_import_context": {
     "authority": "authenticated-target-platform-api",
     "request_fields": ["pool_type", "ordered_manifest_digest", "item_count"],

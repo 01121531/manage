@@ -134,6 +134,12 @@ configure_policy \
 configure_policy \
   email-platform-api-cards \
   "$script_dir/policies/email-platform-api-cards.hcl"
+configure_policy \
+  email-platform-secure-import-card-issuer \
+  "$script_dir/policies/email-platform-secure-import-card-issuer.hcl"
+configure_policy \
+  email-platform-secure-import-mailbox-issuer \
+  "$script_dir/policies/email-platform-secure-import-mailbox-issuer.hcl"
 
 configure_role email-platform-card-importer email-platform-card-importer
 configure_role email-platform-mailbox-importer email-platform-mailbox-importer

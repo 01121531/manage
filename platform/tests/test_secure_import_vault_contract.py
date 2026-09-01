@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 5)
+        self.assertEqual(contract["schema_version"], 6)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -47,6 +47,34 @@ class SecureImportVaultContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(contract["bundle_schema_version"], 3)
+        self.assertEqual(
+            contract["credential_exchange"],
+            {
+                "auth_method": "approle",
+                "preissued_token_file_allowed": False,
+                "token_persistence": "process_memory_only",
+                "role_id_file": "required_separate_absolute_restricted_file",
+                "secret_id_file": "required_separate_absolute_restricted_file",
+                "secret_id_num_uses": 1,
+                "secret_id_ttl_seconds": 600,
+                "initial_token_ttl_max_seconds": 900,
+                "token_explicit_max_ttl_seconds": 3600,
+                "default_policy_allowed": False,
+                "identity_policy_count": 0,
+                "pool_bindings": {
+                    "card": {
+                        "issuer_policy": "email-platform-secure-import-card-issuer",
+                        "approle": "email-platform-card-importer",
+                        "token_policy": "email-platform-card-importer",
+                    },
+                    "mailbox": {
+                        "issuer_policy": "email-platform-secure-import-mailbox-issuer",
+                        "approle": "email-platform-mailbox-importer",
+                        "token_policy": "email-platform-mailbox-importer",
+                    },
+                },
+            },
+        )
         self.assertEqual(
             contract["target_import_context"],
             {
@@ -151,6 +179,14 @@ class SecureImportVaultContractTests(unittest.TestCase):
         card_policy = (ROOT / "infra" / "vault" / "policies" / "email-platform-card-importer.hcl").read_text()
         mailbox_policy = (ROOT / "infra" / "vault" / "policies" / "email-platform-mailbox-importer.hcl").read_text()
         api_policy = (ROOT / "infra" / "vault" / "policies" / "email-platform-api-cards.hcl").read_text()
+        card_issuer_policy = (
+            ROOT / "infra" / "vault" / "policies"
+            / "email-platform-secure-import-card-issuer.hcl"
+        ).read_text()
+        mailbox_issuer_policy = (
+            ROOT / "infra" / "vault" / "policies"
+            / "email-platform-secure-import-mailbox-issuer.hcl"
+        ).read_text()
         self.assertEqual(self._rules(card_policy), {
             "secret/data/cards/imports/*": {"create"},
             "transit/sign/email-platform-card-import-receipt": {"update"},
@@ -158,6 +194,14 @@ class SecureImportVaultContractTests(unittest.TestCase):
         self.assertEqual(self._rules(mailbox_policy), {
             "secret/data/mailboxes/imports/*": {"create"},
             "transit/sign/email-platform-mailbox-import-receipt": {"update"},
+        })
+        self.assertEqual(self._rules(card_issuer_policy), {
+            "auth/approle/role/email-platform-card-importer/role-id": {"read"},
+            "auth/approle/role/email-platform-card-importer/secret-id": {"update"},
+        })
+        self.assertEqual(self._rules(mailbox_issuer_policy), {
+            "auth/approle/role/email-platform-mailbox-importer/role-id": {"read"},
+            "auth/approle/role/email-platform-mailbox-importer/secret-id": {"update"},
         })
         self.assertNotIn("required_parameters", card_policy)
         self.assertNotIn("required_parameters", mailbox_policy)

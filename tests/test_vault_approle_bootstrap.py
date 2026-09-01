@@ -20,6 +20,10 @@ SECURE_IMPORT_ROLES = (
     "email-platform-mailbox-importer",
     "email-platform-api-cards",
 )
+SECURE_IMPORT_POLICIES = SECURE_IMPORT_ROLES + (
+    "email-platform-secure-import-card-issuer",
+    "email-platform-secure-import-mailbox-issuer",
+)
 SECURE_IMPORT_KEYS = (
     "email-platform-card-import-receipt",
     "email-platform-mailbox-import-receipt",
@@ -204,7 +208,7 @@ print("SENSITIVE_ROLE_ID_SECRET_ID_TOKEN_PRIVATE_KEY", file=sys.stderr)
         fake_vault.chmod(0o755)
         self.policy_dir = self.root / "policies"
         self.policy_dir.mkdir()
-        for name in SECURE_IMPORT_ROLES:
+        for name in SECURE_IMPORT_POLICIES:
             source = ROOT / "infra" / "vault" / "policies" / f"{name}.hcl"
             (self.policy_dir / f"{name}.hcl").write_bytes(source.read_bytes())
         self.write_states()
@@ -289,7 +293,7 @@ print("SENSITIVE_ROLE_ID_SECRET_ID_TOKEN_PRIVATE_KEY", file=sys.stderr)
         )
         calls = self.calls()
         self.assertEqual(
-            len([call for call in calls if call[:2] == ["policy", "write"]]), 3
+            len([call for call in calls if call[:2] == ["policy", "write"]]), 5
         )
         self.assertEqual(
             len(

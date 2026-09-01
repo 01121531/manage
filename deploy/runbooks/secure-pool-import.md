@@ -13,9 +13,13 @@ Values that merely append an asterisk to an address are not masked and must be
 rejected before the first Vault or API mutation.
 
 1. Confirm Vault audit devices are healthy, then apply and read back
-   `infra/vault/configure-secure-import.sh`. Issue distinct short-lived card
-   importer, mailbox importer, and API verifier tokens. Repository assets and
-   local tests remain `production_acceptance=false`.
+   `infra/vault/configure-secure-import.sh`. Use separate external principals
+   carrying `email-platform-secure-import-card-issuer` and
+   `email-platform-secure-import-mailbox-issuer` to deliver the matching RoleID
+   and a fresh single-use, ten-minute SecretID into two distinct restricted
+   files. Continue to issue a distinct short-lived API verifier token for the
+   target smoke test. Repository assets and local tests remain
+   `production_acceptance=false`.
 2. Run `scripts/secure_import_vault_smoke.py run` with `--plan-output` and
    `--evidence-output` set to distinct new absolute files outside the repository,
    plus the three external token files. The write-once smoke plan is published
@@ -36,23 +40,29 @@ rejected before the first Vault or API mutation.
    receipt, revoke the token, and remove the per-run policy. Never use a
    `smoke/*` wildcard cleanup role.
 4. Obtain a short-lived administrator access token for the target platform and
-   place it in a restricted external file distinct from the Vault importer
-   token. Run `scripts/secure_pool_import.py card` or `mailbox` with the exact
+   place it in a restricted external file distinct from both Vault AppRole
+   files. Run `scripts/secure_pool_import.py card` or `mailbox` with the exact
    HTTPS `--platform-address`, `--platform-token-file`,
-   `--expected-tenant-id`, and `--expected-audience`, plus the matching Vault
-   and raw-input arguments. The CLI sends only the pool type, ordered masked
+   `--expected-tenant-id`, and `--expected-audience`, plus the matching
+   `--approle-role-id-file`, `--approle-secret-id-file`, Vault address, and
+   raw-input arguments. The retired `--token-file` option is rejected. The CLI
+   sends only the pool type, ordered masked
    manifest digest and item count to `POST /api/v1/admin/pool-import-contexts`;
    it never sends PAN or mailbox credentials. The target platform supplies the
    authoritative tenant, audience and receipt UUID. Any mismatch stops before
-   the Vault token is read, the execution directory is created, or a Vault
-   write occurs.
+   the AppRole files are read, the SecretID is consumed, the execution directory
+   is created, or a Vault write occurs. After writing the execution plan, the
+   CLI exchanges the AppRole values in memory and accepts only the exact
+   pool-specific policy and role, a service token without default or identity
+   policies, and an initial TTL no greater than 15 minutes. It never persists
+   the returned Vault token.
 5. The importer emits a browser-safe `schema_version: 3` bundle containing
    masked items, the target context token, a Transit receipt, and a
    `submission_key` of the form `spi:<signed receipt UUID>`. Keep the raw input,
-   both token files, and bundle outside the repository with restricted
-   permissions. Supply a new external `--execution-directory`; the importer
-   publishes `plan.json` before the first Vault write, a write intent before
-   each mutation, and a confirmation only after Vault acknowledges version 1.
+   platform token, both AppRole files, and bundle outside the repository with
+   restricted permissions. Supply a new external `--execution-directory`; the
+   importer publishes `plan.json` before the first Vault write, a write intent
+   before each mutation, and a confirmation only after Vault acknowledges version 1.
    After every write is confirmed, it renews the same target-issued context
    before Transit signing. Renewal never rotates the token or receipt UUID, is
    bound to the same authenticated user/device/tenant/audience, and is capped
@@ -89,7 +99,8 @@ rejected before the first Vault or API mutation.
    authentic.
 10. Preserve the platform receipt and audit export according to the evidence
    policy. Destroy temporary raw input and bundle copies only under the approved
-   intake retention procedure. Never print or paste a receipt token. Keep
+   intake retention procedure. Never print or paste a receipt token, RoleID,
+   SecretID, or Vault token. A reissue consumes a new single-use SecretID. Keep
    `production_acceptance=false` until real AppRole provenance, Vault audit,
    canary cleanup/readback, key rotation with old-receipt verification, actual
    dual-pool import and independent review are complete.
