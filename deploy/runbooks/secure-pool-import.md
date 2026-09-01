@@ -56,9 +56,11 @@ rejected before the first Vault or API mutation.
    pool-specific policy and role, a service token without default or identity
    policies, and an initial TTL no greater than 15 minutes. It never persists
    the returned Vault token. The token does not need an operator-supplied
-   accessor: after completing its bounded operation, the CLI calls Vault's
-   self-revocation endpoint and clears the token from memory; TTL expiry remains
-   the fail-safe when the network response is ambiguous.
+   accessor: on every controlled exit after token exchange, whether the bounded
+   operation succeeds or fails, the CLI calls Vault's self-revocation endpoint
+   and clears the token from memory. A cleanup failure never replaces the
+   original import, reissue or process-control exception. TTL expiry remains
+   the fail-safe for a hard process termination or ambiguous network response.
 5. The importer emits a browser-safe `schema_version: 3` bundle containing
    masked items, the target context token, a Transit receipt, and a
    `submission_key` of the form `spi:<signed receipt UUID>`. Keep the raw input,
@@ -70,10 +72,13 @@ rejected before the first Vault or API mutation.
    before Transit signing. Renewal never rotates the token or receipt UUID, is
    bound to the same authenticated user/device/tenant/audience, and is capped
    by the configured absolute renewal window (24 hours by default, no more than
-   seven days). After the safe bundle and `complete.json` are durable, the CLI
-   writes `token-revoke.intent.json`, requests `POST
+   seven days). Before leaving this token lifetime on success or failure, the
+   CLI writes `token-revoke.intent.json`, requests `POST
    /v1/auth/token/revoke-self`, accepts only an empty HTTP 204 acknowledgement,
-   clears its in-memory token, then writes `token-revoke.confirmed.json`.
+   clears its in-memory token, then writes `token-revoke.confirmed.json`. If the
+   intent cannot be published, the revoke request still runs; preserve the
+   primary failure and reconcile the missing evidence through the Vault audit
+   trail and TTL.
 6. If the importer is interrupted, run
    `scripts/secure_pool_import_recovery.py` against that execution directory and
    the intended receipt output. This is a read-only assessment with no network
@@ -93,9 +98,10 @@ rejected before the first Vault or API mutation.
    `--receipt-output`; omit `--input-file`. The command validates the closed
    execution record, renews its existing target context, and invokes Transit
    signing only. It does not read the raw source, write KV, or modify the
-   original execution directory. After publishing the fresh bundle it
-   self-revokes the new AppRole token and treats anything other than an empty
-   HTTP 204 as unconfirmed. If that final acknowledgement fails, preserve any
+   original execution directory. It self-revokes the new AppRole token on both
+   successful publication and controlled signing/output failure, and treats
+   anything other than an empty HTTP 204 as unconfirmed. If a post-publication
+   acknowledgement fails, preserve any
    new write-once output, do not overwrite or blindly rerun it, and reconcile
    against the Vault audit trail and TTL. A partial, unknown, consumed,
    caller-mismatched or out-of-window context is refused. Preserve the original

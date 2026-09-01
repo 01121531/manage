@@ -134,12 +134,16 @@ CLI validates the target-issued context and publishes the execution plan before
 reading those AppRole files. It then logs in through AppRole, verifies the exact
 pool policy, role name, service-token type, no default or identity policies, and
 an initial TTL no greater than 15 minutes. The returned Vault token remains only
-in process memory; the retired `--token-file` option is rejected. After a raw
-import is durably complete, the CLI records a secret-free revocation intent,
-calls `POST /v1/auth/token/revoke-self`, requires an empty HTTP 204 response,
-clears its in-memory token, and records confirmation. Receipt reissue performs
-the same self-revocation without mutating the original execution directory.
-The 15-minute TTL remains the backstop if the revocation response is ambiguous.
+in process memory; the retired `--token-file` option is rejected. On every
+controlled exit after token exchange, including KV, context-renewal and Transit
+failures, the CLI attempts `POST /v1/auth/token/revoke-self`, requires an empty
+HTTP 204 response, and clears its in-memory token. A raw import attempts to
+publish a secret-free revocation intent first and confirmation afterward; an
+intent-publication failure cannot suppress the actual revoke request. Receipt
+reissue performs the same self-revocation without mutating the original
+execution directory. Any primary import, reissue or process-control exception
+remains authoritative if cleanup also fails. The 15-minute TTL remains the
+backstop for a hard process termination or ambiguous revocation response.
 Each SecretID has a 10-minute TTL and one use, so receipt reissue requires a
 fresh SecretID.
 Raw card

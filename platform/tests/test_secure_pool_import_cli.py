@@ -408,6 +408,36 @@ class SecurePoolImportCliTests(unittest.TestCase):
         )
         self.assertEqual(client.token, "")
 
+    def test_revocation_still_runs_when_intent_evidence_cannot_be_written(self) -> None:
+        class FakeVaultClient:
+            revocations = 0
+
+            def revoke_self(self) -> None:
+                type(self).revocations += 1
+
+        with patch.object(
+            secure_pool_import,
+            "build_execution_event",
+            return_value={},
+        ), patch.object(
+            secure_pool_import,
+            "_write_execution_record",
+            side_effect=secure_pool_import.ImportFailure(
+                "Execution record publication failed"
+            ),
+        ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+            secure_pool_import._revoke_import_token(
+                FakeVaultClient(),
+                execution_directory=ROOT,
+                plan={},
+            )
+
+        self.assertEqual(FakeVaultClient.revocations, 1)
+        self.assertEqual(
+            str(raised.exception),
+            "Vault token revocation evidence is unconfirmed",
+        )
+
     def test_context_mismatch_fails_before_vault_token_or_execution_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -794,6 +824,49 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 execution_snapshot,
             )
 
+            failed_bundle = root / "receipt-failed.json"
+
+            class FailingReissueVaultClient:
+                revocations = 0
+
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    raise secure_pool_import.ImportFailure("Transit signing failed")
+
+                def revoke_self(self) -> None:
+                    type(self).revocations += 1
+                    raise secure_pool_import.ImportFailure(
+                        "private revocation transport detail"
+                    )
+
+            with patch.object(
+                secure_pool_import, "VaultClient", FailingReissueVaultClient
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.reissue_completed(self._args(
+                    input_file=None,
+                    reissue_from=str(original_bundle.resolve()),
+                    approle_secret_id_file=str(token_file.resolve()),
+                    receipt_output=str(failed_bundle.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+            self.assertEqual(str(raised.exception), "Transit signing failed")
+            self.assertEqual(
+                raised.exception.__notes__,
+                [secure_pool_import._REVOCATION_FAILURE_NOTE],
+            )
+            self.assertNotIn(
+                "private revocation transport detail",
+                str(raised.exception),
+            )
+            self.assertEqual(FailingReissueVaultClient.revocations, 1)
+            self.assertFalse(failed_bundle.exists())
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in execution_directory.iterdir()},
+                execution_snapshot,
+            )
+
     def test_reissue_refuses_incomplete_execution_before_reading_tokens(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -810,6 +883,8 @@ class SecurePoolImportCliTests(unittest.TestCase):
             token_file.write_text("test-vault-token", encoding="utf-8")
 
             class InterruptedVaultClient:
+                revocations = 0
+
                 def __init__(self, *_args: object, **_kwargs: object) -> None:
                     pass
 
@@ -820,7 +895,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     raise AssertionError("sign must not run")
 
                 def revoke_self(self) -> None:
-                    pass
+                    type(self).revocations += 1
 
             with patch.object(secure_pool_import, "VaultClient", InterruptedVaultClient):
                 with self.assertRaises(KeyboardInterrupt):
@@ -830,6 +905,8 @@ class SecurePoolImportCliTests(unittest.TestCase):
                         receipt_output=str(absent_bundle.resolve()),
                         execution_directory=str(execution_directory.resolve()),
                     ))
+
+            self.assertEqual(InterruptedVaultClient.revocations, 1)
 
             with patch.object(
                 secure_pool_import,
@@ -864,6 +941,8 @@ class SecurePoolImportCliTests(unittest.TestCase):
             token_file.write_text("test-vault-token", encoding="utf-8")
 
             class InterruptedVaultClient:
+                revocations = 0
+
                 def __init__(self, *_args: object, **_kwargs: object) -> None:
                     pass
 
@@ -874,7 +953,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     raise AssertionError("sign must not run after an unknown Vault write")
 
                 def revoke_self(self) -> None:
-                    pass
+                    type(self).revocations += 1
 
             with patch.object(secure_pool_import, "VaultClient", InterruptedVaultClient):
                 with self.assertRaises(KeyboardInterrupt):
@@ -884,6 +963,8 @@ class SecurePoolImportCliTests(unittest.TestCase):
                         receipt_output=str(receipt_output.resolve()),
                         execution_directory=str(execution_directory.resolve()),
                     ))
+
+            self.assertEqual(InterruptedVaultClient.revocations, 1)
 
             self.assertTrue((execution_directory / "plan.json").is_file())
             self.assertTrue(
@@ -896,6 +977,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertEqual(recovery["status"], "commit_unknown")
             self.assertEqual(recovery["phase"], "vault_write_commit_unknown")
             self.assertEqual(recovery["unknown_index"], 0)
+            self.assertEqual(recovery["token_revocation"], "confirmed")
             self.assertFalse(receipt_output.exists())
             execution_text = "".join(
                 path.read_text(encoding="ascii")

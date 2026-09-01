@@ -18,10 +18,11 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Iterator, Literal
 from uuid import UUID
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +82,25 @@ _APPROLE_IDENTITIES = {
 
 class ImportFailure(RuntimeError):
     pass
+
+
+_REVOCATION_FAILURE_NOTE = (
+    "Vault token revocation is unconfirmed; inspect the execution record and audit trail"
+)
+
+
+@contextmanager
+def _revoke_token_on_exit(revoke: Callable[[], None]) -> Iterator[None]:
+    try:
+        yield
+    except BaseException as primary_error:
+        try:
+            revoke()
+        except (ImportFailure, OSError, ValueError):
+            primary_error.add_note(_REVOCATION_FAILURE_NOTE)
+        raise
+    else:
+        revoke()
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -450,17 +470,23 @@ def _revoke_import_token(
     execution_directory: Path,
     plan: dict[str, object],
 ) -> None:
-    _write_execution_record(
-        execution_directory / "token-revoke.intent.json",
-        build_execution_event(
-            plan,
-            event_type="vault_token_revoke_intent",
-            index=None,
-            artifact_sha256=None,
-            occurred_at=_utc_now(),
-        ),
-    )
+    evidence_failure: ImportFailure | None = None
+    try:
+        _write_execution_record(
+            execution_directory / "token-revoke.intent.json",
+            build_execution_event(
+                plan,
+                event_type="vault_token_revoke_intent",
+                index=None,
+                artifact_sha256=None,
+                occurred_at=_utc_now(),
+            ),
+        )
+    except ImportFailure as error:
+        evidence_failure = error
     client.revoke_self()
+    if evidence_failure is not None:
+        raise ImportFailure("Vault token revocation evidence is unconfirmed") from None
     _write_execution_record(
         execution_directory / "token-revoke.confirmed.json",
         build_execution_event(
@@ -826,67 +852,71 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         ),
         ca_file=ca_file,
     )
-    for index, (secret_ref, secret) in enumerate(zip(secret_refs, secrets, strict=True)):
-        _write_execution_record(
-            execution_directory / f"write-{index:03d}.intent.json",
-            build_execution_event(
-                plan,
-                event_type="vault_write_intent",
-                index=index,
-                artifact_sha256=None,
-                occurred_at=_utc_now(),
-            ),
+    with _revoke_token_on_exit(
+        lambda: _revoke_import_token(
+            client,
+            execution_directory=execution_directory,
+            plan=plan,
         )
-        client.write_secret(secret_ref, secret)
-        _write_execution_record(
-            execution_directory / f"write-{index:03d}.confirmed.json",
-            build_execution_event(
-                plan,
-                event_type="vault_write_confirmed",
-                index=index,
-                artifact_sha256=None,
-                occurred_at=_utc_now(),
-            ),
-        )
-    renewed_context = platform_client.renew_context(context.context_token)
-    if not _context_matches(
-        renewed_context,
-        context_token=context.context_token,
-        receipt_id=receipt_id,
-        tenant_id=tenant_id,
-        audience=audience,
-        pool_type=pool_type,
-        digest=digest,
-        item_count=len(manifest),
     ):
-        raise ImportFailure("Renewed platform context does not match this execution")
-    bundle = _signed_bundle(client, context=renewed_context, manifest=manifest)
-    _write_execution_record(
-        execution_directory / "bundle.intent.json",
-        build_execution_event(
-            plan,
-            event_type="bundle_publish_intent",
-            index=None,
-            artifact_sha256=None,
-            occurred_at=_utc_now(),
-        ),
-    )
-    bundle_sha256 = _write_bundle(output_path, bundle)
-    _write_execution_record(
-        execution_directory / "complete.json",
-        build_execution_event(
-            plan,
-            event_type="execution_complete",
-            index=None,
-            artifact_sha256=bundle_sha256,
-            occurred_at=_utc_now(),
-        ),
-    )
-    _revoke_import_token(
-        client,
-        execution_directory=execution_directory,
-        plan=plan,
-    )
+        for index, (secret_ref, secret) in enumerate(
+            zip(secret_refs, secrets, strict=True)
+        ):
+            _write_execution_record(
+                execution_directory / f"write-{index:03d}.intent.json",
+                build_execution_event(
+                    plan,
+                    event_type="vault_write_intent",
+                    index=index,
+                    artifact_sha256=None,
+                    occurred_at=_utc_now(),
+                ),
+            )
+            client.write_secret(secret_ref, secret)
+            _write_execution_record(
+                execution_directory / f"write-{index:03d}.confirmed.json",
+                build_execution_event(
+                    plan,
+                    event_type="vault_write_confirmed",
+                    index=index,
+                    artifact_sha256=None,
+                    occurred_at=_utc_now(),
+                ),
+            )
+        renewed_context = platform_client.renew_context(context.context_token)
+        if not _context_matches(
+            renewed_context,
+            context_token=context.context_token,
+            receipt_id=receipt_id,
+            tenant_id=tenant_id,
+            audience=audience,
+            pool_type=pool_type,
+            digest=digest,
+            item_count=len(manifest),
+        ):
+            raise ImportFailure("Renewed platform context does not match this execution")
+        bundle = _signed_bundle(client, context=renewed_context, manifest=manifest)
+        _write_execution_record(
+            execution_directory / "bundle.intent.json",
+            build_execution_event(
+                plan,
+                event_type="bundle_publish_intent",
+                index=None,
+                artifact_sha256=None,
+                occurred_at=_utc_now(),
+            ),
+        )
+        bundle_sha256 = _write_bundle(output_path, bundle)
+        _write_execution_record(
+            execution_directory / "complete.json",
+            build_execution_event(
+                plan,
+                event_type="execution_complete",
+                index=None,
+                artifact_sha256=bundle_sha256,
+                occurred_at=_utc_now(),
+            ),
+        )
     return receipt_id, len(manifest)
 
 
@@ -1020,9 +1050,9 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         ),
         ca_file=ca_file,
     )
-    fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
-    _write_bundle(output_path, fresh_bundle)
-    client.revoke_self()
+    with _revoke_token_on_exit(client.revoke_self):
+        fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
+        _write_bundle(output_path, fresh_bundle)
     return receipt_id, len(items)
 
 
