@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 12)
+        self.assertEqual(contract["schema_version"], 13)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -67,6 +67,21 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "current_operator_system_or_local_administrators"
                 ),
                 "inherited_aces_allowed": False,
+                "descriptor_binding": (
+                    "same_open_descriptor_before_and_after_bounded_read"
+                ),
+            },
+        )
+        self.assertEqual(
+            contract["posix_private_file_permissions"],
+            {
+                "applies_to": [
+                    "raw_source_file",
+                    "platform_access_token_file",
+                    "approle_role_id_file",
+                    "approle_secret_id_file",
+                ],
+                "mode": "0600_or_stricter_no_group_or_other_permissions",
                 "descriptor_binding": (
                     "same_open_descriptor_before_and_after_bounded_read"
                 ),

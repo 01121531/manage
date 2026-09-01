@@ -50,6 +50,10 @@ rejected before the first Vault or API mutation.
    read. The DACL must be protected, contain only explicit non-inherited Allow
    entries for the current operator, SYSTEM and local Administrators, and be
    owned by one of those principals; an inherited or broadened ACL fails closed.
+   On POSIX, the same four files must have mode `0600` or stricter: no group or
+   other read, write, or execute bit is allowed. The importer compares mode on
+   the same open descriptor before and after the bounded read; `0640`, `0604`
+   and `0644` therefore fail before any remote or local mutation.
    This does not replace the approved workstation cleanup procedure or prove
    secure erasure after the process exits. Run `scripts/secure_pool_import.py`
    `card` or `mailbox` with the exact

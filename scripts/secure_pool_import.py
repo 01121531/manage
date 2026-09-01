@@ -332,7 +332,7 @@ def _read_platform_access_token(path: Path) -> str:
             max_bytes=MAX_TOKEN_BYTES,
             permission_validator=_private_file_permission_fingerprint,
         )
-        if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o022):
+        if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o077):
             raise OSError
         token = raw.decode("utf-8").strip()
         if not token or any(character.isspace() for character in token):

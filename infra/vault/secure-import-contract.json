@@ -1,5 +1,5 @@
 {
-  "schema_version": 12,
+  "schema_version": 13,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -25,6 +25,16 @@
     "acl": "protected_explicit_allow_current_operator_system_local_administrators_only",
     "owner": "current_operator_system_or_local_administrators",
     "inherited_aces_allowed": false,
+    "descriptor_binding": "same_open_descriptor_before_and_after_bounded_read"
+  },
+  "posix_private_file_permissions": {
+    "applies_to": [
+      "raw_source_file",
+      "platform_access_token_file",
+      "approle_role_id_file",
+      "approle_secret_id_file"
+    ],
+    "mode": "0600_or_stricter_no_group_or_other_permissions",
     "descriptor_binding": "same_open_descriptor_before_and_after_bounded_read"
   },
   "credential_exchange": {

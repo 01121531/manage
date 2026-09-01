@@ -2,6 +2,7 @@ import argparse
 import importlib.util
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -811,6 +812,42 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertEqual(permissions.call_count, 3)
             self.assertFalse(execution_directory.exists())
             self.assertFalse(receipt_output.exists())
+
+    def test_posix_platform_token_rejects_group_or_other_permissions(self) -> None:
+        def metadata(mode: int) -> os.stat_result:
+            return os.stat_result((stat.S_IFREG | mode, 0, 0, 1, 0, 0, 21, 0, 0, 0))
+
+        for mode in (0o640, 0o604, 0o644):
+            with self.subTest(mode=oct(mode)):
+                with patch.object(
+                    secure_pool_import.os,
+                    "name",
+                    "posix",
+                ), patch.object(
+                    secure_pool_import,
+                    "read_stable_runtime_bytes_with_metadata",
+                    return_value=(b"platform-access-token", metadata(mode)),
+                ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                    READ_PLATFORM_ACCESS_TOKEN(Path("/private/platform.token"))
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "Platform access token file is unavailable",
+                )
+
+        with patch.object(
+            secure_pool_import.os,
+            "name",
+            "posix",
+        ), patch.object(
+            secure_pool_import,
+            "read_stable_runtime_bytes_with_metadata",
+            return_value=(b"platform-access-token", metadata(0o600)),
+        ):
+            self.assertEqual(
+                READ_PLATFORM_ACCESS_TOKEN(Path("/private/platform.token")),
+                "platform-access-token",
+            )
 
     def test_approle_permission_failure_precedes_credential_use(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

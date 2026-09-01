@@ -120,7 +120,9 @@ the raw input, platform token, RoleID and SecretID must also have a protected
 DACL owned by the current operator, SYSTEM or local Administrators, with only
 explicit non-inherited Allow entries for those three principals. The importer
 checks the ACL through the same open handle before and after each bounded read;
-it does not claim secure erasure or replace the approved cleanup procedure:
+on POSIX, those four files instead require mode `0600` or stricter, with no
+group or other permission bits, and the same descriptor-bound mode comparison.
+It does not claim secure erasure or replace the approved cleanup procedure:
 
 ```sh
 python scripts/secure_pool_import.py card \
