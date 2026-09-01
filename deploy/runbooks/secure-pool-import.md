@@ -41,7 +41,12 @@ rejected before the first Vault or API mutation.
    `smoke/*` wildcard cleanup role.
 4. Obtain a short-lived administrator access token for the target platform and
    place it in a restricted external file distinct from both Vault AppRole
-   files. Run `scripts/secure_pool_import.py card` or `mailbox` with the exact
+   files. The raw input and platform-token files must each be a stable regular
+   file with exactly one hard link; the importer rejects either file before any
+   platform call, Vault login, execution-record creation, or receipt write if
+   another filesystem name already points to the same content. On Windows this
+   link-count check does not replace the approved workstation ACL and cleanup
+   procedure. Run `scripts/secure_pool_import.py card` or `mailbox` with the exact
    HTTPS `--platform-address`, `--platform-token-file`,
    `--expected-tenant-id`, and `--expected-audience`, plus the matching
    `--approle-role-id-file`, `--approle-secret-id-file`, Vault address, and

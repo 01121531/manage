@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ assert SPEC is not None and SPEC.loader is not None
 secure_pool_import = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = secure_pool_import
 SPEC.loader.exec_module(secure_pool_import)
+READ_PLATFORM_ACCESS_TOKEN = secure_pool_import._read_platform_access_token
 
 
 class SecurePoolImportCliTests(unittest.TestCase):
@@ -631,6 +633,93 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     ))
                 self.assertFalse(execution_directory.exists())
                 self.assertFalse(receipt_output.exists())
+
+    def test_raw_pool_input_hardlink_fails_before_remote_or_local_mutation(self) -> None:
+        records = {
+            "card": [{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }],
+            "mailbox": [{
+                "email_masked": "m***@example.test",
+                "connector_type": "http",
+                "secret": {"password": "private-password"},
+            }],
+        }
+        for pool_type, source_records in records.items():
+            with self.subTest(pool_type=pool_type), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                input_file = root / "input.json"
+                input_alias = root / "retained-input.json"
+                receipt_output = root / "receipt.json"
+                execution_directory = root / "execution"
+                input_file.write_text(json.dumps(source_records), encoding="utf-8")
+                try:
+                    os.link(input_file, input_alias)
+                except OSError as error:
+                    self.skipTest(f"hard links unavailable: {error}")
+
+                with patch.object(
+                    secure_pool_import.PlatformClient,
+                    "issue_context",
+                    side_effect=AssertionError("Platform must not be called"),
+                ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                    secure_pool_import.run(self._args(
+                        pool_type=pool_type,
+                        input_file=str(input_file.resolve()),
+                        receipt_output=str(receipt_output.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
+                    ))
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "Input file is unavailable or invalid",
+                )
+                self.assertFalse(execution_directory.exists())
+                self.assertFalse(receipt_output.exists())
+
+    def test_platform_token_hardlink_fails_before_remote_or_local_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            platform_token_file = root / "platform.token"
+            platform_token_alias = root / "retained-platform.token"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            platform_token_file.write_text("platform-access-token", encoding="utf-8")
+            try:
+                os.link(platform_token_file, platform_token_alias)
+            except OSError as error:
+                self.skipTest(f"hard links unavailable: {error}")
+
+            with patch.object(
+                secure_pool_import,
+                "_read_platform_access_token",
+                new=READ_PLATFORM_ACCESS_TOKEN,
+            ), patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=AssertionError("Platform must not be called"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    platform_token_file=str(platform_token_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(
+                str(raised.exception),
+                "Platform access token file is unavailable",
+            )
+            self.assertFalse(execution_directory.exists())
+            self.assertFalse(receipt_output.exists())
 
     def test_run_requires_ca_path_to_be_distinct_from_secret_inputs(self) -> None:
         role_id_file = str((ROOT / "vault.role-id").resolve())

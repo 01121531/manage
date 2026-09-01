@@ -1,10 +1,11 @@
 {
-  "schema_version": 10,
+  "schema_version": 11,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
     "automatic_collection": false,
     "raw_source_transport": "approved_intake_workstation_to_vault_only",
+    "raw_source_file": "required_absolute_stable_single_link_restricted_file",
     "browser_input": "secret-free-signed-bundle_only",
     "mailbox_display_format": "one_visible_ascii_local_character_then_three_asterisks_and_dns_domain",
     "card_security_codes": "rejected_at_import_and_runtime_resolution",
@@ -54,6 +55,7 @@
   },
   "target_import_context": {
     "authority": "authenticated-target-platform-api",
+    "administrator_access_token_file": "required_separate_absolute_stable_single_link_restricted_file",
     "request_fields": ["pool_type", "ordered_manifest_digest", "item_count"],
     "server_authoritative_fields": ["receipt_id", "tenant_id", "audience"],
     "default_ttl_seconds": 900,

@@ -150,10 +150,13 @@ def _absolute_file(value: str, *, label: str) -> Path:
     return path
 
 
-def _read_json(path: Path) -> object:
+def _read_json(path: Path, *, require_single_link: bool = False) -> object:
     try:
         raw, metadata = read_stable_runtime_bytes_with_metadata(path, max_bytes=MAX_INPUT_BYTES)
-        if os.name != "nt" and metadata.st_mode & 0o077:
+        if (
+            (require_single_link and metadata.st_nlink != 1)
+            or (os.name != "nt" and metadata.st_mode & 0o077)
+        ):
             raise OSError
         return parse_unique_json_bytes(raw)
     except (OSError, JsonBoundaryError):
@@ -292,7 +295,7 @@ def _read_platform_access_token(path: Path) -> str:
         raw, metadata = read_stable_runtime_bytes_with_metadata(
             path, max_bytes=MAX_TOKEN_BYTES
         )
-        if os.name != "nt" and metadata.st_mode & 0o022:
+        if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o022):
             raise OSError
         token = raw.decode("utf-8").strip()
         if not token or any(character.isspace() for character in token):
@@ -805,7 +808,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         raise ImportFailure(
             "Input, AppRole, platform token, CA, and receipt output paths must be separate"
         )
-    value = _read_json(input_path)
+    value = _read_json(input_path, require_single_link=True)
     if not isinstance(value, list) or not 1 <= len(value) <= 100:
         raise ImportFailure("Input must contain 1 to 100 records")
     pool_type: Literal["card", "mailbox"] = args.pool_type

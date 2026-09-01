@@ -112,7 +112,12 @@ the Web application.
 
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
-absolute paths; tenant and audience must match the target API environment):
+absolute paths; tenant and audience must match the target API environment).
+The raw input and platform-token files must each be stable regular files with
+exactly one hard link. A pre-existing hard-link alias fails before the platform
+request, Vault login, execution-record creation, or receipt write. On Windows,
+this link-count check supplements rather than verifies the approved workstation
+ACL and cleanup procedure:
 
 ```sh
 python scripts/secure_pool_import.py card \

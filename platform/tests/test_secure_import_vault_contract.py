@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 10)
+        self.assertEqual(contract["schema_version"], 11)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -34,6 +34,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "operator_action": "administrator_manual_upload",
                 "automatic_collection": False,
                 "raw_source_transport": "approved_intake_workstation_to_vault_only",
+                "raw_source_file": (
+                    "required_absolute_stable_single_link_restricted_file"
+                ),
                 "browser_input": "secret-free-signed-bundle_only",
                 "mailbox_display_format": (
                     "one_visible_ascii_local_character_then_three_asterisks_"
@@ -104,6 +107,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
             contract["target_import_context"],
             {
                 "authority": "authenticated-target-platform-api",
+                "administrator_access_token_file": (
+                    "required_separate_absolute_stable_single_link_restricted_file"
+                ),
                 "request_fields": [
                     "pool_type",
                     "ordered_manifest_digest",
