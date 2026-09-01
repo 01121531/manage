@@ -134,14 +134,18 @@ CLI validates the target-issued context and publishes the execution plan before
 reading those AppRole files. It then logs in through AppRole, verifies the exact
 pool policy, role name, service-token type, no default or identity policies, and
 an initial TTL no greater than 15 minutes. The returned Vault token remains only
-in process memory; the retired `--token-file` option is rejected. If Vault has
-issued a syntactically safe token but any role, policy, type, orphan, use-count
-or TTL validation fails, the exchange path attempts self-revocation before
-returning the fixed validation error. An unsafe, control-bearing or non-ASCII
-token is never copied into a revocation header. On every controlled exit after
-successful validation, including KV, context-renewal and Transit failures, the
-CLI attempts `POST /v1/auth/token/revoke-self`, requires an empty HTTP 204
-response, and clears its in-memory token. A raw import attempts to
+in process memory; the retired `--token-file` option is rejected. The CLI builds
+its authenticated HTTPS client and installs the conditional revocation guard
+before AppRole login, so client setup cannot fail after Vault has issued a token
+but before the guard exists. An authentication failure with no issued token
+produces neither an empty-token revoke request nor revocation evidence. If Vault
+has issued a syntactically safe token but any role, policy, type, orphan,
+use-count or TTL validation fails, the exchange path attempts self-revocation
+before returning the fixed validation error. An unsafe, control-bearing or
+non-ASCII token is never copied into a revocation header. On every controlled
+exit after successful validation, including KV, context-renewal and Transit
+failures, the CLI attempts `POST /v1/auth/token/revoke-self`, requires an empty
+HTTP 204 response, and clears its in-memory token. A raw import attempts to
 publish a secret-free revocation intent first and confirmation afterward; an
 intent-publication failure cannot suppress the actual revoke request. Receipt
 reissue performs the same self-revocation without mutating the original

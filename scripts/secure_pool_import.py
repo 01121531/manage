@@ -480,10 +480,11 @@ class VaultClient:
         return signature
 
     def revoke_self(self) -> None:
-        try:
-            _revoke_vault_token(self.addr, self.token, self.opener)
-        finally:
-            self.token = ""
+        token = self.token
+        self.token = ""
+        if not token:
+            return
+        _revoke_vault_token(self.addr, token, self.opener)
 
 
 def _revoke_import_token(
@@ -863,24 +864,21 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     )
     _write_execution_record(execution_directory / "plan.json", plan)
 
-    client = VaultClient(
-        vault_origin,
-        _read_vault_approle_token(
-            vault_origin,
-            pool_type=pool_type,
-            role_id_path=role_id_path,
-            secret_id_path=secret_id_path,
-            ca_file=ca_file,
-        ),
-        ca_file=ca_file,
-    )
+    client = VaultClient(vault_origin, "", ca_file=ca_file)
     with _revoke_token_on_exit(
         lambda: _revoke_import_token(
             client,
             execution_directory=execution_directory,
             plan=plan,
-        )
+        ) if client.token else None
     ):
+        client.token = _read_vault_approle_token(
+            vault_origin,
+            pool_type=pool_type,
+            role_id_path=role_id_path,
+            secret_id_path=secret_id_path,
+            ca_file=ca_file,
+        )
         for index, (secret_ref, secret) in enumerate(
             zip(secret_refs, secrets, strict=True)
         ):
@@ -1061,18 +1059,17 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         item_count=len(items),
     ):
         raise ImportFailure("Renewed platform context does not match this execution")
-    client = VaultClient(
-        vault_origin,
-        _read_vault_approle_token(
+    client = VaultClient(vault_origin, "", ca_file=ca_file)
+    with _revoke_token_on_exit(
+        lambda: client.revoke_self() if client.token else None
+    ):
+        client.token = _read_vault_approle_token(
             vault_origin,
             pool_type=pool_type,
             role_id_path=role_id_path,
             secret_id_path=secret_id_path,
             ca_file=ca_file,
-        ),
-        ca_file=ca_file,
-    )
-    with _revoke_token_on_exit(client.revoke_self):
+        )
         fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
         _write_bundle(output_path, fresh_bundle)
     return receipt_id, len(items)

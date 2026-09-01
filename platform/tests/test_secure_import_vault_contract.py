@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 9)
+        self.assertEqual(contract["schema_version"], 10)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -63,6 +63,11 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "POST /v1/auth/token/revoke-self"
                 ),
                 "revocation_acknowledgement": "empty_http_204",
+                "authenticated_client_construction_order": (
+                    "https_client_before_approle_login"
+                ),
+                "revocation_guard_installation": "before_approle_login",
+                "unissued_token_revocation_request": False,
                 "revocation_attempt_scope": (
                     "every_controlled_exit_after_token_exchange"
                 ),

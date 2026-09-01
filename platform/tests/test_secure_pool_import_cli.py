@@ -483,6 +483,23 @@ class SecurePoolImportCliTests(unittest.TestCase):
         self.assertEqual(request.get_header("X-vault-token"), "short-lived-token")
         self.assertEqual(client.token, "")
 
+    def test_vault_token_self_revocation_is_a_noop_without_an_issued_token(
+        self,
+    ) -> None:
+        class RejectingOpener:
+            @staticmethod
+            def open(*_args: object, **_kwargs: object) -> object:
+                raise AssertionError("empty token must not reach the network")
+
+        client = secure_pool_import.VaultClient(
+            "https://vault.example.test", "", ca_file=None
+        )
+        client.opener = RejectingOpener()
+
+        client.revoke_self()
+
+        self.assertEqual(client.token, "")
+
     def test_vault_token_self_revocation_rejects_ambiguous_acknowledgement(self) -> None:
         class FakeResponse:
             def __enter__(self) -> "FakeResponse":
@@ -791,7 +808,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
 
             class OrderedVaultClient:
                 def __init__(self, *_args: object, **_kwargs: object) -> None:
-                    pass
+                    order.append("client")
 
                 def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
                     order.append("write")
@@ -853,7 +870,71 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     execution_directory=str(execution_directory.resolve()),
                 ))
 
-            self.assertEqual(order, ["approle", "write", "renew", "sign", "revoke"])
+            self.assertEqual(
+                order,
+                ["client", "approle", "write", "renew", "sign", "revoke"],
+            )
+
+    def test_approle_failure_after_client_setup_has_no_empty_token_revocation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-client-before-approle",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            order: list[str] = []
+
+            class EmptyVaultClient:
+                revocations = 0
+
+                def __init__(self, _addr: str, token: str, **_kwargs: object) -> None:
+                    order.append("client")
+                    self.token = token
+
+                def revoke_self(self) -> None:
+                    type(self).revocations += 1
+
+            def fail_approle(*_args: object, **_kwargs: object) -> str:
+                order.append("approle")
+                raise secure_pool_import.ImportFailure(
+                    "Vault AppRole authentication failed"
+                )
+
+            with patch.object(
+                secure_pool_import,
+                "_read_vault_approle_token",
+                new=fail_approle,
+            ), patch.object(
+                secure_pool_import,
+                "VaultClient",
+                EmptyVaultClient,
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(
+                str(raised.exception),
+                "Vault AppRole authentication failed",
+            )
+            self.assertEqual(order, ["client", "approle"])
+            self.assertEqual(EmptyVaultClient.revocations, 0)
+            self.assertTrue((execution_directory / "plan.json").is_file())
+            self.assertFalse(
+                (execution_directory / "token-revoke.intent.json").exists()
+            )
+            self.assertFalse(
+                (execution_directory / "token-revoke.confirmed.json").exists()
+            )
+            self.assertFalse(receipt_output.exists())
 
     def test_completed_bundle_can_be_reissued_without_raw_input_or_kv_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -899,19 +980,30 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 writes = 0
 
                 def __init__(self, *_args: object, **_kwargs: object) -> None:
-                    pass
+                    reissue_order.append("client")
 
                 def write_secret(self, _secret_ref: str, _secret: dict[str, object]) -> None:
                     type(self).writes += 1
                     raise AssertionError("KV write must not run during receipt reissue")
 
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    reissue_order.append("sign")
                     return "vault:v1:fresh-signature"
 
                 def revoke_self(self) -> None:
-                    pass
+                    reissue_order.append("revoke")
 
-            with patch.object(secure_pool_import, "VaultClient", ReissueVaultClient):
+            reissue_order: list[str] = []
+
+            def read_reissue_approle(*_args: object, **_kwargs: object) -> str:
+                reissue_order.append("approle")
+                return "test-vault-token"
+
+            with patch.object(
+                secure_pool_import,
+                "_read_vault_approle_token",
+                new=read_reissue_approle,
+            ), patch.object(secure_pool_import, "VaultClient", ReissueVaultClient):
                 result = secure_pool_import.reissue_completed(self._args(
                     input_file=None,
                     reissue_from=str(original_bundle.resolve()),
@@ -922,6 +1014,10 @@ class SecurePoolImportCliTests(unittest.TestCase):
 
             self.assertEqual(result, (self.receipt_id, 1))
             self.assertEqual(ReissueVaultClient.writes, 0)
+            self.assertEqual(
+                reissue_order,
+                ["client", "approle", "sign", "revoke"],
+            )
             original = json.loads(original_bundle.read_text(encoding="utf-8"))
             fresh = json.loads(fresh_bundle.read_text(encoding="utf-8"))
             for key in ("pool_type", "submission_key", "context_token", "items"):

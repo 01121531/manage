@@ -1,5 +1,5 @@
 {
-  "schema_version": 9,
+  "schema_version": 10,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -26,6 +26,9 @@
     "token_explicit_max_ttl_seconds": 3600,
     "revocation_endpoint": "POST /v1/auth/token/revoke-self",
     "revocation_acknowledgement": "empty_http_204",
+    "authenticated_client_construction_order": "https_client_before_approle_login",
+    "revocation_guard_installation": "before_approle_login",
+    "unissued_token_revocation_request": false,
     "revocation_attempt_scope": "every_controlled_exit_after_token_exchange",
     "authentication_validation_failure_revocation": "attempt_for_visible_ascii_issued_token",
     "unsafe_authentication_token_header_reuse": false,
