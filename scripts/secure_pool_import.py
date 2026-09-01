@@ -58,6 +58,7 @@ from scripts.backup_output_policy import (
     publish_write_once_file,
     write_fsynced_temporary_bytes,
 )
+from scripts.external_json import has_link_or_reparse_ancestor
 from scripts.secure_pool_import_recovery import (
     RecoveryFailure,
     assess_execution_directory,
@@ -166,6 +167,23 @@ def _private_file_permission_fingerprint(
         raise OSError from None
 
 
+def _read_private_file_bytes(
+    path: Path,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, os.stat_result]:
+    if has_link_or_reparse_ancestor(path):
+        raise OSError
+    result = read_stable_runtime_bytes_with_metadata(
+        path,
+        max_bytes=max_bytes,
+        permission_validator=_private_file_permission_fingerprint,
+    )
+    if has_link_or_reparse_ancestor(path):
+        raise OSError
+    return result
+
+
 def _read_json(
     path: Path,
     *,
@@ -174,10 +192,9 @@ def _read_json(
 ) -> object:
     try:
         if require_private_permissions:
-            raw, metadata = read_stable_runtime_bytes_with_metadata(
+            raw, metadata = _read_private_file_bytes(
                 path,
                 max_bytes=MAX_INPUT_BYTES,
-                permission_validator=_private_file_permission_fingerprint,
             )
         else:
             raw, metadata = read_stable_runtime_bytes_with_metadata(
@@ -196,10 +213,9 @@ def _read_json(
 
 def _read_approle_value(path: Path) -> str:
     try:
-        raw, metadata = read_stable_runtime_bytes_with_metadata(
+        raw, metadata = _read_private_file_bytes(
             path,
             max_bytes=MAX_TOKEN_BYTES,
-            permission_validator=_private_file_permission_fingerprint,
         )
         if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o077):
             raise OSError
@@ -327,10 +343,9 @@ def _read_vault_approle_token(
 
 def _read_platform_access_token(path: Path) -> str:
     try:
-        raw, metadata = read_stable_runtime_bytes_with_metadata(
+        raw, metadata = _read_private_file_bytes(
             path,
             max_bytes=MAX_TOKEN_BYTES,
-            permission_validator=_private_file_permission_fingerprint,
         )
         if metadata.st_nlink != 1 or (os.name != "nt" and metadata.st_mode & 0o077):
             raise OSError

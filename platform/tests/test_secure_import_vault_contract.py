@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 13)
+        self.assertEqual(contract["schema_version"], 14)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -84,6 +84,22 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "mode": "0600_or_stricter_no_group_or_other_permissions",
                 "descriptor_binding": (
                     "same_open_descriptor_before_and_after_bounded_read"
+                ),
+            },
+        )
+        self.assertEqual(
+            contract["secret_file_path_aliases"],
+            {
+                "applies_to": [
+                    "raw_source_file",
+                    "platform_access_token_file",
+                    "approle_role_id_file",
+                    "approle_secret_id_file",
+                ],
+                "hard_link_count": 1,
+                "symbolic_link_or_reparse_component_allowed": False,
+                "path_inspection": (
+                    "before_and_after_descriptor_bound_read"
                 ),
             },
         )

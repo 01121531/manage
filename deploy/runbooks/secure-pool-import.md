@@ -41,10 +41,13 @@ rejected before the first Vault or API mutation.
    `smoke/*` wildcard cleanup role.
 4. Obtain a short-lived administrator access token for the target platform and
    place it in a restricted external file distinct from both Vault AppRole
-   files. The raw input and platform-token files must each be a stable regular
-   file with exactly one hard link; the importer rejects either file before any
-   platform call, Vault login, execution-record creation, or receipt write if
-   another filesystem name already points to the same content. On Windows the
+   files. The raw input, platform-token, RoleID and SecretID files must each be
+   a stable regular file with exactly one hard link and a direct path containing
+   no symbolic-link, Windows junction, volume mount-point or other reparse
+   component. The importer checks that lexical path before and after the
+   descriptor-bound read;
+   any alias fails before the affected platform call, Vault login,
+   execution-record creation, or receipt write. On Windows the
    importer also evaluates each raw-input, platform-token, RoleID and SecretID
    ACL through the same already-open file handle before and after its bounded
    read. The DACL must be protected, contain only explicit non-inherited Allow

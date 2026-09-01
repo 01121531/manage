@@ -732,6 +732,96 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertFalse(execution_directory.exists())
             self.assertFalse(receipt_output.exists())
 
+    def test_raw_input_link_or_reparse_path_fails_before_remote_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+
+            with patch.object(
+                secure_pool_import,
+                "has_link_or_reparse_ancestor",
+                return_value=True,
+                create=True,
+            ), patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=secure_pool_import.ImportFailure("later stage reached"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            self.assertEqual(
+                str(raised.exception),
+                "Input file is unavailable or invalid",
+            )
+            self.assertFalse(execution_directory.exists())
+            self.assertFalse(receipt_output.exists())
+
+    def test_platform_token_link_or_reparse_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "platform.token"
+            path.write_text("platform-access-token", encoding="utf-8")
+            with patch.object(
+                secure_pool_import,
+                "has_link_or_reparse_ancestor",
+                return_value=True,
+                create=True,
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                READ_PLATFORM_ACCESS_TOKEN(path)
+
+            self.assertEqual(
+                str(raised.exception),
+                "Platform access token file is unavailable",
+            )
+
+    def test_platform_token_path_alias_drift_after_read_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "platform.token"
+            path.write_text("platform-access-token", encoding="utf-8")
+            with patch.object(
+                secure_pool_import,
+                "has_link_or_reparse_ancestor",
+                side_effect=(False, True),
+            ) as aliases, self.assertRaises(
+                secure_pool_import.ImportFailure
+            ) as raised:
+                READ_PLATFORM_ACCESS_TOKEN(path)
+
+            self.assertEqual(aliases.call_count, 2)
+            self.assertEqual(
+                str(raised.exception),
+                "Platform access token file is unavailable",
+            )
+
+    def test_approle_link_or_reparse_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "role-id"
+            path.write_text("private-role-id", encoding="utf-8")
+            with patch.object(
+                secure_pool_import,
+                "has_link_or_reparse_ancestor",
+                return_value=True,
+                create=True,
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import._read_approle_value(path)
+
+            self.assertEqual(
+                str(raised.exception),
+                "Vault AppRole credential file is unavailable",
+            )
+
     def test_raw_input_permission_failure_precedes_remote_or_local_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -825,6 +915,10 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     "posix",
                 ), patch.object(
                     secure_pool_import,
+                    "has_link_or_reparse_ancestor",
+                    return_value=False,
+                ), patch.object(
+                    secure_pool_import,
                     "read_stable_runtime_bytes_with_metadata",
                     return_value=(b"platform-access-token", metadata(mode)),
                 ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
@@ -839,6 +933,10 @@ class SecurePoolImportCliTests(unittest.TestCase):
             secure_pool_import.os,
             "name",
             "posix",
+        ), patch.object(
+            secure_pool_import,
+            "has_link_or_reparse_ancestor",
+            return_value=False,
         ), patch.object(
             secure_pool_import,
             "read_stable_runtime_bytes_with_metadata",

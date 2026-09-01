@@ -113,9 +113,12 @@ the Web application.
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
 absolute paths; tenant and audience must match the target API environment).
-The raw input and platform-token files must each be stable regular files with
-exactly one hard link. A pre-existing hard-link alias fails before the platform
-request, Vault login, execution-record creation, or receipt write. On Windows,
+The raw input, platform-token, RoleID and SecretID files must each be stable
+regular files with exactly one hard link and a direct path containing no
+symbolic-link or Windows reparse component. The importer checks the lexical
+path before and after its descriptor-bound read, so a stable alias or observed
+path drift fails before the affected platform request, Vault login,
+execution-record creation, or receipt write. On Windows,
 the raw input, platform token, RoleID and SecretID must also have a protected
 DACL owned by the current operator, SYSTEM or local Administrators, with only
 explicit non-inherited Allow entries for those three principals. The importer
