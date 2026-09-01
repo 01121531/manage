@@ -95,6 +95,7 @@ from platform.models import (
     OutboxEvent,
     OperationalPolicyDeployment,
     OperationalPolicyVersion,
+    PoolImportContext,
     PoolImportReceipt,
     SecurePoolImportConsumption,
     AdminRoleChangeRequest,
@@ -117,6 +118,13 @@ from platform.pool_imports import (
     pool_import_submission_key,
     pool_secret_ref,
 )
+from platform.pool_import_contexts import (
+    PoolImportContextBindingMismatch,
+    PoolImportContextConsumed,
+    PoolImportContextExpired,
+    PoolImportContextInvalid,
+    pool_import_context_token_hash,
+)
 from platform.uploads import transition_upload_phase
 from platform.schemas import (
     ApiErrorResponse,
@@ -129,6 +137,8 @@ from platform.schemas import (
     AdminCardTimelineResponse,
     AdminMailboxImportItem,
     AdminMailboxStateUpdate,
+    PoolImportContextCreate,
+    PoolImportContextResponse,
     PoolImportReceiptResponse,
     LoginRequest,
     LogoutResponse,
@@ -5725,6 +5735,72 @@ def _admin_card_response(card: Card, *, allocated: bool = False) -> AdminCardRes
     )
 
 
+@router.post(
+    "/admin/pool-import-contexts",
+    response_model=PoolImportContextResponse,
+    status_code=201,
+    tags=["admin"],
+)
+def admin_create_pool_import_context(
+    request: Request,
+    payload: PoolImportContextCreate,
+    principal: AuthPrincipal = Depends(
+        require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    ),
+    db: Session = Depends(get_db),
+) -> PoolImportContextResponse:
+    now = _utc_now()
+    context_token = secrets.token_urlsafe(32)
+    context = PoolImportContext(
+        id=new_id(),
+        context_token_hash=pool_import_context_token_hash(context_token),
+        tenant_id=principal.tenant_id,
+        audience=request.app.state.pool_import_context_audience,
+        pool_type=payload.pool_type,
+        ordered_manifest_digest=payload.ordered_manifest_digest,
+        item_count=payload.item_count,
+        created_by=principal.user_id,
+        device_id=principal.device_id,
+        trace_id=request.state.trace_id,
+        created_at=now,
+        expires_at=now
+        + timedelta(
+            seconds=request.app.state.settings.pool_import_context_ttl_seconds
+        ),
+    )
+    db.add(context)
+    record_audit(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+        event_type="admin.pool_import_context_issued",
+        entity_type=f"{payload.pool_type}_pool",
+        entity_id=context.id,
+        trace_id=request.state.trace_id,
+        details={
+            "pool_type": payload.pool_type,
+            "item_count": payload.item_count,
+            "ordered_manifest_digest": payload.ordered_manifest_digest,
+            "context_fingerprint": hashlib.sha256(
+                context.id.encode("ascii")
+            ).hexdigest(),
+        },
+    )
+    db.commit()
+    db.refresh(context)
+    return PoolImportContextResponse(
+        context_token=context_token,
+        receipt_id=context.id,
+        tenant_id=context.tenant_id,
+        audience=context.audience,
+        pool_type=context.pool_type,
+        ordered_manifest_digest=context.ordered_manifest_digest,
+        item_count=context.item_count,
+        expires_at=context.expires_at,
+    )
+
+
 def _pool_import_receipt_response(
     receipt: PoolImportReceipt,
     consumption: SecurePoolImportConsumption,
@@ -5812,6 +5888,47 @@ def _verify_pool_import_receipt(
         raise HTTPException(status_code=403, detail="Secure import receipt is invalid") from None
     except PoolImportReceiptVerifierUnavailable:
         raise HTTPException(status_code=503, detail="Secure import verifier unavailable") from None
+
+
+def _verify_pool_import_context(
+    request: Request,
+    db: Session,
+    *,
+    token: str | None,
+    principal: AuthPrincipal,
+    pool_type: Literal["card", "mailbox"],
+    request_digest: str,
+    item_count: int,
+    receipt_id: str,
+) -> PoolImportContext | None:
+    if token is None:
+        raise HTTPException(status_code=422, detail="Secure import context is required")
+    try:
+        return request.app.state.pool_import_context_verifier.verify(
+            db,
+            token,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            audience=request.app.state.pool_import_context_audience,
+            pool_type=pool_type,
+            ordered_manifest_digest=request_digest,
+            item_count=item_count,
+            receipt_id=receipt_id,
+        )
+    except PoolImportContextExpired:
+        raise HTTPException(status_code=410, detail="Secure import context has expired") from None
+    except PoolImportContextConsumed:
+        raise HTTPException(
+            status_code=409, detail="Secure import context was already consumed"
+        ) from None
+    except PoolImportContextBindingMismatch:
+        raise HTTPException(
+            status_code=409,
+            detail="Secure import context does not match this import",
+        ) from None
+    except PoolImportContextInvalid:
+        raise HTTPException(status_code=403, detail="Secure import context is invalid") from None
 
 
 def _admin_card_allocation_response(
@@ -6048,6 +6165,11 @@ def admin_import_cards(
         alias="Secure-Import-Receipt",
         max_length=12 * 1024,
     ),
+    secure_import_context: str | None = Header(
+        default=None,
+        alias="Secure-Import-Context",
+        max_length=128,
+    ),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
@@ -6077,6 +6199,16 @@ def admin_import_cards(
             status_code=409,
             detail="Idempotency key does not match the secure import receipt",
         )
+    verified_context = _verify_pool_import_context(
+        request,
+        db,
+        token=secure_import_context,
+        principal=principal,
+        pool_type="card",
+        request_digest=request_digest,
+        item_count=len(payload),
+        receipt_id=verified_receipt.receipt_id,
+    )
     receipt = PoolImportReceipt(
         id=new_id(),
         tenant_id=principal.tenant_id,
@@ -6123,6 +6255,10 @@ def admin_import_cards(
                 status_code=409, detail="Secure import receipt was already consumed"
             )
         raise HTTPException(status_code=409, detail="Pool import conflict") from None
+    if verified_context is not None:
+        verified_context.pool_import_receipt_id = receipt.id
+        verified_context.consumed_at = _utc_now()
+        db.flush()
     cards = [
         Card(
             tenant_id=principal.tenant_id,
@@ -7087,6 +7223,11 @@ def admin_import_mailboxes(
         alias="Secure-Import-Receipt",
         max_length=12 * 1024,
     ),
+    secure_import_context: str | None = Header(
+        default=None,
+        alias="Secure-Import-Context",
+        max_length=128,
+    ),
     principal: AuthPrincipal = Depends(
         require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
     ),
@@ -7116,6 +7257,16 @@ def admin_import_mailboxes(
             status_code=409,
             detail="Idempotency key does not match the secure import receipt",
         )
+    verified_context = _verify_pool_import_context(
+        request,
+        db,
+        token=secure_import_context,
+        principal=principal,
+        pool_type="mailbox",
+        request_digest=request_digest,
+        item_count=len(payload),
+        receipt_id=verified_receipt.receipt_id,
+    )
     receipt = PoolImportReceipt(
         id=new_id(),
         tenant_id=principal.tenant_id,
@@ -7162,6 +7313,10 @@ def admin_import_mailboxes(
                 status_code=409, detail="Secure import receipt was already consumed"
             )
         raise HTTPException(status_code=409, detail="Pool import conflict") from None
+    if verified_context is not None:
+        verified_context.pool_import_receipt_id = receipt.id
+        verified_context.consumed_at = _utc_now()
+        db.flush()
     mailboxes = [
         Mailbox(
             tenant_id=principal.tenant_id,

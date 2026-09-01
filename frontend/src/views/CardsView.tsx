@@ -38,6 +38,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const cardImportRetryRef = useRef<{
     payload: CardImportItem[]
     idempotencyKey: string
+    contextToken: string
     receiptToken: string
   } | null>(null)
   const [cardImportRetryAvailable, setCardImportRetryAvailable] = useState(false)
@@ -205,13 +206,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       if (!confirmed) return
       const batch = {
         payload: bundle.items,
+        contextToken: bundle.context_token,
         receiptToken: bundle.receipt_token,
         idempotencyKey: bundle.submission_key,
       }
       cardImportRetryRef.current = batch
       setCardImportRetryAvailable(true)
       const receipt = await importCards(
-        batch.payload, batch.idempotencyKey, batch.receiptToken,
+        batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       if (receipt.pool_type !== 'card' || receipt.imported_count !== batch.payload.length) {
         throw new Error('平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。')
@@ -247,7 +249,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     setSaving(true)
     try {
       const receipt = await importCards(
-        batch.payload, batch.idempotencyKey, batch.receiptToken,
+        batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       if (receipt.pool_type !== 'card' || receipt.imported_count !== batch.payload.length) {
         throw new Error('平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。')

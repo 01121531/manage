@@ -262,6 +262,31 @@ class PoolImportReceiptResponse(BaseModel):
     created_at: datetime
 
 
+class PoolImportContextCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pool_type: Literal["card", "mailbox"]
+    ordered_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    item_count: int = Field(ge=1, le=100)
+
+
+class PoolImportContextResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    context_token: str = Field(min_length=43, max_length=128)
+    receipt_id: str = Field(
+        pattern=(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        )
+    )
+    tenant_id: str = Field(min_length=1, max_length=64)
+    audience: str = Field(min_length=1, max_length=160)
+    pool_type: Literal["card", "mailbox"]
+    ordered_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    item_count: int = Field(ge=1, le=100)
+    expires_at: datetime
+
+
 class AdminCardAllocationResponse(BaseModel):
     id: str
     card_id: str

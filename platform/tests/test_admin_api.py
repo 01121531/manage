@@ -79,6 +79,30 @@ class _AdminTestPoolImportVerifier:
         )
 
 
+class _AdminTestPoolImportContextVerifier:
+    def verify(
+        self,
+        _db: Session,
+        token: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+        device_id: str,
+        audience: str,
+        pool_type: str,
+        ordered_manifest_digest: str,
+        item_count: int,
+        receipt_id: str,
+    ) -> None:
+        del user_id, device_id, audience, item_count
+        expected = str(uuid5(
+            NAMESPACE_URL,
+            f"{tenant_id}:{pool_type}:{ordered_manifest_digest}",
+        ))
+        if token != "admin-test-secure-import-context" or receipt_id != expected:
+            raise AssertionError("unexpected test import context")
+
+
 class AdminApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -95,6 +119,7 @@ class AdminApiTests(unittest.TestCase):
                 sub2_upload_url="https://sub2.example.test/upload",
             ),
             pool_import_receipt_verifier=_AdminTestPoolImportVerifier(),
+            pool_import_context_verifier=_AdminTestPoolImportContextVerifier(),
         )
         self.admin = create_user_with_device(
             self.app.state.session_factory,
@@ -200,6 +225,7 @@ class AdminApiTests(unittest.TestCase):
     def headers(value: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {value}",
+            "Secure-Import-Context": "admin-test-secure-import-context",
             "Secure-Import-Receipt": "admin-test-secure-import-receipt",
         }
 

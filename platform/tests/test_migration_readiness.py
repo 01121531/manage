@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0035_pool_list_pagination"
+CURRENT = "0036_pool_import_contexts"
 
 
 class MigrationReadinessTests(unittest.TestCase):

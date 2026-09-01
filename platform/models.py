@@ -183,6 +183,51 @@ class PoolImportReceipt(Base):
     )
 
 
+class PoolImportContext(Base):
+    """Target-issued authorization for one exact secret-free import manifest."""
+
+    __tablename__ = "pool_import_contexts"
+    __table_args__ = (
+        CheckConstraint(
+            "pool_type IN ('card', 'mailbox')",
+            name="ck_pool_import_contexts_pool_type",
+        ),
+        CheckConstraint(
+            "item_count >= 1 AND item_count <= 100",
+            name="ck_pool_import_contexts_item_count",
+        ),
+        UniqueConstraint(
+            "context_token_hash",
+            name="uq_pool_import_contexts_token_hash",
+        ),
+        UniqueConstraint(
+            "pool_import_receipt_id",
+            name="uq_pool_import_contexts_local_receipt",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    context_token_hash: Mapped[str] = mapped_column(String(64))
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    audience: Mapped[str] = mapped_column(String(160))
+    pool_type: Mapped[str] = mapped_column(String(16))
+    ordered_manifest_digest: Mapped[str] = mapped_column(String(64))
+    item_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"))
+    trace_id: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    pool_import_receipt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pool_import_receipts.id"), nullable=True
+    )
+
+
 class SecurePoolImportConsumption(Base):
     """Atomic, globally one-time consumption of a signed Vault receipt."""
 

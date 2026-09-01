@@ -73,6 +73,10 @@ SECURE_IMPORT_SCENARIO_CONTRACT = {
         "database_concurrent_receipt_consumption_verified",
         "single_receipt_consumed_once_under_concurrency",
     ),
+    "secure_import_context_prewrite_binding": (
+        "target_context_wrong_tenant_and_audience_prewrite_denial_verified",
+        "wrong_tenant_and_audience_rejected_before_vault_write",
+    ),
     "secure_import_canary_cleanup": (
         "exact_run_canary_cleanup_receipt_verified",
         "exact_run_canaries_permanently_deleted_with_receipt",
@@ -485,7 +489,7 @@ def repository_control_errors() -> list[str]:
         ]
         if (
             not isinstance(secure_import_contract, dict)
-            or secure_import_contract.get("schema_version") != 4
+            or secure_import_contract.get("schema_version") != 5
             or secure_import_contract.get("production_acceptance") is not False
             or secure_import_contract.get("required_target_evidence")
             != expected_evidence

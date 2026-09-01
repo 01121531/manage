@@ -36,6 +36,11 @@ from platform.pool_imports import (
     PoolImportReceiptVerifier,
     pool_import_receipt_verifier_from_settings,
 )
+from platform.pool_import_contexts import (
+    DatabasePoolImportContextVerifier,
+    PoolImportContextVerifier,
+    configured_pool_import_audience,
+)
 from platform.uploads import (
     Sub2Adapter,
     Sub2Policy,
@@ -56,6 +61,7 @@ def create_app(
     card_secret_resolver: CardSecretResolver | None = None,
     secret_resolver: SecretResolver | None = None,
     pool_import_receipt_verifier: PoolImportReceiptVerifier | None = None,
+    pool_import_context_verifier: PoolImportContextVerifier | None = None,
     access_token_verifier: AccessTokenVerifier | None = None,
     rate_limit_backend: RateLimitBackend | None = None,
     rate_limit_clock: Callable[[], float] = time.time,
@@ -193,6 +199,12 @@ def create_app(
         pool_import_receipt_verifier
         if pool_import_receipt_verifier is not None
         else pool_import_receipt_verifier_from_settings(resolved_settings)
+    )
+    application.state.pool_import_context_audience = configured_pool_import_audience(
+        resolved_settings
+    )
+    application.state.pool_import_context_verifier = (
+        pool_import_context_verifier or DatabasePoolImportContextVerifier()
     )
     configured_mail_connectors = dict(mail_connectors or {})
     if resolved_settings.mail_api_url and "http" not in configured_mail_connectors:

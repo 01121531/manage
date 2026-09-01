@@ -33,6 +33,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const mailboxImportRetryRef = useRef<{
     payload: MailboxImportItem[]
     idempotencyKey: string
+    contextToken: string
     receiptToken: string
   } | null>(null)
   const [mailboxImportRetryAvailable, setMailboxImportRetryAvailable] = useState(false)
@@ -143,13 +144,14 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       if (!confirmed || !isCurrent()) return
       const batch = {
         payload: bundle.items,
+        contextToken: bundle.context_token,
         receiptToken: bundle.receipt_token,
         idempotencyKey: bundle.submission_key,
       }
       mailboxImportRetryRef.current = batch
       setMailboxImportRetryAvailable(true)
       const receipt = await importMailboxes(
-        batch.payload, batch.idempotencyKey, batch.receiptToken,
+        batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       if (!isCurrent()) return
       if (receipt.pool_type !== 'mailbox' || receipt.imported_count !== batch.payload.length) {
@@ -189,7 +191,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     setSaving(true)
     try {
       const receipt = await importMailboxes(
-        batch.payload, batch.idempotencyKey, batch.receiptToken,
+        batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       if (!isCurrent()) return
       if (receipt.pool_type !== 'mailbox' || receipt.imported_count !== batch.payload.length) {

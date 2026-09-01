@@ -492,6 +492,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/pool-import-contexts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Create Pool Import Context */
+        post: operations["admin_create_pool_import_context_api_v1_admin_pool_import_contexts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/role-change-requests": {
         parameters: {
             query?: never;
@@ -2177,6 +2194,49 @@ export interface components {
             /** Rollout Percent */
             rollout_percent: number | null;
         };
+        /** PoolImportContextCreate */
+        PoolImportContextCreate: {
+            /** Item Count */
+            item_count: number;
+            /** Ordered Manifest Digest */
+            ordered_manifest_digest: string;
+            /**
+             * Pool Type
+             * @enum {string}
+             */
+            pool_type: "card" | "mailbox";
+        };
+        /** PoolImportContextResponse */
+        PoolImportContextResponse: {
+            /** Audience */
+            audience: string;
+            /** Context Token */
+            context_token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Item Count */
+            item_count: number;
+            /** Ordered Manifest Digest */
+            ordered_manifest_digest: string;
+            /**
+             * Pool Type
+             * @enum {string}
+             */
+            pool_type: "card" | "mailbox";
+            /** Receipt Id */
+            receipt_id: string;
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Tenant Id */
+            tenant_id: string;
+        };
         /** PoolImportReceiptResponse */
         PoolImportReceiptResponse: {
             /**
@@ -2701,6 +2761,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "Secure-Import-Receipt"?: string | null;
+                "Secure-Import-Context"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -3042,6 +3103,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "Secure-Import-Receipt"?: string | null;
+                "Secure-Import-Context"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -3823,6 +3885,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UploadPolicyDeploymentResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Stable platform error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_create_pool_import_context_api_v1_admin_pool_import_contexts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolImportContextCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolImportContextResponse"];
                 };
             };
             /** @description Request validation failed */

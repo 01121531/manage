@@ -146,7 +146,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
             )
 
     def test_inventory_is_exact_full_vault_matrix_plus_egress_controls(self) -> None:
-        self.assertEqual(len(REQUIRED_SCENARIO_OBSERVATIONS), 30)
+        self.assertEqual(len(REQUIRED_SCENARIO_OBSERVATIONS), 31)
         self.assertEqual(
             {name for name in REQUIRED_SCENARIO_OBSERVATIONS if name.startswith("vault_")},
             {
@@ -179,6 +179,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
                 "secure_import_transit_rotation": "non_exportable_transit_keys_rotated",
                 "secure_import_vault_audit": "vault_audit_trace_independently_reviewed",
                 "secure_import_receipt_concurrency": "single_receipt_consumed_once_under_concurrency",
+                "secure_import_context_prewrite_binding": "wrong_tenant_and_audience_rejected_before_vault_write",
                 "secure_import_canary_cleanup": "exact_run_canaries_permanently_deleted_with_receipt",
                 "secure_import_card_manual_batch": "administrator_card_pool_batch_committed",
                 "secure_import_mailbox_manual_batch": "administrator_mailbox_pool_batch_committed",

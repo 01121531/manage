@@ -35,15 +35,25 @@ rejected before the first Vault or API mutation.
    data/metadata reads return 404. Preserve the write-once secret-free cleanup
    receipt, revoke the token, and remove the per-run policy. Never use a
    `smoke/*` wildcard cleanup role.
-4. Run `scripts/secure_pool_import.py card` or `mailbox` against the matching
-   restricted raw input. It emits a browser-safe `schema_version: 2` bundle
-   containing masked items, a Transit receipt, and a `submission_key` of the
-   form `spi:<signed receipt UUID>`. Keep the raw input, Vault token, and bundle
-   outside the repository with restricted permissions. Supply a new external
-   `--execution-directory`; the importer publishes `plan.json` before the first
-   Vault write, a write intent before each mutation, and a confirmation only
-   after Vault acknowledges version 1.
-5. If the importer is interrupted, run
+4. Obtain a short-lived administrator access token for the target platform and
+   place it in a restricted external file distinct from the Vault importer
+   token. Run `scripts/secure_pool_import.py card` or `mailbox` with the exact
+   HTTPS `--platform-address`, `--platform-token-file`,
+   `--expected-tenant-id`, and `--expected-audience`, plus the matching Vault
+   and raw-input arguments. The CLI sends only the pool type, ordered masked
+   manifest digest and item count to `POST /api/v1/admin/pool-import-contexts`;
+   it never sends PAN or mailbox credentials. The target platform supplies the
+   authoritative tenant, audience and receipt UUID. Any mismatch stops before
+   the Vault token is read, the execution directory is created, or a Vault
+   write occurs.
+5. The importer emits a browser-safe `schema_version: 3` bundle containing
+   masked items, the target context token, a Transit receipt, and a
+   `submission_key` of the form `spi:<signed receipt UUID>`. Keep the raw input,
+   both token files, and bundle outside the repository with restricted
+   permissions. Supply a new external `--execution-directory`; the importer
+   publishes `plan.json` before the first Vault write, a write intent before
+   each mutation, and a confirmation only after Vault acknowledges version 1.
+6. If the importer is interrupted, run
    `scripts/secure_pool_import_recovery.py` against that execution directory and
    the intended receipt output. This is a read-only assessment with no network
    client, write/delete operation or importer dependency. It reports one of
@@ -52,24 +62,24 @@ rejected before the first Vault or API mutation.
    create-only/CAS 0 rejection cannot prove an existing secret equals the
    original input. Preserve the source and records under incident procedure for
    operator reconciliation.
-6. On the matching administration page, select the safe bundle, review the
+7. On the matching administration page, select the safe bundle, review the
    pool type, count and routing preview, then confirm once. If the page reports
    “结果尚未确认”, do not select a different bundle. Use the same-batch recovery
    action. After a refresh or navigation, selecting the exact same bundle is
    also safe: its stable key lets the API return the committed receipt without
    consuming the Transit receipt again.
-7. A committed result must show the platform receipt ID, trace ID, pool/count,
+8. A committed result must show the platform receipt ID, trace ID, pool/count,
    `ordered_manifest_digest`, `secure_receipt_fingerprint`, Transit key version
    and timestamps. These are secret-free correlation fields, not proof that the
    target Vault, audit custody, reviewer identity or source secret values are
    authentic.
-8. Preserve the platform receipt and audit export according to the evidence
+9. Preserve the platform receipt and audit export according to the evidence
    policy. Destroy temporary raw input and bundle copies only under the approved
    intake retention procedure. Never print or paste a receipt token. Keep
    `production_acceptance=false` until real AppRole provenance, Vault audit,
    canary cleanup/readback, key rotation with old-receipt verification, actual
    dual-pool import and independent review are complete.
-9. Record those completed target checks as the 12 `secure_import_*` scenarios in
+10. Record those completed target checks as the 13 `secure_import_*` scenarios in
    the repository-external `vault_egress_evidence` index described by
    `deploy/runbooks/target-intake-preflight.md`. Use only opaque references,
    timestamps, fixed observations and digests. The index must reference the

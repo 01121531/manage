@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 4)
+        self.assertEqual(contract["schema_version"], 5)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -46,7 +46,29 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 },
             },
         )
-        self.assertEqual(contract["bundle_schema_version"], 2)
+        self.assertEqual(contract["bundle_schema_version"], 3)
+        self.assertEqual(
+            contract["target_import_context"],
+            {
+                "authority": "authenticated-target-platform-api",
+                "request_fields": [
+                    "pool_type",
+                    "ordered_manifest_digest",
+                    "item_count",
+                ],
+                "server_authoritative_fields": [
+                    "receipt_id",
+                    "tenant_id",
+                    "audience",
+                ],
+                "default_ttl_seconds": 900,
+                "maximum_ttl_seconds": 3600,
+                "storage": "sha256-token-only",
+                "first_vault_write_requires_validated_context": True,
+                "final_submission_header": "Secure-Import-Context",
+                "atomic_one_time_consumption": "same-transaction-as-pool-import",
+            },
+        )
         self.assertEqual(contract["execution_record_schema_version"], 1)
         self.assertEqual(contract["smoke_plan_schema_version"], 1)
         self.assertEqual(contract["cleanup_receipt_schema_version"], 1)
@@ -138,6 +160,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "transit_keys_non_exportable_and_rotated",
                 "vault_audit_trace_reviewed",
                 "database_concurrent_receipt_consumption_verified",
+                "target_context_wrong_tenant_and_audience_prewrite_denial_verified",
                 "exact_run_canary_cleanup_receipt_verified",
                 "administrator_card_pool_batch_committed",
                 "administrator_mailbox_pool_batch_committed",

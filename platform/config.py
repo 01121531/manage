@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     vault_namespace: str | None = None
     vault_timeout_seconds: int = Field(default=10, gt=0, le=60)
     pool_import_receipt_audience: str | None = Field(default=None, max_length=160)
+    pool_import_context_ttl_seconds: int = Field(default=900, gt=0, le=3_600)
     mail_api_url: str | None = None
     mail_allowed_origins_file: str | None = None
     mail_timeout_seconds: int = Field(default=20, gt=0, le=300)
@@ -111,6 +112,22 @@ class Settings(BaseSettings):
             or not normalized.startswith(("urn:", "https://"))
         ):
             raise ValueError("step-up ACR must be one URI-like value")
+        return normalized
+
+    @field_validator("pool_import_receipt_audience")
+    @classmethod
+    def validate_pool_import_receipt_audience(
+        cls, value: str | None
+    ) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if (
+            not normalized
+            or len(normalized) > 160
+            or any(character.isspace() for character in normalized)
+        ):
+            raise ValueError("pool import receipt audience must be one token")
         return normalized
 
     @property

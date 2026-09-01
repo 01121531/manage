@@ -4,8 +4,10 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from scripts.secure_pool_import_recovery import assess_execution_directory
 
@@ -21,17 +23,56 @@ SPEC.loader.exec_module(secure_pool_import)
 
 
 class SecurePoolImportCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.receipt_id = str(uuid4())
+
+        def issue_context(
+            _client: object,
+            pool_type: str,
+            digest: str,
+            item_count: int,
+        ) -> object:
+            return secure_pool_import.PoolImportContext(
+                schema_version=1,
+                context_token="c" * 43,
+                receipt_id=self.receipt_id,
+                tenant_id="tenant-1",
+                audience="email-platform:pool-import:production",
+                pool_type=pool_type,
+                ordered_manifest_digest=digest,
+                item_count=item_count,
+            )
+
+        self.platform_context_patch = patch.object(
+            secure_pool_import.PlatformClient,
+            "issue_context",
+            new=issue_context,
+        )
+        self.platform_token_patch = patch.object(
+            secure_pool_import,
+            "_read_platform_access_token",
+            return_value="platform-access-token",
+        )
+        self.platform_context_patch.start()
+        self.platform_token_patch.start()
+
+    def tearDown(self) -> None:
+        self.platform_token_patch.stop()
+        self.platform_context_patch.stop()
+
     @staticmethod
     def _args(**overrides: str) -> argparse.Namespace:
         values = {
             "pool_type": "card",
             "input_file": str((ROOT / "input.json").resolve()),
-            "tenant_id": "tenant-1",
+            "platform_address": "https://platform.example.test",
+            "platform_token_file": str((ROOT / "platform.token").resolve()),
+            "expected_tenant_id": "tenant-1",
+            "expected_audience": "email-platform:pool-import:production",
             "vault_address": "https://vault.example.test",
             "token_file": str((ROOT / "vault.token").resolve()),
             "receipt_output": str((ROOT / "receipt.json").resolve()),
             "execution_directory": str((ROOT / "secure-import-execution").resolve()),
-            "audience": "email-platform:pool-import:production",
             "ca_file": None,
         }
         values.update(overrides)
@@ -140,12 +181,73 @@ class SecurePoolImportCliTests(unittest.TestCase):
             ), self.assertRaises(secure_pool_import.ImportFailure):
                 client.write_secret(secret_ref, {"pan": "4111111111111111"})
 
-    def test_run_rejects_unusable_receipt_binding_before_reading_secrets(self) -> None:
-        for field, value in (("tenant_id", " tenant-1"), ("audience", "")):
-            with self.subTest(field=field), self.assertRaises(
-                secure_pool_import.ImportFailure
-            ):
-                secure_pool_import.run(self._args(**{field: value}))
+    def test_context_mismatch_fails_before_vault_token_or_execution_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            platform_token_file = root / "platform.token"
+            vault_token_file = root / "vault.token"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(json.dumps([{
+                "provider_ref": "provider-card-1",
+                "brand": "Visa",
+                "pan": "4111111111111111",
+            }]), encoding="utf-8")
+            platform_token_file.write_text("platform-access-token", encoding="utf-8")
+            vault_token_file.write_text("vault-token-must-not-be-read", encoding="utf-8")
+            receipt_id = str(uuid4())
+            valid = secure_pool_import.PoolImportContext(
+                schema_version=1,
+                context_token="c" * 43,
+                receipt_id=receipt_id,
+                tenant_id="tenant-1",
+                audience="email-platform:pool-import:production",
+                pool_type="card",
+                ordered_manifest_digest=secure_pool_import.pool_import_digest(
+                    "card",
+                    [{
+                        "provider_ref": "provider-card-1",
+                        "pool_key": "legacy-unclassified",
+                        "region": "legacy-unclassified",
+                        "brand": "Visa",
+                        "last4": "1111",
+                        "expiry_month": None,
+                        "expiry_year": None,
+                    }],
+                ),
+                item_count=1,
+            )
+            mismatches = (
+                replace(valid, tenant_id="tenant-2"),
+                replace(valid, audience="email-platform:pool-import:staging"),
+                replace(valid, pool_type="mailbox"),
+                replace(valid, ordered_manifest_digest="0" * 64),
+                replace(valid, item_count=2),
+            )
+            for context in mismatches:
+                with self.subTest(context=context), patch.object(
+                    secure_pool_import.PlatformClient,
+                    "issue_context",
+                    return_value=context,
+                ), patch.object(
+                    secure_pool_import,
+                    "_read_token",
+                    side_effect=AssertionError("Vault token must not be read"),
+                ), patch.object(
+                    secure_pool_import,
+                    "VaultClient",
+                    side_effect=AssertionError("Vault client must not be created"),
+                ), self.assertRaises(secure_pool_import.ImportFailure):
+                    secure_pool_import.run(self._args(
+                        input_file=str(input_file.resolve()),
+                        platform_token_file=str(platform_token_file.resolve()),
+                        token_file=str(vault_token_file.resolve()),
+                        receipt_output=str(receipt_output.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
+                    ))
+                self.assertFalse(execution_directory.exists())
+                self.assertFalse(receipt_output.exists())
 
     def test_run_requires_ca_path_to_be_distinct_from_secret_inputs(self) -> None:
         token_file = str((ROOT / "vault.token").resolve())
@@ -207,9 +309,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 bundle = json.loads(receipt_output.read_text(encoding="utf-8"))
                 self.assertEqual(set(bundle), {
                     "schema_version", "pool_type", "submission_key",
-                    "receipt_token", "items",
+                    "context_token", "receipt_token", "items",
                 })
-                self.assertEqual(bundle["schema_version"], 2)
+                self.assertEqual(bundle["schema_version"], 3)
                 self.assertEqual(bundle["pool_type"], pool_type)
                 self.assertRegex(
                     bundle["submission_key"],

@@ -3,6 +3,7 @@ import type { CardImportItem, MailboxImportItem } from './types'
 const MAX_POOL_IMPORT_BYTES = 256 * 1024
 const MAX_POOL_IMPORT_ITEMS = 100
 const MAX_RECEIPT_TOKEN_LENGTH = 12 * 1024
+const IMPORT_CONTEXT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43,128}$/
 const RECEIPT_TOKEN_PATTERN = /^epir1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
 const ROUTING_VALUE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/
 const CONNECTOR_VALUE_PATTERN = /^[a-z][a-z0-9_-]{0,79}$/
@@ -11,9 +12,10 @@ const CARD_BRAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/
 const MASKED_EMAIL_PATTERN = /^[a-z0-9]\*{3}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
 
 export type PoolImportBundle<T> = {
-  schema_version: 2
+  schema_version: 3
   pool_type: 'card' | 'mailbox'
   submission_key: string
+  context_token: string
   receipt_token: string
   items: T[]
 }
@@ -121,20 +123,24 @@ async function readPoolImportJson<T>(
     schema_version?: unknown
     pool_type?: unknown
     submission_key?: unknown
+    context_token?: unknown
     receipt_token?: unknown
     items?: unknown
   }
   if (
-    keys.length !== 5
+    keys.length !== 6
     || !keys.includes('schema_version')
     || !keys.includes('pool_type')
     || !keys.includes('submission_key')
+    || !keys.includes('context_token')
     || !keys.includes('receipt_token')
     || !keys.includes('items')
-    || candidate.schema_version !== 2
+    || candidate.schema_version !== 3
     || (candidate.pool_type !== 'card' && candidate.pool_type !== 'mailbox')
     || typeof candidate.submission_key !== 'string'
     || !/^spi:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(candidate.submission_key)
+    || typeof candidate.context_token !== 'string'
+    || !IMPORT_CONTEXT_TOKEN_PATTERN.test(candidate.context_token)
     || typeof candidate.receipt_token !== 'string'
     || candidate.receipt_token.length < 1
     || candidate.receipt_token.length > MAX_RECEIPT_TOKEN_LENGTH
@@ -151,9 +157,10 @@ async function readPoolImportJson<T>(
       : '该安全包属于信用卡池，不能导入邮箱池。')
   }
   return {
-    schema_version: 2,
+    schema_version: 3,
     pool_type: expectedPoolType,
     submission_key: candidate.submission_key,
+    context_token: candidate.context_token,
     receipt_token: candidate.receipt_token,
     items: candidate.items.map(parseItem),
   }

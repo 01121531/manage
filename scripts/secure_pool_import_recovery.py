@@ -139,15 +139,17 @@ def assess_execution_directory(
                 "schema_version",
                 "pool_type",
                 "submission_key",
+                "context_token",
                 "receipt_token",
                 "items",
             }:
                 raise RecoveryFailure("bundle_invalid")
             items = bundle_value.get("items")
             if (
-                bundle_value.get("schema_version") != 2
+                bundle_value.get("schema_version") != 3
                 or bundle_value.get("pool_type") != plan["pool_type"]
                 or bundle_value.get("submission_key") != f"spi:{plan['execution_id']}"
+                or not isinstance(bundle_value.get("context_token"), str)
                 or not isinstance(bundle_value.get("receipt_token"), str)
                 or not isinstance(items, list)
                 or len(items) != item_count

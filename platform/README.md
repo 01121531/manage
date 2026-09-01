@@ -47,13 +47,19 @@ The default endpoints are:
   provider error, or secret detail is returned.
 - `GET /api/v1/mailboxes` — masked mailbox connector status for the current
   tenant; no `secret_ref`, password, or raw mailbox configuration.
+- `POST /api/v1/admin/pool-import-contexts` — issue a short-lived, one-time,
+  secret-free authorization for one exact card- or mailbox-pool manifest. The
+  caller supplies only pool type, ordered masked-manifest digest and count;
+  tenant, audience and receipt UUID are server-owned. The opaque context token
+  is stored only as SHA-256 and is consumed in the final import transaction.
 - `POST /api/v1/admin/mailboxes/imports` — atomically register a 1–100 item
   mailbox reference manifest containing masked records and pre-provisioned
   `vault://secret/mailboxes/` references. It is not a raw credential upload
   endpoint; the mailbox account and password must already have been handled by
   a separate Vault security-import flow.
   The endpoint is separate from the card pool and never accepts mailbox
-  passwords or returns secret references. A required `Idempotency-Key` header
+  passwords or returns secret references. Required `Secure-Import-Context`,
+  `Secure-Import-Receipt`, and `Idempotency-Key` headers
   binds the validated ordered payload to a secret-free durable receipt; an
   exact replay returns that receipt with 200 and does not duplicate resources
   or audit events.

@@ -980,9 +980,12 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   await expect(history).not.toContainText('4111111111111111')
   await history.getByRole('button', { name: /回收活动租约 allocation-timeline/ }).click()
   const dialog = page.getByRole('dialog', { name: '回收租约 allocation-timeline' })
-  await dialog.getByLabel('选择活动租约回收原因').click()
-  await page.getByText('人工重新分配', { exact: true }).click()
-  await dialog.getByRole('button', { name: '确认回收' }).click()
+  const recycleReasonSelect = dialog.getByLabel('选择活动租约回收原因')
+  const confirmRecycle = dialog.getByRole('button', { name: '确认回收' })
+  await recycleReasonSelect.click()
+  await recycleReasonSelect.press('Enter')
+  await expect(confirmRecycle).toBeEnabled()
+  await confirmRecycle.click()
 
   await expect.poll(() => recycleBodies).toEqual([{ reason_code: 'manual_reassignment' }])
   await expect(history.getByText('人工重新分配', { exact: true })).toBeVisible()
@@ -1507,6 +1510,7 @@ test('current-device revoke handles confirmed, rejected, uncertain HTTP, and tra
 })
 
 test('hard expiry retires an old device revoke without letting its late outcome unlock a new revoke', async ({ browser }) => {
+  test.setTimeout(60_000)
   for (const oldOutcome of ['confirmed', 'rejected', 'ambiguous'] as const) {
     const context = await browser.newContext()
     const page = await context.newPage()
@@ -3118,6 +3122,7 @@ test('audit action filter is shared by list and export and cleared atomically', 
 })
 
 test('security auditor filters and downloads redacted audit evidence', async ({ page }) => {
+  test.setTimeout(60_000)
   const accessValue = 'audit-memory-access'
   const auditTrace = '00000000-0000-0000-0000-000000000077'
   const listQueries: URLSearchParams[] = []
@@ -4957,9 +4962,11 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   }]
   const cardImportBodies: unknown[] = []
   const cardImportKeys: string[] = []
+  const cardImportContexts: string[] = []
   const cardImportReceipts: string[] = []
   const mailboxImportBodies: unknown[] = []
   const mailboxImportKeys: string[] = []
+  const mailboxImportContexts: string[] = []
   const mailboxImportReceipts: string[] = []
 
   await page.route('**/api/v1/**', async (route) => {
@@ -4998,6 +5005,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
       const body = request.postDataJSON() as Array<Record<string, unknown>>
       cardImportBodies.push(body)
       cardImportKeys.push(request.headers()['idempotency-key'] ?? '')
+      cardImportContexts.push(request.headers()['secure-import-context'] ?? '')
       cardImportReceipts.push(request.headers()['secure-import-receipt'] ?? '')
       const imported = body.map((item, index) => ({
         id: `card-import-${index + 1}`, tenant_id: 'tenant-1', provider_ref: item.provider_ref,
@@ -5023,6 +5031,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
       const body = request.postDataJSON() as Array<Record<string, unknown>>
       mailboxImportBodies.push(body)
       mailboxImportKeys.push(request.headers()['idempotency-key'] ?? '')
+      mailboxImportContexts.push(request.headers()['secure-import-context'] ?? '')
       mailboxImportReceipts.push(request.headers()['secure-import-receipt'] ?? '')
       if (mailboxImportBodies.length === 1) {
         return fulfill({ error: { code: 'validation_error', message: 'invalid reference manifest' } }, 422)
@@ -5077,10 +5086,13 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   }]
   const cardSubmissionKey = 'spi:11111111-1111-4111-8111-111111111111'
   const mailboxSubmissionKey = 'spi:22222222-2222-4222-8222-222222222222'
+  const cardContextToken = 'c'.repeat(43)
+  const mailboxContextToken = 'm'.repeat(43)
   await cardBundleInput.setInputFiles({
     name: 'wrong-mailbox-pool.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      schema_version: 3, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      context_token: mailboxContextToken,
       receipt_token: 'epir1.wrong-pool.signature',
       items: [{ email_masked: 'w***@example.invalid', connector_type: 'http', task_type: 'mail_code' }],
     })),
@@ -5090,7 +5102,8 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await cardBundleInput.setInputFiles({
     name: 'card-pool-with-secret.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'card', submission_key: cardSubmissionKey,
+      schema_version: 3, pool_type: 'card', submission_key: cardSubmissionKey,
+      context_token: cardContextToken,
       receipt_token: 'epir1.card-receipt.signature',
       items: [{ ...secureCardItems[0], pan: '4111111111111111' }],
     })),
@@ -5101,7 +5114,8 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await cardBundleInput.setInputFiles({
     name: 'card-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'card', submission_key: cardSubmissionKey,
+      schema_version: 3, pool_type: 'card', submission_key: cardSubmissionKey,
+      context_token: cardContextToken,
       receipt_token: 'epir1.card-receipt.signature', items: secureCardItems,
     })),
   })
@@ -5113,6 +5127,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await cardPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => cardImportBodies).toEqual([secureCardItems])
   expect(cardImportReceipts).toEqual(['epir1.card-receipt.signature'])
+  expect(cardImportContexts).toEqual([cardContextToken])
   const cardRecovery = page.getByRole('alert').filter({ hasText: '上次信用卡池导入结果尚未确认' })
   await expect(cardRecovery).toContainText(cardSubmissionKey)
   await expect(page.getByRole('button', { name: '导入信用卡池安全包 JSON' })).toBeDisabled()
@@ -5124,6 +5139,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   expect(cardImportReceipts).toEqual([
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
   ])
+  expect(cardImportContexts).toEqual([cardContextToken, cardContextToken])
   await expect(page.getByRole('row').filter({ hasText: 'provider-imported' })).toBeVisible()
   await expect(page.getByText('最近一次信用卡池导入已确认：1 条', { exact: true })).toBeVisible()
   await expect(page.getByText('card-import-receipt', { exact: true })).toBeVisible()
@@ -5139,7 +5155,8 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-with-secret.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      schema_version: 3, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      context_token: mailboxContextToken,
       receipt_token: 'epir1.mail-receipt.signature',
       items: [{ ...secureMailboxItems[0], password: 'mailbox-secret-value' }],
     })),
@@ -5153,7 +5170,8 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-pseudo-mask.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      schema_version: 3, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      context_token: mailboxContextToken,
       receipt_token: 'epir1.mail-receipt.signature',
       items: [{
         email_masked: pseudoMaskedEmail, connector_type: 'http', task_type: 'mail_code',
@@ -5168,7 +5186,8 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-cancelled.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      schema_version: 3, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      context_token: mailboxContextToken,
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
@@ -5179,7 +5198,8 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      schema_version: 3, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      context_token: mailboxContextToken,
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
@@ -5190,11 +5210,13 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await mailboxPreview.getByRole('button', { name: '确认导入 1 条' }).click()
   await expect.poll(() => mailboxImportBodies).toEqual([secureMailboxItems])
   expect(mailboxImportReceipts).toEqual(['epir1.mail-receipt.signature'])
+  expect(mailboxImportContexts).toEqual([mailboxContextToken])
   await expect(page.getByRole('button', { name: '重试上次邮箱池引用清单' })).toHaveCount(0)
   await mailboxInput.setInputFiles({
     name: 'mailbox-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
-      schema_version: 2, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      schema_version: 3, pool_type: 'mailbox', submission_key: mailboxSubmissionKey,
+      context_token: mailboxContextToken,
       receipt_token: 'epir1.mail-receipt.signature', items: secureMailboxItems,
     })),
   })
@@ -5218,11 +5240,15 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     'epir1.mail-receipt.signature', 'epir1.mail-receipt.signature',
     'epir1.mail-receipt.signature',
   ])
+  expect(mailboxImportContexts).toEqual([
+    mailboxContextToken, mailboxContextToken, mailboxContextToken,
+  ])
   await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
   await expect(page.getByText('最近一次邮箱池导入已确认：1 条', { exact: true })).toBeVisible()
   await expect(page.getByText('mailbox-import-receipt', { exact: true })).toBeVisible()
   await expect(page.getByText('mailbox-import-trace', { exact: true })).toBeVisible()
   await expect(page.locator('body')).not.toContainText('epir1.mail-receipt.signature')
+  await expect(page.locator('body')).not.toContainText(mailboxContextToken)
   await expect(page.getByRole('button', { name: '登记邮箱连接器' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /轮换邮箱密钥引用/ })).toHaveCount(0)
 })

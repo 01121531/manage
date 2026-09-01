@@ -111,10 +111,12 @@ export const recycleCardAllocation = (
 export const importCards = (
   payload: CardImportItem[],
   idempotencyKey: string,
+  contextToken: string,
   receiptToken: string,
 ): Promise<PoolImportReceipt> => unwrap(api.POST('/api/v1/admin/cards/imports', {
   params: { header: {
     'Idempotency-Key': idempotencyKey,
+    'Secure-Import-Context': contextToken,
     'Secure-Import-Receipt': receiptToken,
   } },
   body: payload,
@@ -136,10 +138,12 @@ export const releaseCardQuarantine = (cardId: string): Promise<CardSummary> =>
 export const importMailboxes = (
   payload: MailboxImportItem[],
   idempotencyKey: string,
+  contextToken: string,
   receiptToken: string,
 ): Promise<PoolImportReceipt> => unwrap(api.POST('/api/v1/admin/mailboxes/imports', {
   params: { header: {
     'Idempotency-Key': idempotencyKey,
+    'Secure-Import-Context': contextToken,
     'Secure-Import-Receipt': receiptToken,
   } },
   body: payload,

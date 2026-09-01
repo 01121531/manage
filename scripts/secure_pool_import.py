@@ -17,10 +17,11 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -94,6 +95,21 @@ def _vault_origin(value: str) -> str:
     return urllib.parse.urlunsplit(parsed)
 
 
+def _platform_origin(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value.strip().rstrip("/"))
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ImportFailure("Platform address must be an HTTPS origin")
+    return urllib.parse.urlunsplit(parsed)
+
+
 def _absolute_file(value: str, *, label: str) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -122,6 +138,21 @@ def _read_token(path: Path) -> str:
         return token
     except (OSError, UnicodeError, ValueError):
         raise ImportFailure("Vault token file is unavailable") from None
+
+
+def _read_platform_access_token(path: Path) -> str:
+    try:
+        raw, metadata = read_stable_runtime_bytes_with_metadata(
+            path, max_bytes=MAX_TOKEN_BYTES
+        )
+        if os.name != "nt" and metadata.st_mode & 0o022:
+            raise OSError
+        token = raw.decode("utf-8").strip()
+        if not token or any(character.isspace() for character in token):
+            raise ValueError
+        return token
+    except (OSError, UnicodeError, ValueError):
+        raise ImportFailure("Platform access token file is unavailable") from None
 
 
 def _contains_forbidden_card_secret(value: object) -> bool:
@@ -302,6 +333,121 @@ class VaultClient:
         return signature
 
 
+@dataclass(frozen=True)
+class PoolImportContext:
+    schema_version: int
+    context_token: str
+    receipt_id: str
+    tenant_id: str
+    audience: str
+    pool_type: Literal["card", "mailbox"]
+    ordered_manifest_digest: str
+    item_count: int
+
+
+class PlatformClient:
+    def __init__(self, addr: str, access_token: str, *, ca_file: Path | None) -> None:
+        self.addr = _platform_origin(addr)
+        self.access_token = access_token
+        context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
+        self.opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=context),
+            _NoRedirect(),
+        )
+
+    def issue_context(
+        self,
+        pool_type: Literal["card", "mailbox"],
+        ordered_manifest_digest: str,
+        item_count: int,
+    ) -> PoolImportContext:
+        request = urllib.request.Request(
+            self.addr + "/api/v1/admin/pool-import-contexts",
+            data=json.dumps(
+                {
+                    "pool_type": pool_type,
+                    "ordered_manifest_digest": ordered_manifest_digest,
+                    "item_count": item_count,
+                },
+                separators=(",", ":"),
+            ).encode("ascii"),
+            method="POST",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with self.opener.open(request, timeout=20) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ImportFailure("Platform returned an invalid import context")
+        except urllib.error.HTTPError as error:
+            if error.code in {401, 403}:
+                raise ImportFailure("Platform rejected import context authorization") from None
+            raise ImportFailure("Platform import context request failed") from None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise ImportFailure("Platform import context request failed") from None
+        try:
+            value = parse_unique_json_bytes(raw)
+        except JsonBoundaryError:
+            raise ImportFailure("Platform returned an invalid import context") from None
+        expected_keys = {
+            "schema_version",
+            "context_token",
+            "receipt_id",
+            "tenant_id",
+            "audience",
+            "pool_type",
+            "ordered_manifest_digest",
+            "item_count",
+            "expires_at",
+        }
+        if not isinstance(value, dict) or set(value) != expected_keys:
+            raise ImportFailure("Platform returned an invalid import context")
+        try:
+            receipt_id = str(UUID(value["receipt_id"]))
+            expires_at = datetime.fromisoformat(
+                str(value["expires_at"]).replace("Z", "+00:00")
+            )
+        except (ValueError, TypeError, AttributeError):
+            raise ImportFailure("Platform returned an invalid import context") from None
+        now = datetime.now(timezone.utc)
+        if (
+            value["schema_version"] != 1
+            or isinstance(value["schema_version"], bool)
+            or not isinstance(value["context_token"], str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43,128}", value["context_token"]) is None
+            or value["receipt_id"] != receipt_id
+            or not isinstance(value["tenant_id"], str)
+            or not 1 <= len(value["tenant_id"]) <= 64
+            or not isinstance(value["audience"], str)
+            or not 1 <= len(value["audience"]) <= 160
+            or value["pool_type"] not in {"card", "mailbox"}
+            or not isinstance(value["ordered_manifest_digest"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", value["ordered_manifest_digest"]) is None
+            or type(value["item_count"]) is not int
+            or not 1 <= value["item_count"] <= 100
+            or not isinstance(value["expires_at"], str)
+            or expires_at.utcoffset() is None
+            or expires_at <= now
+            or expires_at > now + timedelta(seconds=3_660)
+        ):
+            raise ImportFailure("Platform returned an invalid import context")
+        return PoolImportContext(
+            schema_version=1,
+            context_token=value["context_token"],
+            receipt_id=receipt_id,
+            tenant_id=value["tenant_id"],
+            audience=value["audience"],
+            pool_type=value["pool_type"],
+            ordered_manifest_digest=value["ordered_manifest_digest"],
+            item_count=value["item_count"],
+        )
+
+
 def _write_execution_record(path: Path, document: dict[str, object]) -> None:
     raw = execution_canonical_bytes(document) + b"\n"
     try:
@@ -327,23 +473,38 @@ def _write_bundle(path: Path, bundle: dict[str, object]) -> str:
 
 def run(args: argparse.Namespace) -> tuple[str, int]:
     input_path = _absolute_file(args.input_file, label="Input file")
+    platform_token_path = _absolute_file(
+        args.platform_token_file, label="Platform access token file"
+    )
     token_path = _absolute_file(args.token_file, label="Vault token file")
     output_path = _absolute_file(args.receipt_output, label="Receipt output")
     execution_path = Path(args.execution_directory)
     if not execution_path.is_absolute():
         raise ImportFailure("Execution record directory must be an absolute path")
     ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
-    tenant_id = args.tenant_id.strip()
-    audience = args.audience.strip()
-    if tenant_id != args.tenant_id or not 1 <= len(tenant_id) <= 64:
-        raise ImportFailure("Tenant ID is invalid")
-    if audience != args.audience or not 1 <= len(audience) <= 160:
-        raise ImportFailure("Receipt audience is invalid")
+    expected_tenant_id = args.expected_tenant_id.strip()
+    expected_audience = args.expected_audience.strip()
+    if (
+        expected_tenant_id != args.expected_tenant_id
+        or not 1 <= len(expected_tenant_id) <= 64
+    ):
+        raise ImportFailure("Expected tenant ID is invalid")
+    if (
+        expected_audience != args.expected_audience
+        or not 1 <= len(expected_audience) <= 160
+    ):
+        raise ImportFailure("Expected receipt audience is invalid")
     if output_path.exists():
         raise ImportFailure("Receipt output must not already exist")
     if not output_path.parent.is_dir():
         raise ImportFailure("Receipt output directory must already exist")
-    distinct_paths = [input_path, token_path, output_path, execution_path]
+    distinct_paths = [
+        input_path,
+        platform_token_path,
+        token_path,
+        output_path,
+        execution_path,
+    ]
     if ca_file is not None:
         distinct_paths.append(ca_file)
     if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
@@ -356,9 +517,31 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     parsed_records = [parser(item) for item in value]
     manifest = [item[0] for item in parsed_records]
     secrets = [item[1] for item in parsed_records]
-    receipt_id = str(uuid4())
     vault_origin = _vault_origin(args.vault_address)
+    platform_origin = _platform_origin(args.platform_address)
     digest = pool_import_digest(pool_type, manifest)
+    platform_client = PlatformClient(
+        platform_origin,
+        _read_platform_access_token(platform_token_path),
+        ca_file=ca_file,
+    )
+    context = platform_client.issue_context(pool_type, digest, len(manifest))
+    if (
+        context.schema_version != 1
+        or context.tenant_id != expected_tenant_id
+        or context.audience != expected_audience
+        or context.pool_type != pool_type
+        or context.ordered_manifest_digest != digest
+        or context.item_count != len(manifest)
+        or re.fullmatch(r"[A-Za-z0-9_-]{43,128}", context.context_token) is None
+    ):
+        raise ImportFailure("Platform import context does not match this execution")
+    try:
+        receipt_id = str(UUID(context.receipt_id))
+    except (ValueError, TypeError, AttributeError):
+        raise ImportFailure("Platform import context is invalid") from None
+    tenant_id = context.tenant_id
+    audience = context.audience
     secret_refs = [
         pool_secret_ref(
             pool_type,
@@ -433,9 +616,10 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
                 "Transit key changed during signing; inspect the execution record"
             )
     bundle = {
-        "schema_version": 2,
+        "schema_version": 3,
         "pool_type": pool_type,
         "submission_key": pool_import_submission_key(receipt_id),
+        "context_token": context.context_token,
         "receipt_token": encode_receipt_token(unsigned, signature),
         "items": manifest,
     }
@@ -467,12 +651,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Securely import one card or mailbox pool")
     parser.add_argument("pool_type", choices=("card", "mailbox"))
     parser.add_argument("--input-file", required=True)
-    parser.add_argument("--tenant-id", required=True)
+    parser.add_argument("--platform-address", required=True)
+    parser.add_argument("--platform-token-file", required=True)
+    parser.add_argument("--expected-tenant-id", required=True)
+    parser.add_argument("--expected-audience", required=True)
     parser.add_argument("--vault-address", required=True)
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--receipt-output", required=True)
     parser.add_argument("--execution-directory", required=True)
-    parser.add_argument("--audience", required=True)
     parser.add_argument("--ca-file")
     return parser
 

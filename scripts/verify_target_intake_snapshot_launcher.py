@@ -204,8 +204,8 @@ def snapshot_launcher_gate_errors(root: Path = ROOT) -> list[str]:
     }.issubset(execution_profile_keys):
         errors.append("validator execution profile runtime schema is incomplete")
 
-    if texts["contract"].count('    "platform/') != 32:
-        errors.append("validator platform source inventory must contain 32 files")
+    if texts["contract"].count('    "platform/') != 33:
+        errors.append("validator platform source inventory must contain 33 files")
     if texts["contract"].count('    "scripts/') < 34:
         errors.append("validator script source inventory is incomplete")
     if 'RECEIPT_KIND = "target_intake_generation_receipt_v8"' not in texts["generation"]:
@@ -227,7 +227,7 @@ def main() -> int:
         return 1
     print(
         "target-intake-snapshot-launcher-gate-ok "
-        "production_acceptance=false source-files=66 snapshot-members=93 "
+        "production_acceptance=false source-files=67 snapshot-members=94 "
         "clean-child-flags=-I,-B,-S,-P,-X-pycache-prefix "
         "direct-operational-entrypoint=blocked "
         "source-authority=unverified snapshot-atomicity=unverified "

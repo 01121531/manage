@@ -12,8 +12,15 @@ from sqlalchemy import func, select
 from platform.app import create_app
 from platform.bootstrap import create_user_with_device
 from platform.config import Settings
-from platform.models import AuditEvent, Card, Mailbox, PoolImportReceipt
-from platform.pool_imports import VerifiedPoolImportReceipt
+from platform.models import (
+    AuditEvent,
+    Card,
+    Mailbox,
+    PoolImportContext,
+    PoolImportReceipt,
+)
+from platform.pool_imports import VerifiedPoolImportReceipt, pool_import_digest
+from platform.schemas import AdminCardImportItem
 
 
 class _FakeVerifier:
@@ -88,15 +95,114 @@ class SecurePoolImportApiTests(unittest.TestCase):
 
         return asyncio.run(run())
 
-    def headers(self, receipt_id: str, key: str) -> dict[str, str]:
-        return {
+    def headers(
+        self,
+        receipt_id: str,
+        key: str,
+        context_token: str | None = None,
+    ) -> dict[str, str]:
+        headers = {
             "Authorization": self.authorization,
             "Idempotency-Key": key,
             "Secure-Import-Receipt": receipt_id,
         }
+        if context_token is not None:
+            headers["Secure-Import-Context"] = context_token
+        return headers
+
+    def import_headers(
+        self,
+        pool_type: str,
+        payload: list[dict[str, object]],
+        *,
+        idempotency_key: str | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        item_type = AdminCardImportItem if pool_type == "card" else None
+        normalized = (
+            [item_type.model_validate(item) for item in payload]
+            if item_type is not None
+            else payload
+        )
+        digest = pool_import_digest(pool_type, normalized)
+        issued = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": pool_type,
+                "ordered_manifest_digest": digest,
+                "item_count": len(payload),
+            },
+        )
+        self.assertEqual(issued.status_code, 201, issued.text)
+        context = issued.json()
+        receipt_id = context["receipt_id"]
+        return receipt_id, self.headers(
+            receipt_id,
+            idempotency_key or f"spi:{receipt_id}",
+            context["context_token"],
+        )
+
+    def test_target_issues_authoritative_secret_free_import_context(self) -> None:
+        payload = [{
+            "provider_ref": "provider-context-1",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        digest = pool_import_digest(
+            "card",
+            [AdminCardImportItem.model_validate(item) for item in payload],
+        )
+
+        rejected_override = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": digest,
+                "item_count": 1,
+                "tenant_id": "tenant-b",
+                "audience": "attacker-selected",
+            },
+        )
+        self.assertEqual(rejected_override.status_code, 422, rejected_override.text)
+        self.assertNotIn("tenant-b", rejected_override.text)
+        self.assertNotIn("attacker-selected", rejected_override.text)
+
+        issued = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": digest,
+                "item_count": 1,
+            },
+        )
+
+        self.assertEqual(issued.status_code, 201, issued.text)
+        context = issued.json()
+        self.assertEqual(context["schema_version"], 1)
+        self.assertEqual(context["tenant_id"], "tenant-a")
+        self.assertEqual(
+            context["audience"], "email-platform:pool-import:test"
+        )
+        self.assertEqual(context["pool_type"], "card")
+        self.assertEqual(context["ordered_manifest_digest"], digest)
+        self.assertEqual(context["item_count"], 1)
+        self.assertRegex(context["receipt_id"], r"^[0-9a-f-]{36}$")
+        self.assertRegex(context["context_token"], r"^[A-Za-z0-9_-]{43,128}$")
+        with self.app.state.session_factory() as db:
+            row = db.get(PoolImportContext, context["receipt_id"])
+            assert row is not None
+            self.assertEqual(row.tenant_id, "tenant-a")
+            self.assertEqual(row.audience, "email-platform:pool-import:test")
+            self.assertNotEqual(row.context_token_hash, context["context_token"])
 
     def test_card_import_derives_refs_and_replays_without_reverification(self) -> None:
-        receipt_id = str(uuid4())
         payload = [{
             "provider_ref": "provider-card-1",
             "pool_key": "checkout-cn",
@@ -104,10 +210,11 @@ class SecurePoolImportApiTests(unittest.TestCase):
             "brand": "Visa",
             "last4": "4242",
         }]
+        receipt_id, import_headers = self.import_headers("card", payload)
         first = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
+            headers=import_headers,
             json=payload,
         )
         self.assertEqual(first.status_code, 201, first.text)
@@ -140,6 +247,10 @@ class SecurePoolImportApiTests(unittest.TestCase):
                 rf"^vault://secret/cards/imports/[0-9a-f]{{24}}/{receipt_id}/000$",
             )
             self.assertEqual(db.scalar(select(func.count()).select_from(PoolImportReceipt)), 1)
+            context = db.get(PoolImportContext, receipt_id)
+            assert context is not None
+            self.assertIsNotNone(context.consumed_at)
+            self.assertEqual(context.pool_import_receipt_id, first_receipt["id"])
             audit_json = "\n".join(item.details_json for item in db.scalars(select(AuditEvent)))
             self.assertNotIn(receipt_id, audit_json)
             self.assertNotIn("vault://", audit_json)
@@ -147,23 +258,23 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertIn(first_receipt["secure_receipt_fingerprint"], audit_json)
 
     def test_mailbox_import_and_receipt_one_time_consumption(self) -> None:
-        receipt_id = str(uuid4())
         payload = [{
             "email_masked": "m***@example.test",
             "connector_type": "http",
             "task_type": "mail_code",
         }]
+        receipt_id, import_headers = self.import_headers("mailbox", payload)
         first = self.request(
             "POST",
             "/api/v1/admin/mailboxes/imports",
-            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
+            headers=import_headers,
             json=payload,
         )
         self.assertEqual(first.status_code, 201, first.text)
         consumed = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
+            headers=import_headers,
             json=[{
                 "provider_ref": "provider-cross-pool",
                 "pool_key": "checkout-cn",
@@ -214,7 +325,6 @@ class SecurePoolImportApiTests(unittest.TestCase):
             )
 
     def test_first_import_requires_submission_key_bound_to_signed_receipt(self) -> None:
-        receipt_id = str(uuid4())
         payload = [{
             "provider_ref": "provider-card-bound-key",
             "pool_key": "checkout-cn",
@@ -222,11 +332,14 @@ class SecurePoolImportApiTests(unittest.TestCase):
             "brand": "Visa",
             "last4": "4242",
         }]
+        receipt_id, import_headers = self.import_headers(
+            "card", payload, idempotency_key=f"spi:{uuid4()}"
+        )
 
         rejected = self.request(
             "POST",
             "/api/v1/admin/cards/imports",
-            headers=self.headers(receipt_id, f"spi:{uuid4()}"),
+            headers=import_headers,
             json=payload,
         )
 
@@ -235,6 +348,44 @@ class SecurePoolImportApiTests(unittest.TestCase):
         with self.app.state.session_factory() as db:
             self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(PoolImportReceipt)), 0)
+
+    def test_first_import_requires_exact_target_context_without_side_effects(self) -> None:
+        payload = [{
+            "provider_ref": "provider-context-bound",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        receipt_id, import_headers = self.import_headers("card", payload)
+        missing_headers = dict(import_headers)
+        missing_headers.pop("Secure-Import-Context")
+
+        missing = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=missing_headers,
+            json=payload,
+        )
+        self.assertEqual(missing.status_code, 422, missing.text)
+
+        changed_payload = [{**payload[0], "provider_ref": "provider-context-other"}]
+        mismatched = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=import_headers,
+            json=changed_payload,
+        )
+        self.assertEqual(mismatched.status_code, 409, mismatched.text)
+        with self.app.state.session_factory() as db:
+            context = db.get(PoolImportContext, receipt_id)
+            assert context is not None
+            self.assertIsNone(context.consumed_at)
+            self.assertIsNone(context.pool_import_receipt_id)
+            self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 0)
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)), 0
+            )
 
     def test_import_rejects_secret_fields_and_unreceipted_first_write(self) -> None:
         payload = [{
@@ -301,6 +452,7 @@ class SecurePoolImportApiTests(unittest.TestCase):
         )
         self.assertIn("post", paths["/api/v1/admin/cards/imports"])
         self.assertIn("post", paths["/api/v1/admin/mailboxes/imports"])
+        self.assertIn("post", paths["/api/v1/admin/pool-import-contexts"])
 
 
 if __name__ == "__main__":

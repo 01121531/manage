@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -14,8 +14,19 @@
     }
   },
   "receipt_authority": "vault-transit",
+  "target_import_context": {
+    "authority": "authenticated-target-platform-api",
+    "request_fields": ["pool_type", "ordered_manifest_digest", "item_count"],
+    "server_authoritative_fields": ["receipt_id", "tenant_id", "audience"],
+    "default_ttl_seconds": 900,
+    "maximum_ttl_seconds": 3600,
+    "storage": "sha256-token-only",
+    "first_vault_write_requires_validated_context": true,
+    "final_submission_header": "Secure-Import-Context",
+    "atomic_one_time_consumption": "same-transaction-as-pool-import"
+  },
   "atomic_consumption": "postgresql-unique-secure-receipt-id",
-  "bundle_schema_version": 2,
+  "bundle_schema_version": 3,
   "execution_record_schema_version": 1,
   "smoke_plan_schema_version": 1,
   "cleanup_receipt_schema_version": 1,
@@ -98,6 +109,7 @@
     "transit_keys_non_exportable_and_rotated",
     "vault_audit_trace_reviewed",
     "database_concurrent_receipt_consumption_verified",
+    "target_context_wrong_tenant_and_audience_prewrite_denial_verified",
     "exact_run_canary_cleanup_receipt_verified",
     "administrator_card_pool_batch_committed",
     "administrator_mailbox_pool_batch_committed",

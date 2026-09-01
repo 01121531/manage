@@ -34,7 +34,10 @@ RELEASE_ENVIRONMENT_REQUIRED = (
 )
 RUNBOOKS = {
     "secure-pool-import.md": [
-        "schema_version: 2",
+        "schema_version: 3",
+        "--platform-address",
+        "--expected-tenant-id",
+        "Any mismatch stops before",
         "submission_key",
         "signed receipt UUID",
         "Do not upload the raw",
