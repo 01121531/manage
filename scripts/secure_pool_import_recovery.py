@@ -32,7 +32,8 @@ ROOT = REPOSITORY_ROOT
 MAX_RECORD_BYTES = 64 * 1024
 MAX_BUNDLE_BYTES = 2 * 1024 * 1024
 _EVENT_NAME = re.compile(
-    r"^(?:write-[0-9]{3}\.(?:intent|confirmed)|bundle\.intent|complete)\.json$"
+    r"^(?:write-[0-9]{3}\.(?:intent|confirmed)|bundle\.intent|complete|"
+    r"token-revoke\.(?:intent|confirmed))\.json$"
 )
 
 
@@ -79,6 +80,7 @@ def _unknown(phase: str) -> dict[str, object]:
         "phase": phase,
         "confirmed_count": 0,
         "unknown_index": None,
+        "token_revocation": "invalid",
         "production_acceptance": False,
         "automatic_resume_allowed": False,
     }
@@ -104,7 +106,13 @@ def assess_execution_directory(
         return _unknown("plan_invalid")
     plan = dict(plan_value)
     item_count = int(plan["item_count"])
-    allowed = {"plan.json", "bundle.intent.json", "complete.json"} | {
+    allowed = {
+        "plan.json",
+        "bundle.intent.json",
+        "complete.json",
+        "token-revoke.intent.json",
+        "token-revoke.confirmed.json",
+    } | {
         name
         for index in range(item_count)
         for name in (
@@ -161,12 +169,24 @@ def assess_execution_directory(
             bundle_state = "valid"
         except (RecoveryFailure, TypeError, ValueError):
             bundle_state = "invalid"
-    return classify_execution(
+    revoke_intent = events.get("token-revoke.intent.json")
+    revoke_confirmation = events.get("token-revoke.confirmed.json")
+    if revoke_confirmation is not None and revoke_intent is None:
+        return _unknown("token_revocation_confirmation_without_intent")
+    assessment = classify_execution(
         plan,
         events,
         bundle_state=bundle_state,
         bundle_sha256=bundle_sha256,
     )
+    assessment["token_revocation"] = (
+        "confirmed"
+        if revoke_confirmation is not None
+        else "unconfirmed"
+        if revoke_intent is not None
+        else "not_recorded"
+    )
+    return assessment
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -190,6 +210,7 @@ def main() -> int:
         "secure-pool-import-recovery-ok "
         f"status={assessment['status']} phase={assessment['phase']} "
         f"confirmed_count={assessment['confirmed_count']} "
+        f"token_revocation={assessment['token_revocation']} "
         "production_acceptance=false automatic_resume_allowed=false"
     )
     return 0 if assessment["status"] in {"unwritten", "completed"} else 2

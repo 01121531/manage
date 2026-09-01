@@ -53,6 +53,8 @@ _EVENT_TYPES = {
     "vault_write_confirmed",
     "bundle_publish_intent",
     "execution_complete",
+    "vault_token_revoke_intent",
+    "vault_token_revoke_confirmed",
 }
 
 
@@ -219,6 +221,8 @@ def build_execution_event(
         "vault_write_confirmed",
         "bundle_publish_intent",
         "execution_complete",
+        "vault_token_revoke_intent",
+        "vault_token_revoke_confirmed",
     ],
     index: int | None,
     artifact_sha256: str | None,
@@ -276,6 +280,12 @@ def execution_event_errors(
     elif event_type == "execution_complete":
         if index is not None or not isinstance(artifact, str) or _SHA256.fullmatch(artifact) is None:
             errors.append("secure pool import execution completion is invalid")
+    elif event_type in {
+        "vault_token_revoke_intent",
+        "vault_token_revoke_confirmed",
+    }:
+        if index is not None or artifact is not None:
+            errors.append("secure pool import token revocation event is invalid")
     if not _utc_timestamp(document.get("occurred_at")):
         errors.append("secure pool import execution event time is invalid")
     prohibited = document.get("prohibited_content")

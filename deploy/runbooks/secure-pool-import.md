@@ -55,7 +55,10 @@ rejected before the first Vault or API mutation.
    CLI exchanges the AppRole values in memory and accepts only the exact
    pool-specific policy and role, a service token without default or identity
    policies, and an initial TTL no greater than 15 minutes. It never persists
-   the returned Vault token.
+   the returned Vault token. The token does not need an operator-supplied
+   accessor: after completing its bounded operation, the CLI calls Vault's
+   self-revocation endpoint and clears the token from memory; TTL expiry remains
+   the fail-safe when the network response is ambiguous.
 5. The importer emits a browser-safe `schema_version: 3` bundle containing
    masked items, the target context token, a Transit receipt, and a
    `submission_key` of the form `spi:<signed receipt UUID>`. Keep the raw input,
@@ -67,13 +70,20 @@ rejected before the first Vault or API mutation.
    before Transit signing. Renewal never rotates the token or receipt UUID, is
    bound to the same authenticated user/device/tenant/audience, and is capped
    by the configured absolute renewal window (24 hours by default, no more than
-   seven days).
+   seven days). After the safe bundle and `complete.json` are durable, the CLI
+   writes `token-revoke.intent.json`, requests `POST
+   /v1/auth/token/revoke-self`, accepts only an empty HTTP 204 acknowledgement,
+   clears its in-memory token, then writes `token-revoke.confirmed.json`.
 6. If the importer is interrupted, run
    `scripts/secure_pool_import_recovery.py` against that execution directory and
    the intended receipt output. This is a read-only assessment with no network
    client, write/delete operation or importer dependency. It reports one of
    `unwritten`, `partial_written`, `commit_unknown`, or `completed`, always with
-   `automatic_resume_allowed=false`. Do not retry a partial or unknown batch:
+   `automatic_resume_allowed=false`, plus an independent `token_revocation`
+   value of `not_recorded`, `unconfirmed`, or `confirmed`. A completed import
+   with unconfirmed revocation remains completed; preserve its evidence, do not
+   rerun the raw import, and use the target Vault audit trail plus the 15-minute
+   TTL backstop to close the revocation incident. Do not retry a partial or unknown batch:
    create-only/CAS 0 rejection cannot prove an existing secret equals the
    original input. Preserve the source and records under incident procedure for
    operator reconciliation.
@@ -83,9 +93,13 @@ rejected before the first Vault or API mutation.
    `--receipt-output`; omit `--input-file`. The command validates the closed
    execution record, renews its existing target context, and invokes Transit
    signing only. It does not read the raw source, write KV, or modify the
-   original execution directory. A partial, unknown, consumed, caller-mismatched
-   or out-of-window context is refused. Preserve the original bundle, fresh
-   bundle and execution record; never overwrite any of them.
+   original execution directory. After publishing the fresh bundle it
+   self-revokes the new AppRole token and treats anything other than an empty
+   HTTP 204 as unconfirmed. If that final acknowledgement fails, preserve any
+   new write-once output, do not overwrite or blindly rerun it, and reconcile
+   against the Vault audit trail and TTL. A partial, unknown, consumed,
+   caller-mismatched or out-of-window context is refused. Preserve the original
+   bundle, fresh bundle and execution record; never overwrite any of them.
 8. On the matching administration page, select the safe bundle, review the
    pool type, count and routing preview, then confirm once. If the page reports
    “结果尚未确认”, do not select a different bundle. Use the same-batch recovery

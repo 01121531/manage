@@ -134,8 +134,14 @@ CLI validates the target-issued context and publishes the execution plan before
 reading those AppRole files. It then logs in through AppRole, verifies the exact
 pool policy, role name, service-token type, no default or identity policies, and
 an initial TTL no greater than 15 minutes. The returned Vault token remains only
-in process memory; the retired `--token-file` option is rejected. Each SecretID
-has a 10-minute TTL and one use, so receipt reissue requires a fresh SecretID.
+in process memory; the retired `--token-file` option is rejected. After a raw
+import is durably complete, the CLI records a secret-free revocation intent,
+calls `POST /v1/auth/token/revoke-self`, requires an empty HTTP 204 response,
+clears its in-memory token, and records confirmation. Receipt reissue performs
+the same self-revocation without mutating the original execution directory.
+The 15-minute TTL remains the backstop if the revocation response is ambiguous.
+Each SecretID has a 10-minute TTL and one use, so receipt reissue requires a
+fresh SecretID.
 Raw card
 records may contain PAN and optional expiry but any CVV/CVC/CID/security-code
 alias fails closed. Raw mailbox records place provider credentials under a
@@ -155,8 +161,11 @@ python scripts/secure_pool_import_recovery.py \
 ```
 
 The assessment reports `unwritten`, `partial_written`, `commit_unknown`, or
-`completed` and always reports `automatic_resume_allowed=false`. In particular,
-an existing `cas=0` path never proves that its value equals the source secret.
+`completed`, separately reports `token_revocation=not_recorded`, `unconfirmed`,
+or `confirmed`, and always reports `automatic_resume_allowed=false`. An
+ambiguous revocation response never changes a completed import into an
+incomplete one. In particular, an existing `cas=0` path never proves that its
+value equals the source secret.
 
 The API verifies the Transit signature and exact audience, tenant, pool,
 ordered manifest digest, count, validity interval, UUID and key version. It

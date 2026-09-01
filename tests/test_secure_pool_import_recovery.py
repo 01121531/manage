@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from uuid import uuid4
 
-from platform.pool_import_execution import build_execution_plan
+from platform.pool_import_execution import build_execution_event, build_execution_plan
 from scripts.secure_pool_import_recovery import assess_execution_directory
 
 
@@ -50,8 +50,37 @@ class SecurePoolImportRecoveryTests(unittest.TestCase):
             self.assertEqual(result["status"], "unwritten")
             self.assertEqual(result["phase"], "no_vault_mutation_attempted")
             self.assertEqual(result["confirmed_count"], 0)
+            self.assertEqual(result["token_revocation"], "not_recorded")
             self.assertFalse(result["automatic_resume_allowed"])
             self.assertFalse(result["production_acceptance"])
+
+    def test_revocation_intent_is_reported_without_changing_import_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "execution"
+            directory.mkdir()
+            plan = self._plan()
+            self._publish(directory / "plan.json", plan)
+            self._publish(
+                directory / "token-revoke.intent.json",
+                build_execution_event(
+                    plan,
+                    event_type="vault_token_revoke_intent",
+                    index=None,
+                    artifact_sha256=None,
+                    occurred_at=datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                ),
+            )
+
+            result = assess_execution_directory(
+                directory,
+                Path(temporary) / "missing-bundle.json",
+            )
+
+            self.assertEqual(result["status"], "unwritten")
+            self.assertEqual(result["token_revocation"], "unconfirmed")
+            self.assertFalse(result["automatic_resume_allowed"])
 
     def test_tampering_or_unknown_inventory_never_becomes_resumable(self) -> None:
         for label in ("tampered_plan", "extra_file"):

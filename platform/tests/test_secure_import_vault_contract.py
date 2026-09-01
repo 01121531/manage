@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 6)
+        self.assertEqual(contract["schema_version"], 7)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -59,6 +59,17 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "secret_id_ttl_seconds": 600,
                 "initial_token_ttl_max_seconds": 900,
                 "token_explicit_max_ttl_seconds": 3600,
+                "completion_revocation_endpoint": (
+                    "POST /v1/auth/token/revoke-self"
+                ),
+                "completion_revocation_acknowledgement": "empty_http_204",
+                "raw_import_revocation_evidence": (
+                    "write_once_intent_then_confirmation"
+                ),
+                "receipt_reissue_revocation_evidence": (
+                    "cli_result_only_original_execution_immutable"
+                ),
+                "ttl_expiry_is_revocation_backstop": True,
                 "default_policy_allowed": False,
                 "identity_policy_count": 0,
                 "pool_bindings": {

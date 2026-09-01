@@ -426,6 +426,52 @@ class VaultClient:
             raise ImportFailure("Vault returned an invalid signature")
         return signature
 
+    def revoke_self(self) -> None:
+        request = urllib.request.Request(
+            self.addr + "/v1/auth/token/revoke-self",
+            method="POST",
+            headers={"Accept": "application/json", "X-Vault-Token": self.token},
+        )
+        try:
+            with self.opener.open(request, timeout=20) as response:
+                status = response.getcode()
+                raw = response.read(1)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise ImportFailure("Vault token revocation is unconfirmed") from None
+        finally:
+            self.token = ""
+        if status != 204 or raw:
+            raise ImportFailure("Vault token revocation acknowledgement is invalid")
+
+
+def _revoke_import_token(
+    client: VaultClient,
+    *,
+    execution_directory: Path,
+    plan: dict[str, object],
+) -> None:
+    _write_execution_record(
+        execution_directory / "token-revoke.intent.json",
+        build_execution_event(
+            plan,
+            event_type="vault_token_revoke_intent",
+            index=None,
+            artifact_sha256=None,
+            occurred_at=_utc_now(),
+        ),
+    )
+    client.revoke_self()
+    _write_execution_record(
+        execution_directory / "token-revoke.confirmed.json",
+        build_execution_event(
+            plan,
+            event_type="vault_token_revoke_confirmed",
+            index=None,
+            artifact_sha256=None,
+            occurred_at=_utc_now(),
+        ),
+    )
+
 
 @dataclass(frozen=True)
 class PoolImportContext:
@@ -836,6 +882,11 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
             occurred_at=_utc_now(),
         ),
     )
+    _revoke_import_token(
+        client,
+        execution_directory=execution_directory,
+        plan=plan,
+    )
     return receipt_id, len(manifest)
 
 
@@ -971,6 +1022,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     )
     fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
     _write_bundle(output_path, fresh_bundle)
+    client.revoke_self()
     return receipt_id, len(items)
 
 

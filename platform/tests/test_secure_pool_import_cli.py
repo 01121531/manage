@@ -334,6 +334,80 @@ class SecurePoolImportCliTests(unittest.TestCase):
             ), self.assertRaises(secure_pool_import.ImportFailure):
                 client.write_secret(secret_ref, {"pan": "4111111111111111"})
 
+    def test_vault_token_self_revocation_requires_empty_204_and_clears_memory(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                pass
+
+            @staticmethod
+            def getcode() -> int:
+                return 204
+
+            @staticmethod
+            def read(_limit: int) -> bytes:
+                return b""
+
+        class FakeOpener:
+            @staticmethod
+            def open(request: object, timeout: int) -> FakeResponse:
+                captured["request"] = request
+                captured["timeout"] = timeout
+                return FakeResponse()
+
+        client = secure_pool_import.VaultClient(
+            "https://vault.example.test", "short-lived-token", ca_file=None
+        )
+        client.opener = FakeOpener()
+        client.revoke_self()
+
+        request = captured["request"]
+        self.assertEqual(
+            request.full_url,
+            "https://vault.example.test/v1/auth/token/revoke-self",
+        )
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(captured["timeout"], 20)
+        self.assertEqual(request.get_header("X-vault-token"), "short-lived-token")
+        self.assertEqual(client.token, "")
+
+    def test_vault_token_self_revocation_rejects_ambiguous_acknowledgement(self) -> None:
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                pass
+
+            @staticmethod
+            def getcode() -> int:
+                return 200
+
+            @staticmethod
+            def read(_limit: int) -> bytes:
+                return b"{}"
+
+        class FakeOpener:
+            @staticmethod
+            def open(_request: object, timeout: int) -> FakeResponse:
+                return FakeResponse()
+
+        client = secure_pool_import.VaultClient(
+            "https://vault.example.test", "short-lived-token", ca_file=None
+        )
+        client.opener = FakeOpener()
+        with self.assertRaises(secure_pool_import.ImportFailure) as raised:
+            client.revoke_self()
+        self.assertEqual(
+            str(raised.exception),
+            "Vault token revocation acknowledgement is invalid",
+        )
+        self.assertEqual(client.token, "")
+
     def test_context_mismatch_fails_before_vault_token_or_execution_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -431,6 +505,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
             def sign(self, _pool_type: str, _payload: bytes) -> str:
                 return "vault:v1:test-signature"
 
+            def revoke_self(self) -> None:
+                pass
+
         records = {
             "card": [{
                 "provider_ref": "provider-card-1",
@@ -522,6 +599,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
                     return "vault:v1:test-signature"
 
+                def revoke_self(self) -> None:
+                    pass
+
             with patch.object(secure_pool_import, "VaultClient", OrderedVaultClient):
                 secure_pool_import.run(self._args(
                     pool_type="mailbox",
@@ -534,10 +614,13 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertEqual(OrderedVaultClient.writes, 2)
             self.assertTrue((execution_directory / "write-001.confirmed.json").is_file())
             self.assertTrue((execution_directory / "complete.json").is_file())
+            self.assertTrue((execution_directory / "token-revoke.intent.json").is_file())
+            self.assertTrue((execution_directory / "token-revoke.confirmed.json").is_file())
             recovery = assess_execution_directory(
                 execution_directory, receipt_output
             )
             self.assertEqual(recovery["status"], "completed")
+            self.assertEqual(recovery["token_revocation"], "confirmed")
             execution_text = "".join(
                 path.read_text(encoding="ascii")
                 for path in execution_directory.iterdir()
@@ -545,6 +628,13 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertNotIn("first-private-password", execution_text)
             self.assertNotIn("second-private-password", execution_text)
             self.assertNotIn("test-vault-token", execution_text)
+
+            (execution_directory / "token-revoke.confirmed.json").unlink()
+            unconfirmed = assess_execution_directory(
+                execution_directory, receipt_output
+            )
+            self.assertEqual(unconfirmed["status"], "completed")
+            self.assertEqual(unconfirmed["token_revocation"], "unconfirmed")
 
     def test_context_is_renewed_after_all_writes_before_transit_sign(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -571,6 +661,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
                     order.append("sign")
                     return "vault:v1:test-signature"
+
+                def revoke_self(self) -> None:
+                    order.append("revoke")
 
             def renew_context(client: object, context_token: str) -> object:
                 del client
@@ -622,7 +715,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                     execution_directory=str(execution_directory.resolve()),
                 ))
 
-            self.assertEqual(order, ["approle", "write", "renew", "sign"])
+            self.assertEqual(order, ["approle", "write", "renew", "sign", "revoke"])
 
     def test_completed_bundle_can_be_reissued_without_raw_input_or_kv_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -649,6 +742,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
                     return "vault:v1:original-signature"
 
+                def revoke_self(self) -> None:
+                    pass
+
             with patch.object(secure_pool_import, "VaultClient", InitialVaultClient):
                 secure_pool_import.run(self._args(
                     input_file=str(input_file.resolve()),
@@ -673,6 +769,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
 
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
                     return "vault:v1:fresh-signature"
+
+                def revoke_self(self) -> None:
+                    pass
 
             with patch.object(secure_pool_import, "VaultClient", ReissueVaultClient):
                 result = secure_pool_import.reissue_completed(self._args(
@@ -719,6 +818,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
 
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
                     raise AssertionError("sign must not run")
+
+                def revoke_self(self) -> None:
+                    pass
 
             with patch.object(secure_pool_import, "VaultClient", InterruptedVaultClient):
                 with self.assertRaises(KeyboardInterrupt):
@@ -770,6 +872,9 @@ class SecurePoolImportCliTests(unittest.TestCase):
 
                 def sign(self, _pool_type: str, _payload: bytes) -> str:
                     raise AssertionError("sign must not run after an unknown Vault write")
+
+                def revoke_self(self) -> None:
+                    pass
 
             with patch.object(secure_pool_import, "VaultClient", InterruptedVaultClient):
                 with self.assertRaises(KeyboardInterrupt):
