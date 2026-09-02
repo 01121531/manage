@@ -1,5 +1,5 @@
 {
-  "schema_version": 14,
+  "schema_version": 15,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -47,6 +47,20 @@
     "hard_link_count": 1,
     "symbolic_link_or_reparse_component_allowed": false,
     "path_inspection": "before_and_after_descriptor_bound_read"
+  },
+  "path_resolution_failure_boundary": {
+    "applies_to": [
+      "raw_import_distinct_paths",
+      "receipt_reissue_distinct_paths"
+    ],
+    "failures": ["os_error", "runtime_error"],
+    "public_error": "fixed_secret_free_separation_error",
+    "precedes": [
+      "platform_request",
+      "vault_login",
+      "execution_assessment",
+      "local_evidence_write"
+    ]
   },
   "credential_exchange": {
     "auth_method": "approle",

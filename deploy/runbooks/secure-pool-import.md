@@ -47,7 +47,11 @@ rejected before the first Vault or API mutation.
    component. The importer checks that lexical path before and after the
    descriptor-bound read;
    any alias fails before the affected platform call, Vault login,
-   execution-record creation, or receipt write. On Windows the
+   execution-record creation, or receipt write. If any raw-import or receipt
+   reissue path cannot be resolved because of an OS error or link loop, the CLI
+   emits only its fixed path-separation error and does not include the path or
+   operating-system detail; this also precedes platform/Vault use, execution
+   assessment and local evidence writes. On Windows the
    importer also evaluates each raw-input, platform-token, RoleID and SecretID
    ACL through the same already-open file handle before and after its bounded
    read. The DACL must be protected, contain only explicit non-inherited Allow

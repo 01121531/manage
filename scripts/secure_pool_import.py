@@ -155,6 +155,17 @@ def _absolute_file(value: str, *, label: str) -> Path:
     return path
 
 
+def _resolve_paths_for_comparison(
+    paths: list[Path],
+    *,
+    error_message: str,
+) -> tuple[Path, ...]:
+    try:
+        return tuple(path.resolve() for path in paths)
+    except (OSError, RuntimeError):
+        raise ImportFailure(error_message) from None
+
+
 def _private_file_permission_fingerprint(
     descriptor: int,
     metadata: os.stat_result,
@@ -856,10 +867,15 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     ]
     if ca_file is not None:
         distinct_paths.append(ca_file)
-    if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
-        raise ImportFailure(
-            "Input, AppRole, platform token, CA, and receipt output paths must be separate"
-        )
+    separation_error = (
+        "Input, AppRole, platform token, CA, and receipt output paths must be separate"
+    )
+    resolved_paths = _resolve_paths_for_comparison(
+        distinct_paths,
+        error_message=separation_error,
+    )
+    if len(set(resolved_paths)) != len(resolved_paths):
+        raise ImportFailure(separation_error)
     value = _read_json(
         input_path,
         require_single_link=True,
@@ -1031,10 +1047,6 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         raise ImportFailure("Expected receipt audience is invalid")
     if output_path.exists() or not output_path.parent.is_dir():
         raise ImportFailure("Receipt output must be a new file in an existing directory")
-    resolved_execution = execution_path.resolve()
-    resolved_output = output_path.resolve()
-    if resolved_output == resolved_execution or resolved_execution in resolved_output.parents:
-        raise ImportFailure("Reissued receipt output must be outside the execution record")
     distinct_paths = [
         source_bundle_path,
         platform_token_path,
@@ -1045,10 +1057,22 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     ]
     if ca_file is not None:
         distinct_paths.append(ca_file)
-    if len({path.resolve() for path in distinct_paths}) != len(distinct_paths):
-        raise ImportFailure(
-            "Bundle, AppRole, platform token, CA, execution, and output paths must be separate"
-        )
+    separation_error = (
+        "Bundle, AppRole, platform token, CA, execution, and output paths must be separate"
+    )
+    resolved_paths = _resolve_paths_for_comparison(
+        distinct_paths,
+        error_message=separation_error,
+    )
+    resolved_output = resolved_paths[4]
+    resolved_execution = resolved_paths[5]
+    if (
+        resolved_output == resolved_execution
+        or resolved_execution in resolved_output.parents
+    ):
+        raise ImportFailure("Reissued receipt output must be outside the execution record")
+    if len(set(resolved_paths)) != len(resolved_paths):
+        raise ImportFailure(separation_error)
     try:
         assessment = assess_execution_directory(execution_path, source_bundle_path)
     except (OSError, ValueError, RecoveryFailure):

@@ -118,7 +118,10 @@ regular files with exactly one hard link and a direct path containing no
 symbolic-link or Windows reparse component. The importer checks the lexical
 path before and after its descriptor-bound read, so a stable alias or observed
 path drift fails before the affected platform request, Vault login,
-execution-record creation, or receipt write. On Windows,
+execution-record creation, or receipt write. Raw import and receipt reissue
+also map any OS or link-loop resolution failure to the fixed path-separation
+error without exposing a path or operating-system detail, before remote use,
+execution assessment, or local evidence writes. On Windows,
 the raw input, platform token, RoleID and SecretID must also have a protected
 DACL owned by the current operator, SYSTEM or local Administrators, with only
 explicit non-inherited Allow entries for those three principals. The importer

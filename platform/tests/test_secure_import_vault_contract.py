@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 14)
+        self.assertEqual(contract["schema_version"], 15)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -101,6 +101,23 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "path_inspection": (
                     "before_and_after_descriptor_bound_read"
                 ),
+            },
+        )
+        self.assertEqual(
+            contract["path_resolution_failure_boundary"],
+            {
+                "applies_to": [
+                    "raw_import_distinct_paths",
+                    "receipt_reissue_distinct_paths",
+                ],
+                "failures": ["os_error", "runtime_error"],
+                "public_error": "fixed_secret_free_separation_error",
+                "precedes": [
+                    "platform_request",
+                    "vault_login",
+                    "execution_assessment",
+                    "local_evidence_write",
+                ],
             },
         )
         self.assertEqual(

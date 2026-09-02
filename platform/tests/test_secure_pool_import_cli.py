@@ -1011,6 +1011,39 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 )
             )
 
+    def test_raw_import_path_resolution_failure_is_fixed_and_precedes_remote_use(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            arguments = self._args(
+                input_file=str(root / "input.json"),
+                platform_token_file=str(root / "platform.token"),
+                approle_role_id_file=str(root / "role-id"),
+                approle_secret_id_file=str(root / "secret-id"),
+                receipt_output=str(root / "receipt.json"),
+                execution_directory=str(root / "execution"),
+            )
+            with patch.object(
+                Path,
+                "resolve",
+                side_effect=RuntimeError("private raw path detail"),
+            ), patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=AssertionError("Platform must not be called"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(arguments)
+
+            self.assertEqual(
+                str(raised.exception),
+                "Input, AppRole, platform token, CA, and receipt output paths "
+                "must be separate",
+            )
+            self.assertNotIn("private raw path detail", str(raised.exception))
+            self.assertFalse((root / "execution").exists())
+            self.assertFalse((root / "receipt.json").exists())
+
     def test_run_requires_precreated_receipt_directory(self) -> None:
         output = ROOT / "missing-secure-import-output-directory" / "receipt.json"
         with self.assertRaises(secure_pool_import.ImportFailure):
@@ -1439,6 +1472,39 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 {path.name: path.read_bytes() for path in execution_directory.iterdir()},
                 execution_snapshot,
             )
+
+    def test_reissue_path_resolution_failure_is_fixed_and_precedes_assessment(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            arguments = self._args(
+                input_file=None,
+                reissue_from=str(root / "receipt-original.json"),
+                platform_token_file=str(root / "platform.token"),
+                approle_role_id_file=str(root / "role-id"),
+                approle_secret_id_file=str(root / "secret-id"),
+                receipt_output=str(root / "receipt-fresh.json"),
+                execution_directory=str(root / "execution"),
+            )
+            with patch.object(
+                Path,
+                "resolve",
+                side_effect=OSError("private reissue path detail"),
+            ), patch.object(
+                secure_pool_import,
+                "assess_execution_directory",
+                side_effect=AssertionError("Assessment must not run"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.reissue_completed(arguments)
+
+            self.assertEqual(
+                str(raised.exception),
+                "Bundle, AppRole, platform token, CA, execution, and output paths "
+                "must be separate",
+            )
+            self.assertNotIn("private reissue path detail", str(raised.exception))
+            self.assertFalse((root / "receipt-fresh.json").exists())
 
     def test_reissue_refuses_incomplete_execution_before_reading_tokens(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
