@@ -59,7 +59,10 @@ The default endpoints are:
   identity or tenant cannot mutate that renewal state. Matching expired context
   rows are locked once in ascending context-ID order before claim reads and
   deletion, so overlapping batches use the same lock order and renewal, final
-  consumption and reclamation share one transaction boundary. A reclamation writes a dedicated
+  consumption and reclamation share one transaction boundary. New card identity
+  claims are inserted in ascending provider-reference order while retaining their
+  original manifest positions, so reversed batch input cannot reverse unique-index
+  acquisition order. A reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.
   Consumed claims stay as a permanent identity guard. Final card import must

@@ -5847,7 +5847,10 @@ def admin_create_pool_import_context(
                     tenant_id=principal.tenant_id,
                     provider_ref=provider_ref,
                 )
-                for position, provider_ref in enumerate(card_provider_refs)
+                for position, provider_ref in sorted(
+                    enumerate(card_provider_refs),
+                    key=lambda claim: claim[1],
+                )
             ])
             db.flush()
         except IntegrityError:

@@ -109,6 +109,9 @@ rejected before the first Vault or API mutation.
    order before reading or deleting claims. Overlapping batches therefore use
    the same database lock order regardless of provider-reference input order,
    and renewal, final consumption and reclamation cannot silently pass one another.
+   New card identity claims are inserted in ascending provider-reference order
+   while preserving their original manifest positions. Reversed new batches
+   therefore cannot reverse unique-index acquisition order or change manifest binding.
    Reclamation emits a dedicated audit event containing claim/context counts and
    SHA-256 fingerprints of prior context IDs only; it must not contain provider
    references, context tokens or source data.

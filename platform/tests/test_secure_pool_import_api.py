@@ -8,7 +8,7 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
@@ -212,6 +212,82 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertEqual(row.tenant_id, "tenant-a")
             self.assertEqual(row.audience, "email-platform:pool-import:test")
             self.assertNotEqual(row.context_token_hash, context["context_token"])
+
+    def test_card_identity_claim_inserts_use_stable_provider_order(self) -> None:
+        inserted_claims: list[tuple[int, str]] = []
+
+        def capture_claim_insert(
+            connection,
+            cursor,
+            statement,
+            parameters,
+            context,
+            executemany,
+        ) -> None:
+            del connection, cursor, context
+            if not statement.startswith(
+                "INSERT INTO pool_import_card_identity_claims"
+            ):
+                return
+            batches = parameters if executemany else [parameters]
+            inserted_claims.extend(
+                (int(batch[1]), str(batch[3])) for batch in batches
+            )
+
+        event.listen(
+            self.app.state.engine,
+            "before_cursor_execute",
+            capture_claim_insert,
+        )
+        try:
+            issued = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts",
+                headers={"Authorization": self.authorization},
+                json={
+                    "pool_type": "card",
+                    "ordered_manifest_digest": "9" * 64,
+                    "item_count": 3,
+                    "card_provider_refs": [
+                        "provider-z-last",
+                        "provider-a-first",
+                        "provider-m-middle",
+                    ],
+                },
+            )
+        finally:
+            event.remove(
+                self.app.state.engine,
+                "before_cursor_execute",
+                capture_claim_insert,
+            )
+
+        self.assertEqual(issued.status_code, 201, issued.text)
+        self.assertEqual(
+            inserted_claims,
+            [
+                (1, "provider-a-first"),
+                (2, "provider-m-middle"),
+                (0, "provider-z-last"),
+            ],
+        )
+        with self.app.state.session_factory() as db:
+            stored_refs = list(db.scalars(
+                select(PoolImportCardIdentityClaim.provider_ref)
+                .where(
+                    PoolImportCardIdentityClaim.context_id
+                    == issued.json()["receipt_id"]
+                )
+                .order_by(PoolImportCardIdentityClaim.position)
+            ))
+        self.assertEqual(
+            stored_refs,
+            [
+                "provider-z-last",
+                "provider-a-first",
+                "provider-m-middle",
+            ],
+        )
 
     def test_card_context_rejects_an_existing_identity_before_creation(self) -> None:
         payload = [{
