@@ -79,6 +79,15 @@ control characters and malformed authorities fail with a fixed error. Local
 HTTP requires an explicit opt-in; the settings factory supplies it only for
 `development` or `test`. Proxy inheritance is disabled and redirects are
 rejected.
+
+Both the Transit verifier and KV v2 resolver validate the optional
+`PLATFORM_VAULT_NAMESPACE` before reading a Vault token. An empty value omits
+the header; a configured value is preserved exactly, limited to 8192 visible
+ASCII bytes, and may use `/` for namespace hierarchy. Leading/trailing
+whitespace, embedded whitespace/control characters, non-ASCII input or an
+oversized value fails with the fixed `Vault namespace is invalid` error. The
+settings factories likewise do not trim a non-blank Vault address before its
+origin validation.
 - `POST/GET /api/v1/tasks` — idempotently create and list the current user's tasks.
 - `GET /api/v1/tasks/{id}` — fetch an owned task; foreign tasks return 404.
 - `GET /api/v1/tasks/{id}/timeline` — return the current-device task workbench's

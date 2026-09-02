@@ -47,6 +47,14 @@ addresses and the internal `vault` service name. The default Vault opener must
 disable inherited proxy settings and reject redirects; do not replace it with
 `urlopen`, because the request carries `X-Vault-Token`.
 
+Treat `PLATFORM_VAULT_NAMESPACE` as an HTTP routing boundary, not a free-form
+label. Leave it empty to omit `X-Vault-Namespace`, or configure at most 8192
+visible ASCII bytes with `/` as the hierarchy separator. Do not add surrounding
+whitespace, embedded whitespace/control characters or non-ASCII text. The API
+and worker must reject an invalid value with `Vault namespace is invalid` before
+opening the Vault token leaf. Do not pre-trim a non-blank `PLATFORM_VAULT_ADDR`
+or Namespace in deployment rendering; validation must observe the exact value.
+
 `redis.conf` must include `appendonly yes` and
 `aclfile /run/secrets/redis/users.acl`. The external ACL file must disable the
 default user, give the application user only the required key patterns and

@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 20)
+        self.assertEqual(contract["schema_version"], 21)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -160,6 +160,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "userinfo_path_query_fragment_allowed": False,
                 "malformed_input": "fixed_secret_free_vault_address_error",
                 "validation": "before_vault_token_file_read_or_request",
+                "settings_factory_nonblank_input": (
+                    "validated_without_trimming"
+                ),
                 "proxy_inheritance": False,
                 "redirects": "rejected",
             },
@@ -182,8 +185,31 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "userinfo_path_query_fragment_allowed": False,
                 "malformed_input": "fixed_secret_free_vault_address_error",
                 "validation": "before_vault_token_file_read_or_request",
+                "settings_factory_nonblank_input": (
+                    "validated_without_trimming"
+                ),
+                "settings_factory_malformed_input": (
+                    "fixed_secret_free_platform_vault_addr_error"
+                ),
                 "proxy_inheritance": False,
                 "redirects": "rejected",
+            },
+        )
+        self.assertEqual(
+            contract["vault_namespace_header_boundary"],
+            {
+                "applies_to": [
+                    "runtime_kv_v2_resolver",
+                    "transit_receipt_verifier",
+                ],
+                "optional_empty_value": "header_omitted",
+                "encoding": "visible_ascii",
+                "hierarchy_separator": "/",
+                "maximum_bytes": 8192,
+                "trimming": False,
+                "whitespace_or_control_characters_allowed": False,
+                "invalid_input": "fixed_secret_free_vault_namespace_error",
+                "validation": "before_vault_token_file_read_or_request",
             },
         )
         self.assertEqual(

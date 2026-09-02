@@ -489,7 +489,7 @@ def repository_control_errors() -> list[str]:
         ]
         if (
             not isinstance(secure_import_contract, dict)
-            or secure_import_contract.get("schema_version") != 20
+            or secure_import_contract.get("schema_version") != 21
             or secure_import_contract.get("production_acceptance") is not False
             or secure_import_contract.get("required_target_evidence")
             != expected_evidence

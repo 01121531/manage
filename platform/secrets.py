@@ -50,6 +50,7 @@ class JsonEnvironmentSecretResolver:
 ResponseOpener = Callable[..., Any]
 _MAX_VAULT_TOKEN_BYTES = 4096
 _MAX_VAULT_RESPONSE_BYTES = 64 * 1024
+_MAX_VAULT_NAMESPACE_BYTES = 8 * 1024
 _PRODUCTION_VAULT_TOKEN_ROOTS = ("/run/secrets/", "/var/run/secrets/")
 
 
@@ -97,6 +98,20 @@ def _normalize_vault_addr(value: str) -> str:
     return urllib.parse.urlunsplit(parsed)
 
 
+def normalize_vault_namespace(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    try:
+        encoded = value.encode("ascii")
+    except (AttributeError, UnicodeError):
+        raise ValueError("Vault namespace is invalid") from None
+    if len(encoded) > _MAX_VAULT_NAMESPACE_BYTES or any(
+        byte <= 0x20 or byte == 0x7F for byte in encoded
+    ):
+        raise ValueError("Vault namespace is invalid")
+    return value
+
+
 def _vault_ref_path(secret_ref: str) -> str:
     parsed = urllib.parse.urlsplit(secret_ref)
     if parsed.scheme != "vault" or not parsed.netloc:
@@ -138,7 +153,7 @@ class VaultSecretResolver:
         self.addr = _normalize_vault_addr(addr)
         self._static_token = cleaned_token or None
         self._token_file = cleaned_token_file or None
-        self.namespace = namespace.strip() if isinstance(namespace, str) and namespace.strip() else None
+        self.namespace = normalize_vault_namespace(namespace)
         self.timeout = timeout
         self._opener = opener
         self._default_opener = urllib.request.build_opener(
@@ -257,18 +272,18 @@ def secret_resolver_from_settings(settings: Any) -> SecretResolver:
     )
     environment = str(getattr(settings, "environment", "development")).strip().lower()
     is_local = environment in {"development", "test"}
-    cleaned_vault_addr = (
-        vault_addr.strip() if isinstance(vault_addr, str) else ""
-    )
-    if not cleaned_vault_addr and not is_local:
+    raw_vault_addr = vault_addr if isinstance(vault_addr, str) else ""
+    has_vault_addr = bool(raw_vault_addr.strip())
+    if not has_vault_addr and not is_local:
         raise RuntimeError(
             "PLATFORM_VAULT_ADDR is required outside development/test"
         )
-    if cleaned_vault_addr:
-        if (
-            not is_local
-            and urllib.parse.urlsplit(cleaned_vault_addr).scheme.lower() != "https"
-        ):
+    if has_vault_addr:
+        try:
+            normalized_vault_addr = _normalize_vault_addr(raw_vault_addr)
+        except ValueError:
+            raise RuntimeError("PLATFORM_VAULT_ADDR is invalid") from None
+        if not is_local and not normalized_vault_addr.startswith("https://"):
             raise RuntimeError(
                 "PLATFORM_VAULT_ADDR must use HTTPS outside development/test"
             )
@@ -295,7 +310,7 @@ def secret_resolver_from_settings(settings: Any) -> SecretResolver:
                     "/var/run/secrets outside development/test"
                 )
         vault_resolver = VaultSecretResolver(
-            cleaned_vault_addr,
+            normalized_vault_addr,
             cleaned_token or None,
             token_file=cleaned_token_file or None,
             namespace=getattr(settings, "vault_namespace", None),

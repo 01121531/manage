@@ -59,6 +59,9 @@ class PoolImportReceiptTests(unittest.TestCase):
     def verifier(self, *, valid: bool = True) -> VaultTransitPoolImportReceiptVerifier:
         def opener(request, *, timeout: int):
             self.assertEqual(timeout, 3)
+            self.assertEqual(
+                request.headers["X-vault-namespace"], "team/platform/"
+            )
             self.assertTrue(request.full_url.endswith(
                 "/v1/transit/verify/email-platform-card-import-receipt"
             ))
@@ -74,6 +77,7 @@ class PoolImportReceiptTests(unittest.TestCase):
             "https://vault.example.test",
             audience="email-platform:pool-import:test",
             token="test-vault-token",
+            namespace="team/platform/",
             timeout=3,
             opener=opener,
             clock=lambda: NOW,
@@ -139,6 +143,35 @@ class PoolImportReceiptTests(unittest.TestCase):
 
                 self.assertEqual(str(raised.exception), "Vault address is invalid")
 
+    def test_verifier_rejects_unsafe_namespace_before_token_file_read(self) -> None:
+        token_file = str((Path.cwd() / "private-vault-token").resolve())
+        for namespace in (
+            " team/platform",
+            "team/platform ",
+            "team\r\nX-Private-Detail: exposed",
+            "team\tplatform",
+            "n" * 8193,
+        ):
+            with self.subTest(namespace=namespace[:40]):
+                with mock.patch(
+                    "platform.pool_imports.read_stable_runtime_bytes_with_metadata",
+                    side_effect=AssertionError("Vault token file must not be read"),
+                ), self.assertRaises(ValueError) as raised:
+                    verifier = VaultTransitPoolImportReceiptVerifier(
+                        "https://vault.example.test",
+                        audience="email-platform:pool-import:test",
+                        token_file=token_file,
+                        namespace=namespace,
+                        clock=lambda: NOW,
+                    )
+                    verifier._verify_transit("card", b"{}", "vault:v1:c2ln")
+
+                self.assertEqual(
+                    str(raised.exception), "Vault namespace is invalid"
+                )
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertNotIn("Private-Detail", str(raised.exception))
+
     def test_verifier_requires_https_unless_local_http_is_explicit(self) -> None:
         with self.assertRaises(ValueError) as raised:
             VaultTransitPoolImportReceiptVerifier(
@@ -175,6 +208,32 @@ class PoolImportReceiptTests(unittest.TestCase):
         local = pool_import_receipt_verifier_from_settings(settings("test"))
         self.assertIsInstance(local, VaultTransitPoolImportReceiptVerifier)
         self.assertEqual(local.addr, "http://vault:8200")
+
+    def test_settings_factory_does_not_trim_nonblank_vault_address(self) -> None:
+        for vault_addr in (
+            " https://vault.example.test",
+            "https://vault.example.test\t",
+        ):
+            with self.subTest(vault_addr=vault_addr):
+                with self.assertRaises(ValueError) as raised:
+                    pool_import_receipt_verifier_from_settings(
+                        SimpleNamespace(
+                            environment="production",
+                            vault_addr=vault_addr,
+                            vault_token="test-vault-token",
+                            vault_token_file=None,
+                            vault_namespace=None,
+                            vault_timeout_seconds=3,
+                            pool_import_receipt_audience=(
+                                "email-platform:pool-import:test"
+                            ),
+                        )
+                    )
+
+                self.assertEqual(
+                    str(raised.exception), "Vault address is invalid"
+                )
+                self.assertIsNone(raised.exception.__cause__)
 
     def test_rejects_invalid_signature_expiry_and_binding_without_token_leak(self) -> None:
         token = self.token(self.claims())

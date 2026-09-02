@@ -1,5 +1,5 @@
 {
-  "schema_version": 20,
+  "schema_version": 21,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -91,6 +91,7 @@
     "userinfo_path_query_fragment_allowed": false,
     "malformed_input": "fixed_secret_free_vault_address_error",
     "validation": "before_vault_token_file_read_or_request",
+    "settings_factory_nonblank_input": "validated_without_trimming",
     "proxy_inheritance": false,
     "redirects": "rejected"
   },
@@ -103,8 +104,21 @@
     "userinfo_path_query_fragment_allowed": false,
     "malformed_input": "fixed_secret_free_vault_address_error",
     "validation": "before_vault_token_file_read_or_request",
+    "settings_factory_nonblank_input": "validated_without_trimming",
+    "settings_factory_malformed_input": "fixed_secret_free_platform_vault_addr_error",
     "proxy_inheritance": false,
     "redirects": "rejected"
+  },
+  "vault_namespace_header_boundary": {
+    "applies_to": ["runtime_kv_v2_resolver", "transit_receipt_verifier"],
+    "optional_empty_value": "header_omitted",
+    "encoding": "visible_ascii",
+    "hierarchy_separator": "/",
+    "maximum_bytes": 8192,
+    "trimming": false,
+    "whitespace_or_control_characters_allowed": false,
+    "invalid_input": "fixed_secret_free_vault_namespace_error",
+    "validation": "before_vault_token_file_read_or_request"
   },
   "tls_trust_bundle_boundary": {
     "custom_ca_path": "absolute_direct_single_link_stable_regular_file",

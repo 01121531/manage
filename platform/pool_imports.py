@@ -25,6 +25,7 @@ from uuid import UUID
 
 from platform.file_boundary import read_stable_runtime_bytes_with_metadata
 from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
+from platform.secrets import normalize_vault_namespace
 
 
 PoolType = Literal["card", "mailbox"]
@@ -269,7 +270,7 @@ class VaultTransitPoolImportReceiptVerifier:
         self.audience = audience.strip()
         self._static_token = cleaned_token or None
         self._token_file = cleaned_file or None
-        self.namespace = namespace.strip() if namespace and namespace.strip() else None
+        self.namespace = normalize_vault_namespace(namespace)
         self.timeout = timeout
         self._opener = opener or urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
@@ -453,8 +454,8 @@ class VaultTransitPoolImportReceiptVerifier:
 def pool_import_receipt_verifier_from_settings(
     settings: Any,
 ) -> PoolImportReceiptVerifier:
-    addr = str(getattr(settings, "vault_addr", "") or "").strip()
-    if not addr:
+    addr = str(getattr(settings, "vault_addr", "") or "")
+    if not addr.strip():
         return UnconfiguredPoolImportReceiptVerifier()
     token_value = getattr(settings, "vault_token", None)
     token = (

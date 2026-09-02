@@ -78,6 +78,35 @@ class RecordingOpener:
 
 
 class SecretResolverTests(unittest.TestCase):
+    def test_vault_namespace_rejects_unsafe_header_before_token_file_read(
+        self,
+    ) -> None:
+        unsafe_namespaces = (
+            " team/platform",
+            "team/platform ",
+            "team\r\nX-Private-Detail: exposed",
+            "team\tplatform",
+            "n" * 8193,
+        )
+        token_file = str((Path.cwd() / "private-vault-token").resolve())
+
+        for namespace in unsafe_namespaces:
+            with self.subTest(namespace=namespace[:40]):
+                with mock.patch(
+                    "platform.secrets.read_stable_runtime_bytes_with_metadata",
+                    side_effect=AssertionError("Vault token file must not be read"),
+                ), self.assertRaises(ValueError) as raised:
+                    resolver = VaultSecretResolver(
+                        "https://vault.example",
+                        token_file=token_file,
+                        namespace=namespace,
+                    )
+                    resolver.resolve("vault://secret/cards/card-1")
+
+                self.assertEqual(str(raised.exception), "Vault namespace is invalid")
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertNotIn("Private-Detail", str(raised.exception))
+
     def test_vault_origin_rejects_malformed_before_token_file_read(self) -> None:
         malformed_addresses = (
             "https://:8200",
@@ -316,6 +345,38 @@ class SecretResolverTests(unittest.TestCase):
                                 vault_token_file=None,
                             )
                         )
+
+    def test_settings_factory_rejects_malformed_origin_before_token_preflight(
+        self,
+    ) -> None:
+        for vault_addr in (
+            " https://vault.example",
+            "https://vault.example\t",
+            "https://[private-vault-origin-detail",
+        ):
+            with self.subTest(vault_addr=vault_addr):
+                with mock.patch(
+                    "platform.secrets.read_stable_runtime_bytes_with_metadata",
+                    side_effect=AssertionError("Vault token file must not be read"),
+                ), self.assertRaises(RuntimeError) as raised:
+                    secret_resolver_from_settings(
+                        SimpleNamespace(
+                            environment="production",
+                            vault_addr=vault_addr,
+                            vault_token=None,
+                            vault_token_file="/run/secrets/email-platform/token",
+                            vault_namespace=None,
+                        )
+                    )
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "PLATFORM_VAULT_ADDR is invalid",
+                )
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertNotIn(
+                    "private-vault-origin-detail", str(raised.exception)
+                )
 
     def test_local_environment_can_start_without_vault_address(self) -> None:
         for environment in ("development", "test"):

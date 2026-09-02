@@ -129,6 +129,15 @@ name. Its default transport neither inherits system proxies nor follows
 redirects. Custom openers remain an explicit dependency-injection boundary for
 tests and approved integrations.
 
+Both clients validate `PLATFORM_VAULT_NAMESPACE` before reading their Vault
+token. Empty means no namespace header; a configured value is preserved without
+trimming, may contain `/` hierarchy separators, and is limited to 8192 visible
+ASCII bytes. Whitespace, control characters, non-ASCII or oversized values fail
+with the fixed `Vault namespace is invalid` result. The two settings factories
+also pass every non-blank Vault address to origin validation without trimming,
+so malformed IPv6 and leading/trailing controls cannot be normalized away or
+leak parser details before token preflight.
+
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
 absolute paths; tenant and audience must match the target API environment).
