@@ -132,6 +132,11 @@ consumed identity guard or transferring it across tenants. Migration
 `0041_card_claim_mutation_ledger` makes every later context or position change
 produce database-owned append-only evidence correlated by destination context
 and trace. That ledger excludes provider references and card secrets. The
+following `0042_pool_context_identity_lock` migration freezes the target-issued
+context identity after insertion, including its token hash, tenant, audience,
+pool, ordered manifest binding, actor/device, trace and creation time. Only the
+expiry and final consumption/receipt lifecycle fields remain mutable, so direct
+SQL cannot change the meaning of an earlier authorization or ledger row. The
 application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed

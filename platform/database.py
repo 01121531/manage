@@ -361,6 +361,40 @@ def _install_card_claim_mutation_ledger_constraints(engine: Engine) -> None:
         )
 
 
+def _install_pool_import_context_identity_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed context identity guard in local SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS pool_import_contexts_identity_immutable
+            BEFORE UPDATE OF id, context_token_hash, tenant_id, audience,
+                pool_type, ordered_manifest_digest, item_count, created_by,
+                device_id, trace_id, created_at
+            ON pool_import_contexts
+            WHEN NEW.id IS NOT OLD.id
+              OR NEW.context_token_hash IS NOT OLD.context_token_hash
+              OR NEW.tenant_id IS NOT OLD.tenant_id
+              OR NEW.audience IS NOT OLD.audience
+              OR NEW.pool_type IS NOT OLD.pool_type
+              OR NEW.ordered_manifest_digest IS NOT OLD.ordered_manifest_digest
+              OR NEW.item_count IS NOT OLD.item_count
+              OR NEW.created_by IS NOT OLD.created_by
+              OR NEW.device_id IS NOT OLD.device_id
+              OR NEW.trace_id IS NOT OLD.trace_id
+              OR NEW.created_at IS NOT OLD.created_at
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'pool import context identity is immutable'
+                );
+            END;
+            """
+        )
+
+
 def initialize_database(
     database_url: str,
     *,
@@ -374,6 +408,7 @@ def initialize_database(
         _install_audit_append_only_constraints(engine)
         _install_card_event_append_only_constraints(engine)
         _install_card_claim_mutation_ledger_constraints(engine)
+        _install_pool_import_context_identity_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 

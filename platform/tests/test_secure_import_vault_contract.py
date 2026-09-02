@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 35)
+        self.assertEqual(contract["schema_version"], 36)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -388,6 +388,10 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "card_provider_refs": (
                     "required_normalized_unique_and_count_bound_for_card_"
                     "forbidden_for_mailbox"
+                ),
+                "identity_mutation_policy": (
+                    "database_forbidden_after_insert_except_expiry_and_"
+                    "consumption_lifecycle_fields"
                 ),
                 "card_identity_claims": {
                     "storage": (

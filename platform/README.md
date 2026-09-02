@@ -81,7 +81,13 @@ The default endpoints are:
   for every such context or position change. The row carries only tenant,
   source/destination context and position, destination trace and time; it never
   stores the provider reference or card secret, and complements the existing
-  administrator reclamation audit. A
+  administrator reclamation audit. Migration
+  `0042_pool_context_identity_lock` freezes the server-issued context ID, token
+  hash, tenant, audience, pool, manifest digest/count, creator, device, trace
+  and creation time after insertion. Direct SQL therefore cannot rewrite the
+  authorization identity or reinterpret mutation-ledger history after claims
+  move away; only expiry renewal and the existing consumption/receipt lifecycle
+  fields remain mutable. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

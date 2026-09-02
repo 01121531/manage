@@ -271,6 +271,17 @@ def _sql_error(sql: str) -> str | None:
         for pattern in reviewed_card_claim_mutation_triggers
     ):
         return None
+    # Reviewed target-issued context identity invariant for revision 0042.
+    # Expiry and consumption lifecycle fields intentionally remain mutable.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_CONTEXTS_IDENTITY_IMMUTABLE BEFORE UPDATE "
+        r"OF ID, CONTEXT_TOKEN_HASH, TENANT_ID, AUDIENCE, POOL_TYPE, "
+        r"ORDERED_MANIFEST_DIGEST, ITEM_COUNT, CREATED_BY, DEVICE_ID, TRACE_ID, "
+        r"CREATED_AT ON POOL_IMPORT_CONTEXTS FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_CONTEXTS_PREVENT_IDENTITY_CHANGE\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

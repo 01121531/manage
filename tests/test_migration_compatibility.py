@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0041_card_claim_mutation_ledger"
+down_revision = "0042_pool_context_identity_lock"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0041_card_claim_mutation_ledger"
+down_revision = "0042_pool_context_identity_lock"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0041_card_claim_mutation_ledger"',
+            'down_revision = "0042_pool_context_identity_lock"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -372,6 +372,29 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'EXECUTE FUNCTION '
                 'pool_import_card_claim_mutations_prevent_mutation(); SELECT 1")'
             ),
+            "pool context identity guard wrong target": (
+                'op.execute("CREATE TRIGGER pool_import_contexts_identity_immutable '
+                'BEFORE UPDATE OF id, context_token_hash, tenant_id, audience, '
+                'pool_type, ordered_manifest_digest, item_count, created_by, '
+                'device_id, trace_id, created_at ON users FOR EACH ROW EXECUTE '
+                'FUNCTION pool_import_contexts_prevent_identity_change()")'
+            ),
+            "pool context identity guard wrong columns": (
+                'op.execute("CREATE TRIGGER pool_import_contexts_identity_immutable '
+                'BEFORE UPDATE OF id, context_token_hash, tenant_id, audience, '
+                'pool_type, ordered_manifest_digest, item_count, created_by, '
+                'device_id, trace_id, expires_at ON pool_import_contexts FOR EACH '
+                'ROW EXECUTE FUNCTION '
+                'pool_import_contexts_prevent_identity_change()")'
+            ),
+            "pool context identity guard statement suffix": (
+                'op.execute("CREATE TRIGGER pool_import_contexts_identity_immutable '
+                'BEFORE UPDATE OF id, context_token_hash, tenant_id, audience, '
+                'pool_type, ordered_manifest_digest, item_count, created_by, '
+                'device_id, trace_id, created_at ON pool_import_contexts FOR EACH '
+                'ROW EXECUTE FUNCTION '
+                'pool_import_contexts_prevent_identity_change(); SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -382,7 +405,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0041_card_claim_mutation_ledger"
+down_revision = "0042_pool_context_identity_lock"
 def upgrade():
     {body}
 def downgrade():

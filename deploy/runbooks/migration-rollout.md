@@ -97,6 +97,17 @@ both its aggregate audit event and correlated ledger row. Mailbox imports do
 not use either table and may continue. Keep 0041 installed on application
 rollback; do not downgrade away the mutation evidence.
 
+Revision `0042_pool_context_identity_lock` freezes every server-issued pool
+import context identity field after insertion. It leaves only `expires_at`,
+`consumed_at`, and `pool_import_receipt_id` mutable for the existing renewal and
+final-consumption paths, so it is compatible with both the 0041 and 0042
+applications. Pause secure imports during the DDL window, install 0042, then
+prove direct updates to each identity field fail while one renewal and one
+final card or mailbox import still succeed. Because the guard applies equally
+to card and mailbox contexts, resume both pools only after this check. Keep
+0042 installed on application rollback; do not restore a database state where
+an issued context or its historical mutation evidence can be reinterpreted.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

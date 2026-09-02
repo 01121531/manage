@@ -131,7 +131,12 @@ rejected before the first Vault or API mutation.
    position change in `pool_import_card_claim_mutations`. The ledger is
    append-only, correlates the destination context and trace with the existing
    aggregate reclamation audit, and contains no `provider_ref`, PAN, CVV, Vault
-   path or card secret. Keep the card-import
+   path or card secret. Migration `0042_pool_context_identity_lock` also makes
+   the target-issued context identity immutable: ID, token hash, tenant,
+   audience, pool, ordered manifest digest/count, creator, device, trace and
+   creation time cannot be changed after insertion. Expiry renewal and the
+   final consumed-at/receipt linkage remain the only mutable lifecycle fields.
+   Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.
    Reclamation emits a dedicated audit event containing claim/context counts and

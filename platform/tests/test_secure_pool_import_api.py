@@ -921,7 +921,6 @@ class SecurePoolImportApiTests(unittest.TestCase):
             assert row is not None
             original_hash = row.context_token_hash
             row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-            row.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
             db.commit()
 
         renewed = self.request(
@@ -1007,17 +1006,30 @@ class SecurePoolImportApiTests(unittest.TestCase):
         with self.app.state.session_factory() as db:
             row = db.get(PoolImportContext, context["receipt_id"])
             assert row is not None
-            row.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+            created_at = row.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            out_of_window_now = created_at + timedelta(
+                seconds=(
+                    self.app.state.settings
+                    .pool_import_context_renewal_window_seconds
+                    + 1
+                )
+            )
             row.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
             db.commit()
-        out_of_window = self.request(
-            "POST",
-            "/api/v1/admin/pool-import-contexts/renew",
-            headers={
-                "Authorization": self.authorization,
-                "Secure-Import-Context": context["context_token"],
-            },
-        )
+        with patch(
+            "platform.api.v1.routes._utc_now",
+            return_value=out_of_window_now,
+        ):
+            out_of_window = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts/renew",
+                headers={
+                    "Authorization": self.authorization,
+                    "Secure-Import-Context": context["context_token"],
+                },
+            )
         self.assertEqual(out_of_window.status_code, 410, out_of_window.text)
 
     def test_card_import_derives_refs_and_replays_without_reverification(self) -> None:
