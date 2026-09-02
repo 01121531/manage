@@ -58,7 +58,7 @@ The default endpoints are:
   identities are requested by a later card context in the same tenant; another
   identity or tenant cannot mutate that renewal state. Matching expired context
   rows are locked once in ascending context-ID order before claim reads and
-  deletion, so overlapping batches use the same lock order and renewal, final
+  transfer, so overlapping batches use the same lock order and renewal, final
   consumption and reclamation share one transaction boundary. New card identity
   claims are inserted in ascending provider-reference order while retaining their
   original manifest positions, so reversed batch input cannot reverse unique-index
@@ -69,6 +69,10 @@ The default endpoints are:
   mismatches, then installs claim insert/update and owning-context update guards;
   PostgreSQL claim writes take a `FOR KEY SHARE` lock on the matching card context
   so direct SQL and concurrent context changes cannot break this binding. A
+  later `0039_card_claim_delete_guard` migration rejects every direct claim
+  deletion at the database boundary. Reclamation instead updates the existing
+  claim row to the new context and manifest position, preserving the permanent
+  identity history while remaining in the same audited transaction. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

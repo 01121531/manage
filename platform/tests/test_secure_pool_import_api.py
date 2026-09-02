@@ -496,14 +496,51 @@ class SecurePoolImportApiTests(unittest.TestCase):
             stored.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
             db.commit()
 
-        replacement = self.request(
-            "POST",
-            "/api/v1/admin/pool-import-contexts",
-            headers={"Authorization": self.authorization},
-            json=body,
+        claim_mutations: list[str] = []
+
+        def capture_claim_mutation(
+            connection,
+            cursor,
+            statement,
+            parameters,
+            context,
+            executemany,
+        ) -> None:
+            del connection, cursor, parameters, context, executemany
+            if statement.startswith((
+                "DELETE FROM pool_import_card_identity_claims",
+                "UPDATE pool_import_card_identity_claims",
+            )):
+                claim_mutations.append(statement)
+
+        event.listen(
+            self.app.state.engine,
+            "before_cursor_execute",
+            capture_claim_mutation,
         )
+        try:
+            replacement = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts",
+                headers={"Authorization": self.authorization},
+                json=body,
+            )
+        finally:
+            event.remove(
+                self.app.state.engine,
+                "before_cursor_execute",
+                capture_claim_mutation,
+            )
 
         self.assertEqual(replacement.status_code, 201, replacement.text)
+        self.assertFalse(
+            any(statement.startswith("DELETE") for statement in claim_mutations),
+            claim_mutations,
+        )
+        self.assertTrue(
+            any(statement.startswith("UPDATE") for statement in claim_mutations),
+            claim_mutations,
+        )
         self.assertNotEqual(
             replacement.json()["receipt_id"], first_context["receipt_id"]
         )

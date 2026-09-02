@@ -60,6 +60,20 @@ imports do not use this table and may continue. An application rollback can keep
 0038 in place because prior writers already use matching card contexts; do not
 use Alembic downgrade as the rollback mechanism.
 
+Revision `0039_card_claim_delete_guard` makes card identity claims non-deletable
+at the database boundary. The matching application release reclaims an expired,
+unconsumed identity by updating its existing claim row to the replacement
+context; it never deletes and recreates that row. Pause card secure imports
+before the application/migration overlap. The new application can run before
+0039 because its transfer operation is compatible with 0038; after 0039 is
+installed, do not restore or resume an older application that still attempts
+claim deletion. Mailbox imports remain independent and may continue. Prove a
+direct claim DELETE is rejected, a matching expired claim is transferred and
+audited, and a consumed claim remains protected before resuming card imports.
+If the application rolls back, keep 0039 installed and card imports paused until
+the transfer-capable release is restored; do not use Alembic downgrade to make
+the old deletion path work.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

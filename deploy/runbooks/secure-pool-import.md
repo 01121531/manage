@@ -106,7 +106,7 @@ rejected before the first Vault or API mutation.
    provider reference. A request for another identity or from another tenant
    must not delete the claim or invalidate its bounded renewal window.
    The target locks every matching expired context once in ascending context-ID
-   order before reading or deleting claims. Overlapping batches therefore use
+   order before reading or transferring claims. Overlapping batches therefore use
    the same database lock order regardless of provider-reference input order,
    and renewal, final consumption and reclamation cannot silently pass one another.
    New card identity claims are inserted in ascending provider-reference order
@@ -120,6 +120,11 @@ rejected before the first Vault or API mutation.
    installs database triggers for claim insert/update and owning-context updates.
    PostgreSQL claim writes take `FOR KEY SHARE` on the matching card context, so
    direct SQL and concurrent context changes cannot create tenant or pool drift.
+   Migration `0039_card_claim_delete_guard` rejects direct claim deletion in
+   the database. Expired unconsumed reclamation updates the existing claim row
+   to the replacement context and manifest position; it never removes and
+   recreates the identity guard. Keep the card-import application and this
+   migration aligned during rollout because older code attempts deletion.
    Reclamation emits a dedicated audit event containing claim/context counts and
    SHA-256 fingerprints of prior context IDs only; it must not contain provider
    references, context tokens or source data.

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0038_card_claim_context_binding"
+CURRENT = "0039_card_claim_delete_guard"
 
 
 class MigrationReadinessTests(unittest.TestCase):

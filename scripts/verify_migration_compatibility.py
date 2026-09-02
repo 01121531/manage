@@ -233,6 +233,16 @@ def _sql_error(sql: str) -> str | None:
         for pattern in reviewed_card_claim_binding_triggers
     ):
         return None
+    # Reviewed non-deletion invariant for revision 0039. Reclamation moves an
+    # existing claim to the replacement context, so only this exact DELETE
+    # trigger is permitted; all other trigger-shaped dynamic SQL stays blocked.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_CARD_IDENTITY_CLAIMS_NO_DELETE BEFORE "
+        r"DELETE ON POOL_IMPORT_CARD_IDENTITY_CLAIMS FOR EACH ROW EXECUTE "
+        r"FUNCTION POOL_IMPORT_CARD_IDENTITY_CLAIMS_PREVENT_DELETE\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

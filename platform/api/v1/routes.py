@@ -5756,6 +5756,7 @@ def admin_create_pool_import_context(
     now = _utc_now()
     card_provider_refs = payload.card_provider_refs or []
     reclaimed_card_context_ids: list[str] = []
+    reclaimed_card_claims: dict[str, PoolImportCardIdentityClaim] = {}
     if payload.pool_type == "card":
         reclaimable_context_ids = list(db.scalars(
             select(PoolImportContext.id)
@@ -5778,8 +5779,8 @@ def admin_create_pool_import_context(
             .order_by(PoolImportContext.id)
             .with_for_update(of=PoolImportContext)
         ))
-        reclaimed_card_context_ids = list(db.scalars(
-            select(PoolImportCardIdentityClaim.context_id)
+        reclaimable_card_claims = list(db.scalars(
+            select(PoolImportCardIdentityClaim)
             .where(
                 PoolImportCardIdentityClaim.context_id.in_(
                     reclaimable_context_ids
@@ -5792,15 +5793,12 @@ def admin_create_pool_import_context(
                 PoolImportCardIdentityClaim.position,
             )
         ))
-        db.execute(
-            delete(PoolImportCardIdentityClaim).where(
-                PoolImportCardIdentityClaim.context_id.in_(
-                    reclaimable_context_ids
-                ),
-                PoolImportCardIdentityClaim.tenant_id == principal.tenant_id,
-                PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
-            )
-        )
+        reclaimed_card_context_ids = [
+            claim.context_id for claim in reclaimable_card_claims
+        ]
+        reclaimed_card_claims = {
+            claim.provider_ref: claim for claim in reclaimable_card_claims
+        }
         existing_card = db.scalar(
             select(Card.id)
             .where(
@@ -5809,8 +5807,8 @@ def admin_create_pool_import_context(
             )
             .limit(1)
         )
-        existing_claim = db.scalar(
-            select(PoolImportCardIdentityClaim.context_id)
+        authoritative_claims = list(db.scalars(
+            select(PoolImportCardIdentityClaim)
             .join(
                 PoolImportContext,
                 PoolImportContext.id
@@ -5821,7 +5819,19 @@ def admin_create_pool_import_context(
                 PoolImportContext.pool_type == "card",
                 PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
             )
-            .limit(1)
+        ))
+        reclaimable_claim_keys = {
+            (claim.context_id, claim.position)
+            for claim in reclaimable_card_claims
+        }
+        existing_claim = next(
+            (
+                claim
+                for claim in authoritative_claims
+                if (claim.context_id, claim.position)
+                not in reclaimable_claim_keys
+            ),
+            None,
         )
         if existing_card is not None or existing_claim is not None:
             raise HTTPException(
@@ -5850,18 +5860,23 @@ def admin_create_pool_import_context(
     db.flush()
     if payload.pool_type == "card":
         try:
-            db.add_all([
-                PoolImportCardIdentityClaim(
+            new_claims = []
+            for position, provider_ref in sorted(
+                enumerate(card_provider_refs),
+                key=lambda claim: claim[1],
+            ):
+                reclaimed_claim = reclaimed_card_claims.get(provider_ref)
+                if reclaimed_claim is not None:
+                    reclaimed_claim.context_id = context.id
+                    reclaimed_claim.position = position
+                    continue
+                new_claims.append(PoolImportCardIdentityClaim(
                     context_id=context.id,
                     position=position,
                     tenant_id=principal.tenant_id,
                     provider_ref=provider_ref,
-                )
-                for position, provider_ref in sorted(
-                    enumerate(card_provider_refs),
-                    key=lambda claim: claim[1],
-                )
-            ])
+                ))
+            db.add_all(new_claims)
             db.flush()
         except IntegrityError:
             db.rollback()

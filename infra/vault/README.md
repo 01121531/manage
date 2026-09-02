@@ -112,7 +112,7 @@ Expired unconsumed claims are reclaimable only when a later card context in the
 same tenant requests the exact same provider reference; a request for another
 identity or from another tenant cannot delete or invalidate them. The target
 locks matching expired context rows once in ascending context-ID order before
-reading or deleting claims, preventing reversed batch input from reversing the
+reading or transferring claims, preventing reversed batch input from reversing the
 database lock order. New claims are likewise inserted in ascending provider-reference
 order while keeping their original manifest positions, preventing reversed new
 batches from reversing unique-index acquisition order. The claim tenant must
@@ -122,7 +122,10 @@ block replacement until repair. Migration `0038_card_claim_context_binding`
 preflights existing claims and installs database guards on claim insert/update
 and owning-context updates. PostgreSQL claim writes lock the matching card
 context `FOR KEY SHARE`, preventing direct SQL and concurrent context changes
-from breaking the tenant/card-pool binding. It records a
+from breaking the tenant/card-pool binding. Migration
+`0039_card_claim_delete_guard` makes claim deletion database-forbidden;
+reclamation transfers the existing claim row to the replacement context and
+manifest position in the audited transaction. It records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered

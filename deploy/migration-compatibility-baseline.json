@@ -41,6 +41,7 @@
     "0035_pool_list_pagination.py": "af14c4856c897e1d38cc794f53091577a2f566be64bfbbc6cdd2ecbad50fe05c",
     "0036_pool_import_contexts.py": "cb63022541757a5c8748d059a883985f7b22cd2c97056e99c9927b964d74d67d",
     "0037_pool_import_card_identity_claims.py": "e56770bd2fbdfb7dbacbb2c445b90e7c9d520b41f91419858a1dadd8616a5033",
-    "0038_card_claim_context_binding.py": "b6d5ce7db6dc74322d9789f392fda9df34bfb530acac984e825846c7a22b6fd5"
+    "0038_card_claim_context_binding.py": "b6d5ce7db6dc74322d9789f392fda9df34bfb530acac984e825846c7a22b6fd5",
+    "0039_card_claim_delete_guard.py": "b2798f0767d4b27deb481d07984f7d41dae1acff0a6cccd449852c6c5e28061f"
   }
 }
