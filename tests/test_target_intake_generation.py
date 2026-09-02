@@ -205,7 +205,7 @@ class TargetIntakeGenerationTests(unittest.TestCase):
                     "v6",
                     lambda value: value.update(
                         {
-                            "schema_version": 17,
+                            "schema_version": 18,
                             "kind": "target_intake_generation_receipt_v6",
                         }
                     ),

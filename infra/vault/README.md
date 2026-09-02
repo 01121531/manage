@@ -127,7 +127,13 @@ optional port; user information, path, query, fragment and control characters
 are rejected. Both addresses are validated before the CA, private input or
 execution record is read. Malformed IPv6 syntax, an empty host, an invalid port
 or another origin violation maps to the corresponding fixed secret-free address
-error before remote or local mutation. An explicit custom CA must be
+error before remote or local mutation. Platform and Vault must also use distinct
+effective HTTPS origins after hostname case, IDNA and default-port
+normalization. A shared origin produces one fixed secret-free separation error
+before CA/private/evidence reads, preventing the administrator Bearer and
+AppRole inputs from being sent to the same TLS recipient. Different effective
+ports remain distinct origins; repository-external DNS aliases and CNAME
+ownership remain a target review boundary. An explicit custom CA must be
 an absolute, direct, single-link regular file. It is read once through a
 bounded stable snapshot before private input or execution assessment, then one
 in-memory TLS context is reused for all platform and Vault requests; the path

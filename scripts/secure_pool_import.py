@@ -119,6 +119,13 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _origin_hostname_key(value: str) -> str:
+    normalized = value.rstrip(".")
+    if not normalized:
+        raise ValueError
+    return normalized.encode("idna").decode("ascii").casefold()
+
+
 def _https_origin(value: str, *, label: str) -> str:
     error_message = f"{label} must be an HTTPS origin"
     try:
@@ -130,13 +137,16 @@ def _https_origin(value: str, *, label: str) -> str:
             raise ValueError
         parsed = urllib.parse.urlsplit(normalized)
         hostname = parsed.hostname
+        hostname_key = (
+            _origin_hostname_key(hostname) if hostname is not None else None
+        )
         port = parsed.port
-    except (AttributeError, ValueError):
+    except (AttributeError, UnicodeError, ValueError):
         raise ImportFailure(error_message) from None
     if (
         parsed.scheme != "https"
         or not parsed.netloc
-        or hostname is None
+        or hostname_key is None
         or (port is not None and port < 1)
         or parsed.username
         or parsed.password
@@ -154,6 +164,25 @@ def _vault_origin(value: str) -> str:
 
 def _platform_origin(value: str) -> str:
     return _https_origin(value, label="Platform address")
+
+
+def _effective_origin_key(value: str) -> tuple[str, str, int]:
+    parsed = urllib.parse.urlsplit(value)
+    return (
+        parsed.scheme,
+        _origin_hostname_key(parsed.hostname or ""),
+        parsed.port or 443,
+    )
+
+
+def _require_separate_security_origins(
+    platform_origin: str,
+    vault_origin: str,
+) -> None:
+    if _effective_origin_key(platform_origin) == _effective_origin_key(vault_origin):
+        raise ImportFailure(
+            "Platform and Vault addresses must use separate HTTPS origins"
+        )
 
 
 def _absolute_file(value: str, *, label: str) -> Path:
@@ -880,6 +909,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
     vault_origin = _vault_origin(args.vault_address)
     platform_origin = _platform_origin(args.platform_address)
+    _require_separate_security_origins(platform_origin, vault_origin)
     expected_tenant_id = args.expected_tenant_id.strip()
     expected_audience = args.expected_audience.strip()
     if (
@@ -1073,6 +1103,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
     vault_origin = _vault_origin(args.vault_address)
     platform_origin = _platform_origin(args.platform_address)
+    _require_separate_security_origins(platform_origin, vault_origin)
     expected_tenant_id = args.expected_tenant_id.strip()
     expected_audience = args.expected_audience.strip()
     if (

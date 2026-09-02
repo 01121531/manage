@@ -57,7 +57,14 @@ rejected before the first Vault or API mutation.
    character. Both origins are validated before the custom CA, private input or
    execution record is read. A malformed IPv6 authority, empty host, invalid
    port or other origin violation produces only the corresponding fixed
-   secret-free address error before remote or local mutation. When `--ca-file`
+   secret-free address error before remote or local mutation. The two validated
+   recipients must also remain separate effective HTTPS origins after hostname
+   case, IDNA form and default port normalization. A shared origin is rejected
+   with one fixed secret-free separation error before the CA, raw input,
+   execution record or either credential is read, so the platform administrator
+   Bearer and Vault AppRole inputs cannot be delivered to the same TLS origin.
+   Different effective ports remain distinct origins; this check does not claim
+   to detect repository-external DNS aliases or CNAME ownership. When `--ca-file`
    is supplied, it must
    also be an absolute, direct, single-link regular file. The CLI reads at most
    1 MiB once through the stable file boundary, rejects a link/reparse alias or
