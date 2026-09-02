@@ -70,6 +70,15 @@ The default endpoints are:
   endpoint is separate from the mailbox pool and rejects PAN/CVV or mixed-pool fields.
   It uses the same required idempotency receipt contract, namespaced to the
   card pool.
+
+The server-side Transit receipt verifier validates its Vault address before it
+reads the Vault token file or creates a request. The default constructor and
+all managed environments require a pure HTTPS origin with a non-empty IDNA
+hostname and valid optional port; user information, path, query, fragment,
+control characters and malformed authorities fail with a fixed error. Local
+HTTP requires an explicit opt-in; the settings factory supplies it only for
+`development` or `test`. Proxy inheritance is disabled and redirects are
+rejected.
 - `POST/GET /api/v1/tasks` — idempotently create and list the current user's tasks.
 - `GET /api/v1/tasks/{id}` — fetch an owned task; foreign tasks return 404.
 - `GET /api/v1/tasks/{id}/timeline` — return the current-device task workbench's

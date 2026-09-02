@@ -162,7 +162,14 @@ rejected before the first Vault or API mutation.
    “结果尚未确认”, do not select a different bundle. Use the same-batch recovery
    action. After a refresh or navigation, selecting the exact same bundle is
    also safe: its stable key lets the API return the committed receipt without
-   consuming the Transit receipt again.
+   consuming the Transit receipt again. The API-side Transit verifier validates
+   its Vault origin before reading the Vault token file: managed environments
+   and the default constructor require HTTPS. Local HTTP requires explicit
+   opt-in, which the settings factory supplies only for `development`/`test`.
+   Empty or malformed
+   authorities, invalid ports, user information, path/query/fragment and
+   control characters fail with a fixed secret-free error before token or
+   network use; proxies and redirects remain disabled.
 9. A committed result must show the platform receipt ID, trace ID, pool/count,
    `ordered_manifest_digest`, `secure_receipt_fingerprint`, Transit key version
    and timestamps. These are secret-free correlation fields, not proof that the

@@ -110,6 +110,15 @@ any item with an extra field before making an API request, then shows a
 secret-free preview for confirmation. Never upload the raw input file through
 the Web application.
 
+Before reading its API Vault token file, the server-side Transit verifier
+validates a non-empty IDNA hostname, valid optional port and origin-only address.
+Malformed IPv6, empty host, named/out-of-range port, user information, path,
+query, fragment or control character maps to one fixed secret-free address
+error before any request. Its default and managed-environment transport is
+HTTPS-only. Local HTTP requires explicit opt-in, which the settings factory
+supplies only for `development`/`test`. Proxy inheritance remains disabled and
+redirects remain rejected.
+
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
 absolute paths; tenant and audience must match the target API environment).

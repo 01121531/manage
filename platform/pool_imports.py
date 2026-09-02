@@ -128,6 +128,39 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _vault_verifier_origin(addr: str, *, allow_http: bool) -> str:
+    try:
+        if not isinstance(addr, str) or not addr or any(
+            ord(character) <= 0x20 or ord(character) == 0x7F
+            for character in addr
+        ):
+            raise ValueError
+        parsed = urllib.parse.urlsplit(addr.rstrip("/"))
+        hostname = parsed.hostname
+        hostname_key = hostname.rstrip(".") if hostname is not None else ""
+        if not hostname_key:
+            raise ValueError
+        hostname_key.encode("idna")
+        port = parsed.port
+    except (AttributeError, UnicodeError, ValueError):
+        raise ValueError("Vault address is invalid") from None
+    if parsed.scheme != "https" and not (
+        allow_http is True and parsed.scheme == "http"
+    ):
+        raise ValueError("Vault address must use HTTPS")
+    if (
+        not parsed.netloc
+        or port == 0
+        or parsed.username
+        or parsed.password
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Vault address is invalid")
+    return urllib.parse.urlunsplit(parsed)
+
+
 def pool_import_digest(pool_type: PoolType, payload: Sequence[Any]) -> str:
     """Return the ordered, canonical digest shared by importer and API."""
 
@@ -222,18 +255,8 @@ class VaultTransitPoolImportReceiptVerifier:
         timeout: int = 10,
         opener: Callable[..., Any] | None = None,
         clock: Callable[[], datetime] | None = None,
+        allow_http: bool = False,
     ) -> None:
-        parsed = urllib.parse.urlsplit(addr.strip().rstrip("/"))
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Vault address must be HTTP(S)")
-        if (
-            parsed.username
-            or parsed.password
-            or parsed.path
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("Vault address is invalid")
         cleaned_token = token.strip() if isinstance(token, str) else ""
         cleaned_file = token_file.strip() if isinstance(token_file, str) else ""
         if bool(cleaned_token) == bool(cleaned_file):
@@ -242,7 +265,7 @@ class VaultTransitPoolImportReceiptVerifier:
             raise ValueError("Vault token file path must be absolute")
         if not audience.strip() or len(audience.strip()) > 160:
             raise ValueError("Receipt audience is invalid")
-        self.addr = urllib.parse.urlunsplit(parsed)
+        self.addr = _vault_verifier_origin(addr, allow_http=allow_http)
         self.audience = audience.strip()
         self._static_token = cleaned_token or None
         self._token_file = cleaned_file or None
@@ -439,12 +462,14 @@ def pool_import_receipt_verifier_from_settings(
         if token_value is not None and hasattr(token_value, "get_secret_value")
         else token_value
     )
+    environment = str(
+        getattr(settings, "environment", "development")
+    ).strip().lower()
     configured_audience = getattr(settings, "pool_import_receipt_audience", None)
     audience = (
         str(configured_audience).strip()
         if configured_audience
-        else "email-platform:pool-import:"
-        + str(getattr(settings, "environment", "development")).strip().lower()
+        else "email-platform:pool-import:" + environment
     )
     return VaultTransitPoolImportReceiptVerifier(
         addr,
@@ -453,4 +478,5 @@ def pool_import_receipt_verifier_from_settings(
         token_file=getattr(settings, "vault_token_file", None),
         namespace=getattr(settings, "vault_namespace", None),
         timeout=getattr(settings, "vault_timeout_seconds", 10),
+        allow_http=environment in {"development", "test"},
     )

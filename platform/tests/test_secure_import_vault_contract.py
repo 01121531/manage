@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 18)
+        self.assertEqual(contract["schema_version"], 19)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -145,6 +145,23 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "execution_assessment",
                     "local_evidence_write",
                 ],
+            },
+        )
+        self.assertEqual(
+            contract["receipt_verifier_origin_boundary"],
+            {
+                "default_constructor_scheme": "https_only",
+                "managed_environment_scheme": "https_only",
+                "development_test_http_exception": (
+                    "explicit_local_opt_in_only"
+                ),
+                "authority": "nonempty_idna_hostname_with_valid_port",
+                "control_characters_allowed": False,
+                "userinfo_path_query_fragment_allowed": False,
+                "malformed_input": "fixed_secret_free_vault_address_error",
+                "validation": "before_vault_token_file_read_or_request",
+                "proxy_inheritance": False,
+                "redirects": "rejected",
             },
         )
         self.assertEqual(

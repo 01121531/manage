@@ -3,6 +3,9 @@ import io
 import json
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 from uuid import uuid4
 
 from platform.pool_imports import (
@@ -13,6 +16,7 @@ from platform.pool_imports import (
     canonical_receipt_claims,
     encode_receipt_token,
     pool_import_digest,
+    pool_import_receipt_verifier_from_settings,
     pool_import_submission_key,
     pool_secret_ref,
 )
@@ -100,6 +104,77 @@ class PoolImportReceiptTests(unittest.TestCase):
                 audience="email-platform:pool-import:test",
                 token="test-vault-token",
             )
+
+    def test_verifier_rejects_malformed_origin_before_token_file_read(self) -> None:
+        cases = (
+            "https://:8200",
+            "https://vault.example.test:0",
+            "https://vault.example.test:65536",
+            "https://vault.example.test:private-port-detail",
+            " https://vault.example.test",
+            "https://vault.example.test\t",
+            "https://[private-vault-origin-detail",
+        )
+        token = self.token(self.claims())
+        token_file = str((Path.cwd() / "private-vault-token").resolve())
+        for address in cases:
+            with self.subTest(address=address):
+                with mock.patch(
+                    "platform.pool_imports.read_stable_runtime_bytes_with_metadata",
+                    side_effect=AssertionError("Vault token file must not be read"),
+                ), self.assertRaises(ValueError) as raised:
+                    verifier = VaultTransitPoolImportReceiptVerifier(
+                        address,
+                        audience="email-platform:pool-import:test",
+                        token_file=token_file,
+                        clock=lambda: NOW,
+                    )
+                    verifier.verify(
+                        token,
+                        tenant_id="tenant-a",
+                        pool_type="card",
+                        ordered_manifest_digest="a" * 64,
+                        item_count=2,
+                    )
+
+                self.assertEqual(str(raised.exception), "Vault address is invalid")
+
+    def test_verifier_requires_https_unless_local_http_is_explicit(self) -> None:
+        with self.assertRaises(ValueError) as raised:
+            VaultTransitPoolImportReceiptVerifier(
+                "http://vault:8200",
+                audience="email-platform:pool-import:test",
+                token="test-vault-token",
+            )
+        self.assertEqual(str(raised.exception), "Vault address must use HTTPS")
+
+        local = VaultTransitPoolImportReceiptVerifier(
+            "http://vault:8200",
+            audience="email-platform:pool-import:test",
+            token="test-vault-token",
+            allow_http=True,
+        )
+        self.assertEqual(local.addr, "http://vault:8200")
+
+    def test_settings_factory_scopes_http_exception_to_local_environment(self) -> None:
+        def settings(environment: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                environment=environment,
+                vault_addr="http://vault:8200",
+                vault_token="test-vault-token",
+                vault_token_file=None,
+                vault_namespace=None,
+                vault_timeout_seconds=3,
+                pool_import_receipt_audience="email-platform:pool-import:test",
+            )
+
+        with self.assertRaises(ValueError) as raised:
+            pool_import_receipt_verifier_from_settings(settings("production"))
+        self.assertEqual(str(raised.exception), "Vault address must use HTTPS")
+
+        local = pool_import_receipt_verifier_from_settings(settings("test"))
+        self.assertIsInstance(local, VaultTransitPoolImportReceiptVerifier)
+        self.assertEqual(local.addr, "http://vault:8200")
 
     def test_rejects_invalid_signature_expiry_and_binding_without_token_leak(self) -> None:
         token = self.token(self.claims())
