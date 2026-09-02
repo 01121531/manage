@@ -54,9 +54,12 @@ The default endpoints are:
   mailbox requests must not supply card identities. Before the importer can use
   Vault, the target rejects identities already present in the tenant card pool
   and atomically claims every new identity through a database unique constraint.
-  An expired, unconsumed context can relinquish its claims; consumed claims stay
-  as a permanent identity guard. Final card import must match the context's
-  ordered claims. Tenant, audience and receipt UUID are server-owned. The opaque
+  An expired, unconsumed context can relinquish only the claims whose exact
+  identities are requested by a later card context in the same tenant; another
+  identity or tenant cannot mutate that renewal state.
+  Consumed claims stay as a permanent identity guard. Final card import must
+  match the context's ordered claims. Tenant, audience and receipt UUID are
+  server-owned. The opaque
   context token is stored only as SHA-256 and is consumed in the final import
   transaction.
 - `POST /api/v1/admin/mailboxes/imports` — atomically register a 1–100 item

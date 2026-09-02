@@ -5757,13 +5757,16 @@ def admin_create_pool_import_context(
     card_provider_refs = payload.card_provider_refs or []
     if payload.pool_type == "card":
         expired_context_ids = select(PoolImportContext.id).where(
+            PoolImportContext.tenant_id == principal.tenant_id,
+            PoolImportContext.pool_type == "card",
             PoolImportContext.expires_at <= now,
             PoolImportContext.consumed_at.is_(None),
             PoolImportContext.pool_import_receipt_id.is_(None),
         )
         db.execute(
             delete(PoolImportCardIdentityClaim).where(
-                PoolImportCardIdentityClaim.context_id.in_(expired_context_ids)
+                PoolImportCardIdentityClaim.context_id.in_(expired_context_ids),
+                PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
             )
         )
         existing_card = db.scalar(

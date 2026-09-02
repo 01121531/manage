@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 26)
+        self.assertEqual(contract["schema_version"], 27)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -401,8 +401,11 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     ),
                     "concurrent_claim_conflict": "database_unique_constraint",
                     "expired_unconsumed_claim": (
-                        "reclaimable_by_later_context"
+                        "reclaimable_by_later_same_tenant_card_context_"
+                        "requesting_same_provider_ref"
                     ),
+                    "cross_tenant_claim_reclamation": "forbidden",
+                    "nonmatching_identity_claim_reclamation": "forbidden",
                     "consumed_claim": (
                         "retained_as_permanent_identity_guard"
                     ),

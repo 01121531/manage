@@ -1,5 +1,5 @@
 {
-  "schema_version": 26,
+  "schema_version": 27,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -233,7 +233,9 @@
       "existing_card_conflict": "rejected_before_context_issuance",
       "active_claim_conflict": "rejected_before_context_issuance",
       "concurrent_claim_conflict": "database_unique_constraint",
-      "expired_unconsumed_claim": "reclaimable_by_later_context",
+      "expired_unconsumed_claim": "reclaimable_by_later_same_tenant_card_context_requesting_same_provider_ref",
+      "cross_tenant_claim_reclamation": "forbidden",
+      "nonmatching_identity_claim_reclamation": "forbidden",
       "consumed_claim": "retained_as_permanent_identity_guard",
       "final_import_binding": "ordered_provider_refs_must_match_context_claims"
     },

@@ -102,7 +102,10 @@ rejected before the first Vault or API mutation.
    credentials. The target rejects a card identity already stored or claimed in
    the tenant, then atomically records every new claim before the CLI can create
    execution evidence or log into Vault. Expired unconsumed claims may be taken
-   by a later context; consumed claims remain as an identity guard, and final
+   only by a later card context in the same tenant requesting the exact same
+   provider reference. A request for another identity or from another tenant
+   must not delete the claim or invalidate its bounded renewal window.
+   Consumed claims remain as an identity guard, and final
    import must match the context's ordered claims. The target platform supplies
    the authoritative tenant, audience and receipt UUID. Any mismatch stops before
    the AppRole files are read, the SecretID is consumed, the execution directory
