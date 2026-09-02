@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import json
 import secrets
-import ssl
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
@@ -22,6 +21,7 @@ from sqlalchemy.orm import Session
 from platform.database import get_db
 from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
 from platform.models import Device, RevokedAccessToken, RevokedOidcSession, User
+from platform.secrets import create_internal_tls_context
 
 
 ROLE_OPERATOR = "operator"
@@ -290,10 +290,12 @@ class OidcAccessTokenVerifier:
         self.device_claim = device_claim
         ssl_context = None
         if internal_ca_file:
-            ssl_context = ssl.create_default_context(cafile=internal_ca_file)
-            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-            ssl_context.check_hostname = True
+            try:
+                ssl_context = create_internal_tls_context(internal_ca_file)
+            except ValueError:
+                raise ValueError(
+                    "OIDC TLS trust is unavailable or invalid"
+                ) from None
         self.jwks_client = PyJWKClient(
             jwks_url,
             cache_keys=True,

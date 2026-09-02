@@ -70,6 +70,16 @@ During a CA change, replace the bundle using the approved mount semantics and
 restart the affected API/worker process; a context is intentionally not mutated
 in place. Keep inherited proxies disabled and redirects rejected.
 
+The OIDC JWKS verifier must consume the same mounted CA through the shared
+stable snapshot boundary, not by passing its path to OpenSSL. The process reads
+at most 256 KiB of ASCII PEM once, builds a hostname-verifying TLS 1.2+ context
+in memory, and constructs the verifier before database initialization. An
+unreadable, unstable, relative, oversized, non-ASCII or invalid bundle fails as
+`OIDC TLS trust is unavailable or invalid` without exposing a path or TLS parser
+detail. Replace the projected bundle using the approved mount semantics and
+restart the affected API or worker; the live verifier does not mutate its trust
+context in place.
+
 `redis.conf` must include `appendonly yes` and
 `aclfile /run/secrets/redis/users.acl`. The external ACL file must disable the
 default user, give the application user only the required key patterns and

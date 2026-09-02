@@ -149,6 +149,35 @@ class DatabaseInitializationTests(unittest.TestCase):
 
         initialize.assert_not_called()
 
+    def test_unavailable_oidc_ca_fails_before_database_initialization(self) -> None:
+        private_path = str(
+            (Path.cwd() / "private-oidc-internal-ca-detail.pem").resolve()
+        )
+        settings = production_settings().model_copy(
+            update={"internal_ca_file": private_path}
+        )
+        with (
+            patch(
+                "platform.secrets.read_stable_runtime_bytes_with_metadata",
+                side_effect=OSError("private OIDC CA path detail"),
+            ),
+            patch(
+                "platform.app.initialize_database",
+                side_effect=AssertionError("database must not be initialized"),
+            ) as initialize,
+            self.assertRaises(ValueError) as raised,
+        ):
+            create_app(settings, secret_resolver=FalseySecretResolver())
+
+        self.assertEqual(
+            str(raised.exception),
+            "OIDC TLS trust is unavailable or invalid",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn(private_path, str(raised.exception))
+        self.assertNotIn("private OIDC CA path detail", str(raised.exception))
+        initialize.assert_not_called()
+
     def test_explicit_falsey_secret_resolver_replaces_default_vault(self) -> None:
         resolver = FalseySecretResolver()
         app = create_app(

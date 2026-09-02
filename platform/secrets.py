@@ -114,9 +114,8 @@ def normalize_vault_namespace(value: str | None) -> str | None:
     return value
 
 
-def create_vault_tls_context(ca_file: str | None) -> ssl.SSLContext:
-    """Build a hostname-verifying Vault context from one stable CA snapshot."""
-
+def create_internal_tls_context(ca_file: str | None) -> ssl.SSLContext:
+    """Build a hostname-verifying context from one stable internal CA snapshot."""
     try:
         if ca_file is None or ca_file == "":
             context = ssl.create_default_context()
@@ -145,6 +144,15 @@ def create_vault_tls_context(ca_file: str | None) -> ssl.SSLContext:
         context.check_hostname = True
         return context
     except (OSError, UnicodeError, ValueError, ssl.SSLError):
+        raise ValueError("Internal TLS trust is unavailable or invalid") from None
+
+
+def create_vault_tls_context(ca_file: str | None) -> ssl.SSLContext:
+    """Map the shared internal trust boundary to Vault's public error contract."""
+
+    try:
+        return create_internal_tls_context(ca_file)
+    except ValueError:
         raise ValueError("Vault TLS trust is unavailable or invalid") from None
 
 

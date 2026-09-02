@@ -49,6 +49,13 @@ must perform a CA-verified HTTPS request; Keycloak may retain its TCP-only
 management-port readiness probe because it sends no HTTP request. Web uses a
 local process/config probe and does not create a plaintext HTTP exception.
 
+For the Keycloak JWKS path, `PLATFORM_INTERNAL_CA_FILE` is consumed once from a
+bounded stable 256 KiB ASCII PEM snapshot before database initialization. The
+runtime creates a hostname-verifying TLS 1.2+ context from the in-memory bytes;
+OpenSSL is not allowed to reopen the configured path. A CA rotation therefore
+requires an atomic mount update followed by an API, mail-worker and Sub2-worker
+restart before repeating the positive, wrong-CA and wrong-server-name probes.
+
 The loopback-only `vault-dev` profile and the public port 80 redirect are local
 development/redirect exceptions. If any cross-container path above remains
 HTTP, skips verification, lacks its CA or omits hostname validation, the release

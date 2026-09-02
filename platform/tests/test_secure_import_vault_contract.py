@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 22)
+        self.assertEqual(contract["schema_version"], 23)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -238,6 +238,27 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 ),
                 "proxy_inheritance": False,
                 "redirects": "rejected",
+            },
+        )
+        self.assertEqual(
+            contract["runtime_oidc_jwks_tls_trust_boundary"],
+            {
+                "applies_to": ["oidc_access_token_verifier"],
+                "configured_source": "PLATFORM_INTERNAL_CA_FILE",
+                "configured_path": "absolute_stable_runtime_regular_file",
+                "projected_volume_symlink": (
+                    "allowed_when_target_snapshot_is_stable"
+                ),
+                "maximum_bytes": 262144,
+                "encoding": "ascii_pem_bundle",
+                "posix_permissions": "group_and_world_writable_rejected",
+                "path_reopen_by_tls_library": False,
+                "context": "in_memory_hostname_verifying_tls_1_2_or_newer",
+                "invalid_input": "fixed_secret_free_oidc_tls_trust_error",
+                "initialization": (
+                    "before_database_initialization_or_jwks_client_publication"
+                ),
+                "ca_rotation": "restart_process_to_build_new_context",
             },
         )
         self.assertEqual(

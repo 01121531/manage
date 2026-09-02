@@ -101,6 +101,15 @@ hostname verification, certificate validation, and TLS 1.2 or newer. If no CA
 file is configured in direct development/test construction, system trust is
 used with the same TLS policy. The explicit HTTPS handler remains behind the
 no-proxy, no-redirect opener.
+
+The OIDC access-token verifier uses the same stable internal-CA snapshot
+boundary for Keycloak JWKS. A configured `PLATFORM_INTERNAL_CA_FILE` is read
+once with the same 256 KiB ASCII PEM limit and used to create an in-memory,
+hostname-verifying TLS 1.2+ context; the TLS library is never given the CA path.
+An invalid bundle fails with the fixed `OIDC TLS trust is unavailable or
+invalid` result before the database is initialized or the JWKS client is
+published. Rotate the mounted bundle atomically and restart the affected API or
+worker process so a new immutable context is built.
 - `POST/GET /api/v1/tasks` — idempotently create and list the current user's tasks.
 - `GET /api/v1/tasks/{id}` — fetch an owned task; foreign tasks return 404.
 - `GET /api/v1/tasks/{id}/timeline` — return the current-device task workbench's

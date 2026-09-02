@@ -158,6 +158,22 @@ def create_app(
         if secret_resolver is not None
         else secret_resolver_from_settings(resolved_settings)
     )
+    resolved_access_token_verifier = access_token_verifier or (
+        LocalAccessTokenVerifier(jwt_hmac_secret)
+        if auth_mode == "local" and jwt_hmac_secret is not None
+        else OidcAccessTokenVerifier(
+            issuer=resolved_settings.oidc_issuer_url or "",
+            audience=resolved_settings.oidc_audience or "",
+            jwks_url=resolved_settings.oidc_jwks_url or "",
+            allowed_client_ids=(
+                resolved_settings.oidc_client_id or "",
+                resolved_settings.oidc_desktop_client_id or "",
+            ),
+            internal_ca_file=resolved_settings.internal_ca_file,
+            tenant_claim=resolved_settings.oidc_tenant_claim,
+            device_claim=resolved_settings.oidc_device_claim,
+        )
+    )
 
     manages_local_schema = environment in {"development", "test"}
     engine, session_factory = initialize_database(
@@ -178,22 +194,7 @@ def create_app(
     application.state.requires_current_migrations = not manages_local_schema
     application.state.metrics = MetricsRegistry()
     application.state.jwt_hmac_secret = jwt_hmac_secret
-    application.state.access_token_verifier = access_token_verifier or (
-        LocalAccessTokenVerifier(jwt_hmac_secret)
-        if auth_mode == "local" and jwt_hmac_secret is not None
-        else OidcAccessTokenVerifier(
-            issuer=resolved_settings.oidc_issuer_url or "",
-            audience=resolved_settings.oidc_audience or "",
-            jwks_url=resolved_settings.oidc_jwks_url or "",
-            allowed_client_ids=(
-                resolved_settings.oidc_client_id or "",
-                resolved_settings.oidc_desktop_client_id or "",
-            ),
-            internal_ca_file=resolved_settings.internal_ca_file,
-            tenant_claim=resolved_settings.oidc_tenant_claim,
-            device_claim=resolved_settings.oidc_device_claim,
-        )
-    )
+    application.state.access_token_verifier = resolved_access_token_verifier
     application.state.secret_resolver = resolved_secret_resolver
     application.state.pool_import_receipt_verifier = (
         pool_import_receipt_verifier

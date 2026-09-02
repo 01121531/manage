@@ -1,5 +1,7 @@
 import asyncio
+from pathlib import Path
 import ssl
+import stat
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -221,9 +223,29 @@ class OidcVerifierTests(unittest.TestCase):
             self.verifier.verify(self.token(jti="predictable"))
 
     def test_internal_ca_builds_verified_tls_1_2_jwks_context(self) -> None:
+        ca_file = (Path.cwd() / "reviewed-oidc-internal-ca.pem").resolve()
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        events: list[str] = []
+
+        def read_ca(path: Path, **kwargs: object):
+            self.assertEqual(Path(path), ca_file)
+            self.assertEqual(kwargs, {"max_bytes": 256 * 1024})
+            events.append("ca-read")
+            return b"reviewed-oidc-ca-bundle", SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o400
+            )
+
+        def create_context(**kwargs: object):
+            self.assertEqual(kwargs, {"cadata": "reviewed-oidc-ca-bundle"})
+            events.append("context-created")
+            return context
+
         with (
-            patch("platform.auth.ssl.create_default_context", return_value=context) as create_context,
+            patch(
+                "platform.secrets.read_stable_runtime_bytes_with_metadata",
+                side_effect=read_ca,
+            ),
+            patch("ssl.create_default_context", side_effect=create_context),
             patch("platform.auth.PyJWKClient") as jwks_client,
         ):
             OidcAccessTokenVerifier(
@@ -231,12 +253,10 @@ class OidcVerifierTests(unittest.TestCase):
                 audience="email-platform-api",
                 jwks_url=f"{self.issuer}/protocol/openid-connect/certs",
                 allowed_client_ids=(self.web_client_id, self.desktop_client_id),
-                internal_ca_file="/run/secrets/internal-tls/ca.crt",
+                internal_ca_file=str(ca_file),
             )
 
-        create_context.assert_called_once_with(
-            cafile="/run/secrets/internal-tls/ca.crt"
-        )
+        self.assertEqual(events, ["ca-read", "context-created"])
         self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
         self.assertTrue(context.check_hostname)
         self.assertGreaterEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
@@ -245,6 +265,30 @@ class OidcVerifierTests(unittest.TestCase):
             cache_keys=True,
             ssl_context=context,
         )
+
+    def test_internal_ca_failure_is_fixed_and_secret_free(self) -> None:
+        private_path = str(
+            (Path.cwd() / "private-oidc-internal-ca-detail.pem").resolve()
+        )
+        with patch(
+            "platform.secrets.read_stable_runtime_bytes_with_metadata",
+            side_effect=OSError("private OIDC CA path detail"),
+        ), self.assertRaises(ValueError) as raised:
+            OidcAccessTokenVerifier(
+                issuer=self.issuer,
+                audience="email-platform-api",
+                jwks_url=f"{self.issuer}/protocol/openid-connect/certs",
+                allowed_client_ids=(self.web_client_id, self.desktop_client_id),
+                internal_ca_file=private_path,
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "OIDC TLS trust is unavailable or invalid",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn(private_path, str(raised.exception))
+        self.assertNotIn("private OIDC CA path detail", str(raised.exception))
 
 
 if __name__ == "__main__":

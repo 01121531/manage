@@ -1,5 +1,5 @@
 {
-  "schema_version": 22,
+  "schema_version": 23,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -135,6 +135,20 @@
     "validation_order": "after_origin_and_namespace_before_token_preflight_or_request",
     "proxy_inheritance": false,
     "redirects": "rejected"
+  },
+  "runtime_oidc_jwks_tls_trust_boundary": {
+    "applies_to": ["oidc_access_token_verifier"],
+    "configured_source": "PLATFORM_INTERNAL_CA_FILE",
+    "configured_path": "absolute_stable_runtime_regular_file",
+    "projected_volume_symlink": "allowed_when_target_snapshot_is_stable",
+    "maximum_bytes": 262144,
+    "encoding": "ascii_pem_bundle",
+    "posix_permissions": "group_and_world_writable_rejected",
+    "path_reopen_by_tls_library": false,
+    "context": "in_memory_hostname_verifying_tls_1_2_or_newer",
+    "invalid_input": "fixed_secret_free_oidc_tls_trust_error",
+    "initialization": "before_database_initialization_or_jwks_client_publication",
+    "ca_rotation": "restart_process_to_build_new_context"
   },
   "tls_trust_bundle_boundary": {
     "custom_ca_path": "absolute_direct_single_link_stable_regular_file",

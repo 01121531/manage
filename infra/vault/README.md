@@ -148,6 +148,13 @@ fixed `PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault` result
 before token preflight or a Vault request. Direct local construction without a
 CA file retains system trust; proxy inheritance and redirects remain disabled.
 
+The same bounded stable snapshot helper now supplies the OIDC JWKS verifier's
+internal-CA context. It passes only in-memory PEM to a hostname-verifying TLS
+1.2+ context, maps failures to the fixed `OIDC TLS trust is unavailable or
+invalid` result, and constructs the verifier before database initialization.
+This shared runtime material boundary does not merge the OIDC and Vault
+recipient identities, credentials, policies, or network destinations.
+
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
 absolute paths; tenant and audience must match the target API environment).
