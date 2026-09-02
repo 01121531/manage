@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import posixpath
+import ssl
 import stat
 from collections.abc import Mapping
 from typing import Any, Callable, Protocol
@@ -51,6 +52,7 @@ ResponseOpener = Callable[..., Any]
 _MAX_VAULT_TOKEN_BYTES = 4096
 _MAX_VAULT_RESPONSE_BYTES = 64 * 1024
 _MAX_VAULT_NAMESPACE_BYTES = 8 * 1024
+_MAX_VAULT_CA_BYTES = 256 * 1024
 _PRODUCTION_VAULT_TOKEN_ROOTS = ("/run/secrets/", "/var/run/secrets/")
 
 
@@ -112,6 +114,40 @@ def normalize_vault_namespace(value: str | None) -> str | None:
     return value
 
 
+def create_vault_tls_context(ca_file: str | None) -> ssl.SSLContext:
+    """Build a hostname-verifying Vault context from one stable CA snapshot."""
+
+    try:
+        if ca_file is None or ca_file == "":
+            context = ssl.create_default_context()
+        else:
+            if (
+                not isinstance(ca_file, str)
+                or not Path(ca_file).is_absolute()
+                or ca_file != ca_file.strip()
+                or any(
+                    ord(character) < 0x20 or ord(character) == 0x7F
+                    for character in ca_file
+                )
+            ):
+                raise ValueError
+            raw, metadata = read_stable_runtime_bytes_with_metadata(
+                Path(ca_file),
+                max_bytes=_MAX_VAULT_CA_BYTES,
+            )
+            if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & (
+                stat.S_IWGRP | stat.S_IWOTH
+            ):
+                raise OSError("insecure CA file permissions")
+            context = ssl.create_default_context(cadata=raw.decode("ascii"))
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
+        return context
+    except (OSError, UnicodeError, ValueError, ssl.SSLError):
+        raise ValueError("Vault TLS trust is unavailable or invalid") from None
+
+
 def _vault_ref_path(secret_ref: str) -> str:
     parsed = urllib.parse.urlsplit(secret_ref)
     if parsed.scheme != "vault" or not parsed.netloc:
@@ -139,6 +175,7 @@ class VaultSecretResolver:
         namespace: str | None = None,
         timeout: int = 10,
         opener: ResponseOpener | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
@@ -156,10 +193,13 @@ class VaultSecretResolver:
         self.namespace = normalize_vault_namespace(namespace)
         self.timeout = timeout
         self._opener = opener
-        self._default_opener = urllib.request.build_opener(
+        handlers: list[Any] = [
             urllib.request.ProxyHandler({}),
             _NoRedirectHandler(),
-        )
+        ]
+        if ssl_context is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=ssl_context))
+        self._default_opener = urllib.request.build_opener(*handlers)
 
     def __repr__(self) -> str:
         source = "file" if self._token_file is not None else "environment"
@@ -287,6 +327,9 @@ def secret_resolver_from_settings(settings: Any) -> SecretResolver:
             raise RuntimeError(
                 "PLATFORM_VAULT_ADDR must use HTTPS outside development/test"
             )
+        normalized_namespace = normalize_vault_namespace(
+            getattr(settings, "vault_namespace", None)
+        )
         cleaned_token = token_value.strip() if isinstance(token_value, str) else ""
         cleaned_token_file = (
             vault_token_file.strip() if isinstance(vault_token_file, str) else ""
@@ -309,12 +352,21 @@ def secret_resolver_from_settings(settings: Any) -> SecretResolver:
                     "PLATFORM_VAULT_TOKEN_FILE must be under /run/secrets or "
                     "/var/run/secrets outside development/test"
                 )
+        try:
+            vault_tls_context = create_vault_tls_context(
+                getattr(settings, "internal_ca_file", None)
+            )
+        except ValueError:
+            raise RuntimeError(
+                "PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault"
+            ) from None
         vault_resolver = VaultSecretResolver(
             normalized_vault_addr,
             cleaned_token or None,
             token_file=cleaned_token_file or None,
-            namespace=getattr(settings, "vault_namespace", None),
+            namespace=normalized_namespace,
             timeout=getattr(settings, "vault_timeout_seconds", 10),
+            ssl_context=vault_tls_context,
         )
         if not is_local:
             vault_resolver.validate_token_source()

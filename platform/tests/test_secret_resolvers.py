@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import ssl
+import stat
 import tempfile
 import unittest
 import urllib.request
@@ -13,6 +15,7 @@ from platform.secrets import (
     SchemeSecretResolver,
     SecretResolverUnavailable,
     VaultSecretResolver,
+    create_vault_tls_context,
     JsonEnvironmentSecretResolver,
     secret_resolver_from_settings,
 )
@@ -78,6 +81,130 @@ class RecordingOpener:
 
 
 class SecretResolverTests(unittest.TestCase):
+    def test_settings_factory_loads_internal_ca_before_token_preflight(
+        self,
+    ) -> None:
+        ca_file = (Path.cwd() / "reviewed-internal-ca.pem").resolve()
+        context = SimpleNamespace(
+            minimum_version=None,
+            verify_mode=None,
+            check_hostname=False,
+        )
+        events: list[str] = []
+
+        def read_ca(path: Path, **kwargs: object):
+            self.assertEqual(Path(path), ca_file)
+            self.assertEqual(kwargs, {"max_bytes": 256 * 1024})
+            events.append("ca-read")
+            return b"reviewed-ca-bundle", SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o400
+            )
+
+        def create_context(**kwargs: object):
+            self.assertEqual(kwargs, {"cadata": "reviewed-ca-bundle"})
+            events.append("context-created")
+            return context
+
+        def validate_token_source(_resolver: VaultSecretResolver) -> None:
+            events.append("token-preflight")
+
+        with mock.patch(
+            "platform.secrets.read_stable_runtime_bytes_with_metadata",
+            side_effect=read_ca,
+        ), mock.patch(
+            "ssl.create_default_context",
+            side_effect=create_context,
+        ), mock.patch.object(
+            VaultSecretResolver,
+            "validate_token_source",
+            autospec=True,
+            side_effect=validate_token_source,
+        ), mock.patch(
+            "platform.secrets.urllib.request.build_opener",
+            return_value=SimpleNamespace(open=lambda *_args, **_kwargs: None),
+        ) as build_opener:
+            resolver = secret_resolver_from_settings(
+                SimpleNamespace(
+                    environment="production",
+                    vault_addr="https://vault.example",
+                    vault_token=None,
+                    vault_token_file="/run/secrets/email-platform/token",
+                    vault_namespace=None,
+                    vault_timeout_seconds=3,
+                    internal_ca_file=str(ca_file),
+                )
+            )
+
+        self.assertIsInstance(resolver, SchemeSecretResolver)
+        self.assertEqual(events, ["ca-read", "context-created", "token-preflight"])
+        self.assertEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+        https_handlers = [
+            handler
+            for handler in build_opener.call_args.args
+            if isinstance(handler, urllib.request.HTTPSHandler)
+        ]
+        self.assertEqual(len(https_handlers), 1)
+        self.assertIs(https_handlers[0]._context, context)
+
+    def test_vault_tls_context_rejects_invalid_bounded_ca_without_detail(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = {
+                "invalid-pem": b"private invalid CA detail",
+                "non-ascii": b"\xff",
+                "oversized": b"x" * ((256 * 1024) + 1),
+            }
+            for name, contents in cases.items():
+                with self.subTest(name=name):
+                    ca_file = root / name
+                    ca_file.write_bytes(contents)
+                    with self.assertRaises(ValueError) as raised:
+                        create_vault_tls_context(str(ca_file.resolve()))
+
+                    self.assertEqual(
+                        str(raised.exception),
+                        "Vault TLS trust is unavailable or invalid",
+                    )
+                    self.assertIsNone(raised.exception.__cause__)
+                    self.assertNotIn(str(ca_file), str(raised.exception))
+                    self.assertNotIn("private invalid CA detail", str(raised.exception))
+
+    def test_settings_factory_rejects_internal_ca_before_token_preflight(
+        self,
+    ) -> None:
+        with mock.patch(
+            "platform.secrets.read_stable_runtime_bytes_with_metadata",
+            side_effect=OSError("private CA path detail"),
+        ), mock.patch.object(
+            VaultSecretResolver,
+            "validate_token_source",
+            side_effect=AssertionError("Vault token file must not be read"),
+        ), self.assertRaises(RuntimeError) as raised:
+            secret_resolver_from_settings(
+                SimpleNamespace(
+                    environment="production",
+                    vault_addr="https://vault.example",
+                    vault_token=None,
+                    vault_token_file="/run/secrets/email-platform/token",
+                    vault_namespace=None,
+                    vault_timeout_seconds=3,
+                    internal_ca_file=str(
+                        (Path.cwd() / "private-internal-ca.pem").resolve()
+                    ),
+                )
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn("private CA path detail", str(raised.exception))
+
     def test_vault_namespace_rejects_unsafe_header_before_token_file_read(
         self,
     ) -> None:

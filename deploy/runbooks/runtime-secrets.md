@@ -55,6 +55,21 @@ and worker must reject an invalid value with `Vault namespace is invalid` before
 opening the Vault token leaf. Do not pre-trim a non-blank `PLATFORM_VAULT_ADDR`
 or Namespace in deployment rendering; validation must observe the exact value.
 
+The API and both workers already receive `PLATFORM_INTERNAL_CA_FILE`; their KV
+v2 resolver and Transit receipt verifier must use that bundle for Vault HTTPS.
+After the exact Vault origin and Namespace pass validation, the process reads a
+maximum 256 KiB ASCII PEM bundle from one stable runtime-file snapshot, rejects
+group/world-writable POSIX targets, and builds an in-memory context with
+hostname verification, certificate verification, and TLS 1.2 or newer. The TLS
+library must not reopen the configured path. A relative, unstable, unreadable,
+oversized, non-ASCII or invalid bundle fails with the fixed
+`PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault` startup result
+before token preflight or request construction. In direct development/test
+construction only, an absent CA file uses system trust with the same TLS policy.
+During a CA change, replace the bundle using the approved mount semantics and
+restart the affected API/worker process; a context is intentionally not mutated
+in place. Keep inherited proxies disabled and redirects rejected.
+
 `redis.conf` must include `appendonly yes` and
 `aclfile /run/secrets/redis/users.acl`. The external ACL file must disable the
 default user, give the application user only the required key patterns and

@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import ssl
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -133,6 +134,10 @@ class DatabaseInitializationTests(unittest.TestCase):
                 patch(
                     "platform.secrets._PRODUCTION_VAULT_TOKEN_ROOTS",
                     (f"{token_root.as_posix()}/",),
+                ),
+                patch(
+                    "platform.secrets.create_vault_tls_context",
+                    return_value=ssl.create_default_context(),
                 ),
                 patch("platform.app.initialize_database") as initialize,
                 self.assertRaisesRegex(

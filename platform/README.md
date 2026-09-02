@@ -88,6 +88,19 @@ whitespace, embedded whitespace/control characters, non-ASCII input or an
 oversized value fails with the fixed `Vault namespace is invalid` error. The
 settings factories likewise do not trim a non-blank Vault address before its
 origin validation.
+
+When Vault is configured, both settings factories also consume the existing
+`PLATFORM_INTERNAL_CA_FILE` trust bundle. They validate the origin and Namespace
+first, then read at most 256 KiB from one stable runtime-file snapshot and pass
+the ASCII PEM bytes to an in-memory TLS context; the TLS library never reopens
+the configured path. Group/world-writable POSIX targets, an unstable or
+relative path, invalid/oversized/non-ASCII PEM, and read failures produce the
+fixed `PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault` startup
+error before Vault token preflight or request construction. The context requires
+hostname verification, certificate validation, and TLS 1.2 or newer. If no CA
+file is configured in direct development/test construction, system trust is
+used with the same TLS policy. The explicit HTTPS handler remains behind the
+no-proxy, no-redirect opener.
 - `POST/GET /api/v1/tasks` — idempotently create and list the current user's tasks.
 - `GET /api/v1/tasks/{id}` — fetch an owned task; foreign tasks return 404.
 - `GET /api/v1/tasks/{id}/timeline` — return the current-device task workbench's
@@ -378,6 +391,10 @@ internal `vault` service name. Its default opener does not inherit system proxy
 settings and rejects redirects, preventing an `X-Vault-Token` header from being
 forwarded to another recipient. An explicitly injected `SecretResolver` remains
 supported for an approved KMS or cloud Secret Manager implementation.
+The managed settings factory loads `PLATFORM_INTERNAL_CA_FILE` once from a
+bounded stable snapshot into the Vault HTTPS context after origin/Namespace
+validation and before token preflight; it does not give the CA pathname to the
+TLS stack for a second open.
 Production must set `PLATFORM_VAULT_TOKEN_FILE` to an
 absolute path below `/run/secrets` or `/var/run/secrets`. The resolver reopens
 that regular file for every Vault request, so an atomic token rotation is used

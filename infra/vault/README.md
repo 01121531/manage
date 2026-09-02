@@ -138,6 +138,16 @@ also pass every non-blank Vault address to origin validation without trimming,
 so malformed IPv6 and leading/trailing controls cannot be normalized away or
 leak parser details before token preflight.
 
+The runtime settings factories bind the KV v2 resolver and Transit verifier to
+the already-mounted `PLATFORM_INTERNAL_CA_FILE`. After origin and Namespace
+validation, they read a maximum 256 KiB ASCII PEM bundle from one stable runtime
+snapshot, reject group/world-writable POSIX targets, and construct an in-memory
+hostname-verifying TLS 1.2+ context. The TLS library does not receive or reopen
+the CA path. Invalid, unstable, oversized or unreadable input fails with the
+fixed `PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault` result
+before token preflight or a Vault request. Direct local construction without a
+CA file retains system trust; proxy inheritance and redirects remain disabled.
+
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
 absolute paths; tenant and audience must match the target API environment).

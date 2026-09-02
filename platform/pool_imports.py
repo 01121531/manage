@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import ssl
 import stat
 import urllib.error
 import urllib.parse
@@ -25,7 +26,7 @@ from uuid import UUID
 
 from platform.file_boundary import read_stable_runtime_bytes_with_metadata
 from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
-from platform.secrets import normalize_vault_namespace
+from platform.secrets import create_vault_tls_context, normalize_vault_namespace
 
 
 PoolType = Literal["card", "mailbox"]
@@ -257,6 +258,7 @@ class VaultTransitPoolImportReceiptVerifier:
         opener: Callable[..., Any] | None = None,
         clock: Callable[[], datetime] | None = None,
         allow_http: bool = False,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         cleaned_token = token.strip() if isinstance(token, str) else ""
         cleaned_file = token_file.strip() if isinstance(token_file, str) else ""
@@ -272,10 +274,13 @@ class VaultTransitPoolImportReceiptVerifier:
         self._token_file = cleaned_file or None
         self.namespace = normalize_vault_namespace(namespace)
         self.timeout = timeout
-        self._opener = opener or urllib.request.build_opener(
+        handlers: list[Any] = [
             urllib.request.ProxyHandler({}),
             _NoRedirect(),
-        ).open
+        ]
+        if ssl_context is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=ssl_context))
+        self._opener = opener or urllib.request.build_opener(*handlers).open
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def __repr__(self) -> str:
@@ -457,15 +462,28 @@ def pool_import_receipt_verifier_from_settings(
     addr = str(getattr(settings, "vault_addr", "") or "")
     if not addr.strip():
         return UnconfiguredPoolImportReceiptVerifier()
+    environment = str(
+        getattr(settings, "environment", "development")
+    ).strip().lower()
+    allow_http = environment in {"development", "test"}
+    normalized_addr = _vault_verifier_origin(addr, allow_http=allow_http)
+    normalized_namespace = normalize_vault_namespace(
+        getattr(settings, "vault_namespace", None)
+    )
+    try:
+        vault_tls_context = create_vault_tls_context(
+            getattr(settings, "internal_ca_file", None)
+        )
+    except ValueError:
+        raise RuntimeError(
+            "PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault"
+        ) from None
     token_value = getattr(settings, "vault_token", None)
     token = (
         token_value.get_secret_value()
         if token_value is not None and hasattr(token_value, "get_secret_value")
         else token_value
     )
-    environment = str(
-        getattr(settings, "environment", "development")
-    ).strip().lower()
     configured_audience = getattr(settings, "pool_import_receipt_audience", None)
     audience = (
         str(configured_audience).strip()
@@ -473,11 +491,12 @@ def pool_import_receipt_verifier_from_settings(
         else "email-platform:pool-import:" + environment
     )
     return VaultTransitPoolImportReceiptVerifier(
-        addr,
+        normalized_addr,
         audience=audience,
         token=token,
         token_file=getattr(settings, "vault_token_file", None),
-        namespace=getattr(settings, "vault_namespace", None),
+        namespace=normalized_namespace,
         timeout=getattr(settings, "vault_timeout_seconds", 10),
-        allow_http=environment in {"development", "test"},
+        allow_http=allow_http,
+        ssl_context=vault_tls_context,
     )

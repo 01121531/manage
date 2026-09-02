@@ -1,7 +1,10 @@
 import base64
 import io
 import json
+import ssl
+import stat
 import unittest
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +43,95 @@ class _Response:
 
 
 class PoolImportReceiptTests(unittest.TestCase):
+    def test_settings_factory_loads_internal_ca_for_transit(self) -> None:
+        ca_file = (Path.cwd() / "reviewed-internal-ca.pem").resolve()
+        context = SimpleNamespace(
+            minimum_version=None,
+            verify_mode=None,
+            check_hostname=False,
+        )
+        events: list[str] = []
+
+        def read_ca(path: Path, **kwargs: object):
+            self.assertEqual(Path(path), ca_file)
+            self.assertEqual(kwargs, {"max_bytes": 256 * 1024})
+            events.append("ca-read")
+            return b"reviewed-ca-bundle", SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o400
+            )
+
+        def create_context(**kwargs: object):
+            self.assertEqual(kwargs, {"cadata": "reviewed-ca-bundle"})
+            events.append("context-created")
+            return context
+
+        with mock.patch(
+            "platform.secrets.read_stable_runtime_bytes_with_metadata",
+            side_effect=read_ca,
+        ), mock.patch(
+            "ssl.create_default_context",
+            side_effect=create_context,
+        ), mock.patch(
+            "platform.pool_imports.urllib.request.build_opener",
+            return_value=SimpleNamespace(open=lambda *_args, **_kwargs: None),
+        ) as build_opener:
+            verifier = pool_import_receipt_verifier_from_settings(
+                SimpleNamespace(
+                    environment="production",
+                    vault_addr="https://vault.example.test",
+                    vault_token="test-vault-token",
+                    vault_token_file=None,
+                    vault_namespace=None,
+                    vault_timeout_seconds=3,
+                    pool_import_receipt_audience=(
+                        "email-platform:pool-import:production"
+                    ),
+                    internal_ca_file=str(ca_file),
+                )
+            )
+
+        self.assertIsInstance(verifier, VaultTransitPoolImportReceiptVerifier)
+        self.assertEqual(events, ["ca-read", "context-created"])
+        self.assertEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+        https_handlers = [
+            handler
+            for handler in build_opener.call_args.args
+            if isinstance(handler, urllib.request.HTTPSHandler)
+        ]
+        self.assertEqual(len(https_handlers), 1)
+        self.assertIs(https_handlers[0]._context, context)
+
+    def test_settings_factory_rejects_internal_ca_before_transit_use(self) -> None:
+        with mock.patch(
+            "platform.secrets.read_stable_runtime_bytes_with_metadata",
+            side_effect=OSError("private CA path detail"),
+        ), self.assertRaises(RuntimeError) as raised:
+            pool_import_receipt_verifier_from_settings(
+                SimpleNamespace(
+                    environment="production",
+                    vault_addr="https://vault.example.test",
+                    vault_token="test-vault-token",
+                    vault_token_file=None,
+                    vault_namespace=None,
+                    vault_timeout_seconds=3,
+                    pool_import_receipt_audience=(
+                        "email-platform:pool-import:production"
+                    ),
+                    internal_ca_file=str(
+                        (Path.cwd() / "private-internal-ca.pem").resolve()
+                    ),
+                )
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "PLATFORM_INTERNAL_CA_FILE is unavailable or invalid for Vault",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn("private CA path detail", str(raised.exception))
+
     def claims(self, **changes: object) -> dict[str, object]:
         values: dict[str, object] = {
             "schema_version": 1,

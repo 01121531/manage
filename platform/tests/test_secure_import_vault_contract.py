@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 21)
+        self.assertEqual(contract["schema_version"], 22)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -210,6 +210,34 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "whitespace_or_control_characters_allowed": False,
                 "invalid_input": "fixed_secret_free_vault_namespace_error",
                 "validation": "before_vault_token_file_read_or_request",
+            },
+        )
+        self.assertEqual(
+            contract["runtime_vault_tls_trust_boundary"],
+            {
+                "applies_to": [
+                    "runtime_kv_v2_resolver",
+                    "transit_receipt_verifier",
+                ],
+                "configured_source": "PLATFORM_INTERNAL_CA_FILE",
+                "configured_path": "absolute_stable_runtime_regular_file",
+                "projected_volume_symlink": (
+                    "allowed_when_target_snapshot_is_stable"
+                ),
+                "maximum_bytes": 262144,
+                "encoding": "ascii_pem_bundle",
+                "posix_permissions": "group_and_world_writable_rejected",
+                "path_reopen_by_tls_library": False,
+                "context": "in_memory_hostname_verifying_tls_1_2_or_newer",
+                "system_trust_when_unconfigured": True,
+                "invalid_input": (
+                    "fixed_secret_free_platform_internal_ca_error"
+                ),
+                "validation_order": (
+                    "after_origin_and_namespace_before_token_preflight_or_request"
+                ),
+                "proxy_inheritance": False,
+                "redirects": "rejected",
             },
         )
         self.assertEqual(
