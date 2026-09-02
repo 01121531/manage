@@ -123,8 +123,12 @@ rejected before the first Vault or API mutation.
    Migration `0039_card_claim_delete_guard` rejects direct claim deletion in
    the database. Expired unconsumed reclamation updates the existing claim row
    to the replacement context and manifest position; it never removes and
-   recreates the identity guard. Keep the card-import application and this
-   migration aligned during rollout because older code attempts deletion.
+   recreates the identity guard. Migration
+   `0040_card_claim_identity_immutable` rejects any update to that row's
+   `tenant_id` or `provider_ref`; only the context and manifest position used by
+   the existing reclamation path remain transferable. Keep the card-import
+   application and these migrations aligned during rollout because older code
+   attempts deletion.
    Reclamation emits a dedicated audit event containing claim/context counts and
    SHA-256 fingerprints of prior context IDs only; it must not contain provider
    references, context tokens or source data.

@@ -72,7 +72,11 @@ The default endpoints are:
   later `0039_card_claim_delete_guard` migration rejects every direct claim
   deletion at the database boundary. Reclamation instead updates the existing
   claim row to the new context and manifest position, preserving the permanent
-  identity history while remaining in the same audited transaction. A
+  identity history while remaining in the same audited transaction. Migration
+  `0040_card_claim_identity_immutable` additionally makes the claim's tenant and
+  provider reference immutable after insertion, so direct SQL cannot rename a
+  consumed identity guard or move it across tenants; only its reclamation
+  context and manifest position remain transferable. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

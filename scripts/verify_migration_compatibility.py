@@ -243,6 +243,16 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed immutable identity invariant for revision 0040. Context and
+    # position remain transferable by the audited reclamation path.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_CARD_IDENTITY_CLAIMS_IDENTITY_IMMUTABLE "
+        r"BEFORE UPDATE OF TENANT_ID, PROVIDER_REF ON "
+        r"POOL_IMPORT_CARD_IDENTITY_CLAIMS FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_CARD_IDENTITY_CLAIMS_PREVENT_IDENTITY_CHANGE\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

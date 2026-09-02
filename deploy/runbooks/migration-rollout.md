@@ -74,6 +74,17 @@ If the application rolls back, keep 0039 installed and card imports paused until
 the transfer-capable release is restored; do not use Alembic downgrade to make
 the old deletion path work.
 
+Revision `0040_card_claim_identity_immutable` freezes each card identity
+claim's `tenant_id` and `provider_ref` after insertion. It is compatible with
+the transfer-capable 0039 application because reclamation changes only
+`context_id` and `position`. Keep card secure imports paused while installing
+the migration, then prove direct updates to either identity column and a
+combined cross-tenant context/tenant update are rejected, while a normal
+same-tenant expired-claim reclamation still succeeds and emits its existing
+audit event. Mailbox imports do not use card identity claims and may continue.
+If the application rolls back, keep 0040 installed; do not downgrade the
+database to permit identity mutation.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

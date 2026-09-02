@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0039_card_claim_delete_guard"
+down_revision = "0040_card_claim_identity_immutable"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0039_card_claim_delete_guard"
+down_revision = "0040_card_claim_identity_immutable"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0039_card_claim_delete_guard"',
+            'down_revision = "0040_card_claim_identity_immutable"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -338,6 +338,23 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'BEFORE DELETE ON pool_import_card_identity_claims FOR EACH ROW EXECUTE FUNCTION '
                 'pool_import_card_identity_claims_prevent_delete(); SELECT 1")'
             ),
+            "card claim identity guard wrong target": (
+                'op.execute("CREATE TRIGGER pool_import_card_identity_claims_identity_immutable '
+                'BEFORE UPDATE OF tenant_id, provider_ref ON users FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_card_identity_claims_prevent_identity_change()")'
+            ),
+            "card claim identity guard wrong columns": (
+                'op.execute("CREATE TRIGGER pool_import_card_identity_claims_identity_immutable '
+                'BEFORE UPDATE OF context_id, provider_ref ON '
+                'pool_import_card_identity_claims FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_card_identity_claims_prevent_identity_change()")'
+            ),
+            "card claim identity guard statement suffix": (
+                'op.execute("CREATE TRIGGER pool_import_card_identity_claims_identity_immutable '
+                'BEFORE UPDATE OF tenant_id, provider_ref ON '
+                'pool_import_card_identity_claims FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_card_identity_claims_prevent_identity_change(); SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -348,7 +365,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0039_card_claim_delete_guard"
+down_revision = "0040_card_claim_identity_immutable"
 def upgrade():
     {body}
 def downgrade():

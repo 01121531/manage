@@ -125,7 +125,10 @@ context `FOR KEY SHARE`, preventing direct SQL and concurrent context changes
 from breaking the tenant/card-pool binding. Migration
 `0039_card_claim_delete_guard` makes claim deletion database-forbidden;
 reclamation transfers the existing claim row to the replacement context and
-manifest position in the audited transaction. It records a
+manifest position in the audited transaction. Migration
+`0040_card_claim_identity_immutable` also rejects every later change to the
+claim tenant or provider reference, preventing direct SQL from renaming a
+consumed identity guard or transferring it across tenants. It records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered

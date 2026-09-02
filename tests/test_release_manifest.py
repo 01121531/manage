@@ -50,7 +50,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(manifest["release_id"], "0.1.3")
         self.assertEqual(
-            manifest["migration_head"], "0039_card_claim_delete_guard"
+            manifest["migration_head"], "0040_card_claim_identity_immutable"
         )
         self.assertIn("worker-mail", manifest["compose_images"])
         third_party = {
