@@ -37,6 +37,16 @@ path with `/proc/self/fd` before and after reading instead of validating and
 then reopening a pathname. A rotation completed before the call is accepted;
 a switch during a call fails closed.
 
+Before an API or worker reads its Vault token leaf, the runtime resolver must
+validate `PLATFORM_VAULT_ADDR` as an origin with a non-empty IDNA hostname and a
+valid optional port. User information, path, query, fragment, control character,
+empty host, malformed IPv6 or invalid port must fail with the fixed
+`Vault address is invalid` result. Production and staging require HTTPS. The
+development/test-only HTTP exception is limited to `localhost`, loopback
+addresses and the internal `vault` service name. The default Vault opener must
+disable inherited proxy settings and reject redirects; do not replace it with
+`urlopen`, because the request carries `X-Vault-Token`.
+
 `redis.conf` must include `appendonly yes` and
 `aclfile /run/secrets/redis/users.acl`. The external ACL file must disable the
 default user, give the application user only the required key patterns and

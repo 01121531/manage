@@ -53,16 +53,47 @@ _MAX_VAULT_RESPONSE_BYTES = 64 * 1024
 _PRODUCTION_VAULT_TOKEN_ROOTS = ("/run/secrets/", "/var/run/secrets/")
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        del request, file_pointer, code, message, headers, new_url
+        return None
+
+
 def _normalize_vault_addr(value: str) -> str:
-    parsed = urllib.parse.urlsplit(value.strip().rstrip("/"))
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    try:
+        if not isinstance(value, str) or not value or any(
+            ord(character) <= 0x20 or ord(character) == 0x7F
+            for character in value
+        ):
+            raise ValueError
+        parsed = urllib.parse.urlsplit(value.rstrip("/"))
+        hostname = parsed.hostname
+        hostname_key = hostname.rstrip(".") if hostname is not None else ""
+        if not hostname_key:
+            raise ValueError
+        hostname_key.encode("idna")
+        port = parsed.port
+    except (AttributeError, UnicodeError, ValueError):
+        raise ValueError("Vault address is invalid") from None
+    if parsed.scheme not in {"http", "https"}:
         raise ValueError("Vault address must be HTTP(S)")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("Vault address must not contain credentials")
-    if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1", "vault"}:
+    if parsed.scheme == "http" and hostname_key.lower() not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "vault",
+    }:
         raise ValueError("Vault address must use HTTPS outside localhost/internal vault")
-    if parsed.query or parsed.fragment:
-        raise ValueError("Vault address must not contain query or fragment")
+    if (
+        not parsed.netloc
+        or port == 0
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Vault address is invalid")
     return urllib.parse.urlunsplit(parsed)
 
 
@@ -110,6 +141,10 @@ class VaultSecretResolver:
         self.namespace = namespace.strip() if isinstance(namespace, str) and namespace.strip() else None
         self.timeout = timeout
         self._opener = opener
+        self._default_opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _NoRedirectHandler(),
+        )
 
     def __repr__(self) -> str:
         source = "file" if self._token_file is not None else "environment"
@@ -148,7 +183,7 @@ class VaultSecretResolver:
     def _open(self, request: urllib.request.Request, timeout: int) -> Any:
         if self._opener is not None:
             return self._opener(request, timeout=timeout)
-        return urllib.request.urlopen(request, timeout=timeout)
+        return self._default_opener.open(request, timeout=timeout)
 
     def resolve(self, secret_ref: str) -> Mapping[str, object]:
         url = self.addr + _vault_ref_path(secret_ref)

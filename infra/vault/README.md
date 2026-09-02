@@ -119,6 +119,16 @@ HTTPS-only. Local HTTP requires explicit opt-in, which the settings factory
 supplies only for `development`/`test`. Proxy inheritance remains disabled and
 redirects remain rejected.
 
+The API and worker KV v2 runtime resolver applies the same recipient boundary
+before reading its service-token file: non-empty IDNA hostname, valid optional
+port, and an origin-only address with no user information, control character,
+query or fragment. Malformed inputs map to the same fixed secret-free address
+error. Managed environments require HTTPS; direct development/test use permits
+HTTP only for `localhost`, loopback addresses, or the internal `vault` service
+name. Its default transport neither inherits system proxies nor follows
+redirects. Custom openers remain an explicit dependency-injection boundary for
+tests and approved integrations.
+
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct
 absolute paths; tenant and audience must match the target API environment).

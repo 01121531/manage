@@ -359,9 +359,17 @@ production rejects all `env://` references. `vault://mount/path` uses Vault KV v
 `PLATFORM_VAULT_ADDR`; optional `PLATFORM_VAULT_NAMESPACE` is sent as
 `X-Vault-Namespace`. The default resolver fails production/staging startup when
 the address is missing or blank, before database initialization or any API/worker
-listener starts. An explicitly injected `SecretResolver` remains supported for
-an approved KMS or cloud Secret Manager implementation. Production must set
-`PLATFORM_VAULT_TOKEN_FILE` to an
+listener starts. It validates the Vault origin before reading a file-backed
+token or constructing a request: the hostname must be non-empty and IDNA-valid,
+the optional port must be valid, and user information, path, query, fragment,
+control characters or malformed authorities produce one fixed secret-free
+address error. Managed environments require HTTPS; direct local development and
+test construction permits HTTP only for `localhost`, loopback addresses, or the
+internal `vault` service name. Its default opener does not inherit system proxy
+settings and rejects redirects, preventing an `X-Vault-Token` header from being
+forwarded to another recipient. An explicitly injected `SecretResolver` remains
+supported for an approved KMS or cloud Secret Manager implementation.
+Production must set `PLATFORM_VAULT_TOKEN_FILE` to an
 absolute path below `/run/secrets` or `/var/run/secrets`. The resolver reopens
 that regular file for every Vault request, so an atomic token rotation is used
 by the next resolve without restarting the process. Oversized, empty,

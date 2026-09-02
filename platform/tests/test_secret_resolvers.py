@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.request
 from email.message import Message
 from types import SimpleNamespace
 from unittest import mock
@@ -77,6 +78,76 @@ class RecordingOpener:
 
 
 class SecretResolverTests(unittest.TestCase):
+    def test_vault_origin_rejects_malformed_before_token_file_read(self) -> None:
+        malformed_addresses = (
+            "https://:8200",
+            "https://vault.example:0",
+            "https://vault.example:65536",
+            "https://vault.example:private-port-detail",
+            " https://vault.example",
+            "https://vault.example\t",
+            "https://[private-vault-origin-detail",
+            "https://vault.example/proxy",
+        )
+        token_file = str((Path.cwd() / "private-vault-token").resolve())
+
+        for address in malformed_addresses:
+            with self.subTest(address=address):
+                with mock.patch(
+                    "platform.secrets.read_stable_runtime_bytes_with_metadata",
+                    side_effect=AssertionError("Vault token file must not be read"),
+                ), self.assertRaises(ValueError) as raised:
+                    resolver = VaultSecretResolver(address, token_file=token_file)
+                    resolver.resolve("vault://secret/cards/card-1")
+
+                self.assertEqual(str(raised.exception), "Vault address is invalid")
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertNotIn(
+                    "private-vault-origin-detail", str(raised.exception)
+                )
+
+    def test_vault_default_transport_disables_proxies_and_redirects(self) -> None:
+        default_open = RecordingOpener({"data": {"data": {"value": "ok"}}})
+        with mock.patch.object(
+            urllib.request,
+            "build_opener",
+            return_value=SimpleNamespace(open=default_open),
+        ) as build_opener:
+            resolver = VaultSecretResolver(
+                "https://vault.example",
+                "vault-token-secret",
+            )
+            self.assertEqual(
+                resolver.resolve("vault://secret/cards/card-1"),
+                {"value": "ok"},
+            )
+
+        build_opener.assert_called_once()
+        handlers = build_opener.call_args.args
+        proxy_handlers = [
+            handler
+            for handler in handlers
+            if isinstance(handler, urllib.request.ProxyHandler)
+        ]
+        redirect_handlers = [
+            handler
+            for handler in handlers
+            if handler.__class__.__name__ == "_NoRedirectHandler"
+        ]
+        self.assertEqual(len(default_open.requests), 1)
+        self.assertEqual([handler.proxies for handler in proxy_handlers], [{}])
+        self.assertEqual(len(redirect_handlers), 1)
+        self.assertIsNone(
+            redirect_handlers[0].redirect_request(
+                None,
+                None,
+                302,
+                "Found",
+                {},
+                "https://redirect.example",
+            )
+        )
+
     def test_vault_resolver_reads_kv_v2_without_token_in_url(self) -> None:
         opener = RecordingOpener(
             {"data": {"data": {"pan": "4111111111111111", "cvv": "123"}}}
