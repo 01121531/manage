@@ -110,7 +110,10 @@ claimed for that tenant and persists all claims under a unique tenant/reference
 constraint before the importer creates execution evidence or logs into Vault.
 Expired unconsumed claims are reclaimable only when a later card context in the
 same tenant requests the exact same provider reference; a request for another
-identity or from another tenant cannot delete or invalidate them. Consumed
+identity or from another tenant cannot delete or invalidate them. The target
+locks matching expired context rows before deleting claims and records a
+dedicated audit event with only claim/context counts and SHA-256 fingerprints
+of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered
 claims. Mailbox contexts do
 not carry card identity fields. The importer then writes each secret to its

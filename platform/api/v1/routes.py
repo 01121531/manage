@@ -5755,17 +5755,30 @@ def admin_create_pool_import_context(
 ) -> PoolImportContextResponse:
     now = _utc_now()
     card_provider_refs = payload.card_provider_refs or []
+    reclaimed_card_context_ids: list[str] = []
     if payload.pool_type == "card":
-        expired_context_ids = select(PoolImportContext.id).where(
-            PoolImportContext.tenant_id == principal.tenant_id,
-            PoolImportContext.pool_type == "card",
-            PoolImportContext.expires_at <= now,
-            PoolImportContext.consumed_at.is_(None),
-            PoolImportContext.pool_import_receipt_id.is_(None),
-        )
+        reclaimed_card_context_ids = list(db.scalars(
+            select(PoolImportCardIdentityClaim.context_id)
+            .join(
+                PoolImportContext,
+                PoolImportContext.id == PoolImportCardIdentityClaim.context_id,
+            )
+            .where(
+                PoolImportContext.tenant_id == principal.tenant_id,
+                PoolImportContext.pool_type == "card",
+                PoolImportContext.expires_at <= now,
+                PoolImportContext.consumed_at.is_(None),
+                PoolImportContext.pool_import_receipt_id.is_(None),
+                PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
+            )
+            .with_for_update(of=PoolImportContext)
+        ))
+        reclaimable_context_ids = sorted(set(reclaimed_card_context_ids))
         db.execute(
             delete(PoolImportCardIdentityClaim).where(
-                PoolImportCardIdentityClaim.context_id.in_(expired_context_ids),
+                PoolImportCardIdentityClaim.context_id.in_(
+                    reclaimable_context_ids
+                ),
                 PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
             )
         )
@@ -5828,6 +5841,28 @@ def admin_create_pool_import_context(
                 status_code=409,
                 detail="Card identities are already in use",
             ) from None
+    reclaimed_context_fingerprints = [
+        hashlib.sha256(context_id.encode("ascii")).hexdigest()
+        for context_id in sorted(set(reclaimed_card_context_ids))
+    ]
+    if reclaimed_card_context_ids:
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type="admin.pool_import_card_identity_claims_reclaimed",
+            entity_type="card_pool",
+            entity_id=context.id,
+            trace_id=request.state.trace_id,
+            details={
+                "reclaimed_claim_count": len(reclaimed_card_context_ids),
+                "reclaimed_context_count": len(reclaimed_context_fingerprints),
+                "reclaimed_context_fingerprints": (
+                    reclaimed_context_fingerprints
+                ),
+            },
+        )
     record_audit(
         db,
         tenant_id=principal.tenant_id,

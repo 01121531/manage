@@ -1,5 +1,5 @@
 {
-  "schema_version": 27,
+  "schema_version": 28,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -236,6 +236,8 @@
       "expired_unconsumed_claim": "reclaimable_by_later_same_tenant_card_context_requesting_same_provider_ref",
       "cross_tenant_claim_reclamation": "forbidden",
       "nonmatching_identity_claim_reclamation": "forbidden",
+      "reclamation_candidate_lock": "matching_expired_context_rows_for_update_before_claim_delete",
+      "reclamation_audit": "claim_and_context_counts_plus_context_id_sha256_without_provider_refs",
       "consumed_claim": "retained_as_permanent_identity_guard",
       "final_import_binding": "ordered_provider_refs_must_match_context_claims"
     },

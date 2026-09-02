@@ -4,10 +4,13 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm import Session
 
 from platform.app import create_app
 from platform.bootstrap import create_user_with_device
@@ -562,6 +565,77 @@ class SecurePoolImportApiTests(unittest.TestCase):
                 "provider-new-unrelated-claim",
                 "provider-unrelated-renewal",
             ])
+
+    def test_card_identity_claim_reclamation_is_explicitly_audited(self) -> None:
+        original = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": "1" * 64,
+                "item_count": 1,
+                "card_provider_refs": ["provider-audited-reclamation"],
+            },
+        )
+        self.assertEqual(original.status_code, 201, original.text)
+        original_context = original.json()
+        with self.app.state.session_factory() as db:
+            stored = db.get(PoolImportContext, original_context["receipt_id"])
+            assert stored is not None
+            stored.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            db.commit()
+
+        locked_statements = []
+        session_scalars = Session.scalars
+
+        def capture_locked_statement(session, statement, *args, **kwargs):
+            if getattr(statement, "_for_update_arg", None) is not None:
+                locked_statements.append(statement)
+            return session_scalars(session, statement, *args, **kwargs)
+
+        with patch.object(Session, "scalars", new=capture_locked_statement):
+            replacement = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts",
+                headers={"Authorization": self.authorization},
+                json={
+                    "pool_type": "card",
+                    "ordered_manifest_digest": "2" * 64,
+                    "item_count": 1,
+                    "card_provider_refs": ["provider-audited-reclamation"],
+                },
+            )
+
+        self.assertEqual(replacement.status_code, 201, replacement.text)
+        self.assertTrue(any(
+            "FOR UPDATE OF pool_import_contexts" in str(statement.compile(
+                dialect=postgresql.dialect(),
+            ))
+            for statement in locked_statements
+        ))
+        with self.app.state.session_factory() as db:
+            audits = list(db.scalars(select(AuditEvent).where(
+                AuditEvent.event_type
+                == "admin.pool_import_card_identity_claims_reclaimed"
+            )))
+            self.assertEqual(len(audits), 1)
+            audit = audits[0]
+            self.assertEqual(audit.entity_type, "card_pool")
+            self.assertEqual(audit.entity_id, replacement.json()["receipt_id"])
+            self.assertIn('"reclaimed_claim_count": 1', audit.details_json)
+            self.assertIn('"reclaimed_context_count": 1', audit.details_json)
+            self.assertIn(
+                hashlib.sha256(
+                    original_context["receipt_id"].encode("ascii")
+                ).hexdigest(),
+                audit.details_json,
+            )
+            self.assertNotIn(
+                "provider-audited-reclamation",
+                audit.details_json,
+            )
+            self.assertNotIn(original_context["context_token"], audit.details_json)
 
     def test_consumed_card_identity_claim_is_not_reclaimed(self) -> None:
         payload = [{

@@ -56,7 +56,11 @@ The default endpoints are:
   and atomically claims every new identity through a database unique constraint.
   An expired, unconsumed context can relinquish only the claims whose exact
   identities are requested by a later card context in the same tenant; another
-  identity or tenant cannot mutate that renewal state.
+  identity or tenant cannot mutate that renewal state. Matching expired context
+  rows are locked before claim deletion so renewal, final consumption and
+  reclamation share one transaction boundary. A reclamation writes a dedicated
+  audit event containing only claim/context counts and SHA-256 fingerprints of
+  the prior context IDs; provider references and context tokens are excluded.
   Consumed claims stay as a permanent identity guard. Final card import must
   match the context's ordered claims. Tenant, audience and receipt UUID are
   server-owned. The opaque

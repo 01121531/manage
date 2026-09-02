@@ -105,6 +105,11 @@ rejected before the first Vault or API mutation.
    only by a later card context in the same tenant requesting the exact same
    provider reference. A request for another identity or from another tenant
    must not delete the claim or invalidate its bounded renewal window.
+   The target locks every matching expired context before deleting a claim, so
+   renewal, final consumption and reclamation cannot silently pass one another.
+   Reclamation emits a dedicated audit event containing claim/context counts and
+   SHA-256 fingerprints of prior context IDs only; it must not contain provider
+   references, context tokens or source data.
    Consumed claims remain as an identity guard, and final
    import must match the context's ordered claims. The target platform supplies
    the authoritative tenant, audience and receipt UUID. Any mismatch stops before
