@@ -143,6 +143,12 @@ receipt link, issued/expiry/consumed times and Transit key version cannot be
 updated or deleted after insertion, while each independently administered card
 or mailbox import can still insert a fresh consumption row. This protects
 replay evidence without storing or joining raw data from either pool. The
+`0044_pool_context_consumption_terminal` migration additionally makes the
+target context lifecycle one-way: a new context is unconsumed, renewal can
+change expiry only while it remains unconsumed, and final consumption must set
+the time and local receipt together. That receipt must match the context's
+signed receipt, tenant, pool, manifest, actor and device. Once consumed, all
+three lifecycle fields are immutable. The
 application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed

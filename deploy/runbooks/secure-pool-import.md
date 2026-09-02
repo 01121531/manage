@@ -142,6 +142,11 @@ rejected before the first Vault or API mutation.
    still INSERT its own consumption row in the existing atomic transaction.
    The guard is shared infrastructure only: the card pool and mailbox pool
    remain independently uploaded and no raw source data is copied into it.
+   Migration `0044_pool_context_consumption_terminal` requires a context to
+   begin with no consumed-at value or local receipt. Expiry may be renewed only
+   in that state. Final import must atomically set both fields against the
+   matching signed consumption and tenant/pool/manifest/actor/device receipt;
+   after that transition expiry, consumed-at and receipt linkage cannot change.
    Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.

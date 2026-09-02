@@ -292,6 +292,16 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed one-way pool context consumption lifecycle for revision 0044.
+    # Only this exact insert/update trigger and lifecycle column set is allowed.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_CONTEXTS_CONSUMPTION_LIFECYCLE BEFORE "
+        r"INSERT OR UPDATE OF EXPIRES_AT, CONSUMED_AT, "
+        r"POOL_IMPORT_RECEIPT_ID ON POOL_IMPORT_CONTEXTS FOR EACH ROW EXECUTE "
+        r"FUNCTION POOL_IMPORT_CONTEXTS_VALIDATE_CONSUMPTION_LIFECYCLE\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

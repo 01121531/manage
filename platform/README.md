@@ -93,7 +93,13 @@ The default endpoints are:
   delete its receipt identity, local import receipt link, issue/expiry time,
   Transit key version or consumed time; fresh card and mailbox import
   transactions can still insert one new row. This shared replay guard does not
-  merge the two pools or expose their source data. A
+  merge the two pools or expose their source data. Migration
+  `0044_pool_context_consumption_terminal` requires every context to start with
+  both consumption fields empty, permits expiry renewal only before
+  consumption, and accepts exactly one transition that simultaneously links a
+  matching local receipt and its signed-receipt consumption. Afterward expiry,
+  consumption time and receipt linkage are a database-enforced terminal state
+  for both pools. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

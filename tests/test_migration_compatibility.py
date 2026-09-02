@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0043_secure_consumption_lock"
+down_revision = "0044_pool_context_consumption_terminal"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0043_secure_consumption_lock"
+down_revision = "0044_pool_context_consumption_terminal"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0043_secure_consumption_lock"',
+            'down_revision = "0044_pool_context_consumption_terminal"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -414,6 +414,28 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'FUNCTION secure_pool_import_consumptions_prevent_mutation(); '
                 'SELECT 1")'
             ),
+            "context consumption lifecycle wrong target": (
+                'op.execute("CREATE TRIGGER '
+                'pool_import_contexts_consumption_lifecycle BEFORE INSERT OR '
+                'UPDATE OF expires_at, consumed_at, pool_import_receipt_id ON '
+                'users FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_contexts_validate_consumption_lifecycle()")'
+            ),
+            "context consumption lifecycle wrong event": (
+                'op.execute("CREATE TRIGGER '
+                'pool_import_contexts_consumption_lifecycle BEFORE UPDATE OF '
+                'expires_at, consumed_at, pool_import_receipt_id ON '
+                'pool_import_contexts FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_contexts_validate_consumption_lifecycle()")'
+            ),
+            "context consumption lifecycle statement suffix": (
+                'op.execute("CREATE TRIGGER '
+                'pool_import_contexts_consumption_lifecycle BEFORE INSERT OR '
+                'UPDATE OF expires_at, consumed_at, pool_import_receipt_id ON '
+                'pool_import_contexts FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_contexts_validate_consumption_lifecycle(); '
+                'SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -424,7 +446,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0043_secure_consumption_lock"
+down_revision = "0044_pool_context_consumption_terminal"
 def upgrade():
     {body}
 def downgrade():

@@ -117,6 +117,17 @@ insert and atomically link a new consumption row. Keep 0043 installed on
 application rollback; do not reopen deletion or rewriting of one-time receipt
 consumption evidence.
 
+Revision `0044_pool_context_consumption_terminal` preflights every existing
+context for a complete consumed-at/local-receipt pair and an exact matching
+signed consumption, tenant, pool, manifest, actor and device binding. Pause
+both card and mailbox secure imports before this preflight; any invalid history
+must stop the migration for authorized remediation. After installation, prove
+a new context starts unconsumed, one pre-consumption renewal succeeds, partial
+or mismatched consumption fails, a normal card and mailbox consumption each
+succeed once, and all three lifecycle fields reject later change or clearing.
+Keep 0044 installed on application rollback so a consumed context cannot be
+reopened or reinterpreted.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

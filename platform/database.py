@@ -429,6 +429,84 @@ def _install_secure_pool_import_consumption_constraints(engine: Engine) -> None:
         )
 
 
+def _install_pool_import_context_consumption_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed context lifecycle guards in local SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS
+            pool_import_contexts_consumption_lifecycle_insert
+            BEFORE INSERT ON pool_import_contexts
+            WHEN NEW.consumed_at IS NOT NULL
+              OR NEW.pool_import_receipt_id IS NOT NULL
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'pool import context must start unconsumed'
+                );
+            END;
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS
+            pool_import_contexts_consumption_lifecycle_update
+            BEFORE UPDATE OF expires_at, consumed_at, pool_import_receipt_id
+            ON pool_import_contexts
+            WHEN
+                (NEW.consumed_at IS NULL)
+                    <> (NEW.pool_import_receipt_id IS NULL)
+                OR (
+                    (OLD.consumed_at IS NOT NULL
+                     OR OLD.pool_import_receipt_id IS NOT NULL)
+                    AND (
+                        NEW.expires_at IS NOT OLD.expires_at
+                        OR NEW.consumed_at IS NOT OLD.consumed_at
+                        OR NEW.pool_import_receipt_id
+                            IS NOT OLD.pool_import_receipt_id
+                    )
+                )
+                OR (
+                    OLD.consumed_at IS NULL
+                    AND OLD.pool_import_receipt_id IS NULL
+                    AND NEW.consumed_at IS NOT NULL
+                    AND NEW.pool_import_receipt_id IS NOT NULL
+                    AND (
+                        NEW.expires_at IS NOT OLD.expires_at
+                        OR NOT EXISTS (
+                            SELECT 1
+                            FROM pool_import_receipts
+                            JOIN secure_pool_import_consumptions
+                              ON secure_pool_import_consumptions.pool_import_receipt_id
+                                 = pool_import_receipts.id
+                            WHERE pool_import_receipts.id
+                                    = NEW.pool_import_receipt_id
+                              AND secure_pool_import_consumptions.receipt_id
+                                    = NEW.id
+                              AND pool_import_receipts.tenant_id = NEW.tenant_id
+                              AND pool_import_receipts.pool_type = NEW.pool_type
+                              AND pool_import_receipts.request_digest
+                                    = NEW.ordered_manifest_digest
+                              AND pool_import_receipts.item_count
+                                    = NEW.item_count
+                              AND pool_import_receipts.created_by = NEW.created_by
+                              AND pool_import_receipts.device_id = NEW.device_id
+                        )
+                    )
+                )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'pool import context consumption lifecycle invalid'
+                );
+            END;
+            """
+        )
+
+
 def initialize_database(
     database_url: str,
     *,
@@ -444,6 +522,7 @@ def initialize_database(
         _install_card_claim_mutation_ledger_constraints(engine)
         _install_pool_import_context_identity_constraints(engine)
         _install_secure_pool_import_consumption_constraints(engine)
+        _install_pool_import_context_consumption_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 
