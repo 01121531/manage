@@ -115,7 +115,10 @@ locks matching expired context rows once in ascending context-ID order before
 reading or deleting claims, preventing reversed batch input from reversing the
 database lock order. New claims are likewise inserted in ascending provider-reference
 order while keeping their original manifest positions, preventing reversed new
-batches from reversing unique-index acquisition order. It records a
+batches from reversing unique-index acquisition order. The claim tenant must
+match its authoritative owning context; a drifted claim is never renewed,
+consumed, reclaimed, or deleted, and the owning context tenant continues to
+block replacement until repair. It records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered

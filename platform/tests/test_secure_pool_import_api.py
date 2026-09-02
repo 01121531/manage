@@ -590,6 +590,93 @@ class SecurePoolImportApiTests(unittest.TestCase):
                 ],
             )
 
+    def test_card_identity_claim_tenant_drift_fails_closed(self) -> None:
+        import_payload = [{
+            "provider_ref": "provider-tenant-drifted-claim",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        body = {
+            "pool_type": "card",
+            "ordered_manifest_digest": pool_import_digest(
+                "card",
+                [
+                    AdminCardImportItem.model_validate(item)
+                    for item in import_payload
+                ],
+            ),
+            "item_count": 1,
+            "card_provider_refs": ["provider-tenant-drifted-claim"],
+        }
+        issued = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json=body,
+        )
+        self.assertEqual(issued.status_code, 201, issued.text)
+        original = issued.json()
+        with self.app.state.session_factory() as db:
+            claim = db.scalar(select(PoolImportCardIdentityClaim).where(
+                PoolImportCardIdentityClaim.context_id == original["receipt_id"]
+            ))
+            assert claim is not None
+            claim.tenant_id = "tenant-b"
+            db.commit()
+
+        final_import = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=self.headers(
+                original["receipt_id"],
+                f"spi:{original['receipt_id']}",
+                original["context_token"],
+            ),
+            json=import_payload,
+        )
+        renewal = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts/renew",
+            headers={
+                "Authorization": self.authorization,
+                "Secure-Import-Context": original["context_token"],
+            },
+        )
+        with self.app.state.session_factory() as db:
+            context = db.get(PoolImportContext, original["receipt_id"])
+            assert context is not None
+            context.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            db.commit()
+        replacement = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json=body,
+        )
+
+        self.assertEqual(final_import.status_code, 409, final_import.text)
+        self.assertEqual(renewal.status_code, 409, renewal.text)
+        self.assertEqual(replacement.status_code, 409, replacement.text)
+        self.assertNotIn("provider-tenant-drifted-claim", replacement.text)
+        with self.app.state.session_factory() as db:
+            claim = db.scalar(select(PoolImportCardIdentityClaim))
+            assert claim is not None
+            self.assertEqual(claim.context_id, original["receipt_id"])
+            self.assertEqual(claim.tenant_id, "tenant-b")
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportContext)),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(AuditEvent).where(
+                    AuditEvent.event_type
+                    == "admin.pool_import_card_identity_claims_reclaimed"
+                )),
+                0,
+            )
+
     def test_card_identity_claim_reclamation_only_takes_requested_refs(self) -> None:
         original = self.request(
             "POST",

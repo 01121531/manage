@@ -62,7 +62,10 @@ The default endpoints are:
   consumption and reclamation share one transaction boundary. New card identity
   claims are inserted in ascending provider-reference order while retaining their
   original manifest positions, so reversed batch input cannot reverse unique-index
-  acquisition order. A reclamation writes a dedicated
+  acquisition order. A claim's tenant must also match its authoritative owning
+  context: a drifted row cannot be renewed, consumed, reclaimed, or deleted, and
+  the owning context's tenant continues to block replacement until the row is
+  repaired. A reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.
   Consumed claims stay as a permanent identity guard. Final card import must

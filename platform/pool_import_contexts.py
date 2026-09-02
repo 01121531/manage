@@ -55,10 +55,18 @@ def _aware_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
-def _claimed_card_provider_refs(db: Session, context_id: str) -> list[str]:
+def _claimed_card_provider_refs(
+    db: Session,
+    context_id: str,
+    *,
+    tenant_id: str,
+) -> list[str]:
     return list(db.scalars(
         select(PoolImportCardIdentityClaim.provider_ref)
-        .where(PoolImportCardIdentityClaim.context_id == context_id)
+        .where(
+            PoolImportCardIdentityClaim.context_id == context_id,
+            PoolImportCardIdentityClaim.tenant_id == tenant_id,
+        )
         .order_by(PoolImportCardIdentityClaim.position)
     ))
 
@@ -98,7 +106,11 @@ def renew_pool_import_context(
         )
     if (
         context.pool_type == "card"
-        and len(_claimed_card_provider_refs(db, context.id)) != context.item_count
+        and len(_claimed_card_provider_refs(
+            db,
+            context.id,
+            tenant_id=context.tenant_id,
+        )) != context.item_count
     ):
         raise PoolImportContextBindingMismatch(
             "Secure import context no longer owns its card identities"
@@ -184,7 +196,11 @@ class DatabasePoolImportContextVerifier:
         if pool_type == "card":
             if (
                 card_provider_refs is None
-                or _claimed_card_provider_refs(db, context.id)
+                or _claimed_card_provider_refs(
+                    db,
+                    context.id,
+                    tenant_id=context.tenant_id,
+                )
                 != list(card_provider_refs)
             ):
                 raise PoolImportContextBindingMismatch(

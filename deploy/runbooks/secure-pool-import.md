@@ -112,6 +112,10 @@ rejected before the first Vault or API mutation.
    New card identity claims are inserted in ascending provider-reference order
    while preserving their original manifest positions. Reversed new batches
    therefore cannot reverse unique-index acquisition order or change manifest binding.
+   A claim tenant must match the authoritative tenant on its owning context. If
+   those values drift, renewal, final consumption, reclamation and deletion all
+   fail closed; the owning context tenant still blocks a replacement until an
+   authorized repair restores the binding.
    Reclamation emits a dedicated audit event containing claim/context counts and
    SHA-256 fingerprints of prior context IDs only; it must not contain provider
    references, context tokens or source data.

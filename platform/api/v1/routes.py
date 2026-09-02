@@ -5768,6 +5768,8 @@ def admin_create_pool_import_context(
                 exists().where(
                     PoolImportCardIdentityClaim.context_id
                     == PoolImportContext.id,
+                    PoolImportCardIdentityClaim.tenant_id
+                    == principal.tenant_id,
                     PoolImportCardIdentityClaim.provider_ref.in_(
                         card_provider_refs
                     ),
@@ -5782,6 +5784,7 @@ def admin_create_pool_import_context(
                 PoolImportCardIdentityClaim.context_id.in_(
                     reclaimable_context_ids
                 ),
+                PoolImportCardIdentityClaim.tenant_id == principal.tenant_id,
                 PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
             )
             .order_by(
@@ -5794,6 +5797,7 @@ def admin_create_pool_import_context(
                 PoolImportCardIdentityClaim.context_id.in_(
                     reclaimable_context_ids
                 ),
+                PoolImportCardIdentityClaim.tenant_id == principal.tenant_id,
                 PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
             )
         )
@@ -5807,8 +5811,14 @@ def admin_create_pool_import_context(
         )
         existing_claim = db.scalar(
             select(PoolImportCardIdentityClaim.context_id)
+            .join(
+                PoolImportContext,
+                PoolImportContext.id
+                == PoolImportCardIdentityClaim.context_id,
+            )
             .where(
-                PoolImportCardIdentityClaim.tenant_id == principal.tenant_id,
+                PoolImportContext.tenant_id == principal.tenant_id,
+                PoolImportContext.pool_type == "card",
                 PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
             )
             .limit(1)
