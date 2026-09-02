@@ -35,6 +35,7 @@ if _loaded_platform is not None and not hasattr(_loaded_platform, "__path__"):
 from platform.file_boundary import read_stable_runtime_bytes_with_metadata
 from platform.json_boundary import JsonBoundaryError, parse_unique_json_bytes
 from platform.pool_imports import (
+    card_provider_refs_are_unique,
     canonical_receipt_claims,
     encode_receipt_token,
     pool_import_digest,
@@ -958,6 +959,8 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     parsed_records = [parser(item) for item in value]
     manifest = [item[0] for item in parsed_records]
     secrets = [item[1] for item in parsed_records]
+    if pool_type == "card" and not card_provider_refs_are_unique(manifest):
+        raise ImportFailure("Card input contains duplicate provider references")
     digest = pool_import_digest(pool_type, manifest)
     platform_client = PlatformClient(
         platform_origin,

@@ -375,6 +375,41 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertIn(first_receipt["ordered_manifest_digest"], audit_json)
             self.assertIn(first_receipt["secure_receipt_fingerprint"], audit_json)
 
+    def test_duplicate_card_provider_refs_fail_before_receipt_verification(self) -> None:
+        receipt_id = str(uuid4())
+        payload = [
+            {
+                "provider_ref": "provider-duplicate",
+                "pool_key": "checkout-cn",
+                "region": "cn-east",
+                "brand": "Visa",
+                "last4": "4242",
+            },
+            {
+                "provider_ref": "provider-duplicate",
+                "pool_key": "checkout-us",
+                "region": "us-east",
+                "brand": "Mastercard",
+                "last4": "4444",
+            },
+        ]
+
+        rejected = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=self.headers(receipt_id, f"spi:{receipt_id}"),
+            json=payload,
+        )
+
+        self.assertEqual(rejected.status_code, 422, rejected.text)
+        self.assertNotIn("provider-duplicate", rejected.text)
+        self.assertEqual(self.verifier.calls, 0)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 0)
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)), 0
+            )
+
     def test_mailbox_import_and_receipt_one_time_consumption(self) -> None:
         payload = [{
             "email_masked": "m***@example.test",

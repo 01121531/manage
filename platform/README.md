@@ -68,8 +68,13 @@ The default endpoints are:
   `vault://secret/cards/` references. It is not a raw card-data upload endpoint;
   PAN/CVV must be handled by a separate Card Vault security-import flow. The
   endpoint is separate from the mailbox pool and rejects PAN/CVV or mixed-pool fields.
-  It uses the same required idempotency receipt contract, namespaced to the
-  card pool.
+  Each batch must also have exact unique `provider_ref` values after the existing
+  field normalization. The importer rejects duplicates before reading the
+  platform token, issuing a context, using Vault, or creating local execution
+  evidence; the API independently rejects them before receipt verification or
+  database writes. It uses the same required idempotency receipt contract,
+  namespaced to the card pool. Mailbox records are not deduplicated by masked
+  address because distinct accounts can share the same display mask.
 
 The server-side Transit receipt verifier validates its Vault address before it
 reads the Vault token file or creates a request. The default constructor and

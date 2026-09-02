@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 24)
+        self.assertEqual(contract["schema_version"], 25)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -43,6 +43,18 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "and_dns_domain"
                 ),
                 "card_security_codes": "rejected_at_import_and_runtime_resolution",
+                "card_batch_identity": {
+                    "field": "provider_ref",
+                    "comparison": "exact_after_existing_field_normalization",
+                    "duplicates": "rejected",
+                    "cli_validation": (
+                        "before_platform_token_context_vault_or_local_evidence_use"
+                    ),
+                    "api_validation": (
+                        "before_receipt_verification_context_verification_or_"
+                        "database_write"
+                    ),
+                },
                 "pools": {
                     "card": "credit_card_pool",
                     "mailbox": "mailbox_pool",

@@ -89,7 +89,13 @@ rejected before the first Vault or API mutation.
    `--expected-tenant-id`, and `--expected-audience`, plus the matching
    `--approle-role-id-file`, `--approle-secret-id-file`, Vault address, and
    raw-input arguments. The retired `--token-file` option is rejected. The CLI
-   sends only the pool type, ordered masked
+   requires every card batch to contain exact unique normalized `provider_ref`
+   values and rejects a duplicate before reading the platform token, requesting
+   a context, logging into Vault, creating the execution directory or writing a
+   secret. The API repeats that deterministic check before Transit receipt or
+   target-context verification and before its database transaction. Do not use
+   masked mailbox addresses as a uniqueness key: distinct accounts can share the
+   same safe display mask. The CLI sends only the pool type, ordered masked
    manifest digest and item count to `POST /api/v1/admin/pool-import-contexts`;
    it never sends PAN or mailbox credentials. The target platform supplies the
    authoritative tenant, audience and receipt UUID. Any mismatch stops before

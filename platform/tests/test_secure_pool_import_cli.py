@@ -378,6 +378,54 @@ class SecurePoolImportCliTests(unittest.TestCase):
             ):
                 secure_pool_import._card_record({**base, name: "123"})
 
+    def test_duplicate_card_provider_refs_fail_before_platform_or_vault_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(
+                json.dumps(
+                    [
+                        {
+                            "provider_ref": "provider-duplicate",
+                            "brand": "Visa",
+                            "pan": "4111111111111111",
+                        },
+                        {
+                            "provider_ref": "provider-duplicate",
+                            "brand": "Mastercard",
+                            "pan": "5555555555554444",
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                secure_pool_import,
+                "_read_platform_access_token",
+                side_effect=AssertionError("platform token must not be read"),
+            ) as read_platform_token, patch.object(
+                secure_pool_import,
+                "VaultClient",
+                side_effect=AssertionError("Vault client must not be created"),
+            ), self.assertRaisesRegex(
+                secure_pool_import.ImportFailure,
+                "^Card input contains duplicate provider references$",
+            ):
+                secure_pool_import.run(
+                    self._args(
+                        input_file=str(input_file.resolve()),
+                        receipt_output=str(receipt_output.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
+                    )
+                )
+
+            read_platform_token.assert_not_called()
+            self.assertFalse(receipt_output.exists())
+            self.assertFalse(execution_directory.exists())
+
     def test_parsers_reject_implicit_scalar_coercion(self) -> None:
         with self.assertRaises(secure_pool_import.ImportFailure):
             secure_pool_import._card_record({

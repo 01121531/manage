@@ -98,6 +98,12 @@ approved intake workstation; the application does not collect either source
 automatically. Card records enter only the credit-card pool and mailbox records
 enter only the mailbox pool. `scripts/secure_pool_import.py` reads the matching
 restricted local input file,
+writes no remote or local state when a card batch repeats an exact normalized
+`provider_ref`: that deterministic error is rejected before the platform token,
+context request, Vault login, execution directory, or secret write. The API
+performs the same check again before receipt verification or database writes.
+Mailbox records are not deduplicated by masked address because different
+accounts can have the same safe display value. The importer then
 writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
 pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
 output JSON contains `schema_version: 3`, an explicit `pool_type`, a stable

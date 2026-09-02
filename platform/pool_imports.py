@@ -182,6 +182,23 @@ def pool_import_digest(pool_type: PoolType, payload: Sequence[Any]) -> str:
     return hashlib.sha256(digest_input).hexdigest()
 
 
+def card_provider_refs_are_unique(payload: Sequence[Any]) -> bool:
+    """Return whether valid card manifest items have exact unique identities."""
+
+    provider_refs: list[str] = []
+    for item in payload:
+        normalized = (
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+        )
+        if not isinstance(normalized, dict):
+            return False
+        provider_ref = normalized.get("provider_ref")
+        if type(provider_ref) is not str:
+            return False
+        provider_refs.append(provider_ref)
+    return len(provider_refs) == len(set(provider_refs))
+
+
 def pool_secret_ref(
     pool_type: PoolType,
     *,

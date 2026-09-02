@@ -1,5 +1,5 @@
 {
-  "schema_version": 24,
+  "schema_version": 25,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -9,6 +9,13 @@
     "browser_input": "secret-free-signed-bundle_only",
     "mailbox_display_format": "one_visible_ascii_local_character_then_three_asterisks_and_dns_domain",
     "card_security_codes": "rejected_at_import_and_runtime_resolution",
+    "card_batch_identity": {
+      "field": "provider_ref",
+      "comparison": "exact_after_existing_field_normalization",
+      "duplicates": "rejected",
+      "cli_validation": "before_platform_token_context_vault_or_local_evidence_use",
+      "api_validation": "before_receipt_verification_context_verification_or_database_write"
+    },
     "pools": {
       "card": "credit_card_pool",
       "mailbox": "mailbox_pool"

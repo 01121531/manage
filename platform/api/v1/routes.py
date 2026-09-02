@@ -110,6 +110,7 @@ from platform.models import (
     new_id,
 )
 from platform.pool_imports import (
+    card_provider_refs_are_unique,
     PoolImportReceiptBindingMismatch,
     PoolImportReceiptExpired,
     PoolImportReceiptInvalid,
@@ -6258,6 +6259,11 @@ def admin_import_cards(
     ),
     db: Session = Depends(get_db),
 ) -> PoolImportReceiptResponse:
+    if not card_provider_refs_are_unique(payload):
+        raise HTTPException(
+            status_code=422,
+            detail="Card input contains duplicate provider references",
+        )
     request_digest = pool_import_digest("card", payload)
     replay = _replay_pool_import_receipt(
         db,
