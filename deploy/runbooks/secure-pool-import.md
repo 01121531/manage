@@ -51,7 +51,14 @@ rejected before the first Vault or API mutation.
    reissue path cannot be resolved because of an OS error or link loop, the CLI
    emits only its fixed path-separation error and does not include the path or
    operating-system detail; this also precedes platform/Vault use, execution
-   assessment and local evidence writes. When `--ca-file` is supplied, it must
+   assessment and local evidence writes. The platform and Vault addresses must
+   each be an HTTPS origin with a non-empty hostname and valid optional port,
+   and may not contain user information, a path, query, fragment or control
+   character. Both origins are validated before the custom CA, private input or
+   execution record is read. A malformed IPv6 authority, empty host, invalid
+   port or other origin violation produces only the corresponding fixed
+   secret-free address error before remote or local mutation. When `--ca-file`
+   is supplied, it must
    also be an absolute, direct, single-link regular file. The CLI reads at most
    1 MiB once through the stable file boundary, rejects a link/reparse alias or
    observed path drift, and builds one in-memory TLS context reused for both

@@ -121,7 +121,13 @@ path drift fails before the affected platform request, Vault login,
 execution-record creation, or receipt write. Raw import and receipt reissue
 also map any OS or link-loop resolution failure to the fixed path-separation
 error without exposing a path or operating-system detail, before remote use,
-execution assessment, or local evidence writes. An explicit custom CA must be
+execution assessment, or local evidence writes. The target platform and Vault
+addresses must each be a pure HTTPS origin with a non-empty hostname and valid
+optional port; user information, path, query, fragment and control characters
+are rejected. Both addresses are validated before the CA, private input or
+execution record is read. Malformed IPv6 syntax, an empty host, an invalid port
+or another origin violation maps to the corresponding fixed secret-free address
+error before remote or local mutation. An explicit custom CA must be
 an absolute, direct, single-link regular file. It is read once through a
 bounded stable snapshot before private input or execution assessment, then one
 in-memory TLS context is reused for all platform and Vault requests; the path

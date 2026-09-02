@@ -439,6 +439,41 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 "https://vault.example.test/path", "token", tls_context=None
             )
 
+    def test_malformed_origins_use_fixed_secret_free_errors(self) -> None:
+        cases = (
+            (
+                secure_pool_import._vault_origin,
+                "https://[private-vault-origin-detail",
+                "Vault address must be an HTTPS origin",
+            ),
+            (
+                secure_pool_import._platform_origin,
+                "https://platform.example.test:private-port-detail",
+                "Platform address must be an HTTPS origin",
+            ),
+            (
+                secure_pool_import._platform_origin,
+                "https://:443",
+                "Platform address must be an HTTPS origin",
+            ),
+            (
+                secure_pool_import._platform_origin,
+                "https://platform.example.test:0",
+                "Platform address must be an HTTPS origin",
+            ),
+            (
+                secure_pool_import._platform_origin,
+                "\thttps://platform.example.test ",
+                "Platform address must be an HTTPS origin",
+            ),
+        )
+        for validator, value, expected in cases:
+            with self.subTest(value=value):
+                with self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                    validator(value)
+                self.assertEqual(str(raised.exception), expected)
+                self.assertNotIn("private", str(raised.exception))
+
     def test_vault_write_requires_exact_version_one_acknowledgement(self) -> None:
         client = secure_pool_import.VaultClient(
             "https://vault.example.test", "token", tls_context=None
@@ -1045,6 +1080,45 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertNotIn("private raw path detail", str(raised.exception))
             self.assertFalse((root / "execution").exists())
             self.assertFalse((root / "receipt.json").exists())
+
+    def test_raw_import_validates_origins_before_ca_or_private_input(self) -> None:
+        cases = (
+            (
+                {"platform_address": "http://private-platform-origin-detail"},
+                "Platform address must be an HTTPS origin",
+            ),
+            (
+                {"vault_address": "https://vault.example.test:private-port-detail"},
+                "Vault address must be an HTTPS origin",
+            ),
+        )
+        for overrides, expected in cases:
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                arguments = self._args(
+                    input_file=str(root / "input.json"),
+                    platform_token_file=str(root / "platform.token"),
+                    approle_role_id_file=str(root / "role-id"),
+                    approle_secret_id_file=str(root / "secret-id"),
+                    receipt_output=str(root / "receipt.json"),
+                    execution_directory=str(root / "execution"),
+                    **overrides,
+                )
+                with patch.object(
+                    secure_pool_import,
+                    "_create_tls_context",
+                    side_effect=AssertionError("CA must not be loaded"),
+                ), patch.object(
+                    secure_pool_import,
+                    "_read_json",
+                    side_effect=AssertionError("Private input must not be read"),
+                ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                    secure_pool_import.run(arguments)
+
+                self.assertEqual(str(raised.exception), expected)
+                self.assertNotIn("private", str(raised.exception))
+                self.assertFalse((root / "execution").exists())
+                self.assertFalse((root / "receipt.json").exists())
 
     def test_custom_ca_link_alias_fails_before_private_or_remote_use(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1730,6 +1804,37 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 "must be separate",
             )
             self.assertNotIn("private reissue path detail", str(raised.exception))
+            self.assertFalse((root / "receipt-fresh.json").exists())
+
+    def test_reissue_validates_origins_before_ca_or_execution_assessment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            arguments = self._args(
+                input_file=None,
+                reissue_from=str(root / "receipt-original.json"),
+                platform_address="https://[private-platform-origin-detail",
+                platform_token_file=str(root / "platform.token"),
+                approle_role_id_file=str(root / "role-id"),
+                approle_secret_id_file=str(root / "secret-id"),
+                receipt_output=str(root / "receipt-fresh.json"),
+                execution_directory=str(root / "execution"),
+            )
+            with patch.object(
+                secure_pool_import,
+                "_create_tls_context",
+                side_effect=AssertionError("CA must not be loaded"),
+            ), patch.object(
+                secure_pool_import,
+                "assess_execution_directory",
+                side_effect=AssertionError("Execution must not be assessed"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.reissue_completed(arguments)
+
+            self.assertEqual(
+                str(raised.exception),
+                "Platform address must be an HTTPS origin",
+            )
+            self.assertNotIn("private", str(raised.exception))
             self.assertFalse((root / "receipt-fresh.json").exists())
 
     def test_reissue_refuses_incomplete_execution_before_reading_tokens(self) -> None:

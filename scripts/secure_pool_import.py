@@ -119,34 +119,41 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _vault_origin(value: str) -> str:
-    parsed = urllib.parse.urlsplit(value.strip().rstrip("/"))
+def _https_origin(value: str, *, label: str) -> str:
+    error_message = f"{label} must be an HTTPS origin"
+    try:
+        normalized = value.rstrip("/")
+        if not normalized or any(
+            ord(character) <= 0x20 or ord(character) == 0x7F
+            for character in value
+        ):
+            raise ValueError
+        parsed = urllib.parse.urlsplit(normalized)
+        hostname = parsed.hostname
+        port = parsed.port
+    except (AttributeError, ValueError):
+        raise ImportFailure(error_message) from None
     if (
         parsed.scheme != "https"
         or not parsed.netloc
+        or hostname is None
+        or (port is not None and port < 1)
         or parsed.username
         or parsed.password
         or parsed.path
         or parsed.query
         or parsed.fragment
     ):
-        raise ImportFailure("Vault address must be an HTTPS origin")
+        raise ImportFailure(error_message)
     return urllib.parse.urlunsplit(parsed)
+
+
+def _vault_origin(value: str) -> str:
+    return _https_origin(value, label="Vault address")
 
 
 def _platform_origin(value: str) -> str:
-    parsed = urllib.parse.urlsplit(value.strip().rstrip("/"))
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.username
-        or parsed.password
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ImportFailure("Platform address must be an HTTPS origin")
-    return urllib.parse.urlunsplit(parsed)
+    return _https_origin(value, label="Platform address")
 
 
 def _absolute_file(value: str, *, label: str) -> Path:
@@ -871,6 +878,8 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     if not execution_path.is_absolute():
         raise ImportFailure("Execution record directory must be an absolute path")
     ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
+    vault_origin = _vault_origin(args.vault_address)
+    platform_origin = _platform_origin(args.platform_address)
     expected_tenant_id = args.expected_tenant_id.strip()
     expected_audience = args.expected_audience.strip()
     if (
@@ -919,8 +928,6 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     parsed_records = [parser(item) for item in value]
     manifest = [item[0] for item in parsed_records]
     secrets = [item[1] for item in parsed_records]
-    vault_origin = _vault_origin(args.vault_address)
-    platform_origin = _platform_origin(args.platform_address)
     digest = pool_import_digest(pool_type, manifest)
     platform_client = PlatformClient(
         platform_origin,
@@ -1064,6 +1071,8 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     if not execution_path.is_absolute():
         raise ImportFailure("Execution record directory must be an absolute path")
     ca_file = _absolute_file(args.ca_file, label="CA file") if args.ca_file else None
+    vault_origin = _vault_origin(args.vault_address)
+    platform_origin = _platform_origin(args.platform_address)
     expected_tenant_id = args.expected_tenant_id.strip()
     expected_audience = args.expected_audience.strip()
     if (
@@ -1137,8 +1146,6 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     except (KeyError, TypeError, ValueError):
         raise ImportFailure("Completed execution evidence is invalid") from None
     context_token = bundle.get("context_token")
-    vault_origin = _vault_origin(args.vault_address)
-    platform_origin = _platform_origin(args.platform_address)
     if (
         plan.get("pool_type") != pool_type
         or bundle.get("schema_version") != 3
