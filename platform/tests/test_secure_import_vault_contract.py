@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 15)
+        self.assertEqual(contract["schema_version"], 16)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -113,6 +113,28 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "failures": ["os_error", "runtime_error"],
                 "public_error": "fixed_secret_free_separation_error",
                 "precedes": [
+                    "platform_request",
+                    "vault_login",
+                    "execution_assessment",
+                    "local_evidence_write",
+                ],
+            },
+        )
+        self.assertEqual(
+            contract["tls_trust_bundle_boundary"],
+            {
+                "custom_ca_path": (
+                    "absolute_direct_single_link_stable_regular_file"
+                ),
+                "maximum_bytes": 1048576,
+                "load": "once_before_private_input_or_execution_assessment",
+                "context": (
+                    "single_in_memory_context_reused_for_platform_and_vault"
+                ),
+                "default_system_trust": "single_in_memory_context",
+                "public_error": "fixed_secret_free_ca_error",
+                "precedes": [
+                    "private_input_read",
                     "platform_request",
                     "vault_login",
                     "execution_assessment",

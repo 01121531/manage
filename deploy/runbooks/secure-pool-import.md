@@ -51,7 +51,14 @@ rejected before the first Vault or API mutation.
    reissue path cannot be resolved because of an OS error or link loop, the CLI
    emits only its fixed path-separation error and does not include the path or
    operating-system detail; this also precedes platform/Vault use, execution
-   assessment and local evidence writes. On Windows the
+   assessment and local evidence writes. When `--ca-file` is supplied, it must
+   also be an absolute, direct, single-link regular file. The CLI reads at most
+   1 MiB once through the stable file boundary, rejects a link/reparse alias or
+   observed path drift, and builds one in-memory TLS context reused for both
+   platform and Vault traffic. The TLS library never reopens that custom CA
+   path after validation. Any CA read, encoding, size, identity or TLS parsing
+   failure becomes the fixed secret-free CA error before private input reads,
+   remote use, execution assessment or local evidence writes. On Windows the
    importer also evaluates each raw-input, platform-token, RoleID and SecretID
    ACL through the same already-open file handle before and after its bounded
    read. The DACL must be protected, contain only explicit non-inherited Allow

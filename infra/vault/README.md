@@ -121,7 +121,13 @@ path drift fails before the affected platform request, Vault login,
 execution-record creation, or receipt write. Raw import and receipt reissue
 also map any OS or link-loop resolution failure to the fixed path-separation
 error without exposing a path or operating-system detail, before remote use,
-execution assessment, or local evidence writes. On Windows,
+execution assessment, or local evidence writes. An explicit custom CA must be
+an absolute, direct, single-link regular file. It is read once through a
+bounded stable snapshot before private input or execution assessment, then one
+in-memory TLS context is reused for all platform and Vault requests; the path
+is not reopened by the TLS library. Alias/drift, size, encoding, identity or
+TLS parsing failures produce only the fixed CA error before remote use or local
+evidence writes. On Windows,
 the raw input, platform token, RoleID and SecretID must also have a protected
 DACL owned by the current operator, SYSTEM or local Administrators, with only
 explicit non-inherited Allow entries for those three principals. The importer

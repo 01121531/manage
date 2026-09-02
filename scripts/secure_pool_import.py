@@ -67,6 +67,7 @@ from scripts.secure_pool_import_recovery import (
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_TOKEN_BYTES = 4096
+MAX_CA_BUNDLE_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
 RECEIPT_TTL_SECONDS = 300
 SIGNING_DOMAIN = b"email-platform/pool-import-receipt/v1\0"
@@ -164,6 +165,23 @@ def _resolve_paths_for_comparison(
         return tuple(path.resolve() for path in paths)
     except (OSError, RuntimeError):
         raise ImportFailure(error_message) from None
+
+
+def _create_tls_context(ca_file: Path | None) -> ssl.SSLContext:
+    try:
+        if ca_file is None:
+            return ssl.create_default_context()
+        if has_link_or_reparse_ancestor(ca_file):
+            raise OSError
+        raw, metadata = read_stable_runtime_bytes_with_metadata(
+            ca_file,
+            max_bytes=MAX_CA_BUNDLE_BYTES,
+        )
+        if metadata.st_nlink != 1 or has_link_or_reparse_ancestor(ca_file):
+            raise OSError
+        return ssl.create_default_context(cadata=raw.decode("ascii"))
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        raise ImportFailure("CA file is unavailable or invalid") from None
 
 
 def _private_file_permission_fingerprint(
@@ -271,9 +289,9 @@ def _exchange_approle_token(
     secret_id: str,
     expected_role: str,
     expected_policy: str,
-    ca_file: Path | None,
+    tls_context: ssl.SSLContext | None,
 ) -> str:
-    context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
+    context = tls_context if tls_context is not None else ssl.create_default_context()
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
         urllib.request.HTTPSHandler(context=context),
@@ -339,7 +357,7 @@ def _read_vault_approle_token(
     pool_type: Literal["card", "mailbox"],
     role_id_path: Path,
     secret_id_path: Path,
-    ca_file: Path | None,
+    tls_context: ssl.SSLContext | None,
 ) -> str:
     expected_role, expected_policy = _APPROLE_IDENTITIES[pool_type]
     return _exchange_approle_token(
@@ -348,7 +366,7 @@ def _read_vault_approle_token(
         secret_id=_read_approle_value(secret_id_path),
         expected_role=expected_role,
         expected_policy=expected_policy,
-        ca_file=ca_file,
+        tls_context=tls_context,
     )
 
 
@@ -483,10 +501,16 @@ def _mailbox_record(value: object) -> tuple[dict[str, object], dict[str, object]
 
 
 class VaultClient:
-    def __init__(self, addr: str, token: str, *, ca_file: Path | None) -> None:
+    def __init__(
+        self,
+        addr: str,
+        token: str,
+        *,
+        tls_context: ssl.SSLContext | None,
+    ) -> None:
         self.addr = _vault_origin(addr)
         self.token = token
-        context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
+        context = tls_context if tls_context is not None else ssl.create_default_context()
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             urllib.request.HTTPSHandler(context=context),
@@ -662,10 +686,16 @@ def _parse_platform_context(raw: bytes) -> PoolImportContext:
 
 
 class PlatformClient:
-    def __init__(self, addr: str, access_token: str, *, ca_file: Path | None) -> None:
+    def __init__(
+        self,
+        addr: str,
+        access_token: str,
+        *,
+        tls_context: ssl.SSLContext | None,
+    ) -> None:
         self.addr = _platform_origin(addr)
         self.access_token = access_token
-        context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
+        context = tls_context if tls_context is not None else ssl.create_default_context()
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             urllib.request.HTTPSHandler(context=context),
@@ -876,6 +906,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     )
     if len(set(resolved_paths)) != len(resolved_paths):
         raise ImportFailure(separation_error)
+    tls_context = _create_tls_context(ca_file)
     value = _read_json(
         input_path,
         require_single_link=True,
@@ -894,7 +925,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     platform_client = PlatformClient(
         platform_origin,
         _read_platform_access_token(platform_token_path),
-        ca_file=ca_file,
+        tls_context=tls_context,
     )
     context = platform_client.issue_context(pool_type, digest, len(manifest))
     if (
@@ -939,7 +970,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     )
     _write_execution_record(execution_directory / "plan.json", plan)
 
-    client = VaultClient(vault_origin, "", ca_file=ca_file)
+    client = VaultClient(vault_origin, "", tls_context=tls_context)
     with _revoke_token_on_exit(
         lambda: _revoke_import_token(
             client,
@@ -952,7 +983,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
             pool_type=pool_type,
             role_id_path=role_id_path,
             secret_id_path=secret_id_path,
-            ca_file=ca_file,
+            tls_context=tls_context,
         )
         for index, (secret_ref, secret) in enumerate(
             zip(secret_refs, secrets, strict=True)
@@ -1073,6 +1104,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         raise ImportFailure("Reissued receipt output must be outside the execution record")
     if len(set(resolved_paths)) != len(resolved_paths):
         raise ImportFailure(separation_error)
+    tls_context = _create_tls_context(ca_file)
     try:
         assessment = assess_execution_directory(execution_path, source_bundle_path)
     except (OSError, ValueError, RecoveryFailure):
@@ -1128,7 +1160,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
     platform_client = PlatformClient(
         platform_origin,
         _read_platform_access_token(platform_token_path),
-        ca_file=ca_file,
+        tls_context=tls_context,
     )
     renewed_context = platform_client.renew_context(context_token)
     if not _context_matches(
@@ -1142,7 +1174,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         item_count=len(items),
     ):
         raise ImportFailure("Renewed platform context does not match this execution")
-    client = VaultClient(vault_origin, "", ca_file=ca_file)
+    client = VaultClient(vault_origin, "", tls_context=tls_context)
     with _revoke_token_on_exit(
         lambda: client.revoke_self() if client.token else None
     ):
@@ -1151,7 +1183,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
             pool_type=pool_type,
             role_id_path=role_id_path,
             secret_id_path=secret_id_path,
-            ca_file=ca_file,
+            tls_context=tls_context,
         )
         fresh_bundle = _signed_bundle(client, context=renewed_context, manifest=items)
         _write_bundle(output_path, fresh_bundle)

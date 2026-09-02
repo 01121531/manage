@@ -214,7 +214,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 secret_id="single-use-secret-id",
                 expected_role="email-platform-card-importer",
                 expected_policy="email-platform-card-importer",
-                ca_file=None,
+                tls_context=None,
             )
 
         self.assertEqual(token, "vault-service-token")
@@ -253,7 +253,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                         secret_id="sensitive-secret-id",
                         expected_role="email-platform-card-importer",
                         expected_policy="email-platform-card-importer",
-                        ca_file=None,
+                        tls_context=None,
                     )
                 message = str(raised.exception)
                 self.assertEqual(message, "Vault AppRole response is invalid")
@@ -280,7 +280,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 secret_id="sensitive-secret-id",
                 expected_role="email-platform-card-importer",
                 expected_policy="email-platform-card-importer",
-                ca_file=None,
+                tls_context=None,
             )
 
         self.assertEqual(str(raised.exception), "Vault AppRole response is invalid")
@@ -313,7 +313,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 secret_id="sensitive-secret-id",
                 expected_role="email-platform-card-importer",
                 expected_policy="email-platform-card-importer",
-                ca_file=None,
+                tls_context=None,
             )
 
         self.assertEqual(str(raised.exception), "Vault AppRole response is invalid")
@@ -343,7 +343,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                         secret_id="sensitive-secret-id",
                         expected_role="email-platform-card-importer",
                         expected_policy="email-platform-card-importer",
-                        ca_file=None,
+                        tls_context=None,
                     )
 
                 self.assertEqual(
@@ -431,15 +431,17 @@ class SecurePoolImportCliTests(unittest.TestCase):
 
     def test_vault_address_requires_https_origin(self) -> None:
         with self.assertRaises(secure_pool_import.ImportFailure):
-            secure_pool_import.VaultClient("http://vault.example.test", "token", ca_file=None)
+            secure_pool_import.VaultClient(
+                "http://vault.example.test", "token", tls_context=None
+            )
         with self.assertRaises(secure_pool_import.ImportFailure):
             secure_pool_import.VaultClient(
-                "https://vault.example.test/path", "token", ca_file=None
+                "https://vault.example.test/path", "token", tls_context=None
             )
 
     def test_vault_write_requires_exact_version_one_acknowledgement(self) -> None:
         client = secure_pool_import.VaultClient(
-            "https://vault.example.test", "token", ca_file=None
+            "https://vault.example.test", "token", tls_context=None
         )
         secret_ref = "vault://secret/cards/imports/example/0"
         with patch.object(client, "post", return_value={"data": {"version": 1}}):
@@ -481,7 +483,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 return FakeResponse()
 
         client = secure_pool_import.VaultClient(
-            "https://vault.example.test", "short-lived-token", ca_file=None
+            "https://vault.example.test", "short-lived-token", tls_context=None
         )
         client.opener = FakeOpener()
         client.revoke_self()
@@ -505,7 +507,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 raise AssertionError("empty token must not reach the network")
 
         client = secure_pool_import.VaultClient(
-            "https://vault.example.test", "", ca_file=None
+            "https://vault.example.test", "", tls_context=None
         )
         client.opener = RejectingOpener()
 
@@ -535,7 +537,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 return FakeResponse()
 
         client = secure_pool_import.VaultClient(
-            "https://vault.example.test", "short-lived-token", ca_file=None
+            "https://vault.example.test", "short-lived-token", tls_context=None
         )
         client.opener = FakeOpener()
         with self.assertRaises(secure_pool_import.ImportFailure) as raised:
@@ -1043,6 +1045,230 @@ class SecurePoolImportCliTests(unittest.TestCase):
             self.assertNotIn("private raw path detail", str(raised.exception))
             self.assertFalse((root / "execution").exists())
             self.assertFalse((root / "receipt.json").exists())
+
+    def test_custom_ca_link_alias_fails_before_private_or_remote_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            ca_file = root / "ca.pem"
+            input_file.write_text(
+                json.dumps([{
+                    "provider_ref": "provider-ca-alias",
+                    "brand": "Visa",
+                    "pan": "4111111111111111",
+                }]),
+                encoding="utf-8",
+            )
+            ca_file.write_text("private trust path detail", encoding="ascii")
+            original_read_json = secure_pool_import._read_json
+            input_reads = 0
+
+            def observed_read_json(*args: object, **kwargs: object) -> object:
+                nonlocal input_reads
+                input_reads += 1
+                return original_read_json(*args, **kwargs)
+
+            default_context = secure_pool_import.ssl.create_default_context()
+            with patch.object(
+                secure_pool_import,
+                "has_link_or_reparse_ancestor",
+                side_effect=lambda path: Path(path) == ca_file,
+            ), patch.object(
+                secure_pool_import,
+                "_read_json",
+                new=observed_read_json,
+            ), patch.object(
+                secure_pool_import.ssl,
+                "create_default_context",
+                return_value=default_context,
+            ), patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=secure_pool_import.ImportFailure("remote use reached"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    ca_file=str(ca_file.resolve()),
+                    receipt_output=str((root / "receipt.json").resolve()),
+                    execution_directory=str((root / "execution").resolve()),
+                ))
+
+            self.assertEqual(str(raised.exception), "CA file is unavailable or invalid")
+            self.assertNotIn("private trust path detail", str(raised.exception))
+            self.assertEqual(input_reads, 0)
+            self.assertFalse((root / "execution").exists())
+            self.assertFalse((root / "receipt.json").exists())
+
+    def test_custom_ca_path_drift_after_read_fails_before_remote_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            ca_file = root / "ca.pem"
+            input_file.write_text(
+                json.dumps([{
+                    "provider_ref": "provider-ca-drift",
+                    "brand": "Visa",
+                    "pan": "4111111111111111",
+                }]),
+                encoding="utf-8",
+            )
+            ca_file.write_text("stable ca snapshot", encoding="ascii")
+            ca_checks = 0
+
+            def path_alias_observed(path: Path) -> bool:
+                nonlocal ca_checks
+                if Path(path) != ca_file:
+                    return False
+                ca_checks += 1
+                return ca_checks == 2
+
+            default_context = secure_pool_import.ssl.create_default_context()
+            with patch.object(
+                secure_pool_import,
+                "has_link_or_reparse_ancestor",
+                side_effect=path_alias_observed,
+            ), patch.object(
+                secure_pool_import.ssl,
+                "create_default_context",
+                return_value=default_context,
+            ), patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                side_effect=secure_pool_import.ImportFailure("remote use reached"),
+            ), self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    ca_file=str(ca_file.resolve()),
+                    receipt_output=str((root / "receipt.json").resolve()),
+                    execution_directory=str((root / "execution").resolve()),
+                ))
+
+            self.assertEqual(str(raised.exception), "CA file is unavailable or invalid")
+            self.assertEqual(ca_checks, 2)
+            self.assertFalse((root / "execution").exists())
+            self.assertFalse((root / "receipt.json").exists())
+
+    def test_custom_ca_is_loaded_from_one_stable_in_memory_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ca_file = Path(temp_dir) / "ca.pem"
+            ca_file.write_text("reviewed ca snapshot", encoding="ascii")
+            tls_context = object()
+            with patch.object(
+                secure_pool_import.ssl,
+                "create_default_context",
+                return_value=tls_context,
+            ) as create_context:
+                result = secure_pool_import._create_tls_context(ca_file)
+
+            self.assertIs(result, tls_context)
+            create_context.assert_called_once_with(cadata="reviewed ca snapshot")
+
+    def test_invalid_custom_ca_has_one_fixed_public_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ca_file = Path(temp_dir) / "ca.pem"
+            ca_file.write_text("private invalid CA detail", encoding="ascii")
+
+            with self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import._create_tls_context(ca_file)
+
+            self.assertEqual(str(raised.exception), "CA file is unavailable or invalid")
+            self.assertNotIn("private invalid CA detail", str(raised.exception))
+
+    def test_custom_ca_hardlink_alias_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ca_file = root / "ca.pem"
+            ca_alias = root / "ca-alias.pem"
+            ca_file.write_text("reviewed ca snapshot", encoding="ascii")
+            os.link(ca_file, ca_alias)
+
+            with self.assertRaises(secure_pool_import.ImportFailure) as raised:
+                secure_pool_import._create_tls_context(ca_file)
+
+            self.assertEqual(str(raised.exception), "CA file is unavailable or invalid")
+
+    def test_one_tls_context_is_reused_for_platform_vault_and_approle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            ca_file = root / "ca.pem"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(
+                json.dumps([{
+                    "provider_ref": "provider-ca-context",
+                    "brand": "Visa",
+                    "pan": "4111111111111111",
+                }]),
+                encoding="utf-8",
+            )
+            ca_file.write_text("reviewed ca snapshot", encoding="ascii")
+            tls_context = object()
+            observed_contexts: list[object] = []
+
+            def capture_platform_context(
+                _client: object,
+                _addr: str,
+                _access_token: str,
+                *,
+                tls_context: object,
+            ) -> None:
+                observed_contexts.append(tls_context)
+
+            class FakeVaultClient:
+                def __init__(
+                    self,
+                    _addr: str,
+                    token: str,
+                    *,
+                    tls_context: object,
+                ) -> None:
+                    self.token = token
+                    observed_contexts.append(tls_context)
+
+                def write_secret(
+                    self,
+                    _secret_ref: str,
+                    _secret: dict[str, object],
+                ) -> None:
+                    pass
+
+                def sign(self, _pool_type: str, _payload: bytes) -> str:
+                    return "vault:v1:test-signature"
+
+                def revoke_self(self) -> None:
+                    self.token = ""
+
+            def read_approle(*_args: object, **kwargs: object) -> str:
+                observed_contexts.append(kwargs["tls_context"])
+                return "test-vault-token"
+
+            with patch.object(
+                secure_pool_import,
+                "_create_tls_context",
+                return_value=tls_context,
+            ) as create_context, patch.object(
+                secure_pool_import.PlatformClient,
+                "__init__",
+                new=capture_platform_context,
+            ), patch.object(
+                secure_pool_import,
+                "VaultClient",
+                FakeVaultClient,
+            ), patch.object(
+                secure_pool_import,
+                "_read_vault_approle_token",
+                new=read_approle,
+            ):
+                secure_pool_import.run(self._args(
+                    input_file=str(input_file.resolve()),
+                    ca_file=str(ca_file.resolve()),
+                    receipt_output=str(receipt_output.resolve()),
+                    execution_directory=str(execution_directory.resolve()),
+                ))
+
+            create_context.assert_called_once_with(ca_file)
+            self.assertEqual(observed_contexts, [tls_context, tls_context, tls_context])
 
     def test_run_requires_precreated_receipt_directory(self) -> None:
         output = ROOT / "missing-secure-import-output-directory" / "receipt.json"
