@@ -128,7 +128,11 @@ reclamation transfers the existing claim row to the replacement context and
 manifest position in the audited transaction. Migration
 `0040_card_claim_identity_immutable` also rejects every later change to the
 claim tenant or provider reference, preventing direct SQL from renaming a
-consumed identity guard or transferring it across tenants. It records a
+consumed identity guard or transferring it across tenants. Migration
+`0041_card_claim_mutation_ledger` makes every later context or position change
+produce database-owned append-only evidence correlated by destination context
+and trace. That ledger excludes provider references and card secrets. The
+application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered

@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 34)
+        self.assertEqual(contract["schema_version"], 35)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -426,6 +426,10 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     ),
                     "identity_mutation_policy": (
                         "database_forbidden_tenant_and_provider_ref_after_insert"
+                    ),
+                    "claim_mutation_ledger": (
+                        "database_generated_append_only_context_and_position_"
+                        "transition_evidence_without_provider_ref_or_card_secret"
                     ),
                     "reclamation_audit": (
                         "claim_and_context_counts_plus_context_id_sha256_"

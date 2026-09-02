@@ -76,7 +76,12 @@ The default endpoints are:
   `0040_card_claim_identity_immutable` additionally makes the claim's tenant and
   provider reference immutable after insertion, so direct SQL cannot rename a
   consumed identity guard or move it across tenants; only its reclamation
-  context and manifest position remain transferable. A
+  context and manifest position remain transferable. Migration
+  `0041_card_claim_mutation_ledger` adds a database-generated append-only row
+  for every such context or position change. The row carries only tenant,
+  source/destination context and position, destination trace and time; it never
+  stores the provider reference or card secret, and complements the existing
+  administrator reclamation audit. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

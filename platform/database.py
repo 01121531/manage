@@ -293,6 +293,74 @@ def _install_card_event_append_only_constraints(engine: Engine) -> None:
             )
 
 
+def _install_card_claim_mutation_ledger_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed claim mutation ledger in local SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS pool_import_card_claim_mutations_record
+            AFTER UPDATE OF context_id, position
+            ON pool_import_card_identity_claims
+            WHEN NEW.context_id IS NOT OLD.context_id
+              OR NEW.position IS NOT OLD.position
+            BEGIN
+                INSERT INTO pool_import_card_claim_mutations (
+                    tenant_id,
+                    source_context_id,
+                    source_position,
+                    destination_context_id,
+                    destination_position,
+                    destination_trace_id,
+                    created_at
+                ) VALUES (
+                    NEW.tenant_id,
+                    OLD.context_id,
+                    OLD.position,
+                    NEW.context_id,
+                    NEW.position,
+                    (
+                        SELECT trace_id
+                        FROM pool_import_contexts
+                        WHERE id = NEW.context_id
+                          AND tenant_id = NEW.tenant_id
+                          AND pool_type = 'card'
+                    ),
+                    CURRENT_TIMESTAMP
+                );
+            END;
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS
+            pool_import_card_claim_mutations_no_update
+            BEFORE UPDATE ON pool_import_card_claim_mutations
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'card claim mutation ledger is append-only'
+                );
+            END;
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS
+            pool_import_card_claim_mutations_no_delete
+            BEFORE DELETE ON pool_import_card_claim_mutations
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'card claim mutation ledger is append-only'
+                );
+            END;
+            """
+        )
+
+
 def initialize_database(
     database_url: str,
     *,
@@ -305,6 +373,7 @@ def initialize_database(
         Base.metadata.create_all(engine)
         _install_audit_append_only_constraints(engine)
         _install_card_event_append_only_constraints(engine)
+        _install_card_claim_mutation_ledger_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 

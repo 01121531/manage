@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -251,6 +252,46 @@ class PoolImportCardIdentityClaim(Base):
     position: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     provider_ref: Mapped[str] = mapped_column(String(160))
+
+
+class PoolImportCardClaimMutation(Base):
+    """Secret-free database evidence for every card claim location change."""
+
+    __tablename__ = "pool_import_card_claim_mutations"
+    __table_args__ = (
+        CheckConstraint(
+            "source_position >= 0 AND source_position < 100",
+            name="ck_pool_import_card_claim_mutations_source_position",
+        ),
+        CheckConstraint(
+            "destination_position >= 0 AND destination_position < 100",
+            name="ck_pool_import_card_claim_mutations_destination_position",
+        ),
+        CheckConstraint(
+            "source_context_id <> destination_context_id "
+            "OR source_position <> destination_position",
+            name="ck_pool_import_card_claim_mutations_changed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_context_id: Mapped[str] = mapped_column(
+        ForeignKey("pool_import_contexts.id")
+    )
+    source_position: Mapped[int] = mapped_column(Integer)
+    destination_context_id: Mapped[str] = mapped_column(
+        ForeignKey("pool_import_contexts.id")
+    )
+    destination_position: Mapped[int] = mapped_column(Integer)
+    destination_trace_id: Mapped[str] = mapped_column(String(36), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
 
 
 class SecurePoolImportConsumption(Base):

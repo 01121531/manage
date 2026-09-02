@@ -126,7 +126,12 @@ rejected before the first Vault or API mutation.
    recreates the identity guard. Migration
    `0040_card_claim_identity_immutable` rejects any update to that row's
    `tenant_id` or `provider_ref`; only the context and manifest position used by
-   the existing reclamation path remain transferable. Keep the card-import
+   the existing reclamation path remain transferable. Migration
+   `0041_card_claim_mutation_ledger` automatically records every context or
+   position change in `pool_import_card_claim_mutations`. The ledger is
+   append-only, correlates the destination context and trace with the existing
+   aggregate reclamation audit, and contains no `provider_ref`, PAN, CVV, Vault
+   path or card secret. Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.
    Reclamation emits a dedicated audit event containing claim/context counts and

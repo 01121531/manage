@@ -253,6 +253,24 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed append-only claim-location ledger for revision 0041. Keep the
+    # source trigger and both ledger mutation guards exact.
+    reviewed_card_claim_mutation_triggers = (
+        r"CREATE TRIGGER POOL_IMPORT_CARD_CLAIM_MUTATIONS_RECORD AFTER UPDATE "
+        r"OF CONTEXT_ID, POSITION ON POOL_IMPORT_CARD_IDENTITY_CLAIMS FOR EACH "
+        r"ROW EXECUTE FUNCTION POOL_IMPORT_CARD_CLAIM_MUTATIONS_RECORD\(\);?",
+        r"CREATE TRIGGER POOL_IMPORT_CARD_CLAIM_MUTATIONS_NO_UPDATE BEFORE "
+        r"UPDATE ON POOL_IMPORT_CARD_CLAIM_MUTATIONS FOR EACH ROW EXECUTE "
+        r"FUNCTION POOL_IMPORT_CARD_CLAIM_MUTATIONS_PREVENT_MUTATION\(\);?",
+        r"CREATE TRIGGER POOL_IMPORT_CARD_CLAIM_MUTATIONS_NO_DELETE BEFORE "
+        r"DELETE ON POOL_IMPORT_CARD_CLAIM_MUTATIONS FOR EACH ROW EXECUTE "
+        r"FUNCTION POOL_IMPORT_CARD_CLAIM_MUTATIONS_PREVENT_MUTATION\(\);?",
+    )
+    if any(
+        re.fullmatch(pattern, code)
+        for pattern in reviewed_card_claim_mutation_triggers
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

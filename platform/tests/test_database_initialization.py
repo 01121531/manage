@@ -52,6 +52,10 @@ class DatabaseInitializationTests(unittest.TestCase):
             patch(
                 "platform.database._install_card_event_append_only_constraints"
             ) as install_card_events,
+            patch(
+                "platform.database."
+                "_install_card_claim_mutation_ledger_constraints"
+            ) as install_card_claim_mutations,
         ):
             app = create_app(
                 production_settings(),
@@ -62,6 +66,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             create_all.assert_not_called()
             install.assert_not_called()
             install_card_events.assert_not_called()
+            install_card_claim_mutations.assert_not_called()
             self.assertEqual(inspect(app.state.engine).get_table_names(), [])
         finally:
             app.state.engine.dispose()
@@ -73,6 +78,10 @@ class DatabaseInitializationTests(unittest.TestCase):
             patch(
                 "platform.database._install_card_event_append_only_constraints"
             ) as install_card_events,
+            patch(
+                "platform.database."
+                "_install_card_claim_mutation_ledger_constraints"
+            ) as install_card_claim_mutations,
         ):
             engine, _ = initialize_database(
                 "sqlite+pysqlite:///:memory:", create_schema=True
@@ -81,6 +90,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             create_all.assert_called_once_with(engine)
             install.assert_called_once_with(engine)
             install_card_events.assert_called_once_with(engine)
+            install_card_claim_mutations.assert_called_once_with(engine)
         finally:
             engine.dispose()
 

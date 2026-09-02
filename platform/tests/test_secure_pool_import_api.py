@@ -19,6 +19,7 @@ from platform.models import (
     AuditEvent,
     Card,
     Mailbox,
+    PoolImportCardClaimMutation,
     PoolImportCardIdentityClaim,
     PoolImportContext,
     PoolImportReceipt,
@@ -846,6 +847,22 @@ class SecurePoolImportApiTests(unittest.TestCase):
                 audit.details_json,
             )
             self.assertNotIn(original_context["context_token"], audit.details_json)
+            mutations = list(db.scalars(select(PoolImportCardClaimMutation)))
+            self.assertEqual(len(mutations), 1)
+            mutation = mutations[0]
+            self.assertEqual(mutation.tenant_id, "tenant-a")
+            self.assertEqual(
+                mutation.source_context_id,
+                original_context["receipt_id"],
+            )
+            self.assertEqual(
+                mutation.destination_context_id,
+                replacement.json()["receipt_id"],
+            )
+            self.assertEqual(
+                mutation.destination_trace_id,
+                replacement.headers["X-Trace-Id"],
+            )
 
     def test_consumed_card_identity_claim_is_not_reclaimed(self) -> None:
         payload = [{

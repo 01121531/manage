@@ -1,5 +1,5 @@
 {
-  "schema_version": 34,
+  "schema_version": 35,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -243,6 +243,7 @@
       "claim_insert_order": "ascending_provider_ref_with_manifest_position_preserved",
       "delete_policy": "database_forbidden_reclamation_transfers_existing_claim",
       "identity_mutation_policy": "database_forbidden_tenant_and_provider_ref_after_insert",
+      "claim_mutation_ledger": "database_generated_append_only_context_and_position_transition_evidence_without_provider_ref_or_card_secret",
       "reclamation_audit": "claim_and_context_counts_plus_context_id_sha256_without_provider_refs",
       "consumed_claim": "retained_as_permanent_identity_guard",
       "final_import_binding": "ordered_provider_refs_must_match_context_claims"

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0040_card_claim_identity_immutable"
+CURRENT = "0041_card_claim_mutation_ledger"
 
 
 class MigrationReadinessTests(unittest.TestCase):

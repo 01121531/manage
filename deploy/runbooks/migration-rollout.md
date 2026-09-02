@@ -85,6 +85,18 @@ audit event. Mailbox imports do not use card identity claims and may continue.
 If the application rolls back, keep 0040 installed; do not downgrade the
 database to permit identity mutation.
 
+Revision `0041_card_claim_mutation_ledger` adds the append-only
+`pool_import_card_claim_mutations` table and an `AFTER UPDATE` trigger that
+records every card claim `context_id` or `position` change without storing the
+provider reference or any card secret. Both the 0040 application and the new
+application are compatible with the trigger because the database writes the
+ledger automatically. Pause card secure imports during the DDL window, install
+0041, then prove a direct claim transfer creates exactly one row, attempts to
+update or delete that row fail, and a normal expired-claim reclamation produces
+both its aggregate audit event and correlated ledger row. Mailbox imports do
+not use either table and may continue. Keep 0041 installed on application
+rollback; do not downgrade away the mutation evidence.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

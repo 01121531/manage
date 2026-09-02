@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0040_card_claim_identity_immutable"
+down_revision = "0041_card_claim_mutation_ledger"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0040_card_claim_identity_immutable"
+down_revision = "0041_card_claim_mutation_ledger"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0040_card_claim_identity_immutable"',
+            'down_revision = "0041_card_claim_mutation_ledger"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -355,6 +355,23 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'pool_import_card_identity_claims FOR EACH ROW EXECUTE FUNCTION '
                 'pool_import_card_identity_claims_prevent_identity_change(); SELECT 1")'
             ),
+            "card claim mutation record wrong target": (
+                'op.execute("CREATE TRIGGER pool_import_card_claim_mutations_record '
+                'AFTER UPDATE OF context_id, position ON users FOR EACH ROW '
+                'EXECUTE FUNCTION pool_import_card_claim_mutations_record()")'
+            ),
+            "card claim mutation guard wrong event": (
+                'op.execute("CREATE TRIGGER pool_import_card_claim_mutations_no_update '
+                'BEFORE INSERT ON pool_import_card_claim_mutations FOR EACH ROW '
+                'EXECUTE FUNCTION '
+                'pool_import_card_claim_mutations_prevent_mutation()")'
+            ),
+            "card claim mutation guard statement suffix": (
+                'op.execute("CREATE TRIGGER pool_import_card_claim_mutations_no_delete '
+                'BEFORE DELETE ON pool_import_card_claim_mutations FOR EACH ROW '
+                'EXECUTE FUNCTION '
+                'pool_import_card_claim_mutations_prevent_mutation(); SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -365,7 +382,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0040_card_claim_identity_immutable"
+down_revision = "0041_card_claim_mutation_ledger"
 def upgrade():
     {body}
 def downgrade():
