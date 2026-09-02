@@ -268,6 +268,45 @@ class PoolImportContextCreate(BaseModel):
     pool_type: Literal["card", "mailbox"]
     ordered_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     item_count: int = Field(ge=1, le=100)
+    card_provider_refs: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
+
+    @field_validator("card_provider_refs", mode="before")
+    @classmethod
+    def normalize_card_provider_refs(cls, value: object) -> object:
+        if value is None or not isinstance(value, list):
+            return value
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("card provider references must be strings")
+            provider_ref = item.strip()
+            if (
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", provider_ref)
+                is None
+                or _contains_pan_like_digits(provider_ref)
+            ):
+                raise ValueError("card provider reference is invalid")
+            normalized.append(provider_ref)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_pool_identity_fields(self) -> "PoolImportContextCreate":
+        if self.pool_type == "card":
+            if (
+                self.card_provider_refs is None
+                or len(self.card_provider_refs) != self.item_count
+                or len(set(self.card_provider_refs)) != len(self.card_provider_refs)
+            ):
+                raise ValueError(
+                    "card imports require one unique provider reference per item"
+                )
+        elif self.card_provider_refs is not None:
+            raise ValueError("mailbox imports must not include card provider references")
+        return self
 
 
 class PoolImportContextResponse(BaseModel):

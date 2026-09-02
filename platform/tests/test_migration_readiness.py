@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0036_pool_import_contexts"
+CURRENT = "0037_pool_import_card_identity_claims"
 
 
 class MigrationReadinessTests(unittest.TestCase):

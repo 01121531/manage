@@ -24,6 +24,7 @@ secure_pool_import = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = secure_pool_import
 SPEC.loader.exec_module(secure_pool_import)
 READ_PLATFORM_ACCESS_TOKEN = secure_pool_import._read_platform_access_token
+PLATFORM_ISSUE_CONTEXT = secure_pool_import.PlatformClient.issue_context
 PRIVATE_FILE_PERMISSION_FINGERPRINT = (
     secure_pool_import._private_file_permission_fingerprint
 )
@@ -38,7 +39,14 @@ class SecurePoolImportCliTests(unittest.TestCase):
             pool_type: str,
             digest: str,
             item_count: int,
+            *,
+            card_provider_refs: list[str] | None = None,
         ) -> object:
+            if pool_type == "card":
+                self.assertIsNotNone(card_provider_refs)
+                self.assertEqual(len(card_provider_refs or []), item_count)
+            else:
+                self.assertIsNone(card_provider_refs)
             context = secure_pool_import.PoolImportContext(
                 schema_version=1,
                 context_token="c" * 43,
@@ -425,6 +433,104 @@ class SecurePoolImportCliTests(unittest.TestCase):
             read_platform_token.assert_not_called()
             self.assertFalse(receipt_output.exists())
             self.assertFalse(execution_directory.exists())
+
+    def test_card_context_preflight_receives_normalized_provider_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_file = root / "input.json"
+            receipt_output = root / "receipt.json"
+            execution_directory = root / "execution"
+            input_file.write_text(
+                json.dumps([{
+                    "provider_ref": "  provider-preflight  ",
+                    "brand": "Visa",
+                    "pan": "4111111111111111",
+                }]),
+                encoding="utf-8",
+            )
+            captured: dict[str, object] = {}
+
+            def reject_context(*args: object, **kwargs: object) -> object:
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+                raise secure_pool_import.ImportFailure(
+                    "Platform rejected card identity preflight"
+                )
+
+            with patch.object(
+                secure_pool_import.PlatformClient,
+                "issue_context",
+                new=reject_context,
+            ), patch.object(
+                secure_pool_import,
+                "VaultClient",
+                side_effect=AssertionError("Vault client must not be created"),
+            ), self.assertRaisesRegex(
+                secure_pool_import.ImportFailure,
+                "^Platform rejected card identity preflight$",
+            ):
+                secure_pool_import.run(
+                    self._args(
+                        input_file=str(input_file.resolve()),
+                        receipt_output=str(receipt_output.resolve()),
+                        execution_directory=str(execution_directory.resolve()),
+                    )
+                )
+
+            self.assertEqual(
+                captured.get("kwargs"),
+                {"card_provider_refs": ["provider-preflight"]},
+            )
+            self.assertFalse(receipt_output.exists())
+            self.assertFalse(execution_directory.exists())
+
+    def test_platform_card_context_request_is_secret_free_and_maps_conflict(self) -> None:
+        captured: dict[str, object] = {}
+
+        class RejectingOpener:
+            @staticmethod
+            def open(request: object, timeout: int) -> object:
+                captured["request"] = request
+                captured["timeout"] = timeout
+                raise secure_pool_import.urllib.error.HTTPError(
+                    request.full_url,
+                    409,
+                    "conflict detail must not escape",
+                    None,
+                    None,
+                )
+
+        client = secure_pool_import.PlatformClient(
+            "https://platform.example.test",
+            "platform-access-token",
+            tls_context=None,
+        )
+        client.opener = RejectingOpener()
+        with self.assertRaisesRegex(
+            secure_pool_import.ImportFailure,
+            "^Platform rejected card identity preflight$",
+        ):
+            PLATFORM_ISSUE_CONTEXT(
+                client,
+                "card",
+                "a" * 64,
+                1,
+                card_provider_refs=["provider-preflight"],
+            )
+
+        request = captured["request"]
+        self.assertEqual(captured["timeout"], 20)
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "pool_type": "card",
+                "ordered_manifest_digest": "a" * 64,
+                "item_count": 1,
+                "card_provider_refs": ["provider-preflight"],
+            },
+        )
+        self.assertNotIn("pan", request.data.decode("ascii").lower())
+        self.assertNotIn("password", request.data.decode("ascii").lower())
 
     def test_parsers_reject_implicit_scalar_coercion(self) -> None:
         with self.assertRaises(secure_pool_import.ImportFailure):

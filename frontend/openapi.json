@@ -2443,6 +2443,22 @@
       "PoolImportContextCreate": {
         "additionalProperties": false,
         "properties": {
+          "card_provider_refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Provider Refs"
+          },
           "item_count": {
             "maximum": 100.0,
             "minimum": 1.0,

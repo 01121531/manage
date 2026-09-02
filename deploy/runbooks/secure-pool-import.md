@@ -95,10 +95,16 @@ rejected before the first Vault or API mutation.
    secret. The API repeats that deterministic check before Transit receipt or
    target-context verification and before its database transaction. Do not use
    masked mailbox addresses as a uniqueness key: distinct accounts can share the
-   same safe display mask. The CLI sends only the pool type, ordered masked
-   manifest digest and item count to `POST /api/v1/admin/pool-import-contexts`;
-   it never sends PAN or mailbox credentials. The target platform supplies the
-   authoritative tenant, audience and receipt UUID. Any mismatch stops before
+   same safe display mask. The CLI sends the pool type, ordered masked manifest
+   digest and item count to `POST /api/v1/admin/pool-import-contexts`; for cards
+   it also sends the normalized, secret-free `provider_ref` list, while mailbox
+   requests never send card identities. It never sends PAN or mailbox
+   credentials. The target rejects a card identity already stored or claimed in
+   the tenant, then atomically records every new claim before the CLI can create
+   execution evidence or log into Vault. Expired unconsumed claims may be taken
+   by a later context; consumed claims remain as an identity guard, and final
+   import must match the context's ordered claims. The target platform supplies
+   the authoritative tenant, audience and receipt UUID. Any mismatch stops before
    the AppRole files are read, the SecretID is consumed, the execution directory
    is created, or a Vault write occurs. After writing the execution plan, the
    CLI exchanges the AppRole values in memory and accepts only the exact

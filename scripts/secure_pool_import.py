@@ -744,15 +744,20 @@ class PlatformClient:
         pool_type: Literal["card", "mailbox"],
         ordered_manifest_digest: str,
         item_count: int,
+        *,
+        card_provider_refs: list[str] | None = None,
     ) -> PoolImportContext:
+        body: dict[str, object] = {
+            "pool_type": pool_type,
+            "ordered_manifest_digest": ordered_manifest_digest,
+            "item_count": item_count,
+        }
+        if pool_type == "card":
+            body["card_provider_refs"] = card_provider_refs
         request = urllib.request.Request(
             self.addr + "/api/v1/admin/pool-import-contexts",
             data=json.dumps(
-                {
-                    "pool_type": pool_type,
-                    "ordered_manifest_digest": ordered_manifest_digest,
-                    "item_count": item_count,
-                },
+                body,
                 separators=(",", ":"),
             ).encode("ascii"),
             method="POST",
@@ -770,6 +775,8 @@ class PlatformClient:
         except urllib.error.HTTPError as error:
             if error.code in {401, 403}:
                 raise ImportFailure("Platform rejected import context authorization") from None
+            if error.code == 409 and pool_type == "card":
+                raise ImportFailure("Platform rejected card identity preflight") from None
             raise ImportFailure("Platform import context request failed") from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise ImportFailure("Platform import context request failed") from None
@@ -967,7 +974,16 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         _read_platform_access_token(platform_token_path),
         tls_context=tls_context,
     )
-    context = platform_client.issue_context(pool_type, digest, len(manifest))
+    context = platform_client.issue_context(
+        pool_type,
+        digest,
+        len(manifest),
+        card_provider_refs=(
+            [str(item["provider_ref"]) for item in manifest]
+            if pool_type == "card"
+            else None
+        ),
+    )
     if (
         context.schema_version != 1
         or context.tenant_id != expected_tenant_id

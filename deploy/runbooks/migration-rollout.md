@@ -35,6 +35,19 @@ PostgreSQL-only first statement widens only `alembic_version.version_num` to
 `VARCHAR(255)` before Alembic records 0028; do not rename historical revisions
 or generalize this exception to application tables.
 
+Revision `0037_pool_import_card_identity_claims` adds only a secret-free claim
+table and index, so version N can continue serving ordinary task traffic against
+the expanded database. The card secure-import context request itself is not an
+N/N+1-compatible protocol: N does not accept `card_provider_refs`, while N+1
+requires them and binds the final import to the stored claims. Pause card
+secure-import operations for the API/CLI rollout window; mailbox imports retain
+their existing request shape. Deploy the table first, retire every N API
+instance, then distribute the N+1 importer CLI
+and resume imports only after existing-card, competing-context and final-binding
+negative probes pass. If the application rolls back to N, pause card imports
+again; N ignores the additive claims and must not be used to create a new Vault
+batch. Do not delete consumed claims during rollback or routine cleanup.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

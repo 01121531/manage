@@ -1,5 +1,5 @@
 {
-  "schema_version": 25,
+  "schema_version": 26,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -226,7 +226,17 @@
   "target_import_context": {
     "authority": "authenticated-target-platform-api",
     "administrator_access_token_file": "required_separate_absolute_stable_single_link_restricted_file",
-    "request_fields": ["pool_type", "ordered_manifest_digest", "item_count"],
+    "request_fields": ["pool_type", "ordered_manifest_digest", "item_count", "card_provider_refs"],
+    "card_provider_refs": "required_normalized_unique_and_count_bound_for_card_forbidden_for_mailbox",
+    "card_identity_claims": {
+      "storage": "secret_free_target_database_unique_tenant_provider_ref",
+      "existing_card_conflict": "rejected_before_context_issuance",
+      "active_claim_conflict": "rejected_before_context_issuance",
+      "concurrent_claim_conflict": "database_unique_constraint",
+      "expired_unconsumed_claim": "reclaimable_by_later_context",
+      "consumed_claim": "retained_as_permanent_identity_guard",
+      "final_import_binding": "ordered_provider_refs_must_match_context_claims"
+    },
     "server_authoritative_fields": ["receipt_id", "tenant_id", "audience"],
     "default_ttl_seconds": 900,
     "maximum_ttl_seconds": 3600,

@@ -2213,6 +2213,8 @@ export interface components {
         };
         /** PoolImportContextCreate */
         PoolImportContextCreate: {
+            /** Card Provider Refs */
+            card_provider_refs?: string[] | null;
             /** Item Count */
             item_count: number;
             /** Ordered Manifest Digest */

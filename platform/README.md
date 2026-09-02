@@ -49,9 +49,16 @@ The default endpoints are:
   tenant; no `secret_ref`, password, or raw mailbox configuration.
 - `POST /api/v1/admin/pool-import-contexts` — issue a short-lived, one-time,
   secret-free authorization for one exact card- or mailbox-pool manifest. The
-  caller supplies only pool type, ordered masked-manifest digest and count;
-  tenant, audience and receipt UUID are server-owned. The opaque context token
-  is stored only as SHA-256 and is consumed in the final import transaction.
+  caller supplies pool type, ordered masked-manifest digest and count. Card
+  requests additionally supply the normalized, secret-free `provider_ref` list;
+  mailbox requests must not supply card identities. Before the importer can use
+  Vault, the target rejects identities already present in the tenant card pool
+  and atomically claims every new identity through a database unique constraint.
+  An expired, unconsumed context can relinquish its claims; consumed claims stay
+  as a permanent identity guard. Final card import must match the context's
+  ordered claims. Tenant, audience and receipt UUID are server-owned. The opaque
+  context token is stored only as SHA-256 and is consumed in the final import
+  transaction.
 - `POST /api/v1/admin/mailboxes/imports` — atomically register a 1–100 item
   mailbox reference manifest containing masked records and pre-provisioned
   `vault://secret/mailboxes/` references. It is not a raw credential upload
@@ -71,10 +78,13 @@ The default endpoints are:
   Each batch must also have exact unique `provider_ref` values after the existing
   field normalization. The importer rejects duplicates before reading the
   platform token, issuing a context, using Vault, or creating local execution
-  evidence; the API independently rejects them before receipt verification or
-  database writes. It uses the same required idempotency receipt contract,
-  namespaced to the card pool. Mailbox records are not deduplicated by masked
-  address because distinct accounts can share the same display mask.
+  evidence. Context issuance then rejects an existing or already-claimed tenant
+  identity before the first Vault write; a concurrent request is closed by the
+  target database uniqueness contract. The final API independently verifies the
+  ordered claim binding before database writes. It uses the same required
+  idempotency receipt contract, namespaced to the card pool. Mailbox records are
+  not deduplicated by masked address because distinct accounts can share the
+  same display mask.
 
 The server-side Transit receipt verifier validates its Vault address before it
 reads the Vault token file or creates a request. The default constructor and

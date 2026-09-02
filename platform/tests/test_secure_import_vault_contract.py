@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 25)
+        self.assertEqual(contract["schema_version"], 26)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -383,7 +383,33 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "pool_type",
                     "ordered_manifest_digest",
                     "item_count",
+                    "card_provider_refs",
                 ],
+                "card_provider_refs": (
+                    "required_normalized_unique_and_count_bound_for_card_"
+                    "forbidden_for_mailbox"
+                ),
+                "card_identity_claims": {
+                    "storage": (
+                        "secret_free_target_database_unique_tenant_provider_ref"
+                    ),
+                    "existing_card_conflict": (
+                        "rejected_before_context_issuance"
+                    ),
+                    "active_claim_conflict": (
+                        "rejected_before_context_issuance"
+                    ),
+                    "concurrent_claim_conflict": "database_unique_constraint",
+                    "expired_unconsumed_claim": (
+                        "reclaimable_by_later_context"
+                    ),
+                    "consumed_claim": (
+                        "retained_as_permanent_identity_guard"
+                    ),
+                    "final_import_binding": (
+                        "ordered_provider_refs_must_match_context_claims"
+                    ),
+                },
                 "server_authoritative_fields": [
                     "receipt_id",
                     "tenant_id",

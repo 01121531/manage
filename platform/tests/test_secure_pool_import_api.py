@@ -16,6 +16,7 @@ from platform.models import (
     AuditEvent,
     Card,
     Mailbox,
+    PoolImportCardIdentityClaim,
     PoolImportContext,
     PoolImportReceipt,
 )
@@ -124,15 +125,20 @@ class SecurePoolImportApiTests(unittest.TestCase):
             else payload
         )
         digest = pool_import_digest(pool_type, normalized)
+        context_body: dict[str, object] = {
+            "pool_type": pool_type,
+            "ordered_manifest_digest": digest,
+            "item_count": len(payload),
+        }
+        if pool_type == "card":
+            context_body["card_provider_refs"] = [
+                item.provider_ref for item in normalized
+            ]
         issued = self.request(
             "POST",
             "/api/v1/admin/pool-import-contexts",
             headers={"Authorization": self.authorization},
-            json={
-                "pool_type": pool_type,
-                "ordered_manifest_digest": digest,
-                "item_count": len(payload),
-            },
+            json=context_body,
         )
         self.assertEqual(issued.status_code, 201, issued.text)
         context = issued.json()
@@ -164,6 +170,7 @@ class SecurePoolImportApiTests(unittest.TestCase):
                 "pool_type": "card",
                 "ordered_manifest_digest": digest,
                 "item_count": 1,
+                "card_provider_refs": ["provider-context-1"],
                 "tenant_id": "tenant-b",
                 "audience": "attacker-selected",
             },
@@ -180,6 +187,7 @@ class SecurePoolImportApiTests(unittest.TestCase):
                 "pool_type": "card",
                 "ordered_manifest_digest": digest,
                 "item_count": 1,
+                "card_provider_refs": ["provider-context-1"],
             },
         )
 
@@ -202,6 +210,278 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertEqual(row.audience, "email-platform:pool-import:test")
             self.assertNotEqual(row.context_token_hash, context["context_token"])
 
+    def test_card_context_rejects_an_existing_identity_before_creation(self) -> None:
+        payload = [{
+            "provider_ref": "provider-already-present",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        normalized = [AdminCardImportItem.model_validate(item) for item in payload]
+        with self.app.state.session_factory() as db:
+            db.add(Card(
+                tenant_id="tenant-a",
+                provider_ref="provider-already-present",
+                pool_key="checkout-cn",
+                region="cn-east",
+                brand="Visa",
+                last4="4242",
+                secret_ref="vault://secret/cards/imports/tenant/receipt/000",
+                is_active=True,
+            ))
+            db.commit()
+
+        rejected = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": pool_import_digest("card", normalized),
+                "item_count": 1,
+                "card_provider_refs": ["provider-already-present"],
+            },
+        )
+
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertNotIn("provider-already-present", rejected.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportContext)), 0
+            )
+
+    def test_card_context_reserves_identity_against_a_second_context(self) -> None:
+        payload = [{
+            "provider_ref": "provider-reserved",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        digest = pool_import_digest(
+            "card", [AdminCardImportItem.model_validate(item) for item in payload]
+        )
+        body = {
+            "pool_type": "card",
+            "ordered_manifest_digest": digest,
+            "item_count": 1,
+            "card_provider_refs": ["provider-reserved"],
+        }
+
+        first = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json=body,
+        )
+        second = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json=body,
+        )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(second.status_code, 409, second.text)
+        self.assertNotIn("provider-reserved", second.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportContext)), 1
+            )
+
+    def test_mailbox_context_rejects_card_identity_fields(self) -> None:
+        rejected = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "mailbox",
+                "ordered_manifest_digest": "a" * 64,
+                "item_count": 1,
+                "card_provider_refs": ["provider-cross-pool"],
+            },
+        )
+
+        self.assertEqual(rejected.status_code, 422, rejected.text)
+        self.assertNotIn("provider-cross-pool", rejected.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportContext)), 0
+            )
+
+    def test_card_context_requires_normalized_unique_count_bound_identities(self) -> None:
+        cases = (
+            {"item_count": 1},
+            {
+                "item_count": 2,
+                "card_provider_refs": [" provider-duplicate ", "provider-duplicate"],
+            },
+            {
+                "item_count": 2,
+                "card_provider_refs": ["provider-count-mismatch"],
+            },
+            {
+                "item_count": 1,
+                "card_provider_refs": ["4111111111111111"],
+            },
+        )
+        for extra in cases:
+            with self.subTest(extra=extra):
+                rejected = self.request(
+                    "POST",
+                    "/api/v1/admin/pool-import-contexts",
+                    headers={"Authorization": self.authorization},
+                    json={
+                        "pool_type": "card",
+                        "ordered_manifest_digest": "d" * 64,
+                        **extra,
+                    },
+                )
+                self.assertEqual(rejected.status_code, 422, rejected.text)
+                self.assertNotIn("provider-duplicate", rejected.text)
+                self.assertNotIn("4111111111111111", rejected.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportContext)), 0
+            )
+
+    def test_card_import_must_match_the_context_identity_claims(self) -> None:
+        final_payload = [{
+            "provider_ref": "provider-final-payload",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        digest = pool_import_digest(
+            "card",
+            [AdminCardImportItem.model_validate(item) for item in final_payload],
+        )
+        issued = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": digest,
+                "item_count": 1,
+                "card_provider_refs": ["provider-preflight-other"],
+            },
+        )
+        self.assertEqual(issued.status_code, 201, issued.text)
+        context = issued.json()
+
+        rejected = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=self.headers(
+                context["receipt_id"],
+                f"spi:{context['receipt_id']}",
+                context["context_token"],
+            ),
+            json=final_payload,
+        )
+
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertNotIn("provider-final-payload", rejected.text)
+        self.assertNotIn("provider-preflight-other", rejected.text)
+        self.assertEqual(self.verifier.calls, 1)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 0)
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)), 0
+            )
+            stored = db.get(PoolImportContext, context["receipt_id"])
+            assert stored is not None
+            self.assertIsNone(stored.consumed_at)
+
+    def test_expired_unconsumed_card_identity_claim_can_be_reclaimed(self) -> None:
+        body = {
+            "pool_type": "card",
+            "ordered_manifest_digest": "b" * 64,
+            "item_count": 1,
+            "card_provider_refs": ["provider-expired-claim"],
+        }
+        first = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json=body,
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        first_context = first.json()
+        with self.app.state.session_factory() as db:
+            stored = db.get(PoolImportContext, first_context["receipt_id"])
+            assert stored is not None
+            stored.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            db.commit()
+
+        replacement = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json=body,
+        )
+
+        self.assertEqual(replacement.status_code, 201, replacement.text)
+        self.assertNotEqual(
+            replacement.json()["receipt_id"], first_context["receipt_id"]
+        )
+        lost_renewal = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts/renew",
+            headers={
+                "Authorization": self.authorization,
+                "Secure-Import-Context": first_context["context_token"],
+            },
+        )
+        self.assertEqual(lost_renewal.status_code, 409, lost_renewal.text)
+        with self.app.state.session_factory() as db:
+            claims = list(db.scalars(select(PoolImportCardIdentityClaim)))
+            self.assertEqual(len(claims), 1)
+            self.assertEqual(
+                claims[0].context_id, replacement.json()["receipt_id"]
+            )
+
+    def test_consumed_card_identity_claim_is_not_reclaimed(self) -> None:
+        payload = [{
+            "provider_ref": "provider-consumed-claim",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        _, import_headers = self.import_headers("card", payload)
+        imported = self.request(
+            "POST",
+            "/api/v1/admin/cards/imports",
+            headers=import_headers,
+            json=payload,
+        )
+        self.assertEqual(imported.status_code, 201, imported.text)
+        rejected = self.request(
+            "POST",
+            "/api/v1/admin/pool-import-contexts",
+            headers={"Authorization": self.authorization},
+            json={
+                "pool_type": "card",
+                "ordered_manifest_digest": "c" * 64,
+                "item_count": 1,
+                "card_provider_refs": ["provider-consumed-claim"],
+            },
+        )
+
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertNotIn("provider-consumed-claim", rejected.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(PoolImportCardIdentityClaim)
+                ),
+                1,
+            )
+
     def test_expired_context_can_be_idempotently_renewed_within_bounded_window(self) -> None:
         digest = "a" * 64
         issued = self.request(
@@ -209,7 +489,7 @@ class SecurePoolImportApiTests(unittest.TestCase):
             "/api/v1/admin/pool-import-contexts",
             headers={"Authorization": self.authorization},
             json={
-                "pool_type": "card",
+                "pool_type": "mailbox",
                 "ordered_manifest_digest": digest,
                 "item_count": 1,
             },

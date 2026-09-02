@@ -95,6 +95,7 @@ from platform.models import (
     OutboxEvent,
     OperationalPolicyDeployment,
     OperationalPolicyVersion,
+    PoolImportCardIdentityClaim,
     PoolImportContext,
     PoolImportReceipt,
     SecurePoolImportConsumption,
@@ -5753,6 +5754,39 @@ def admin_create_pool_import_context(
     db: Session = Depends(get_db),
 ) -> PoolImportContextResponse:
     now = _utc_now()
+    card_provider_refs = payload.card_provider_refs or []
+    if payload.pool_type == "card":
+        expired_context_ids = select(PoolImportContext.id).where(
+            PoolImportContext.expires_at <= now,
+            PoolImportContext.consumed_at.is_(None),
+            PoolImportContext.pool_import_receipt_id.is_(None),
+        )
+        db.execute(
+            delete(PoolImportCardIdentityClaim).where(
+                PoolImportCardIdentityClaim.context_id.in_(expired_context_ids)
+            )
+        )
+        existing_card = db.scalar(
+            select(Card.id)
+            .where(
+                Card.tenant_id == principal.tenant_id,
+                Card.provider_ref.in_(card_provider_refs),
+            )
+            .limit(1)
+        )
+        existing_claim = db.scalar(
+            select(PoolImportCardIdentityClaim.context_id)
+            .where(
+                PoolImportCardIdentityClaim.tenant_id == principal.tenant_id,
+                PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
+            )
+            .limit(1)
+        )
+        if existing_card is not None or existing_claim is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Card identities are already in use",
+            )
     context_token = secrets.token_urlsafe(32)
     context = PoolImportContext(
         id=new_id(),
@@ -5772,6 +5806,25 @@ def admin_create_pool_import_context(
         ),
     )
     db.add(context)
+    db.flush()
+    if payload.pool_type == "card":
+        try:
+            db.add_all([
+                PoolImportCardIdentityClaim(
+                    context_id=context.id,
+                    position=position,
+                    tenant_id=principal.tenant_id,
+                    provider_ref=provider_ref,
+                )
+                for position, provider_ref in enumerate(card_provider_refs)
+            ])
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Card identities are already in use",
+            ) from None
     record_audit(
         db,
         tenant_id=principal.tenant_id,
@@ -5984,6 +6037,7 @@ def _verify_pool_import_context(
     request_digest: str,
     item_count: int,
     receipt_id: str,
+    card_provider_refs: list[str] | None,
 ) -> PoolImportContext | None:
     if token is None:
         raise HTTPException(status_code=422, detail="Secure import context is required")
@@ -5999,6 +6053,7 @@ def _verify_pool_import_context(
             ordered_manifest_digest=request_digest,
             item_count=item_count,
             receipt_id=receipt_id,
+            card_provider_refs=card_provider_refs,
         )
     except PoolImportContextExpired:
         raise HTTPException(status_code=410, detail="Secure import context has expired") from None
@@ -6297,6 +6352,7 @@ def admin_import_cards(
         request_digest=request_digest,
         item_count=len(payload),
         receipt_id=verified_receipt.receipt_id,
+        card_provider_refs=[item.provider_ref for item in payload],
     )
     receipt = PoolImportReceipt(
         id=new_id(),
@@ -7355,6 +7411,7 @@ def admin_import_mailboxes(
         request_digest=request_digest,
         item_count=len(payload),
         receipt_id=verified_receipt.receipt_id,
+        card_provider_refs=None,
     )
     receipt = PoolImportReceipt(
         id=new_id(),

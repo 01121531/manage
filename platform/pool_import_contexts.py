@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from platform.models import PoolImportContext
+from platform.models import PoolImportCardIdentityClaim, PoolImportContext
 
 
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
@@ -54,6 +55,14 @@ def _aware_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
+def _claimed_card_provider_refs(db: Session, context_id: str) -> list[str]:
+    return list(db.scalars(
+        select(PoolImportCardIdentityClaim.provider_ref)
+        .where(PoolImportCardIdentityClaim.context_id == context_id)
+        .order_by(PoolImportCardIdentityClaim.position)
+    ))
+
+
 def renew_pool_import_context(
     db: Session,
     token: str,
@@ -87,6 +96,13 @@ def renew_pool_import_context(
         raise PoolImportContextBindingMismatch(
             "Secure import context does not match this caller"
         )
+    if (
+        context.pool_type == "card"
+        and len(_claimed_card_provider_refs(db, context.id)) != context.item_count
+    ):
+        raise PoolImportContextBindingMismatch(
+            "Secure import context no longer owns its card identities"
+        )
     current = _aware_utc(now)
     renewal_deadline = _aware_utc(context.created_at) + timedelta(
         seconds=renewal_window_seconds
@@ -116,6 +132,7 @@ class PoolImportContextVerifier(Protocol):
         ordered_manifest_digest: str,
         item_count: int,
         receipt_id: str,
+        card_provider_refs: Sequence[str] | None,
     ) -> PoolImportContext | None: ...
 
 
@@ -136,6 +153,7 @@ class DatabasePoolImportContextVerifier:
         ordered_manifest_digest: str,
         item_count: int,
         receipt_id: str,
+        card_provider_refs: Sequence[str] | None,
     ) -> PoolImportContext:
         token_hash = pool_import_context_token_hash(token)
         context = db.scalar(
@@ -160,6 +178,19 @@ class DatabasePoolImportContextVerifier:
             or context.ordered_manifest_digest != ordered_manifest_digest
             or context.item_count != item_count
         ):
+            raise PoolImportContextBindingMismatch(
+                "Secure import context does not match this import"
+            )
+        if pool_type == "card":
+            if (
+                card_provider_refs is None
+                or _claimed_card_provider_refs(db, context.id)
+                != list(card_provider_refs)
+            ):
+                raise PoolImportContextBindingMismatch(
+                    "Secure import context does not match this import"
+                )
+        elif card_provider_refs is not None:
             raise PoolImportContextBindingMismatch(
                 "Secure import context does not match this import"
             )

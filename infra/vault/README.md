@@ -103,8 +103,15 @@ writes no remote or local state when a card batch repeats an exact normalized
 context request, Vault login, execution directory, or secret write. The API
 performs the same check again before receipt verification or database writes.
 Mailbox records are not deduplicated by masked address because different
-accounts can have the same safe display value. The importer then
-writes each secret to its deterministic KV v2 path with `cas=0`, and asks the
+accounts can have the same safe display value. For card imports, the context
+request carries only the normalized `provider_ref` list in addition to the
+secret-free digest and count. The target rejects an identity already stored or
+claimed for that tenant and persists all claims under a unique tenant/reference
+constraint before the importer creates execution evidence or logs into Vault.
+Expired unconsumed claims are reclaimable; consumed claims remain an identity
+guard, and final submission must match the ordered claims. Mailbox contexts do
+not carry card identity fields. The importer then writes each secret to its
+deterministic KV v2 path with `cas=0`, and asks the
 pool-specific Vault Transit key to sign a five-minute, secret-free receipt. Its
 output JSON contains `schema_version: 3`, an explicit `pool_type`, a stable
 `submission_key` derived from the signed receipt UUID, the `receipt_token`, and

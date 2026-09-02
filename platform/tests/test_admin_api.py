@@ -93,8 +93,9 @@ class _AdminTestPoolImportContextVerifier:
         ordered_manifest_digest: str,
         item_count: int,
         receipt_id: str,
+        card_provider_refs: list[str] | None,
     ) -> None:
-        del user_id, device_id, audience, item_count
+        del user_id, device_id, audience, item_count, card_provider_refs
         expected = str(uuid5(
             NAMESPACE_URL,
             f"{tenant_id}:{pool_type}:{ordered_manifest_digest}",

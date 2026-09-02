@@ -228,6 +228,31 @@ class PoolImportContext(Base):
     )
 
 
+class PoolImportCardIdentityClaim(Base):
+    """A target-side claim that precedes any Vault card-secret write."""
+
+    __tablename__ = "pool_import_card_identity_claims"
+    __table_args__ = (
+        CheckConstraint(
+            "position >= 0 AND position < 100",
+            name="ck_pool_import_card_identity_claims_position",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "provider_ref",
+            name="uq_pool_import_card_identity_claims_tenant_provider",
+        ),
+    )
+
+    context_id: Mapped[str] = mapped_column(
+        ForeignKey("pool_import_contexts.id"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    provider_ref: Mapped[str] = mapped_column(String(160))
+
+
 class SecurePoolImportConsumption(Base):
     """Atomic, globally one-time consumption of a signed Vault receipt."""
 
