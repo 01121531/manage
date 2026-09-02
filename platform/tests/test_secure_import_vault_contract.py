@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 23)
+        self.assertEqual(contract["schema_version"], 24)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -244,6 +244,20 @@ class SecureImportVaultContractTests(unittest.TestCase):
             contract["runtime_oidc_jwks_tls_trust_boundary"],
             {
                 "applies_to": ["oidc_access_token_verifier"],
+                "issuer_url": (
+                    "exact_http_or_https_url_without_userinfo_query_fragment_"
+                    "controls_or_trimming"
+                ),
+                "jwks_url": (
+                    "exact_keycloak_protocol_openid_connect_certs_url_"
+                    "derived_from_issuer"
+                ),
+                "managed_environment_scheme": "https_only",
+                "endpoint_maximum_characters": 2048,
+                "endpoint_validation": (
+                    "before_ca_read_database_initialization_or_jwks_client_"
+                    "publication"
+                ),
                 "configured_source": "PLATFORM_INTERNAL_CA_FILE",
                 "configured_path": "absolute_stable_runtime_regular_file",
                 "projected_volume_symlink": (
@@ -259,6 +273,16 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "before_database_initialization_or_jwks_client_publication"
                 ),
                 "ca_rotation": "restart_process_to_build_new_context",
+                "proxy_inheritance": False,
+                "redirects": "rejected",
+                "request_timeout_seconds": 10,
+                "response_maximum_bytes": 65536,
+                "response_json": (
+                    "strict_utf8_object_with_duplicate_keys_rejected"
+                ),
+                "invalid_response": "fixed_secret_free_oidc_jwks_error",
+                "jwk_set_cache_seconds": 300,
+                "signing_key_cache_without_ttl": False,
             },
         )
         self.assertEqual(

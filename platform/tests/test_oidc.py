@@ -3,6 +3,7 @@ from pathlib import Path
 import ssl
 import stat
 import unittest
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -134,6 +135,151 @@ class OidcVerifierTests(unittest.TestCase):
                         )
             jwks_client.assert_not_called()
 
+    def test_constructor_rejects_unbound_or_ambiguous_oidc_endpoints(self) -> None:
+        invalid_endpoints = (
+            (
+                f" {self.issuer}",
+                f"{self.issuer}/protocol/openid-connect/certs",
+            ),
+            (
+                "https://operator@identity.example.test/realms/email-platform",
+                "https://operator@identity.example.test/realms/email-platform/"
+                "protocol/openid-connect/certs",
+            ),
+            (
+                f"{self.issuer}?tenant=other",
+                f"{self.issuer}/protocol/openid-connect/certs",
+            ),
+            (
+                self.issuer,
+                "https://keys.example.test/realms/email-platform/"
+                "protocol/openid-connect/certs",
+            ),
+            (
+                self.issuer,
+                f"{self.issuer}/protocol/openid-connect/certs?source=other",
+            ),
+            (
+                self.issuer,
+                f"{self.issuer}/protocol/openid-connect/other-certs",
+            ),
+        )
+        with patch("platform.auth.PyJWKClient") as jwks_client:
+            for issuer, jwks_url in invalid_endpoints:
+                with self.subTest(issuer=issuer, jwks_url=jwks_url):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "^OIDC endpoint configuration is invalid$",
+                    ):
+                        OidcAccessTokenVerifier(
+                            issuer=issuer,
+                            audience="email-platform-api",
+                            jwks_url=jwks_url,
+                            allowed_client_ids=(
+                                self.web_client_id,
+                                self.desktop_client_id,
+                            ),
+                        )
+            jwks_client.assert_not_called()
+
+    def test_jwks_transport_disables_proxy_redirects_and_nonexpiring_key_cache(
+        self,
+    ) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, size: int) -> bytes:
+                self.read_size = size
+                return b'{"keys":[]}'
+
+        response = Response()
+        opener = unittest.mock.Mock()
+        opener.open.return_value = response
+        with patch(
+            "platform.auth.urllib.request.build_opener",
+            return_value=opener,
+        ) as build_opener:
+            verifier = OidcAccessTokenVerifier(
+                issuer=self.issuer,
+                audience="email-platform-api",
+                jwks_url=f"{self.issuer}/protocol/openid-connect/certs",
+                allowed_client_ids=(self.web_client_id, self.desktop_client_id),
+            )
+
+        handlers = build_opener.call_args.args
+        proxy_handler = next(
+            handler
+            for handler in handlers
+            if isinstance(handler, urllib.request.ProxyHandler)
+        )
+        redirect_handler = next(
+            handler
+            for handler in handlers
+            if isinstance(handler, urllib.request.HTTPRedirectHandler)
+        )
+        self.assertEqual(proxy_handler.proxies, {})
+        self.assertIsNone(
+            redirect_handler.redirect_request(
+                None, None, 302, "", {}, "https://other"
+            )
+        )
+        self.assertFalse(hasattr(verifier.jwks_client.get_signing_key, "cache_info"))
+
+        self.assertEqual(verifier.jwks_client.fetch_data(), {"keys": []})
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            f"{self.issuer}/protocol/openid-connect/certs",
+        )
+        self.assertEqual(opener.open.call_args.kwargs, {"timeout": 10})
+        self.assertEqual(response.read_size, 64 * 1024 + 1)
+
+    def test_jwks_transport_rejects_oversized_or_duplicate_json(self) -> None:
+        class Response:
+            def __init__(self, raw: bytes) -> None:
+                self.raw = raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, _size: int) -> bytes:
+                return self.raw
+
+        for raw in (
+            b"x" * (64 * 1024 + 1),
+            b'{"keys":[],"keys":[]}',
+        ):
+            with self.subTest(size=len(raw)):
+                opener = unittest.mock.Mock()
+                opener.open.return_value = Response(raw)
+                with patch(
+                    "platform.auth.urllib.request.build_opener",
+                    return_value=opener,
+                ):
+                    verifier = OidcAccessTokenVerifier(
+                        issuer=self.issuer,
+                        audience="email-platform-api",
+                        jwks_url=(
+                            f"{self.issuer}/protocol/openid-connect/certs"
+                        ),
+                        allowed_client_ids=(
+                            self.web_client_id,
+                            self.desktop_client_id,
+                        ),
+                    )
+                with self.assertRaisesRegex(
+                    jwt.PyJWKClientConnectionError,
+                    "^OIDC JWKS endpoint is unavailable or invalid$",
+                ):
+                    verifier.jwks_client.fetch_data()
+
     def test_app_wires_the_web_and_desktop_clients_into_the_verifier(self) -> None:
         app = create_app(
             Settings(
@@ -246,9 +392,9 @@ class OidcVerifierTests(unittest.TestCase):
                 side_effect=read_ca,
             ),
             patch("ssl.create_default_context", side_effect=create_context),
-            patch("platform.auth.PyJWKClient") as jwks_client,
+            patch("platform.auth.urllib.request.build_opener") as build_opener,
         ):
-            OidcAccessTokenVerifier(
+            verifier = OidcAccessTokenVerifier(
                 issuer=self.issuer,
                 audience="email-platform-api",
                 jwks_url=f"{self.issuer}/protocol/openid-connect/certs",
@@ -260,11 +406,13 @@ class OidcVerifierTests(unittest.TestCase):
         self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
         self.assertTrue(context.check_hostname)
         self.assertGreaterEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
-        jwks_client.assert_called_once_with(
-            f"{self.issuer}/protocol/openid-connect/certs",
-            cache_keys=True,
-            ssl_context=context,
+        https_handler = next(
+            handler
+            for handler in build_opener.call_args.args
+            if isinstance(handler, urllib.request.HTTPSHandler)
         )
+        self.assertIs(https_handler._context, context)
+        self.assertIs(verifier.jwks_client.ssl_context, context)
 
     def test_internal_ca_failure_is_fixed_and_secret_free(self) -> None:
         private_path = str(

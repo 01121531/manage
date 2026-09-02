@@ -193,6 +193,13 @@ only RS256 and validates issuer, audience, expiry, subject, `tenant_id`,
 client; user, role and device are then revalidated from the platform DB. Tokens
 from another realm client are rejected before device activity or business writes
 even if that client obtained the API audience.
+The configured JWKS URL must be the exact Keycloak
+`<issuer>/protocol/openid-connect/certs` endpoint. Managed environments require
+HTTPS for both values. JWKS retrieval uses a ten-second, proxy-free,
+no-redirect opener and accepts at most 64 KiB of strict UTF-8 JSON with no
+duplicate keys. The JWK set is cached for five minutes, but individual signing
+keys are not cached without a TTL, so reviewed Keycloak rotation is observed at
+that bounded refresh boundary.
 Logout always persists the exact bearer SHA-256. For OIDC tokens with a valid
 optional `sid`, it also persists a domain-separated SHA-256 over issuer and sid,
 so sibling access tokens from the same identity-provider session are rejected.

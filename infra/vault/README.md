@@ -154,6 +154,12 @@ internal-CA context. It passes only in-memory PEM to a hostname-verifying TLS
 invalid` result, and constructs the verifier before database initialization.
 This shared runtime material boundary does not merge the OIDC and Vault
 recipient identities, credentials, policies, or network destinations.
+The OIDC recipient remains separately pinned to the exact Keycloak
+`<issuer>/protocol/openid-connect/certs` URL. Its opener ignores inherited
+proxies, rejects redirects, applies a ten-second timeout and caps strict JSON at
+64 KiB. The JWK-set cache lasts five minutes while the non-expiring per-key
+cache remains disabled, so a reviewed key rotation has a finite local refresh
+boundary.
 
 Example (the input, target-platform token, pool-specific AppRole RoleID and
 single-use SecretID, optional CA, execution directory, and output use distinct

@@ -86,7 +86,10 @@ class OriginPolicyTests(unittest.TestCase):
             oidc_audience="platform-api",
             oidc_client_id="platform-web",
             oidc_desktop_client_id="platform-desktop",
-            oidc_jwks_url="https://identity.example/realms/platform/certs",
+            oidc_jwks_url=(
+                "https://identity.example/realms/platform/"
+                "protocol/openid-connect/certs"
+            ),
             internal_ca_file="/run/secrets/internal-tls/ca.crt",
             rate_limit_enabled=True,
             redis_url="redis://localhost:6379/0",

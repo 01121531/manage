@@ -80,6 +80,18 @@ detail. Replace the projected bundle using the approved mount semantics and
 restart the affected API or worker; the live verifier does not mutate its trust
 context in place.
 
+Treat the OIDC issuer and JWKS endpoint as one recipient identity. The JWKS URL
+must be exactly `<issuer>/protocol/openid-connect/certs`; neither URL may contain
+userinfo, query, fragment, controls, surrounding whitespace or a non-HTTP(S)
+scheme, and production/staging require HTTPS. Validate this pair before reading
+the CA or initializing the database. JWKS retrieval must not inherit proxy
+settings or follow redirects, uses a ten-second timeout, and reads no more than
+64 KiB of strict UTF-8 JSON with duplicate keys rejected. Cache the complete JWK
+set for at most five minutes and do not enable PyJWT's non-expiring per-key
+cache.
+After a Keycloak signing-key rotation, wait for or restart past that bounded
+cache before claiming the old key is no longer accepted.
+
 `redis.conf` must include `appendonly yes` and
 `aclfile /run/secrets/redis/users.acl`. The external ACL file must disable the
 default user, give the application user only the required key patterns and

@@ -178,6 +178,33 @@ class DatabaseInitializationTests(unittest.TestCase):
         self.assertNotIn("private OIDC CA path detail", str(raised.exception))
         initialize.assert_not_called()
 
+    def test_unbound_oidc_jwks_fails_before_database_initialization(self) -> None:
+        settings = production_settings().model_copy(
+            update={
+                "oidc_jwks_url": (
+                    "https://keys.example.test/realms/platform/"
+                    "protocol/openid-connect/certs"
+                )
+            }
+        )
+        with (
+            patch(
+                "platform.app.initialize_database",
+                side_effect=AssertionError("database must not be initialized"),
+            ) as initialize,
+            self.assertRaisesRegex(
+                RuntimeError,
+                "^OIDC endpoint configuration is invalid$",
+            ),
+        ):
+            create_app(
+                settings,
+                access_token_verifier=object(),
+                secret_resolver=FalseySecretResolver(),
+            )
+
+        initialize.assert_not_called()
+
     def test_explicit_falsey_secret_resolver_replaces_default_vault(self) -> None:
         resolver = FalseySecretResolver()
         app = create_app(

@@ -1,5 +1,5 @@
 {
-  "schema_version": 23,
+  "schema_version": 24,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -138,6 +138,11 @@
   },
   "runtime_oidc_jwks_tls_trust_boundary": {
     "applies_to": ["oidc_access_token_verifier"],
+    "issuer_url": "exact_http_or_https_url_without_userinfo_query_fragment_controls_or_trimming",
+    "jwks_url": "exact_keycloak_protocol_openid_connect_certs_url_derived_from_issuer",
+    "managed_environment_scheme": "https_only",
+    "endpoint_maximum_characters": 2048,
+    "endpoint_validation": "before_ca_read_database_initialization_or_jwks_client_publication",
     "configured_source": "PLATFORM_INTERNAL_CA_FILE",
     "configured_path": "absolute_stable_runtime_regular_file",
     "projected_volume_symlink": "allowed_when_target_snapshot_is_stable",
@@ -148,7 +153,15 @@
     "context": "in_memory_hostname_verifying_tls_1_2_or_newer",
     "invalid_input": "fixed_secret_free_oidc_tls_trust_error",
     "initialization": "before_database_initialization_or_jwks_client_publication",
-    "ca_rotation": "restart_process_to_build_new_context"
+    "ca_rotation": "restart_process_to_build_new_context",
+    "proxy_inheritance": false,
+    "redirects": "rejected",
+    "request_timeout_seconds": 10,
+    "response_maximum_bytes": 65536,
+    "response_json": "strict_utf8_object_with_duplicate_keys_rejected",
+    "invalid_response": "fixed_secret_free_oidc_jwks_error",
+    "jwk_set_cache_seconds": 300,
+    "signing_key_cache_without_ttl": false
   },
   "tls_trust_bundle_boundary": {
     "custom_ca_path": "absolute_direct_single_link_stable_regular_file",

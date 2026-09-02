@@ -59,7 +59,10 @@ def _production_settings(**overrides: object) -> Settings:
         "oidc_audience": "platform-api",
         "oidc_client_id": "platform-web",
         "oidc_desktop_client_id": "platform-desktop",
-        "oidc_jwks_url": "https://identity.example.test/jwks",
+        "oidc_jwks_url": (
+            "https://identity.example.test/realms/platform/"
+            "protocol/openid-connect/certs"
+        ),
         "internal_ca_file": "/run/secrets/internal-tls/ca.crt",
         "allowed_origins": "https://platform.example.test",
         "mail_poll_mode": "worker",

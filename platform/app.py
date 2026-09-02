@@ -18,7 +18,12 @@ from platform.cards import CardSecretResolver, SecretCardSecretResolver
 from platform.config import Settings, get_settings
 from platform.database import database_schema_is_current, initialize_database
 from platform.errors import http_exception_handler, validation_exception_handler
-from platform.auth import AccessTokenVerifier, LocalAccessTokenVerifier, OidcAccessTokenVerifier
+from platform.auth import (
+    AccessTokenVerifier,
+    LocalAccessTokenVerifier,
+    OidcAccessTokenVerifier,
+    validate_oidc_endpoint_pair,
+)
 from platform.middleware import (
     OriginPolicyMiddleware,
     TraceAndErrorMiddleware,
@@ -115,10 +120,20 @@ def create_app(
         missing = [name for name, value in required_oidc.items() if not value]
         if missing:
             raise RuntimeError(f"Missing OIDC configuration: {', '.join(missing)}")
+        try:
+            validate_oidc_endpoint_pair(
+                resolved_settings.oidc_issuer_url or "",
+                resolved_settings.oidc_jwks_url or "",
+            )
+        except ValueError:
+            raise RuntimeError("OIDC endpoint configuration is invalid") from None
         if managed_environment:
-            if urlsplit(resolved_settings.oidc_jwks_url or "").scheme.lower() != "https":
+            if (
+                urlsplit(resolved_settings.oidc_issuer_url or "").scheme != "https"
+                or urlsplit(resolved_settings.oidc_jwks_url or "").scheme != "https"
+            ):
                 raise RuntimeError(
-                    "PLATFORM_OIDC_JWKS_URL must use HTTPS outside development"
+                    "OIDC issuer and JWKS URLs must use HTTPS outside development"
                 )
             if not resolved_settings.internal_ca_file:
                 raise RuntimeError(

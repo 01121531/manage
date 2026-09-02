@@ -56,7 +56,10 @@ class DeviceLimitHarness:
                     "oidc_audience": "email-platform-api",
                     "oidc_client_id": "email-platform-web",
                     "oidc_desktop_client_id": "email-platform-desktop",
-                    "oidc_jwks_url": "https://identity.example.test/jwks",
+                    "oidc_jwks_url": (
+                        "https://identity.example.test/realms/platform/"
+                        "protocol/openid-connect/certs"
+                    ),
                 }
             )
             verifier = FakeOidcVerifier({})

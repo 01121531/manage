@@ -6,6 +6,9 @@ import hashlib
 import hmac
 import json
 import secrets
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
@@ -55,7 +58,105 @@ _MAX_ACCESS_TOKEN_CHARS = 8 * 1024
 _MAX_JWT_HEADER_BYTES = 2 * 1024
 _MAX_JWT_PAYLOAD_BYTES = 6 * 1024
 _MAX_JWT_SIGNATURE_BYTES = 1024
+_MAX_OIDC_ENDPOINT_CHARS = 2048
+_MAX_OIDC_JWKS_BYTES = 64 * 1024
+_OIDC_JWKS_CACHE_SECONDS = 300
+_OIDC_JWKS_TIMEOUT_SECONDS = 10
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _validated_oidc_url(value: str) -> urllib.parse.SplitResult:
+    try:
+        if (
+            type(value) is not str
+            or not value
+            or len(value) > _MAX_OIDC_ENDPOINT_CHARS
+            or value != value.strip()
+            or "\\" in value
+            or any(
+                ord(character) <= 0x20 or ord(character) == 0x7F
+                for character in value
+            )
+        ):
+            raise ValueError
+        parsed = urllib.parse.urlsplit(value)
+        hostname = parsed.hostname
+        if hostname is None or not hostname.rstrip("."):
+            raise ValueError
+        hostname.rstrip(".").encode("idna")
+        parsed.port
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError
+    except (AttributeError, UnicodeError, ValueError):
+        raise ValueError("OIDC endpoint configuration is invalid") from None
+    return parsed
+
+
+def validate_oidc_endpoint_pair(issuer: str, jwks_url: str) -> None:
+    """Validate the reviewed Keycloak issuer/JWKS relationship exactly."""
+
+    _validated_oidc_url(issuer)
+    _validated_oidc_url(jwks_url)
+    issuer_base = issuer[:-1] if issuer.endswith("/") else issuer
+    expected_jwks_url = f"{issuer_base}/protocol/openid-connect/certs"
+    if jwks_url != expected_jwks_url:
+        raise ValueError("OIDC endpoint configuration is invalid") from None
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        del request, file_pointer, code, message, headers, new_url
+        return None
+
+
+class _ControlledOidcJwksClient(PyJWKClient):
+    def __init__(
+        self,
+        uri: str,
+        *,
+        ssl_context: Any,
+    ) -> None:
+        super().__init__(
+            uri,
+            cache_keys=False,
+            cache_jwk_set=True,
+            lifespan=_OIDC_JWKS_CACHE_SECONDS,
+            timeout=_OIDC_JWKS_TIMEOUT_SECONDS,
+            ssl_context=ssl_context,
+        )
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _NoRedirectHandler(),
+            urllib.request.HTTPSHandler(context=ssl_context),
+        )
+
+    def fetch_data(self) -> dict[str, object]:
+        try:
+            request = urllib.request.Request(url=self.uri, headers=self.headers)
+            with self._opener.open(request, timeout=self.timeout) as response:
+                raw = response.read(_MAX_OIDC_JWKS_BYTES + 1)
+            if type(raw) is not bytes or len(raw) > _MAX_OIDC_JWKS_BYTES:
+                raise JsonBoundaryError("invalid JSON")
+            jwk_set = parse_unique_json_bytes(raw)
+            if not isinstance(jwk_set, dict):
+                raise JsonBoundaryError("invalid JSON")
+        except (OSError, TypeError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            raise jwt.PyJWKClientConnectionError(
+                "OIDC JWKS endpoint is unavailable or invalid"
+            ) from None
+
+        if self.jwk_set_cache is not None:
+            self.jwk_set_cache.put(jwk_set)
+        return jwk_set
 
 
 def _b64url_encode(value: bytes) -> str:
@@ -270,6 +371,7 @@ class OidcAccessTokenVerifier:
         tenant_claim: str = "tenant_id",
         device_claim: str = "device_id",
     ) -> None:
+        validate_oidc_endpoint_pair(issuer, jwks_url)
         if type(allowed_client_ids) is not tuple or not allowed_client_ids:
             raise ValueError("OIDC allowed client IDs must be a non-empty tuple")
         client_ids = allowed_client_ids
@@ -283,7 +385,7 @@ class OidcAccessTokenVerifier:
             raise ValueError("OIDC allowed client IDs must be exact non-empty strings")
         if len(set(client_ids)) != len(client_ids):
             raise ValueError("OIDC allowed client IDs must be unique")
-        self.issuer = issuer.rstrip("/")
+        self.issuer = issuer
         self.audience = audience
         self.allowed_client_ids = frozenset(client_ids)
         self.tenant_claim = tenant_claim
@@ -296,9 +398,8 @@ class OidcAccessTokenVerifier:
                 raise ValueError(
                     "OIDC TLS trust is unavailable or invalid"
                 ) from None
-        self.jwks_client = PyJWKClient(
+        self.jwks_client = _ControlledOidcJwksClient(
             jwks_url,
-            cache_keys=True,
             ssl_context=ssl_context,
         )
 

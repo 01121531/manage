@@ -55,6 +55,12 @@ runtime creates a hostname-verifying TLS 1.2+ context from the in-memory bytes;
 OpenSSL is not allowed to reopen the configured path. A CA rotation therefore
 requires an atomic mount update followed by an API, mail-worker and Sub2-worker
 restart before repeating the positive, wrong-CA and wrong-server-name probes.
+The request itself is also recipient-bound: the JWKS URL must be the exact
+Keycloak endpoint derived from the configured issuer, proxy inheritance is
+disabled, redirects are rejected, and the response is limited to 64 KiB of
+strict JSON. Record a negative redirect probe and a proxy-environment probe in
+the same target evidence window; repository tests do not prove target DNS,
+egress routing or the live Keycloak response.
 
 The loopback-only `vault-dev` profile and the public port 80 redirect are local
 development/redirect exceptions. If any cross-container path above remains
