@@ -5757,23 +5757,38 @@ def admin_create_pool_import_context(
     card_provider_refs = payload.card_provider_refs or []
     reclaimed_card_context_ids: list[str] = []
     if payload.pool_type == "card":
-        reclaimed_card_context_ids = list(db.scalars(
-            select(PoolImportCardIdentityClaim.context_id)
-            .join(
-                PoolImportContext,
-                PoolImportContext.id == PoolImportCardIdentityClaim.context_id,
-            )
+        reclaimable_context_ids = list(db.scalars(
+            select(PoolImportContext.id)
             .where(
                 PoolImportContext.tenant_id == principal.tenant_id,
                 PoolImportContext.pool_type == "card",
                 PoolImportContext.expires_at <= now,
                 PoolImportContext.consumed_at.is_(None),
                 PoolImportContext.pool_import_receipt_id.is_(None),
-                PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
+                exists().where(
+                    PoolImportCardIdentityClaim.context_id
+                    == PoolImportContext.id,
+                    PoolImportCardIdentityClaim.provider_ref.in_(
+                        card_provider_refs
+                    ),
+                ),
             )
+            .order_by(PoolImportContext.id)
             .with_for_update(of=PoolImportContext)
         ))
-        reclaimable_context_ids = sorted(set(reclaimed_card_context_ids))
+        reclaimed_card_context_ids = list(db.scalars(
+            select(PoolImportCardIdentityClaim.context_id)
+            .where(
+                PoolImportCardIdentityClaim.context_id.in_(
+                    reclaimable_context_ids
+                ),
+                PoolImportCardIdentityClaim.provider_ref.in_(card_provider_refs),
+            )
+            .order_by(
+                PoolImportCardIdentityClaim.context_id,
+                PoolImportCardIdentityClaim.position,
+            )
+        ))
         db.execute(
             delete(PoolImportCardIdentityClaim).where(
                 PoolImportCardIdentityClaim.context_id.in_(

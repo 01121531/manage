@@ -608,11 +608,21 @@ class SecurePoolImportApiTests(unittest.TestCase):
             )
 
         self.assertEqual(replacement.status_code, 201, replacement.text)
-        self.assertTrue(any(
-            "FOR UPDATE OF pool_import_contexts" in str(statement.compile(
+        locked_sql = [
+            " ".join(str(statement.compile(
                 dialect=postgresql.dialect(),
-            ))
+            )).split())
             for statement in locked_statements
+        ]
+        self.assertTrue(any(
+            "FOR UPDATE OF pool_import_contexts" in sql
+            for sql in locked_sql
+        ))
+        self.assertTrue(any(
+            sql.startswith("SELECT pool_import_contexts.id")
+            and "ORDER BY pool_import_contexts.id "
+                "FOR UPDATE OF pool_import_contexts" in sql
+            for sql in locked_sql
         ))
         with self.app.state.session_factory() as db:
             audits = list(db.scalars(select(AuditEvent).where(

@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 28)
+        self.assertEqual(contract["schema_version"], 29)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -408,6 +408,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     "nonmatching_identity_claim_reclamation": "forbidden",
                     "reclamation_candidate_lock": (
                         "matching_expired_context_rows_for_update_before_claim_delete"
+                    ),
+                    "reclamation_lock_order": (
+                        "ascending_context_id_before_claim_read_and_delete"
                     ),
                     "reclamation_audit": (
                         "claim_and_context_counts_plus_context_id_sha256_"

@@ -111,7 +111,9 @@ constraint before the importer creates execution evidence or logs into Vault.
 Expired unconsumed claims are reclaimable only when a later card context in the
 same tenant requests the exact same provider reference; a request for another
 identity or from another tenant cannot delete or invalidate them. The target
-locks matching expired context rows before deleting claims and records a
+locks matching expired context rows once in ascending context-ID order before
+reading or deleting claims, preventing reversed batch input from reversing the
+database lock order. It records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered
