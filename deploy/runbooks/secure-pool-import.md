@@ -136,6 +136,12 @@ rejected before the first Vault or API mutation.
    audience, pool, ordered manifest digest/count, creator, device, trace and
    creation time cannot be changed after insertion. Expiry renewal and the
    final consumed-at/receipt linkage remain the only mutable lifecycle fields.
+   Migration `0043_secure_consumption_lock` separately freezes the resulting
+   one-time signed-receipt consumption record after insertion. UPDATE and
+   DELETE are rejected for every field, while a new card or mailbox import may
+   still INSERT its own consumption row in the existing atomic transaction.
+   The guard is shared infrastructure only: the card pool and mailbox pool
+   remain independently uploaded and no raw source data is copied into it.
    Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.

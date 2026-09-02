@@ -60,6 +60,10 @@ class DatabaseInitializationTests(unittest.TestCase):
                 "platform.database."
                 "_install_pool_import_context_identity_constraints"
             ) as install_pool_context_identity,
+            patch(
+                "platform.database."
+                "_install_secure_pool_import_consumption_constraints"
+            ) as install_secure_consumption,
         ):
             app = create_app(
                 production_settings(),
@@ -72,6 +76,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_card_events.assert_not_called()
             install_card_claim_mutations.assert_not_called()
             install_pool_context_identity.assert_not_called()
+            install_secure_consumption.assert_not_called()
             self.assertEqual(inspect(app.state.engine).get_table_names(), [])
         finally:
             app.state.engine.dispose()
@@ -91,6 +96,10 @@ class DatabaseInitializationTests(unittest.TestCase):
                 "platform.database."
                 "_install_pool_import_context_identity_constraints"
             ) as install_pool_context_identity,
+            patch(
+                "platform.database."
+                "_install_secure_pool_import_consumption_constraints"
+            ) as install_secure_consumption,
         ):
             engine, _ = initialize_database(
                 "sqlite+pysqlite:///:memory:", create_schema=True
@@ -101,6 +110,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_card_events.assert_called_once_with(engine)
             install_card_claim_mutations.assert_called_once_with(engine)
             install_pool_context_identity.assert_called_once_with(engine)
+            install_secure_consumption.assert_called_once_with(engine)
         finally:
             engine.dispose()
 

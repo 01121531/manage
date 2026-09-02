@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 36)
+        self.assertEqual(contract["schema_version"], 37)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -466,6 +466,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 "first_vault_write_requires_validated_context": True,
                 "final_submission_header": "Secure-Import-Context",
                 "atomic_one_time_consumption": "same-transaction-as-pool-import",
+                "consumption_record_mutation_policy": (
+                    "database_append_only_after_insert"
+                ),
             },
         )
         self.assertEqual(contract["execution_record_schema_version"], 1)

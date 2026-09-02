@@ -395,6 +395,40 @@ def _install_pool_import_context_identity_constraints(engine: Engine) -> None:
         )
 
 
+def _install_secure_pool_import_consumption_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed consumption guards in local SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS
+            secure_pool_import_consumptions_update_forbidden
+            BEFORE UPDATE ON secure_pool_import_consumptions
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'secure pool import consumption is append-only'
+                );
+            END;
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS
+            secure_pool_import_consumptions_delete_forbidden
+            BEFORE DELETE ON secure_pool_import_consumptions
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'secure pool import consumption is append-only'
+                );
+            END;
+            """
+        )
+
+
 def initialize_database(
     database_url: str,
     *,
@@ -409,6 +443,7 @@ def initialize_database(
         _install_card_event_append_only_constraints(engine)
         _install_card_claim_mutation_ledger_constraints(engine)
         _install_pool_import_context_identity_constraints(engine)
+        _install_secure_pool_import_consumption_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 

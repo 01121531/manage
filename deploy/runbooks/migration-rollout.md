@@ -108,6 +108,15 @@ to card and mailbox contexts, resume both pools only after this check. Keep
 0042 installed on application rollback; do not restore a database state where
 an issued context or its historical mutation evidence can be reinterpreted.
 
+Revision `0043_secure_consumption_lock` makes
+`secure_pool_import_consumptions` append-only after insertion. Pause both card
+and mailbox secure imports during the DDL window, install 0043, then prove a
+direct update of each stored field and a direct delete are rejected. Before
+resuming, also prove one fresh card import and one fresh mailbox import can each
+insert and atomically link a new consumption row. Keep 0043 installed on
+application rollback; do not reopen deletion or rewriting of one-time receipt
+consumption evidence.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

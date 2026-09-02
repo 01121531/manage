@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0042_pool_context_identity_lock"
+CURRENT = "0043_secure_consumption_lock"
 
 
 class MigrationReadinessTests(unittest.TestCase):

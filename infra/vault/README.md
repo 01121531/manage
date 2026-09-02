@@ -137,6 +137,12 @@ context identity after insertion, including its token hash, tenant, audience,
 pool, ordered manifest binding, actor/device, trace and creation time. Only the
 expiry and final consumption/receipt lifecycle fields remain mutable, so direct
 SQL cannot change the meaning of an earlier authorization or ledger row. The
+`0043_secure_consumption_lock` migration then makes the shared one-time signed
+receipt consumption row append-only. Its receipt identity, local platform
+receipt link, issued/expiry/consumed times and Transit key version cannot be
+updated or deleted after insertion, while each independently administered card
+or mailbox import can still insert a fresh consumption row. This protects
+replay evidence without storing or joining raw data from either pool. The
 application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed

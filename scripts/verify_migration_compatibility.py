@@ -282,6 +282,16 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed append-only secure import receipt consumption for revision
+    # 0043. Only this exact UPDATE-or-DELETE trigger is permitted.
+    if re.fullmatch(
+        r"CREATE TRIGGER SECURE_POOL_IMPORT_CONSUMPTIONS_APPEND_ONLY BEFORE "
+        r"UPDATE OR DELETE ON SECURE_POOL_IMPORT_CONSUMPTIONS FOR EACH ROW "
+        r"EXECUTE FUNCTION "
+        r"SECURE_POOL_IMPORT_CONSUMPTIONS_PREVENT_MUTATION\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

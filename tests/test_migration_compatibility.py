@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0042_pool_context_identity_lock"
+down_revision = "0043_secure_consumption_lock"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0042_pool_context_identity_lock"
+down_revision = "0043_secure_consumption_lock"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0042_pool_context_identity_lock"',
+            'down_revision = "0043_secure_consumption_lock"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -395,6 +395,25 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'ROW EXECUTE FUNCTION '
                 'pool_import_contexts_prevent_identity_change(); SELECT 1")'
             ),
+            "secure consumption guard wrong target": (
+                'op.execute("CREATE TRIGGER '
+                'secure_pool_import_consumptions_append_only BEFORE UPDATE OR '
+                'DELETE ON pool_import_receipts FOR EACH ROW EXECUTE FUNCTION '
+                'secure_pool_import_consumptions_prevent_mutation()")'
+            ),
+            "secure consumption guard wrong events": (
+                'op.execute("CREATE TRIGGER '
+                'secure_pool_import_consumptions_append_only BEFORE UPDATE ON '
+                'secure_pool_import_consumptions FOR EACH ROW EXECUTE FUNCTION '
+                'secure_pool_import_consumptions_prevent_mutation()")'
+            ),
+            "secure consumption guard statement suffix": (
+                'op.execute("CREATE TRIGGER '
+                'secure_pool_import_consumptions_append_only BEFORE UPDATE OR '
+                'DELETE ON secure_pool_import_consumptions FOR EACH ROW EXECUTE '
+                'FUNCTION secure_pool_import_consumptions_prevent_mutation(); '
+                'SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -405,7 +424,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0042_pool_context_identity_lock"
+down_revision = "0043_secure_consumption_lock"
 def upgrade():
     {body}
 def downgrade():

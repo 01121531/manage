@@ -88,6 +88,12 @@ The default endpoints are:
   authorization identity or reinterpret mutation-ledger history after claims
   move away; only expiry renewal and the existing consumption/receipt lifecycle
   fields remain mutable. A
+  following `0043_secure_consumption_lock` migration makes every signed-receipt
+  consumption row append-only after insertion. Direct SQL cannot update or
+  delete its receipt identity, local import receipt link, issue/expiry time,
+  Transit key version or consumed time; fresh card and mailbox import
+  transactions can still insert one new row. This shared replay guard does not
+  merge the two pools or expose their source data. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

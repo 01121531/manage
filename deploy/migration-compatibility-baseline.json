@@ -45,6 +45,7 @@
     "0039_card_claim_delete_guard.py": "b2798f0767d4b27deb481d07984f7d41dae1acff0a6cccd449852c6c5e28061f",
     "0040_card_claim_identity_immutable.py": "73fdea7426c0afa9ae28dd65fad28594cfb61a5e070938b24c8296945cb695f6",
     "0041_card_claim_mutation_ledger.py": "fbaf62e262c8615ba68c5c02aa8146a27f038104f0f86f5281dec6d0a4f89681",
-    "0042_pool_context_identity_lock.py": "934e03a6e002fca2c08e78c262ca630c948dd9aeab698cf0bdf4f47e8e962b50"
+    "0042_pool_context_identity_lock.py": "934e03a6e002fca2c08e78c262ca630c948dd9aeab698cf0bdf4f47e8e962b50",
+    "0043_secure_consumption_lock.py": "328c21c902edd7a890fa2d4190b90e5675201d5e8b28564d2787826a55360d51"
   }
 }
