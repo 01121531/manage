@@ -302,6 +302,15 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed append-only local import receipt for revision 0045. Only this
+    # exact UPDATE-or-DELETE trigger is permitted.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_RECEIPTS_APPEND_ONLY BEFORE UPDATE OR "
+        r"DELETE ON POOL_IMPORT_RECEIPTS FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_RECEIPTS_PREVENT_MUTATION\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

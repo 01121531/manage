@@ -99,7 +99,11 @@ The default endpoints are:
   consumption, and accepts exactly one transition that simultaneously links a
   matching local receipt and its signed-receipt consumption. Afterward expiry,
   consumption time and receipt linkage are a database-enforced terminal state
-  for both pools. A
+  for both pools. Migration `0045_pool_import_receipt_append_only` also makes
+  the linked local idempotency receipt append-only. Its identity, tenant, pool,
+  idempotency key, manifest digest/count, actor, device, trace and creation time
+  cannot be updated or deleted after insertion; a new card or mailbox import
+  can still insert its own receipt. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

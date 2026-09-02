@@ -128,6 +128,15 @@ succeed once, and all three lifecycle fields reject later change or clearing.
 Keep 0044 installed on application rollback so a consumed context cannot be
 reopened or reinterpreted.
 
+Revision `0045_pool_import_receipt_append_only` makes the linked local
+idempotency receipt append-only. Pause both card and mailbox secure imports
+during the DDL window, install 0045, then prove direct updates of every receipt
+field and direct deletion are rejected. Before resuming, prove one fresh card
+import and one fresh mailbox import can each insert a new local receipt and
+complete the existing exact context/consumption linkage. Keep 0045 installed
+on application rollback so historical tenant, pool, manifest, actor, device,
+trace and idempotency evidence cannot be rewritten or removed.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

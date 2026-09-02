@@ -429,6 +429,32 @@ def _install_secure_pool_import_consumption_constraints(engine: Engine) -> None:
         )
 
 
+def _install_pool_import_receipt_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed local receipt guards in SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS pool_import_receipts_update_forbidden
+            BEFORE UPDATE ON pool_import_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'pool import receipt is append-only');
+            END;
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS pool_import_receipts_delete_forbidden
+            BEFORE DELETE ON pool_import_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'pool import receipt is append-only');
+            END;
+            """
+        )
+
+
 def _install_pool_import_context_consumption_constraints(engine: Engine) -> None:
     """Mirror the migration-backed context lifecycle guards in local SQLite."""
 
@@ -521,6 +547,7 @@ def initialize_database(
         _install_card_event_append_only_constraints(engine)
         _install_card_claim_mutation_ledger_constraints(engine)
         _install_pool_import_context_identity_constraints(engine)
+        _install_pool_import_receipt_constraints(engine)
         _install_secure_pool_import_consumption_constraints(engine)
         _install_pool_import_context_consumption_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)

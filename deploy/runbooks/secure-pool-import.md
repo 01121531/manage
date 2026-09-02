@@ -147,6 +147,11 @@ rejected before the first Vault or API mutation.
    in that state. Final import must atomically set both fields against the
    matching signed consumption and tenant/pool/manifest/actor/device receipt;
    after that transition expiry, consumed-at and receipt linkage cannot change.
+   Migration `0045_pool_import_receipt_append_only` freezes that linked local
+   idempotency receipt after insertion. Direct UPDATE of any receipt field and
+   direct DELETE must fail, while each new card or mailbox transaction may
+   still INSERT one receipt. The row contains only secret-free binding and
+   audit metadata; never add PAN, CVV, mailbox credentials or source content.
    Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.

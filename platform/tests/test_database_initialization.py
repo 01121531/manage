@@ -65,6 +65,9 @@ class DatabaseInitializationTests(unittest.TestCase):
                 "_install_secure_pool_import_consumption_constraints"
             ) as install_secure_consumption,
             patch(
+                "platform.database._install_pool_import_receipt_constraints"
+            ) as install_pool_import_receipts,
+            patch(
                 "platform.database."
                 "_install_pool_import_context_consumption_constraints"
             ) as install_context_consumption,
@@ -80,6 +83,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_card_events.assert_not_called()
             install_card_claim_mutations.assert_not_called()
             install_pool_context_identity.assert_not_called()
+            install_pool_import_receipts.assert_not_called()
             install_secure_consumption.assert_not_called()
             install_context_consumption.assert_not_called()
             self.assertEqual(inspect(app.state.engine).get_table_names(), [])
@@ -106,6 +110,9 @@ class DatabaseInitializationTests(unittest.TestCase):
                 "_install_secure_pool_import_consumption_constraints"
             ) as install_secure_consumption,
             patch(
+                "platform.database._install_pool_import_receipt_constraints"
+            ) as install_pool_import_receipts,
+            patch(
                 "platform.database."
                 "_install_pool_import_context_consumption_constraints"
             ) as install_context_consumption,
@@ -119,6 +126,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_card_events.assert_called_once_with(engine)
             install_card_claim_mutations.assert_called_once_with(engine)
             install_pool_context_identity.assert_called_once_with(engine)
+            install_pool_import_receipts.assert_called_once_with(engine)
             install_secure_consumption.assert_called_once_with(engine)
             install_context_consumption.assert_called_once_with(engine)
         finally:

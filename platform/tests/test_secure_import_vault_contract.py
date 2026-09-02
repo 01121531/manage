@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 38)
+        self.assertEqual(contract["schema_version"], 39)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -471,6 +471,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 ),
                 "consumption_lifecycle_policy": (
                     "database_one_way_exact_receipt_bound_terminal"
+                ),
+                "local_receipt_mutation_policy": (
+                    "database_append_only_after_insert"
                 ),
             },
         )

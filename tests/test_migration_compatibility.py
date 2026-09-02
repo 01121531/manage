@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0044_pool_context_consumption_terminal"
+down_revision = "0045_pool_import_receipt_append_only"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0044_pool_context_consumption_terminal"
+down_revision = "0045_pool_import_receipt_append_only"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0044_pool_context_consumption_terminal"',
+            'down_revision = "0045_pool_import_receipt_append_only"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -436,6 +436,22 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'pool_import_contexts_validate_consumption_lifecycle(); '
                 'SELECT 1")'
             ),
+            "pool import receipt guard wrong target": (
+                'op.execute("CREATE TRIGGER pool_import_receipts_append_only '
+                'BEFORE UPDATE OR DELETE ON users FOR EACH ROW EXECUTE '
+                'FUNCTION pool_import_receipts_prevent_mutation()")'
+            ),
+            "pool import receipt guard wrong events": (
+                'op.execute("CREATE TRIGGER pool_import_receipts_append_only '
+                'BEFORE UPDATE ON pool_import_receipts FOR EACH ROW EXECUTE '
+                'FUNCTION pool_import_receipts_prevent_mutation()")'
+            ),
+            "pool import receipt guard statement suffix": (
+                'op.execute("CREATE TRIGGER pool_import_receipts_append_only '
+                'BEFORE UPDATE OR DELETE ON pool_import_receipts FOR EACH ROW '
+                'EXECUTE FUNCTION pool_import_receipts_prevent_mutation(); '
+                'SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -446,7 +462,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0044_pool_context_consumption_terminal"
+down_revision = "0045_pool_import_receipt_append_only"
 def upgrade():
     {body}
 def downgrade():
