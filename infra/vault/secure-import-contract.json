@@ -1,5 +1,5 @@
 {
-  "schema_version": 31,
+  "schema_version": 32,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -231,6 +231,7 @@
     "card_identity_claims": {
       "storage": "secret_free_target_database_unique_tenant_provider_ref",
       "claim_tenant_binding": "claim_tenant_must_match_authoritative_context_tenant",
+      "database_context_binding": "preflight_then_claim_and_context_update_triggers",
       "existing_card_conflict": "rejected_before_context_issuance",
       "active_claim_conflict": "rejected_before_context_issuance",
       "concurrent_claim_conflict": "database_unique_constraint",

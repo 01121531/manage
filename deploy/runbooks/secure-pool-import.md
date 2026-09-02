@@ -115,7 +115,11 @@ rejected before the first Vault or API mutation.
    A claim tenant must match the authoritative tenant on its owning context. If
    those values drift, renewal, final consumption, reclamation and deletion all
    fail closed; the owning context tenant still blocks a replacement until an
-   authorized repair restores the binding.
+   authorized repair restores the binding. Migration
+   `0038_card_claim_context_binding` rejects historical mismatches before it
+   installs database triggers for claim insert/update and owning-context updates.
+   PostgreSQL claim writes take `FOR KEY SHARE` on the matching card context, so
+   direct SQL and concurrent context changes cannot create tenant or pool drift.
    Reclamation emits a dedicated audit event containing claim/context counts and
    SHA-256 fingerprints of prior context IDs only; it must not contain provider
    references, context tokens or source data.

@@ -24,7 +24,7 @@ class DatabaseSchemaCheckTests(unittest.TestCase):
                 connection.execute(
                     text(
                         "INSERT INTO alembic_version(version_num) "
-                        "VALUES ('0037_pool_import_card_identity_claims')"
+                        "VALUES ('0038_card_claim_context_binding')"
                     )
                 )
             engine.dispose()

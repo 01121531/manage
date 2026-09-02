@@ -48,6 +48,18 @@ negative probes pass. If the application rolls back to N, pause card imports
 again; N ignores the additive claims and must not be used to create a new Vault
 batch. Do not delete consumed claims during rollback or routine cleanup.
 
+Revision `0038_card_claim_context_binding` converts the application-level claim
+binding into a database invariant. Its first step checks every historical claim
+against an owning context with the same tenant and `pool_type=card`; any mismatch
+aborts the migration before triggers are installed. Pause card secure imports,
+run and record that preflight, apply the hash-reviewed migration, then prove that
+cross-tenant claim inserts/updates and owning-context tenant/pool changes fail
+while a matching claim insert succeeds. PostgreSQL claim writes lock the matching
+context `FOR KEY SHARE`, serializing them with protected context changes. Mailbox
+imports do not use this table and may continue. An application rollback can keep
+0038 in place because prior writers already use matching card contexts; do not
+use Alembic downgrade as the rollback mechanism.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

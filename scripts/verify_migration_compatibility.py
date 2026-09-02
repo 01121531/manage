@@ -213,6 +213,26 @@ def _sql_error(sql: str) -> str | None:
     )
     if any(re.fullmatch(pattern, code) for pattern in reviewed_card_event_triggers):
         return None
+    # Reviewed database binding invariant for revision 0038. Keep every trigger
+    # target, event, column list and function exact; other dynamic SQL remains
+    # forbidden by the generic rule below.
+    reviewed_card_claim_binding_triggers = (
+        r"CREATE TRIGGER POOL_IMPORT_CARD_IDENTITY_CLAIMS_CONTEXT_BINDING_INSERT "
+        r"BEFORE INSERT ON POOL_IMPORT_CARD_IDENTITY_CLAIMS FOR EACH ROW EXECUTE "
+        r"FUNCTION POOL_IMPORT_CARD_IDENTITY_CLAIMS_VALIDATE_CONTEXT_BINDING\(\);?",
+        r"CREATE TRIGGER POOL_IMPORT_CARD_IDENTITY_CLAIMS_CONTEXT_BINDING_UPDATE "
+        r"BEFORE UPDATE OF CONTEXT_ID, TENANT_ID ON "
+        r"POOL_IMPORT_CARD_IDENTITY_CLAIMS FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_CARD_IDENTITY_CLAIMS_VALIDATE_CONTEXT_BINDING\(\);?",
+        r"CREATE TRIGGER POOL_IMPORT_CONTEXTS_CARD_CLAIM_BINDING BEFORE UPDATE OF "
+        r"ID, TENANT_ID, POOL_TYPE ON POOL_IMPORT_CONTEXTS FOR EACH ROW EXECUTE "
+        r"FUNCTION POOL_IMPORT_CONTEXTS_VALIDATE_CARD_CLAIM_BINDING\(\);?",
+    )
+    if any(
+        re.fullmatch(pattern, code)
+        for pattern in reviewed_card_claim_binding_triggers
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

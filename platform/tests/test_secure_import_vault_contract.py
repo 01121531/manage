@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 31)
+        self.assertEqual(contract["schema_version"], 32)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -395,6 +395,9 @@ class SecureImportVaultContractTests(unittest.TestCase):
                     ),
                     "claim_tenant_binding": (
                         "claim_tenant_must_match_authoritative_context_tenant"
+                    ),
+                    "database_context_binding": (
+                        "preflight_then_claim_and_context_update_triggers"
                     ),
                     "existing_card_conflict": (
                         "rejected_before_context_issuance"

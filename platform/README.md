@@ -65,7 +65,11 @@ The default endpoints are:
   acquisition order. A claim's tenant must also match its authoritative owning
   context: a drifted row cannot be renewed, consumed, reclaimed, or deleted, and
   the owning context's tenant continues to block replacement until the row is
-  repaired. A reclamation writes a dedicated
+  repaired. Migration `0038_card_claim_context_binding` first rejects historical
+  mismatches, then installs claim insert/update and owning-context update guards;
+  PostgreSQL claim writes take a `FOR KEY SHARE` lock on the matching card context
+  so direct SQL and concurrent context changes cannot break this binding. A
+  reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.
   Consumed claims stay as a permanent identity guard. Final card import must

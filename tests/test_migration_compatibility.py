@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0037_pool_import_card_identity_claims"
+down_revision = "0038_card_claim_context_binding"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0037_pool_import_card_identity_claims"
+down_revision = "0038_card_claim_context_binding"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0037_pool_import_card_identity_claims"',
+            'down_revision = "0038_card_claim_context_binding"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -308,6 +308,21 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'op.execute("CREATE TRIGGER audit_events_subject_binding BEFORE INSERT ON audit_events '
                 'FOR EACH ROW EXECUTE FUNCTION audit_events_validate_subject_binding(); SELECT 1")'
             ),
+            "card claim trigger wrong target": (
+                'op.execute("CREATE TRIGGER pool_import_card_identity_claims_context_binding_insert '
+                'BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_card_identity_claims_validate_context_binding()")'
+            ),
+            "card claim trigger wrong event": (
+                'op.execute("CREATE TRIGGER pool_import_card_identity_claims_context_binding_insert '
+                'BEFORE UPDATE ON pool_import_card_identity_claims FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_card_identity_claims_validate_context_binding()")'
+            ),
+            "card claim trigger statement suffix": (
+                'op.execute("CREATE TRIGGER pool_import_card_identity_claims_context_binding_insert '
+                'BEFORE INSERT ON pool_import_card_identity_claims FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_card_identity_claims_validate_context_binding(); SELECT 1")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -318,7 +333,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0037_pool_import_card_identity_claims"
+down_revision = "0038_card_claim_context_binding"
 def upgrade():
     {body}
 def downgrade():

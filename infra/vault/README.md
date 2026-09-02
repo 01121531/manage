@@ -118,7 +118,11 @@ order while keeping their original manifest positions, preventing reversed new
 batches from reversing unique-index acquisition order. The claim tenant must
 match its authoritative owning context; a drifted claim is never renewed,
 consumed, reclaimed, or deleted, and the owning context tenant continues to
-block replacement until repair. It records a
+block replacement until repair. Migration `0038_card_claim_context_binding`
+preflights existing claims and installs database guards on claim insert/update
+and owning-context updates. PostgreSQL claim writes lock the matching card
+context `FOR KEY SHARE`, preventing direct SQL and concurrent context changes
+from breaking the tenant/card-pool binding. It records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed
 claims remain an identity guard, and final submission must match the ordered
