@@ -609,6 +609,39 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.destroy_calls, 1)
         self.assertTrue(instance._closed)
 
+    def test_unexpected_clipboard_error_keeps_destroy_retryable(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        clipboard_get = instance.root.clipboard_get
+        attempts = 0
+
+        def fail_once():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("unexpected clipboard failure")
+            return clipboard_get()
+
+        instance.root.clipboard_get = fail_once
+
+        instance._clear_sensitive_code()
+        _, retry, args = instance.root.scheduled.pop()
+        instance._destroy_window()
+
+        self.assertEqual(instance._clipboard_cleanup_pending, 1)
+        self.assertEqual(instance.root.destroy_calls, 0)
+        self.assertFalse(instance._closed)
+
+        retry(*args)
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance.root.destroy_calls, 1)
+        self.assertTrue(instance._closed)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

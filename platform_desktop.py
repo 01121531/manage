@@ -2034,7 +2034,7 @@ class PlatformDesktopApp:
                     return
                 self.root.clipboard_clear()
                 self.root.update_idletasks()
-            except tk.TclError:
+            except Exception:
                 if retries_remaining <= 0:
                     self._remember_clipboard_cleanup_failure(owner)
                     self._set_status(

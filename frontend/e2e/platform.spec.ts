@@ -5724,6 +5724,15 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
           trace_id: '', created_at: '2026-08-20T00:00:00Z',
         })
       }
+      if (cardImportBodies.length === 6) {
+        return fulfill({
+          id: 'invalid-card-created-at-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
+          ordered_manifest_digest: '08603be66c89a429df9ef89deb4e864c5b6523f3b6b03f114fd6285ef96e71f8',
+          secure_receipt_fingerprint: cardReceiptFingerprint,
+          key_version: 3, consumed_at: '2026-08-20T00:00:00Z',
+          trace_id: 'invalid-card-created-at-trace', created_at: 'not-a-date',
+        })
+      }
       return fulfill({
         id: 'card-import-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
         ordered_manifest_digest: '08603be66c89a429df9ef89deb4e864c5b6523f3b6b03f114fd6285ef96e71f8',
@@ -5889,19 +5898,31 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
     secureCardItems, secureCardItems, secureCardItems,
     secureCardItems, secureCardItems, secureCardItems,
   ])
+  await expect(page.getByText(
+    '平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。', { exact: true },
+  ).last()).toBeVisible()
+  await expect(cardRecovery).toBeVisible()
+  await expect(page.getByText('最近一次信用卡池导入已确认：1 条', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('invalid-card-created-at-receipt')
+  await cardRecovery.getByRole('button', { name: '使用同一批次核验信用卡池导入' }).click()
+  await expect.poll(() => cardImportBodies).toEqual([
+    secureCardItems, secureCardItems, secureCardItems, secureCardItems,
+    secureCardItems, secureCardItems, secureCardItems,
+  ])
   expect(cardImportKeys).toEqual([
     cardSubmissionKey, cardSubmissionKey, cardSubmissionKey,
-    cardSubmissionKey, cardSubmissionKey, cardSubmissionKey,
+    cardSubmissionKey, cardSubmissionKey, cardSubmissionKey, cardSubmissionKey,
   ])
   expect(cardImportKeys[1]).toBe(cardImportKeys[0])
   expect(cardImportReceipts).toEqual([
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
+    'epir1.card-receipt.signature',
   ])
   expect(cardImportContexts).toEqual([
     cardContextToken, cardContextToken, cardContextToken,
-    cardContextToken, cardContextToken, cardContextToken,
+    cardContextToken, cardContextToken, cardContextToken, cardContextToken,
   ])
   await expect(page.getByRole('row').filter({ hasText: 'provider-imported' })).toBeVisible()
   await expect(page.getByText('最近一次信用卡池导入已确认：1 条', { exact: true })).toBeVisible()

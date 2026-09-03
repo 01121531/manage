@@ -4919,6 +4919,71 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(disabled_audits, 1)
 
+    def test_admin_mailbox_state_rechecks_target_binding_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="binding***@example.test",
+                connector_type="http",
+                task_type="mail_code",
+                secret_ref="vault://secret/mailboxes/post-commit-binding",
+            )
+            db.add(mailbox)
+            db.commit()
+            mailbox_id = mailbox.id
+
+        original_commit = Session.commit
+        mailbox_moved = False
+
+        def commit_then_move_mailbox(session: Session) -> None:
+            nonlocal mailbox_moved
+            disabling = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.mailbox_disabled"
+                for item in session.new
+            )
+            original_commit(session)
+            if not disabling or mailbox_moved:
+                return
+            mailbox_moved = True
+            with self.app.state.session_factory() as other_db:
+                current_mailbox = other_db.get(Mailbox, mailbox_id)
+                self.assertIsNotNone(current_mailbox)
+                current_mailbox.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_move_mailbox,
+        ):
+            response = self.request(
+                "PATCH",
+                f"/api/v1/admin/mailboxes/{mailbox_id}",
+                headers=self.headers(admin_token),
+                json={"is_active": False},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("binding***@example.test", response.text)
+        with self.app.state.session_factory() as db:
+            mailbox = db.get(Mailbox, mailbox_id)
+            disabled_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.mailbox_disabled",
+                    AuditEvent.entity_id == mailbox_id,
+                )
+            )
+        self.assertEqual(mailbox.tenant_id, "tenant-b")
+        self.assertFalse(mailbox.is_active)
+        self.assertEqual(disabled_audits, 1)
+
     def test_admin_mailbox_management_revokes_sessions_and_rotates_reference(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

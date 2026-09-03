@@ -8797,7 +8797,17 @@ def admin_update_mailbox_state(
         principal,
         allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
     )
-    db.refresh(mailbox, with_for_update=True)
+    mailbox = db.scalar(
+        select(Mailbox)
+        .where(
+            Mailbox.id == mailbox_id,
+            Mailbox.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox not found")
     active_session_count = db.scalar(
         select(func.count())
         .select_from(MailSession)
