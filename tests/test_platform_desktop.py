@@ -728,6 +728,30 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.clipboard, "")
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
 
+    def test_code_cleanup_schedule_error_clears_sensitive_value_immediately(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance._clipboard_owner = (secret, None)
+        instance.root.clipboard = secret
+        instance._schedule_code_cleanup = (
+            PlatformDesktopApp._schedule_code_cleanup.__get__(instance)
+        )
+        instance.root.after = mock.Mock(
+            side_effect=RuntimeError("cleanup scheduling failed")
+        )
+
+        scheduled = instance._schedule_code_cleanup()
+
+        self.assertFalse(scheduled)
+        self.assertIsNone(instance._current_code)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance.code_label.values["text"], "------")
+        self.assertEqual(instance.copy_button.values["state"], "disabled")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

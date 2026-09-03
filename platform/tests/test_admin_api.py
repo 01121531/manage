@@ -3086,6 +3086,79 @@ class AdminApiTests(unittest.TestCase):
         self.assertFalse(persisted.is_active)
         self.assertEqual(disabled_audits, 1)
 
+    def test_card_enable_rechecks_target_binding_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="post-commit-moved-enabled-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/post-commit-moved-enabled",
+        )
+        disabled = self.request(
+            "PATCH",
+            f"/api/v1/admin/cards/{card.card_id}",
+            headers=self.headers(admin_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        enable_recorded = False
+        card_moved = False
+
+        def mark_enable(*args, **kwargs):
+            nonlocal enable_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.card_enabled":
+                enable_recorded = True
+            return result
+
+        def commit_then_move_card(session: Session) -> None:
+            nonlocal card_moved
+            original_commit(session)
+            if not enable_recorded or card_moved:
+                return
+            card_moved = True
+            with self.app.state.session_factory() as other:
+                current_card = other.get(Card, card.card_id)
+                self.assertIsNotNone(current_card)
+                current_card.tenant_id = "tenant-b"
+                original_commit(other)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_enable,
+        ), mock.patch.object(Session, "commit", new=commit_then_move_card):
+            response = self.request(
+                "PATCH",
+                f"/api/v1/admin/cards/{card.card_id}",
+                headers=self.headers(admin_token),
+                json={"is_active": True},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("4242", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+            enabled_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.card_enabled",
+                    AuditEvent.entity_id == card.card_id,
+                )
+            )
+        self.assertEqual(persisted.tenant_id, "tenant-b")
+        self.assertTrue(persisted.is_active)
+        self.assertEqual(enabled_audits, 1)
+
     def test_card_state_rechecks_access_token_revocation_after_commit(self) -> None:
         admin_token = self.login(
             "tenant-a",

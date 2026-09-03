@@ -2084,7 +2084,7 @@ class PlatformDesktopApp:
                 pass
         self._clear_owned_clipboard(code)
 
-    def _schedule_code_cleanup(self) -> None:
+    def _schedule_code_cleanup(self) -> bool:
         self._code_clear_generation += 1
         generation = self._code_clear_generation
 
@@ -2092,7 +2092,12 @@ class PlatformDesktopApp:
             if generation == self._code_clear_generation:
                 self._clear_sensitive_code()
 
-        self.root.after(CODE_VISIBLE_SECONDS * 1000, clear_if_current)
+        try:
+            self.root.after(CODE_VISIBLE_SECONDS * 1000, clear_if_current)
+        except Exception:
+            self._clear_sensitive_code()
+            return False
+        return True
 
     def _clear_card_details(self) -> None:
         text = self._current_card_clipboard
@@ -3354,8 +3359,14 @@ class PlatformDesktopApp:
                     copied = paste_action.value is None or self._write_clipboard(
                         paste_action.value
                     )
-                    self._schedule_code_cleanup()
-                    if copied:
+                    cleanup_scheduled = self._schedule_code_cleanup()
+                    if not cleanup_scheduled:
+                        self._set_status(
+                            "无法安排验证码自动清理；为避免敏感信息残留，"
+                            "验证码与客户端写入的剪贴板内容已立即清除。",
+                            ERROR,
+                        )
+                    elif copied:
                         self._set_status(paste_action.status, SUCCESS)
                     else:
                         self._paste_sequence.stop()
