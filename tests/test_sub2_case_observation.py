@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import unittest
 
+from platform.uploads import AI1_OBSERVED_CONTROL_PLANE_PATHS
 from scripts.verify_sub2_case_observation import (
     OBSERVATION,
     observation_errors,
@@ -64,6 +65,13 @@ class Sub2CaseObservationTests(unittest.TestCase):
             "legacy_check_concurrency_limit_not_observed",
             self.observation["negative_findings"],
         )
+
+    def test_generic_upload_guard_is_bound_to_every_observed_control_path(self) -> None:
+        observed_paths = {
+            item["path"] for item in self.observation["operations"]
+        }
+
+        self.assertEqual(AI1_OBSERVED_CONTROL_PLANE_PATHS, observed_paths)
 
     def test_observation_contains_no_supplied_secret_or_example_values(self) -> None:
         rendered = json.dumps(self.observation, ensure_ascii=False)

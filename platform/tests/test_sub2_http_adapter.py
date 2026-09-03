@@ -10,6 +10,7 @@ from unittest import mock
 from platform.config import Settings
 from platform.secrets import JsonEnvironmentSecretResolver, SecretResolverUnavailable
 from platform.uploads import (
+    AI1_OBSERVED_CONTROL_PLANE_PATHS,
     HttpSub2Adapter,
     Sub2AdapterError,
     Sub2AdapterUnavailable,
@@ -148,6 +149,47 @@ class HttpSub2AdapterTests(unittest.TestCase):
                     )
             self.assertEqual(resolver.refs, [])
             self.assertEqual(opener.requests, [])
+
+    def test_observed_ai1_control_plane_paths_cannot_receive_generic_uploads(self) -> None:
+        concrete_paths = (
+            AI1_OBSERVED_CONTROL_PLANE_PATHS
+            - {"/api/v1/admin/accounts/{account_id}/duplicate"}
+        ) | {"/api/v1/admin/accounts/42/duplicate"}
+        for path in sorted(concrete_paths):
+            resolver = RecordingResolver()
+            opener = RecordingOpener(FakeResponse({"external_ref": "unexpected"}))
+            with self.subTest(path=path), self.assertRaisesRegex(
+                ValueError, "Observed account-control endpoint"
+            ) as raised:
+                HttpSub2Adapter(
+                    f"https://ai1.aisb.shop{path}",
+                    resolver,
+                    allowed_origins=("https://ai1.aisb.shop",),
+                    opener=opener,
+                )
+            self.assertNotIn(path, str(raised.exception))
+            self.assertEqual(resolver.refs, [])
+            self.assertEqual(opener.requests, [])
+
+    def test_ai1_unknown_business_path_and_other_hosts_remain_configurable(self) -> None:
+        resolver = RecordingResolver()
+        opener = RecordingOpener(FakeResponse({"external_ref": "unused"}))
+
+        HttpSub2Adapter(
+            "https://ai1.aisb.shop/api/v1/provider-upload",
+            resolver,
+            allowed_origins=("https://ai1.aisb.shop",),
+            opener=opener,
+        )
+        HttpSub2Adapter(
+            "https://provider.example/api/v1/admin/accounts",
+            resolver,
+            allowed_origins=("https://provider.example",),
+            opener=opener,
+        )
+
+        self.assertEqual(resolver.refs, [])
+        self.assertEqual(opener.requests, [])
 
     def test_exact_allowed_origin_accepts_business_path_and_effective_default_port(self) -> None:
         resolver = RecordingResolver()

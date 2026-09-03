@@ -373,6 +373,15 @@ _SUB2_LOOKUP_PROTOCOL_SUPPORTED = True
 _SUB2_LOOKUP_OUTCOMES = tuple(state.value for state in Sub2LookupState)
 _SUB2_STATUS_QUERY_SUPPORTED = False
 _SUB2_IDEMPOTENCY_LOOKUP_SUPPORTED = False
+AI1_OBSERVED_CONTROL_PLANE_PATHS = frozenset(
+    {
+        "/api/v1/admin/accounts",
+        "/api/v1/admin/openai/generate-auth-url",
+        "/api/v1/admin/openai/exchange-code",
+        "/api/v1/admin/accounts/today-stats/batch",
+        "/api/v1/admin/accounts/{account_id}/duplicate",
+    }
+)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -476,6 +485,21 @@ def _origin_key(value: str, *, allow_path: bool) -> tuple[str, str, int]:
     return ("https", hostname, port)
 
 
+def _is_ai1_observed_control_plane_url(value: str) -> bool:
+    if _origin_key(value, allow_path=True) != ("https", "ai1.aisb.shop", 443):
+        return False
+    path = urllib.parse.unquote(urllib.parse.urlsplit(value).path).rstrip("/")
+    duplicate_template = "/api/v1/admin/accounts/{account_id}/duplicate"
+    if path in AI1_OBSERVED_CONTROL_PLANE_PATHS - {duplicate_template}:
+        return True
+    prefix = "/api/v1/admin/accounts/"
+    suffix = "/duplicate"
+    account_id = path[len(prefix):-len(suffix)] if (
+        path.startswith(prefix) and path.endswith(suffix)
+    ) else ""
+    return bool(account_id) and "/" not in account_id
+
+
 def _secret_text(secret: Mapping[str, object], *names: str) -> str:
     for name in names:
         value = secret.get(name)
@@ -526,6 +550,11 @@ class HttpSub2Adapter:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.upload_url = _normalize_https_url(upload_url)
+        if _is_ai1_observed_control_plane_url(self.upload_url):
+            raise ValueError(
+                "Observed account-control endpoint cannot be used as the generic "
+                "Sub2 upload URL"
+            )
         origin_keys = tuple(
             _origin_key(origin, allow_path=False) for origin in allowed_origins
         )
