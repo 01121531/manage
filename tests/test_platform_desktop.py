@@ -4272,6 +4272,32 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._client.clear_access_token.assert_called_once_with()
         self.assertIn("网络中断", instance.status_label.values["text"])
 
+    def test_stale_session_restore_finished_clears_old_thread_reference(self) -> None:
+        restore_started = threading.Event()
+        release_restore = threading.Event()
+        instance = self._event_app()
+        client = mock.Mock()
+        client.has_saved_refresh_session.return_value = True
+
+        def refresh():
+            restore_started.set()
+            release_restore.wait(timeout=2)
+            raise PlatformTransportError("offline")
+
+        client.refresh_oidc_session.side_effect = refresh
+        instance._client = client
+        instance._attempt_session_restore()
+        restore_thread = instance._session_restore_thread
+        self.assertTrue(restore_started.wait(timeout=1))
+
+        instance._session_generation += 1
+        release_restore.set()
+        restore_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._session_restore_thread)
+        self.assertIsNone(instance._session_restore_action)
+
     def test_restore_me_auth_failure_compensates_rotated_session_once(self) -> None:
         instance = self._event_app()
 

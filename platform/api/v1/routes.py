@@ -2567,6 +2567,8 @@ def get_mail_code(
     db.refresh(session)
     if session.status in {"consumed", "revoked", "expired"}:
         db.commit()
+        _lock_task_creation_principal(db, principal)
+        db.refresh(session, with_for_update=True)
         return MailCodeResponse(status=session.status)
 
     if message is None or message.watermark == session.start_watermark:

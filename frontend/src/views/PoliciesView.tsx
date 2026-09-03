@@ -344,7 +344,16 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
             '确认审批',
             row,
             '不变更（审批阶段）',
-            () => approveUploadPolicyVersion(row.id),
+            async () => {
+              const approved = await approveUploadPolicyVersion(row.id)
+              if (
+                approved.id !== row.id
+                || approved.version !== row.version
+                || approved.status !== 'approved'
+                || approved.approved_by !== principal.id
+                || approved.approved_at === null
+              ) throw new Error('upload policy approval response binding mismatch')
+            },
             '策略已通过独立审批。',
           )}
         >审批</Button> : null}

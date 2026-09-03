@@ -1770,8 +1770,18 @@ class PlatformDesktopApp:
                 (generation, "session_restored", (action, profile, expires_in))
             )
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (generation, "session_restore_finished", (action, thread))
+                )
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-session-restore"
+            target=run_worker, daemon=False, name="platform-session-restore"
         )
         self._session_restore_thread = thread
         try:
@@ -2676,6 +2686,13 @@ class PlatformDesktopApp:
             if kind == "upload_poll_finished":
                 if self._upload_poll_thread is value:
                     self._upload_poll_thread = None
+                continue
+            if kind == "session_restore_finished":
+                action, worker_thread = value
+                if self._session_restore_thread is worker_thread:
+                    self._session_restore_thread = None
+                if self._session_restore_action is action:
+                    self._session_restore_action = None
                 continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}

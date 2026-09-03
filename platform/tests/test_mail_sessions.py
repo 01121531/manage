@@ -1041,6 +1041,64 @@ class MailSessionTests(unittest.TestCase):
                     self.assertEqual(closed.status_code, 200, closed.text)
                 self.app.state.mail_connectors["fake"] = self.connector
 
+    def test_lookup_terminal_status_rechecks_operator_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-terminal-merge-commit-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        original_commit = Session.commit
+        demoted = False
+
+        def revoke_during_lookup(*_args, **_kwargs) -> None:
+            with self.app.state.session_factory() as other:
+                persisted = other.get(MailSession, session_id)
+                self.assertIsNotNone(persisted)
+                persisted.status = "revoked"
+                persisted.delivered_code = None
+                persisted.delivered_message_id_hash = None
+                persisted.delivered_at = None
+                persisted.code_expires_at = None
+                persisted.start_watermark = None
+                persisted.last_message_hash = None
+                original_commit(other)
+            return None
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            returning_terminal_status = any(
+                isinstance(item, MailSession)
+                and item.id == session_id
+                and item.status == "revoked"
+                for item in session_db.identity_map.values()
+            )
+            original_commit(session_db)
+            if not returning_terminal_status or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(
+            self.connector,
+            "find_code_after",
+            side_effect=revoke_during_lookup,
+        ), patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("revoked", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+        self.assertEqual(persisted.status, "revoked")
+
     def test_concurrent_api_polls_return_code_exactly_once(self) -> None:
         with tempfile.TemporaryDirectory(prefix="api-double-poll-") as directory:
             database_path = Path(directory) / "api-double-poll.db"

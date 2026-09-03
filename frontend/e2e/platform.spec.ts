@@ -4184,7 +4184,7 @@ test('platform admin governs upload policies without browser execution details',
       versions = versions.map((item) => item.id === approveMatch[1]
         ? { ...item, status: 'approved', approved_by: 'user-admin', approved_at: '2026-08-20T00:02:00Z' }
         : item)
-      return fulfill(versions.find((item) => item.id === approveMatch[1]))
+      return fulfill({ ...versions.find((item) => item.id === approveMatch[1]), id: 'wrong-approval-binding' })
     }
     const deployMatch = path.match(/^\/api\/v1\/admin\/policies\/upload\/versions\/([^/]+)\/deploy$/)
     if (deployMatch && request.method() === 'POST') {
@@ -4311,12 +4311,16 @@ test('platform admin governs upload policies without browser execution details',
   approveDialog = page.getByRole('dialog', { name: '确认审批策略 sub2-2026.08.1？' })
   await approveDialog.getByRole('button', { name: '确认审批' }).click()
   await expect.poll(() => approveRequests).toEqual([visibleApproveId ?? ''])
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' })).toBeVisible()
+  await expect(page.getByText('策略已通过独立审批。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-approval-binding')
+  await expect(approveDraft).toHaveCount(0)
 
   await page.getByPlaceholder('例如 sub2-2026.08.1').fill('sub2-2026.09.1')
   const uploadPolicyForm = page.getByRole('button', { name: '登记快照' }).locator('xpath=ancestor::form')
   await uploadPolicyForm.getByPlaceholder('变更说明').fill('九月灰度版本')
   await uploadPolicyForm.getByRole('button', { name: '登记快照' }).click()
-  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' })).toBeVisible()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' }).last()).toBeVisible()
   await expect(page.getByText('策略快照已登记，等待另一位管理员审批。', { exact: true })).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('wrong-policy-version')
   await expect(page.getByText('sub2-2026.09.1')).toBeVisible()
