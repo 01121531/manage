@@ -914,6 +914,10 @@ class PlatformDesktopApp:
         self._clear_card_details()
         self._clear_trace_id()
         self._poll_retry_attempt = 0
+        if self._active_task_discovery_action is not None:
+            self._active_task_discovery_action = None
+            self._active_task_discovery_thread = None
+            self._active_task_discovery_required = True
         if self._upload_submission_action is not None:
             self._upload_submission_action.ambiguous = True
         self._task_generation += 1

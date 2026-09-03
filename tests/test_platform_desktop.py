@@ -2985,6 +2985,47 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["state"], "normal")
         self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
 
+    def test_lock_during_active_task_discovery_restores_retry_after_unlock(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        instance._task_id = None
+        started = threading.Event()
+        release = threading.Event()
+
+        def list_tasks(*, limit):
+            self.assertEqual(limit, 1)
+            started.set()
+            self.assertTrue(release.wait(timeout=5))
+            return []
+
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.list_tasks.side_effect = list_tasks
+        instance._discover_active_task()
+        worker = instance._active_task_discovery_thread
+        self.assertTrue(started.wait(timeout=5))
+
+        instance.lock()
+        release.set()
+        worker.join(timeout=1)
+        instance._drain_events()
+        instance._finish_unlock(
+            {
+                "tenant_id": "tenant-1",
+                "id": "user-1",
+                "device_id": "device-1",
+            }
+        )
+
+        self.assertIsNone(instance._active_task_discovery_action)
+        self.assertIsNone(instance._active_task_discovery_thread)
+        self.assertTrue(instance._active_task_discovery_required)
+        self.assertEqual(
+            instance.new_task_button.values["text"],
+            "重试检查活动任务",
+        )
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+
     def test_active_task_discovery_thread_start_failure_exposes_retry(self) -> None:
         instance = self._event_app()
         instance._task_id = None

@@ -735,10 +735,29 @@ def logout(
             else token_claimed
         )
     )
-    if not owns_cleanup:
-        # A different token from an already-revoked session may still add its
-        # exact digest. Persist that without repeating resource cleanup/audit.
-        db.commit()
+    if owns_cleanup:
+        record_audit(
+            db,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            device_id=principal.device_id,
+            event_type="auth.logout",
+            entity_type="user",
+            entity_id=principal.user_id,
+            trace_id=request.state.trace_id,
+            details={"reason": "user_logout"},
+        )
+    # Publish the revocation barrier before resource cleanup. A cleanup failure
+    # must not make the bearer usable again, and a safe replay can finish it.
+    db.commit()
+    if not (
+        owns_cleanup
+        or principal.access_token_revoked
+        or principal.oidc_session_revoked
+    ):
+        # A concurrent loser may persist an exact token digest, but the request
+        # that claimed the session owns cleanup. A later revoked-token replay
+        # remains able to compensate if that owner fails.
         return LogoutResponse()
     _revoke_principal_resources(
         db,
@@ -751,17 +770,6 @@ def logout(
         release_reason="user_logout",
         mail_status="revoked",
         finalize_upload_outbox=True,
-    )
-    record_audit(
-        db,
-        tenant_id=principal.tenant_id,
-        user_id=principal.user_id,
-        device_id=principal.device_id,
-        event_type="auth.logout",
-        entity_type="user",
-        entity_id=principal.user_id,
-        trace_id=request.state.trace_id,
-        details={"reason": "user_logout"},
     )
     db.commit()
     return LogoutResponse()

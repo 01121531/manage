@@ -234,6 +234,7 @@ export default function AuthenticatedShell({ principal, oidcManager, roleChangeA
         <div className="topbar-identity">
           <div className="topbar-primary"><Text strong>{principal.email}</Text><Tag>{roleNames[principal.role] ?? principal.role}</Tag></div>
           <div className="topbar-meta" aria-label="当前安全会话">
+            <Tag icon={<TeamOutlined />}>组织 {principal.tenant_id}</Tag>
             <Tag icon={<LaptopOutlined />}>设备 {principal.device_id}</Tag>
             <Tag
               icon={<ClockCircleOutlined />}

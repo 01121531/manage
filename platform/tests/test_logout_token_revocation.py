@@ -173,6 +173,46 @@ class LogoutTokenRevocationTests(unittest.TestCase):
         self.assertNotIn(claims["jti"], audit_json)
         self.assertNotIn(token_hash, audit_json)
 
+    def test_cleanup_failure_cannot_roll_back_logout_revocation(self) -> None:
+        headers = {"Authorization": f"Bearer {self.token}"}
+        with patch(
+            "platform.api.v1.routes._revoke_principal_resources",
+            side_effect=RuntimeError("cleanup failed"),
+        ):
+            failed = self.request(
+                "POST",
+                "/api/v1/auth/logout",
+                headers=headers,
+            )
+
+        denied = self.request("GET", "/api/v1/me", headers=headers)
+        replay = self.request("POST", "/api/v1/auth/logout", headers=headers)
+
+        self.assertEqual(failed.status_code, 500, failed.text)
+        self.assertEqual(denied.status_code, 401, denied.text)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        with self.app.state.session_factory() as db:
+            task = db.scalar(
+                select(Task).where(Task.idempotency_key == "logout-token-race-task")
+            )
+            self.assertEqual(task.status, "cancelled")
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(AuditEvent)
+                    .where(AuditEvent.event_type == "auth.logout")
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(AuditEvent)
+                    .where(AuditEvent.event_type == "task.cancelled")
+                ),
+                1,
+            )
+
     def test_oidc_logout_revokes_normal_use_but_allows_safe_replay(self) -> None:
         oidc_token = "signed-oidc-access-token-without-secret-material"
         oidc_jti = "oidc-logout-token-identifier-0001"

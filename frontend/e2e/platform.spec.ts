@@ -1281,6 +1281,7 @@ test('operator login keeps bearer in memory and exposes task trace', async ({ pa
 
   await expect(page.getByText('operator@example.invalid')).toBeVisible()
   await expect(page.getByText('操作员')).toBeVisible()
+  await expect(page.getByText('组织 tenant-1')).toBeVisible()
   await expect(page.getByText('设备 device-1')).toBeVisible()
   await expect(page.getByText('Sub2 上传', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('timer')).toContainText('会话')
