@@ -3421,6 +3421,48 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             self.assertEqual(instance.root.destroy_calls, 1)
             instance._client.prepare_logout_cleanup.assert_called_once_with("task-1")
 
+    def test_update_synchronous_clipboard_cleanup_cannot_bypass_remote_cleanup(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+
+        def cleanup() -> None:
+            cleanup_started.set()
+            self.assertTrue(release_cleanup.wait(timeout=1))
+
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        manifest = mock.Mock(sha256="f" * 64)
+        package = Path("verified-update.exe")
+        pending = (manifest, package)
+
+        with mock.patch("platform_desktop.launch_update_helper") as launch_helper:
+            instance._events.put(
+                (instance._update_generation, "update_downloaded", pending)
+            )
+            instance._drain_events()
+
+            self.assertTrue(cleanup_started.wait(timeout=1))
+            self.assertIsNotNone(instance._update_cleanup_thread)
+            self.assertEqual(instance.root.clipboard, "")
+            self.assertEqual(instance._pending_update_install, pending)
+            self.assertFalse(instance._update_cleanup_completed)
+            launch_helper.assert_not_called()
+
+            release_cleanup.set()
+            instance._update_cleanup_thread.join(timeout=1)
+            self.assertFalse(instance._update_cleanup_thread.is_alive())
+            instance._drain_events()
+
+            launch_helper.assert_called_once_with(package, manifest.sha256)
+            self.assertIsNone(instance._pending_update_install)
+            self.assertTrue(instance._update_cleanup_completed)
+
     def test_update_waits_for_owned_clipboard_cleanup_before_helper(self) -> None:
         instance = self._event_app()
         secret = "246810"

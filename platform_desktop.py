@@ -3071,8 +3071,6 @@ class PlatformDesktopApp:
         ):
             return
         pending = (manifest, package)
-        self._pending_update_install = pending
-        self._update_cleanup_completed = False
         self.stop_polling()
         self._paste_sequence.stop()
         self._close_task_history()
@@ -3086,6 +3084,8 @@ class PlatformDesktopApp:
         self._upload_generation += 1
 
         self._update_cleanup_action = self._capture_session_cleanup(self._task_id)
+        self._update_cleanup_completed = False
+        self._pending_update_install = pending
 
         self._mail_session_id = None
         self._mail_session_token = None
