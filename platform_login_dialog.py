@@ -248,6 +248,8 @@ class PlatformLoginController:
         self._generation = 0
         self._device_cancel = threading.Event()
         self._cancel_cleanup_action: Callable[[], None] | None = None
+        self._worker_lock = threading.Lock()
+        self._worker_threads: list[threading.Thread] = []
 
     def _compensate_partial_login(self, error: BaseException) -> BaseException:
         """Detach a token issued before identity lookup failed, then clean it once."""
@@ -287,10 +289,25 @@ class PlatformLoginController:
         on_error: ErrorCallback,
         cancel_event: threading.Event | None = None,
     ) -> bool:
-        thread = self._thread_factory(target=worker, daemon=True)
+        thread: threading.Thread
+
+        def owned_worker() -> None:
+            try:
+                worker()
+            finally:
+                with self._worker_lock:
+                    if thread in self._worker_threads:
+                        self._worker_threads.remove(thread)
+
+        thread = self._thread_factory(target=owned_worker, daemon=False)
+        with self._worker_lock:
+            self._worker_threads.append(thread)
         try:
             thread.start()
         except RuntimeError:
+            with self._worker_lock:
+                if thread in self._worker_threads:
+                    self._worker_threads.remove(thread)
             if cancel_event is not None:
                 cancel_event.set()
             if generation == self._generation:
@@ -302,6 +319,19 @@ class PlatformLoginController:
                 )
             return False
         return True
+
+    def detach_worker_threads(self) -> tuple[threading.Thread, ...]:
+        """Transfer ownership of any still-running login workers."""
+
+        with self._worker_lock:
+            threads = tuple(self._worker_threads)
+            self._worker_threads.clear()
+        return threads
+
+    def stop_workers(self) -> None:
+        self._generation += 1
+        self._device_cancel.set()
+        self.busy = False
 
     def submit(
         self,
@@ -491,9 +521,7 @@ class PlatformLoginController:
         )
 
     def cancel(self) -> bool:
-        self._generation += 1
-        self._device_cancel.set()
-        self.busy = False
+        self.stop_workers()
         cleanup = self._cancel_cleanup_action
         if cleanup is None:
             prepare_cleanup = getattr(self.client, "prepare_logout_cleanup", None)
@@ -1138,11 +1166,18 @@ class PlatformLoginDialog:
         except tk.TclError:
             return
 
-    def close(self) -> None:
+    def detach_worker_threads(self) -> tuple[threading.Thread, ...]:
+        return self._controller.detach_worker_threads()
+
+    def stop_and_detach_worker_threads(self) -> tuple[threading.Thread, ...]:
+        self._controller.stop_workers()
+        return self._controller.detach_worker_threads()
+
+    def close(self, *, cancel_authentication: bool = True) -> None:
         if self._closed:
             return
         self._clear_device_challenge()
-        if not self._controller.cancel():
+        if cancel_authentication and not self._controller.cancel():
             self._set_busy(True)
             self._set_status(
                 "登录会话清理尚未确认；窗口保持打开，请恢复网络后再次关闭。",

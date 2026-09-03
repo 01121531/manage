@@ -21,6 +21,19 @@ class _ImmediateThread:
         self.target()
 
 
+class _DeferredThread:
+    instances = []
+
+    def __init__(self, *, target, daemon):
+        self.target = target
+        self.daemon = daemon
+        self.started = False
+        self.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+
 class _FakeVariable:
     def __init__(self, value=""):
         self.value = value
@@ -249,6 +262,16 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertIn("无法连接平台", dialog.status_label.options["text"])
         self.assertNotIn(raw_error, dialog.status_label.options["text"])
 
+    def test_successful_dismiss_does_not_cancel_authenticated_session(self):
+        dialog = self.headless_dialog()
+
+        dialog.close(cancel_authentication=False)
+
+        self.assertTrue(dialog._closed)
+        self.assertTrue(dialog.window.destroyed)
+        self.assertEqual(dialog._controller.cancel_calls, 0)
+        dialog._on_close.assert_called_once_with()
+
     def test_device_challenge_keeps_base_uri_and_code_visible_and_copyable(self):
         dialog = self.headless_dialog()
         challenge = self.device_challenge()
@@ -448,6 +471,29 @@ class PlatformLoginDialogTests(unittest.TestCase):
                 self.assertNotIn(raw_error, str(errors[0]))
                 if flow != "local":
                     self.assertTrue(controller._device_cancel.is_set())
+
+    def test_controller_retains_non_daemon_login_worker_until_detached(self):
+        _DeferredThread.instances = []
+        controller = PlatformLoginController(
+            _FakeClient(),
+            schedule=lambda callback: callback(),
+            thread_factory=_DeferredThread,
+        )
+
+        self.assertTrue(controller.submit(
+            "tenant",
+            "user@example.test",
+            "platform-secret",
+            "device-1",
+            on_success=self.fail,
+            on_error=self.fail,
+        ))
+
+        worker = _DeferredThread.instances[-1]
+        self.assertTrue(worker.started)
+        self.assertFalse(worker.daemon)
+        self.assertEqual(controller.detach_worker_threads(), (worker,))
+        self.assertEqual(controller.detach_worker_threads(), ())
 
     def test_controller_device_login_returns_challenge_and_safe_profile(self):
         client = _FakeClient()

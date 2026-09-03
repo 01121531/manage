@@ -66,10 +66,15 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
       }
     } catch {
       if (!isCurrent()) return
-      message.error('上传服务暂不可用，取消请求未确认生效；正在刷新真实状态。如任务仍在排队或运行可重试，unknown 请先复核，勿盲目重试。')
+      message.error(
+        '原因：平台未能确认上传取消结果。'
+        + '影响：取消、待取消或 unknown 状态可能已经生效；页面不会按失败响应推断最终状态。'
+        + '下一步：正在重新获取上传真实状态；完成前不得重复取消，仅当刷新后仍在排队或运行时才可重试，unknown 请先复核。',
+      )
     } finally {
       if (!isCurrent()) return
-      setRefresh((value) => value + 1)
+      await refreshUploadRows(isCurrent)
+      if (!isCurrent()) return
       if (cancelActionRef.current === action) cancelActionRef.current = null
       setCancelingUploadId((current) => current === row.id ? null : current)
     }
@@ -134,7 +139,7 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
     if (action) releaseReconcileAction(action)
   }
 
-  const refreshReconciledUpload = async (jobId: string, isCurrent: () => boolean) => {
+  const refreshUploadRows = async (isCurrent: () => boolean, reconciledJobId?: string) => {
     if (!isCurrent()) return
     setLoading(true)
     setUploadListError(undefined)
@@ -142,11 +147,13 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
       const items = await listUploads()
       if (!isCurrent()) return
       setRows(items)
-      setReconcileTarget((current) => {
-        if (current?.id !== jobId) return current
-        const refreshed = items.find((item) => item.id === jobId)
-        return refreshed?.status === 'unknown' ? refreshed : null
-      })
+      if (reconciledJobId) {
+        setReconcileTarget((current) => {
+          if (current?.id !== reconciledJobId) return current
+          const refreshed = items.find((item) => item.id === reconciledJobId)
+          return refreshed?.status === 'unknown' ? refreshed : null
+        })
+      }
     } catch {
       if (!isCurrent()) return
       setReconcileTarget(null)
@@ -191,7 +198,7 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
       )
     } finally {
       if (!isCurrent()) return
-      await refreshReconciledUpload(target.id, isCurrent)
+      await refreshUploadRows(isCurrent, target.id)
       if (!isCurrent()) return
       setSaving(false)
       releaseReconcileAction(action)

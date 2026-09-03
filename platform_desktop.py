@@ -270,6 +270,7 @@ class PlatformDesktopApp:
         self._locked = False
         self._client: PlatformClient | None = client
         self._login_dialog: PlatformLoginDialog | None = None
+        self._login_worker_threads: list[threading.Thread] = []
         self._task_id: str | None = None
         self._task_transition: TaskTransitionCleanup | None = None
         self._task_transition_thread: threading.Thread | None = None
@@ -1169,16 +1170,23 @@ class PlatformDesktopApp:
             self._login_dialog.focus()
             return
 
+        dialog: PlatformLoginDialog
+
         def closed() -> None:
+            self._login_worker_threads = [
+                thread for thread in self._login_worker_threads if thread.is_alive()
+            ]
+            self._login_worker_threads.extend(dialog.detach_worker_threads())
             self._login_dialog = None
 
-        self._login_dialog = PlatformLoginDialog(
+        dialog = PlatformLoginDialog(
             self.root,
             self._client,
             on_success=self._on_login_success,
             on_close=closed,
         )
-        self._login_dialog.show(modal=True)
+        self._login_dialog = dialog
+        dialog.show(modal=True)
 
     def _on_login_success(self, profile: dict[str, Any], expires_in: int) -> None:
         self._session_restore_action = None
@@ -1212,7 +1220,7 @@ class PlatformDesktopApp:
         self.close_active_task_button.configure(state="disabled")
         self._set_status("登录成功，正在检查本设备是否有未完成任务…", MUTED)
         if self._login_dialog is not None and self._login_dialog.exists():
-            self._login_dialog.close()
+            self._login_dialog.close(cancel_authentication=False)
         self._login_dialog = None
         self._discover_active_task()
 
@@ -3534,6 +3542,11 @@ class PlatformDesktopApp:
             self, "_active_task_discovery_thread", None
         )
         history_threads = tuple(getattr(self, "_history_threads", ()))
+        login_worker_threads = tuple(getattr(self, "_login_worker_threads", ()))
+        self._login_worker_threads = []
+        login_dialog = getattr(self, "_login_dialog", None)
+        if login_dialog is not None:
+            login_worker_threads += login_dialog.stop_and_detach_worker_threads()
         detached_task_cleanup_threads = tuple(
             getattr(self, "_detached_task_cleanup_threads", ())
         )
@@ -3629,6 +3642,9 @@ class PlatformDesktopApp:
             for history_thread in history_threads:
                 if history_thread.is_alive():
                     history_thread.join()
+            for login_worker_thread in login_worker_threads:
+                if login_worker_thread.is_alive():
+                    login_worker_thread.join()
             for cleanup_thread in detached_task_cleanup_threads:
                 if cleanup_thread.is_alive():
                     cleanup_thread.join()

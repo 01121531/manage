@@ -5513,7 +5513,12 @@ def admin_approve_role_change_request(
             finalize_upload_outbox=True,
         )
         db.commit()
-    db.refresh(role_change)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(role_change, with_for_update=True)
     return _admin_role_change_response(role_change)
 
 

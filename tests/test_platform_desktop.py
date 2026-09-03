@@ -182,6 +182,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._client = None
         instance._update_client = mock.Mock()
         instance._login_dialog = None
+        instance._login_worker_threads = []
         instance.root = RootStub()
         instance.auth_label = RecordingWidget()
         instance.profile_label = RecordingWidget()
@@ -3171,6 +3172,26 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["state"], "normal")
         self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
 
+    def test_login_success_dismisses_dialog_without_cancelling_new_session(self) -> None:
+        instance = self._event_app()
+        dialog = mock.Mock()
+        dialog.exists.return_value = True
+        instance._login_dialog = dialog
+        instance._discover_active_task = mock.Mock()
+
+        instance._on_login_success(
+            {
+                "id": "user-1",
+                "tenant_id": "tenant-1",
+                "device_id": "device-1",
+                "email": "operator@example.test",
+            },
+            300,
+        )
+
+        dialog.close.assert_called_once_with(cancel_authentication=False)
+        instance._discover_active_task.assert_called_once_with()
+
     def test_lock_during_active_task_discovery_restores_retry_after_unlock(
         self,
     ) -> None:
@@ -4424,6 +4445,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             order,
             ["restore-waited", "restore-cleanup", "current-session-cleanup"],
         )
+
+    def test_session_cleanup_waits_for_detached_login_worker_before_logout(self) -> None:
+        instance = self._event_app()
+        order = []
+        login_worker = mock.Mock()
+        login_worker.is_alive.return_value = True
+        login_worker.join.side_effect = lambda: order.append("login-worker-waited")
+        instance._login_worker_threads = [login_worker]
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = (
+            lambda: order.append("current-session-cleanup")
+        )
+
+        cleanup = instance._capture_session_cleanup(None)
+        cleanup()
+
+        login_worker.join.assert_called_once_with()
+        self.assertEqual(
+            order,
+            ["login-worker-waited", "current-session-cleanup"],
+        )
+        self.assertEqual(instance._login_worker_threads, [])
 
     def test_session_cleanup_waits_for_restore_to_publish_detached_cleanup(self) -> None:
         instance = self._event_app()

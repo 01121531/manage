@@ -3582,6 +3582,11 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
   const lateReconcileGate = new Promise<void>((resolve) => {
     releaseLateReconcile = resolve
   })
+  let waitForCancelRefresh = false
+  let releaseCancelRefresh = () => undefined
+  const cancelRefreshGate = new Promise<void>((resolve) => {
+    releaseCancelRefresh = resolve
+  })
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -3625,6 +3630,10 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
         waitForRecoveryList = false
         await recoveryListGate
       }
+      if (waitForCancelRefresh) {
+        waitForCancelRefresh = false
+        await cancelRefreshGate
+      }
       return fulfill(uploads)
     }
     const reconcileMatch = path.match(/^\/api\/v1\/upload-jobs\/([^/]+)\/reconcile$/)
@@ -3655,8 +3664,15 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
     }
     const cancelMatch = path.match(/^\/api\/v1\/upload-jobs\/([^/]+)\/cancel$/)
     if (cancelMatch && request.method() === 'POST') {
-      cancelRequests.push(cancelMatch[1])
-      return fulfill({ ...uploads[2], status: 'cancel_pending' })
+      const jobId = cancelMatch[1]
+      cancelRequests.push(jobId)
+      uploads = uploads.map((upload) => upload.id === jobId
+        ? { ...upload, status: 'unknown' }
+        : upload)
+      waitForCancelRefresh = true
+      return fulfill({
+        error: { code: 'service_unavailable', message: 'cancel response lost secret detail' },
+      }, 503)
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -3802,8 +3818,22 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
 
   await runningCancel.click()
   cancelDialog = page.getByRole('dialog', { name: '确认取消上传 Running Result？' })
-  await cancelDialog.getByRole('button', { name: '确认请求取消' }).click()
-  await expect.poll(() => cancelRequests).toEqual([runningVisibleId ?? ''])
+  const confirmCancel = cancelDialog.getByRole('button', { name: '确认请求取消' })
+  await confirmCancel.click()
+  try {
+    await expect.poll(() => cancelRequests).toEqual([runningVisibleId ?? ''])
+    await expect(confirmCancel).toHaveClass(/ant-btn-loading/)
+    await expect(page.getByText(/原因：平台未能确认上传取消结果。影响：.*下一步：/)).toBeVisible()
+    await expect(page.getByText('cancel response lost secret detail')).toHaveCount(0)
+    await confirmCancel.dispatchEvent('click')
+    expect(cancelRequests).toEqual([runningVisibleId ?? ''])
+  } finally {
+    releaseCancelRefresh()
+  }
+  await expect(cancelDialog).toBeHidden()
+  await expect(runningRow.getByText('unknown')).toBeVisible()
+  await expect(runningRow.getByRole('button', { name: /复核上传 Running Result/ })).toBeVisible()
+  expect(cancelRequests).toEqual([runningVisibleId ?? ''])
 
   const lateRow = page.getByRole('row').filter({ hasText: 'Late Result' })
   const lateReconcile = lateRow.getByRole('button', {
@@ -3839,7 +3869,9 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
   await page.getByText('Sub2 上传', { exact: true }).click()
   await expect(lateRow.getByText('failed')).toBeVisible()
   await expect(lateRow.getByRole('button', { name: /复核上传 Late Result/ })).toHaveCount(0)
-  await expect(runningCancel).toBeEnabled()
+  await expect(runningRow.getByText('unknown')).toBeVisible()
+  await expect(runningRow.getByRole('button', { name: /复核上传 Running Result/ })).toBeEnabled()
+  await expect(runningCancel).toHaveCount(0)
 })
 
 test('platform admin governs upload policies without browser execution details', async ({ page }) => {
