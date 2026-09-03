@@ -2335,6 +2335,12 @@ def get_mail_code(
             details={"status": "expired"},
         )
         db.commit()
+        _lock_owned_open_task(
+            db,
+            session.task_id,
+            request=request,
+            principal=principal,
+        )
         return MailCodeResponse(status="expired")
 
     if session.consumed_at is not None or session.status == "consumed":

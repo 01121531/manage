@@ -2496,6 +2496,8 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         release_first.set()
         old_thread.join(timeout=1)
+        instance._drain_events()
+        self.assertIsNone(instance._upload_poll_thread)
         retry()
         new_thread = instance._upload_poll_thread
         new_thread.join(timeout=1)

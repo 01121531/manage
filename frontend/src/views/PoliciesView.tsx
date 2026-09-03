@@ -455,7 +455,14 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
         onFinish={(values) => perform(
           'register',
           async () => {
-            await registerUploadPolicyVersion(values)
+            const created = await registerUploadPolicyVersion(values)
+            if (
+              !created.id
+              || created.version !== values.version
+              || created.change_note !== values.change_note
+              || created.status !== 'draft'
+              || created.created_by !== principal.id
+            ) throw new Error('upload policy registration response binding mismatch')
             form.resetFields()
           },
           '策略快照已登记，等待另一位管理员审批。',

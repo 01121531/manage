@@ -2673,6 +2673,10 @@ class PlatformDesktopApp:
                 if self._update_download_thread is value:
                     self._update_download_thread = None
                 continue
+            if kind == "upload_poll_finished":
+                if self._upload_poll_thread is value:
+                    self._upload_poll_thread = None
+                continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}
                 and generation != self._upload_generation
@@ -4421,8 +4425,18 @@ class PlatformDesktopApp:
                 return
             self._events.put((generation, "upload", job))
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (generation, "upload_poll_finished", thread)
+                )
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-upload-poll"
+            target=run_worker, daemon=False, name="platform-upload-poll"
         )
         self._upload_poll_threads.append(thread)
         self._upload_poll_thread = thread
