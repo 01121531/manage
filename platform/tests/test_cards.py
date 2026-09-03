@@ -729,6 +729,56 @@ class CardAllocationTests(unittest.TestCase):
         )
         self.assertEqual(allocated.status_code, 201, allocated.text)
 
+    def test_card_allocation_rechecks_operator_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-allocation-commit-boundary")
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal demoted
+            committing_allocation = any(
+                isinstance(item, AuditEvent) and item.event_type == "card.allocated"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_allocation or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("VISA", response.text)
+        self.assertNotIn("1111", response.text)
+        with self.app.state.session_factory() as db:
+            allocations = list(
+                db.scalars(
+                    select(CardAllocation).where(CardAllocation.task_id == task_id)
+                )
+            )
+            self.assertEqual(len(allocations), 1)
+            allocation_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "card.allocated",
+                        AuditEvent.entity_id == allocations[0].id,
+                    )
+                )
+            )
+        self.assertEqual(allocations[0].status, "active")
+        self.assertEqual(len(allocation_events), 1)
+
     def test_replace_card_is_transactional_masked_and_idempotent(self) -> None:
         with self.app.state.session_factory() as db:
             db.add(

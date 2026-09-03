@@ -3380,6 +3380,7 @@ def allocate_card(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    _lock_task_creation_principal(db, principal)
     db.refresh(allocation, with_for_update=True)
     return _card_allocation_response(allocation, card)
 

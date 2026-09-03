@@ -4190,6 +4190,9 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._drain_events()
 
         self.assertIsNone(instance._mail_session_id)
+        self.assertIsNone(instance._active_task_recovery_action)
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_transition_thread)
         self.assertNotEqual(instance.new_task_button.values.get("state"), "normal")
 
     def test_saved_oidc_session_is_restored_and_refreshed_before_expiry(self) -> None:

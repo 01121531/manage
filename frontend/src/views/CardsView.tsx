@@ -574,7 +574,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     action.pending = true
     setRecycleSaving(true)
     try {
-      await recycleCardAllocation(allocation.card_id, allocation.id, recycleReason)
+      const updated = await recycleCardAllocation(allocation.card_id, allocation.id, recycleReason)
+      if (
+        updated.id !== allocation.id
+        || updated.card_id !== allocation.card_id
+        || updated.status !== 'released'
+        || updated.release_reason_code !== recycleReason
+        || updated.released_at === null
+      ) throw new Error('card allocation recycle response binding mismatch')
       message.success('活动租约已回收；关联排队上传已取消。')
       setRecycleTarget(null)
       setRecycleReason(undefined)

@@ -1602,8 +1602,24 @@ class PlatformDesktopApp:
                     )
                 )
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (
+                        action.task_generation,
+                        "active_task_recovery_finished",
+                        (action, transition, thread),
+                    )
+                )
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-active-task-recovery"
+            target=run_worker,
+            daemon=False,
+            name="platform-active-task-recovery",
         )
         self._task_transition_threads = [
             existing
@@ -2608,6 +2624,15 @@ class PlatformDesktopApp:
                         and self._client.is_authenticated
                     ):
                         self.copy_card_button.configure(state="normal")
+                continue
+            if kind == "active_task_recovery_finished":
+                action, transition, worker_thread = value
+                if self._task_transition_thread is worker_thread:
+                    self._task_transition_thread = None
+                if self._active_task_recovery_action is action:
+                    self._active_task_recovery_action = None
+                if self._task_transition is transition and transition.cancelled:
+                    self._task_transition = None
                 continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}
