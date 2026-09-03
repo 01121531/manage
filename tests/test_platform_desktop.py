@@ -6001,6 +6001,32 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIsNone(cancelled._card_reveal_action)
         self.assertIsNone(cancelled._card_reveal_thread)
 
+    def test_card_reveal_retries_after_cancelled_old_generation_finishes(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        old_action = mock.Mock(
+            generation=instance._task_generation - 1,
+            allocation_id=instance._card_allocation_id,
+        )
+        old_action.cancel = threading.Event()
+        old_action.cancel.set()
+        instance._card_reveal_action = old_action
+
+        with mock.patch("platform_desktop.messagebox.askyesno") as confirm:
+            instance.reveal_card_details()
+
+        confirm.assert_not_called()
+        retry = next(
+            callback
+            for delay, callback, _ in instance.root.scheduled
+            if delay == 250
+        )
+        instance._card_reveal_action = None
+        instance.reveal_card_details = mock.Mock()
+        retry()
+
+        instance.reveal_card_details.assert_called_once_with()
+
     def test_card_reveal_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

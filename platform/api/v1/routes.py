@@ -3730,6 +3730,7 @@ def replace_card_allocation(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    _lock_task_creation_principal(db, principal)
     db.refresh(replacement, with_for_update=True)
     return _card_allocation_response(replacement, replacement_card)
 

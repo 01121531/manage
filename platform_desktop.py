@@ -4079,7 +4079,23 @@ class PlatformDesktopApp:
         ):
             self._set_status("请先登录并创建已分配卡的任务。", ERROR)
             return
-        if self._card_reveal_action is not None:
+        active_action = self._card_reveal_action
+        if active_action is not None:
+            if not self._card_reveal_is_current(active_action):
+                generation = self._task_generation
+                allocation_id = self._card_allocation_id
+                self.copy_card_button.configure(state="disabled")
+                self._set_status("上一卡号揭示仍在安全收尾，请稍后再试。", WARNING)
+
+                def retry_if_current() -> None:
+                    if (
+                        generation == self._task_generation
+                        and allocation_id == self._card_allocation_id
+                    ):
+                        self.reveal_card_details()
+
+                self.root.after(250, retry_if_current)
+                return
             self._set_status("卡号揭示仍在进行，请完成当前验证后再试。", WARNING)
             return
         allocation_id = self._card_allocation_id

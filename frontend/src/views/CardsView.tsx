@@ -460,7 +460,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         if (action.pending) return
         action.pending = true
         try {
-          await releaseCardQuarantine(row.id)
+          const updated = await releaseCardQuarantine(row.id)
+          if (
+            updated.id !== row.id
+            || updated.status !== 'disabled'
+            || updated.is_active
+            || updated.quarantine_reason_code !== null
+            || updated.quarantined_at !== null
+          ) throw new Error('card quarantine release response binding mismatch')
           message.success('隔离已解除；卡资源仍处于停用状态。')
         } catch {
           message.error(
