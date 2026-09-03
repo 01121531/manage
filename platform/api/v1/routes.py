@@ -4877,7 +4877,13 @@ def admin_approve_role_change_request(
     )
     if role_change is None:
         raise HTTPException(status_code=404, detail="Role-change request not found")
-    participant_ids = sorted({principal.user_id, role_change.target_user_id})
+    participant_ids = sorted(
+        {
+            principal.user_id,
+            role_change.requested_by,
+            role_change.target_user_id,
+        }
+    )
     participants = {
         user.id: user
         for user in db.scalars(
@@ -4907,6 +4913,7 @@ def admin_approve_role_change_request(
         raise unauthorized()
     if actor.role != ROLE_PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Insufficient role")
+    requester = participants.get(role_change.requested_by)
     target = participants.get(role_change.target_user_id)
     if role_change.status == "applied":
         if (
@@ -4986,6 +4993,21 @@ def admin_approve_role_change_request(
             reason="insufficient_acr",
             status_code=403,
             detail="Required MFA authentication level is missing",
+        )
+    if (
+        requester is None
+        or not requester.is_active
+        or requester.role != ROLE_PLATFORM_ADMIN
+    ):
+        role_change.status = "expired"
+        _deny_role_change_approval(
+            db,
+            role_change=role_change,
+            principal=principal,
+            trace_id=request.state.trace_id,
+            reason="requester_state_changed",
+            status_code=409,
+            detail="Role-change requester is no longer eligible",
         )
 
     user = target

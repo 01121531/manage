@@ -358,6 +358,24 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
             role_change = db.get(AdminRoleChangeRequest, str(created["id"]))
         self.assertEqual(role_change.status, "pending")
 
+    def test_approval_rejects_request_after_requester_loses_admin_role(
+        self,
+    ) -> None:
+        created = self.create_role_change()
+        with self.app.state.session_factory() as db:
+            requester = db.get(User, self.requester.user_id)
+            self.assertIsNotNone(requester)
+            requester.role = "security_auditor"
+            db.commit()
+
+        response = self.approve(str(created["id"]), self.mfa_token())
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(self.user_role(self.target.user_id), "operator")
+        with self.app.state.session_factory() as db:
+            role_change = db.get(AdminRoleChangeRequest, str(created["id"]))
+        self.assertEqual(role_change.status, "expired")
+
     def test_second_admin_applies_once_and_existing_token_sees_role_only_afterward(
         self,
     ) -> None:
