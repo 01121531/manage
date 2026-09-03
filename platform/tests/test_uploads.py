@@ -2171,6 +2171,54 @@ class UploadJobTests(unittest.TestCase):
             )
         self.assertEqual(len(cancel_events), 1)
 
+    def test_admin_cancel_rechecks_actor_after_authentication(self) -> None:
+        owner_token = self.login()
+        task_id, _ = self.create_task_with_card(owner_token)
+        queued = self.create_upload(owner_token, task_id, "upload-stale-admin-cancel")
+        job_id = queued.json()["id"]
+        admin, _admin_token = self.create_role_session("ops_admin")
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=admin.user_id,
+            tenant_id="tenant-upload",
+            device_id=admin.device_id,
+            email="upload-tenant-upload-ops_admin@example.test",
+            role="ops_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            actor = db.get(User, admin.user_id)
+            actor.role = "operator"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            cancelled = self.request(
+                "POST", f"/api/v1/upload-jobs/{job_id}/cancel"
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(cancelled.status_code, 403, cancelled.text)
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            cancel_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == job_id,
+                        AuditEvent.event_type == "upload.cancel_requested",
+                    )
+                )
+            )
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(cancel_events, [])
+
     def test_admin_roles_cancel_tenant_uploads_with_actor_subject_audit(self) -> None:
         owner_token = self.login()
         with self.app.state.session_factory() as db:

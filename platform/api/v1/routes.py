@@ -4367,6 +4367,12 @@ def cancel_upload_job(
     ),
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:
+    if principal.role != ROLE_OPERATOR:
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
     ownership = [
         UploadJob.id == job_id,
         UploadJob.tenant_id == principal.tenant_id,
