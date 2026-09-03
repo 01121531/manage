@@ -5503,6 +5503,12 @@ def admin_approve_role_change_request(
                 finalize_upload_outbox=True,
             )
             db.commit()
+            _lock_admin_write_principal(
+                db,
+                principal,
+                allowed_roles=(ROLE_PLATFORM_ADMIN,),
+            )
+            db.refresh(role_change, with_for_update=True)
         raise HTTPException(status_code=409, detail="Role-change request is not pending")
     if role_change.status != "pending":
         raise HTTPException(status_code=409, detail="Role-change request is not pending")

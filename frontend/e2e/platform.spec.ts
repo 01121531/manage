@@ -4517,7 +4517,13 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     { id: 'device-retry', tenant_id: 'tenant-1', user_id: 'operator-2', name: 'retry-ops-device', revoked_at: null, last_seen_at: null, created_at: '2026-08-20T00:04:00Z' },
   ]
   const roleBodies: unknown[] = []
-  let pendingRoleRequests: Array<Record<string, unknown>> = []
+  let pendingRoleRequests: Array<Record<string, unknown>> = [{
+    id: 'role-approval-1', tenant_id: 'tenant-1', target_user_id: 'operator-3',
+    expected_old_role: 'operator', new_role: 'security_auditor', status: 'pending',
+    requested_by: 'admin-other', approved_by: null,
+    request_trace_id: 'role-request-trace-approval', approval_trace_id: null,
+    created_at: '2026-08-20T00:04:00Z', expires_at: '2026-08-20T00:20:00Z', applied_at: null,
+  }]
   const singleDisableIds: string[] = []
   const batchBodies: unknown[] = []
   const revokedDeviceIds: string[] = []
@@ -4574,6 +4580,16 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     }
     if (path === '/api/v1/admin/role-change-requests' && request.method() === 'GET') {
       return fulfill(pendingRoleRequests)
+    }
+    if (path === '/api/v1/admin/role-change-requests/role-approval-1/approve' && request.method() === 'POST') {
+      const applied = {
+        ...pendingRoleRequests.find((item) => item.id === 'role-approval-1'),
+        status: 'applied', approved_by: 'admin-1', approval_trace_id: 'role-approval-trace-1',
+        applied_at: '2026-08-20T00:05:00Z',
+      }
+      users = users.map((user) => user.id === 'operator-3' ? { ...user, role: 'security_auditor' } : user)
+      pendingRoleRequests = pendingRoleRequests.filter((item) => item.id !== 'role-approval-1')
+      return fulfill({ ...applied, id: 'wrong-role-approval-binding' })
     }
     if (path === '/api/v1/admin/devices' && request.method() === 'GET') {
       deviceListRequests += 1
@@ -4694,6 +4710,18 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await expect(secondDisableButton).toHaveCount(1)
   await expect(secondCheckbox).toHaveCount(1)
   await expect(thirdCheckbox).toHaveCount(1)
+  const initialRoleRequestCard = page.locator('.ant-card').filter({
+    has: page.getByText('待审批角色变更申请', { exact: true }),
+  })
+  const approvalRow = initialRoleRequestCard.getByRole('row').filter({ hasText: 'operator-three@example.invalid' })
+  await approvalRow.getByRole('button', { name: /审批角色申请 role-approval-1/ }).click()
+  const approvalDialog = page.getByRole('dialog', { name: '确认审批角色变更申请？' })
+  await approvalDialog.getByRole('button', { name: '审批并应用角色' }).click()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()).toBeVisible()
+  await expect(page.getByText('角色变更已由独立管理员审批并应用。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-role-approval-binding')
+  await expect(approvalRow).toHaveCount(0)
+  await expect(thirdRow).toContainText('安全审计员')
   await secondCheckbox.check()
   const roleSelect = page.getByLabel('申请调整 operator-one@example.invalid 角色', { exact: true })
   const secondRoleSelect = page.getByLabel('申请调整 operator-two@example.invalid 角色', { exact: true })
@@ -4761,7 +4789,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     { role: 'security_auditor' },
     { role: 'security_auditor' },
   ])
-  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' })).toBeVisible()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()).toBeVisible()
   await expect(page.getByText('角色变更申请已创建，等待另一位平台管理员完成 fresh MFA 后审批。', { exact: true })).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('wrong-role-target')
   await expect(firstRow).toContainText('操作员')

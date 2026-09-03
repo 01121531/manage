@@ -266,7 +266,19 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
       },
       onOk: () => runUserAction(
         action,
-        () => approveRoleChangeRequest(request.id),
+        async () => {
+          const approved = await approveRoleChangeRequest(request.id)
+          if (
+            approved.id !== request.id
+            || approved.target_user_id !== request.target_user_id
+            || approved.expected_old_role !== request.expected_old_role
+            || approved.new_role !== request.new_role
+            || approved.status !== 'applied'
+            || approved.approved_by !== principal.id
+            || approved.applied_at === null
+            || approved.approval_trace_id === null
+          ) throw new Error('role change approval response binding mismatch')
+        },
         '角色变更已由独立管理员审批并应用。',
       ),
     })

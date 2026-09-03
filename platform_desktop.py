@@ -1343,6 +1343,13 @@ class PlatformDesktopApp:
                     ),
                 )
             )
+            self._events.put(
+                (
+                    action.session_generation,
+                    "active_task_discovery_finished",
+                    (action, thread),
+                )
+            )
 
     @staticmethod
     def _recovery_active_upload(

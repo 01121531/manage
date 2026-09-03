@@ -620,6 +620,48 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
         self.assertEqual(event_counts["admin.user_role_change_approved"], 1)
         self.assertEqual(event_counts["admin.user_role_changed"], 1)
 
+    def test_applied_replay_rechecks_approver_after_cleanup_commit(self) -> None:
+        created = self.create_role_change()
+        approver_mfa = self.mfa_token()
+        applied = self.approve(str(created["id"]), approver_mfa)
+        self.assertEqual(applied.status_code, 200, applied.text)
+
+        original_revoke = routes._revoke_principal_resources
+        original_commit = Session.commit
+        cleanup_complete = False
+        approver_demoted = False
+
+        def mark_cleanup(*args, **kwargs):
+            nonlocal cleanup_complete
+            result = original_revoke(*args, **kwargs)
+            cleanup_complete = True
+            return result
+
+        def demote_after_cleanup_commit(session: Session) -> None:
+            nonlocal approver_demoted
+            original_commit(session)
+            if cleanup_complete and not approver_demoted:
+                approver_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    approver = other_db.get(User, self.approver.user_id)
+                    self.assertIsNotNone(approver)
+                    approver.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "_revoke_principal_resources",
+            side_effect=mark_cleanup,
+        ), mock.patch.object(Session, "commit", new=demote_after_cleanup_commit):
+            replay = self.approve(str(created["id"]), approver_mfa)
+
+        self.assertEqual(replay.status_code, 403, replay.text)
+        self.assertNotIn("Role-change request is not pending", replay.text)
+        self.assertEqual(self.user_role(self.target.user_id), "security_auditor")
+        with self.app.state.session_factory() as db:
+            role_change = db.get(AdminRoleChangeRequest, str(created["id"]))
+        self.assertEqual(role_change.status, "applied")
+
     def test_two_concurrent_approvals_have_one_winner(self) -> None:
         created = self.create_role_change()
         tokens = (

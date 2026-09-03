@@ -3775,6 +3775,31 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
+    def test_stale_discovery_start_failure_clears_action_and_thread(self) -> None:
+        instance = self._event_app()
+        instance._task_id = None
+        instance._client = mock.Mock(is_authenticated=True)
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._discover_active_task()
+
+        self.assertIsNotNone(instance._active_task_discovery_action)
+        self.assertIsNotNone(instance._active_task_discovery_thread)
+        instance._session_generation += 1
+        instance._drain_events()
+
+        self.assertIsNone(instance._active_task_discovery_action)
+        self.assertIsNone(instance._active_task_discovery_thread)
+        self.assertTrue(instance._active_task_discovery_required)
+
     def test_active_task_discovery_rejects_multiple_live_uploads_off_ui_thread(
         self,
     ) -> None:
