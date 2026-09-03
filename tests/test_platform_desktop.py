@@ -174,6 +174,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._upload_submission_action = None
         instance._upload_submission_thread = None
         instance._session_refreshing = False
+        instance._session_refresh_thread = None
         instance._unlock_action = None
         instance._unlock_thread = None
         instance._profile_summary = "operator@example.test"
@@ -2053,6 +2054,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         instance._drain_events()
         self.assertFalse(instance._session_refreshing)
+        self.assertIsNone(instance._session_refresh_thread)
         instance.logout.assert_called_once_with(
             message="安全会话刷新失败，已停止任务并清除临时数据。"
         )
@@ -4467,6 +4469,25 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             ["login-worker-waited", "current-session-cleanup"],
         )
         self.assertEqual(instance._login_worker_threads, [])
+
+    def test_session_cleanup_waits_for_refresh_worker_before_logout(self) -> None:
+        instance = self._event_app()
+        order = []
+        refresh_worker = mock.Mock()
+        refresh_worker.is_alive.return_value = True
+        refresh_worker.join.side_effect = lambda: order.append("refresh-waited")
+        instance._session_refresh_thread = refresh_worker
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = (
+            lambda: order.append("current-session-cleanup")
+        )
+
+        cleanup = instance._capture_session_cleanup(None)
+        cleanup()
+
+        refresh_worker.join.assert_called_once_with()
+        self.assertEqual(order, ["refresh-waited", "current-session-cleanup"])
+        self.assertIsNone(instance._session_refresh_thread)
 
     def test_session_cleanup_waits_for_restore_to_publish_detached_cleanup(self) -> None:
         instance = self._event_app()

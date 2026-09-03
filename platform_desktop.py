@@ -330,6 +330,7 @@ class PlatformDesktopApp:
         self._active_task_recovery: TaskRecoverySnapshot | None = None
         self._session_deadline = 0.0
         self._session_refreshing = False
+        self._session_refresh_thread: threading.Thread | None = None
         self._unlock_action: _UnlockAction | None = None
         self._unlock_thread: threading.Thread | None = None
         self._update_generation = 0
@@ -1804,11 +1805,14 @@ class PlatformDesktopApp:
             self._events.put((generation, "session_refreshed", expires_in))
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-session-refresh"
+            target=worker, daemon=False, name="platform-session-refresh"
         )
+        self._session_refresh_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            if self._session_refresh_thread is thread:
+                self._session_refresh_thread = None
             self._events.put(
                 (
                     generation,
@@ -3348,10 +3352,12 @@ class PlatformDesktopApp:
                 )
             elif kind == "session_refreshed":
                 self._session_refreshing = False
+                self._session_refresh_thread = None
                 self._session_deadline = time.monotonic() + max(1, int(value))
                 self._set_status("安全会话已刷新。", SUCCESS)
             elif kind == "session_refresh_error":
                 self._session_refreshing = False
+                self._session_refresh_thread = None
                 self.logout(message="安全会话刷新失败，已停止任务并清除临时数据。")
             elif kind == "task_history":
                 self._render_task_history(value)
@@ -3519,6 +3525,8 @@ class PlatformDesktopApp:
             compensation.thread if compensation is not None else None
         )
         restore_thread = getattr(self, "_session_restore_thread", None)
+        session_refresh_thread = getattr(self, "_session_refresh_thread", None)
+        self._session_refresh_thread = None
         restore_lock = getattr(self, "_session_restore_lock", None)
         if restore_lock is None:
             restore_lock = threading.Lock()
@@ -3603,6 +3611,11 @@ class PlatformDesktopApp:
                         first_error = error
             if restore_thread is not None and restore_thread.is_alive():
                 restore_thread.join()
+            if (
+                session_refresh_thread is not None
+                and session_refresh_thread.is_alive()
+            ):
+                session_refresh_thread.join()
             if restore_compensation is None and late_restore_compensation is None:
                 with restore_lock:
                     late_restore_compensation = self._session_restore_compensation
@@ -4369,6 +4382,7 @@ class PlatformDesktopApp:
         self._reset_task_verification()
         self._upload_job_id = None
         self._profile_identity = None
+        self._session_refresh_thread = None
         self._reset_upload_attempt()
         self._task_generation += 1
         self._upload_generation += 1
