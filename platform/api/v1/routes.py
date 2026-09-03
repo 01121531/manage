@@ -5408,6 +5408,12 @@ def _deny_role_change_approval(
         },
     )
     db.commit()
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(role_change, with_for_update=True)
     contracts = {
         403: ("forbidden", "联系管理员确认账号角色和资源权限"),
         404: ("not_found", "刷新列表并确认资源仍然存在"),

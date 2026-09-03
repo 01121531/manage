@@ -2442,6 +2442,9 @@ class PlatformDesktopApp:
                         ),
                     )
                 )
+            self._events.put(
+                (generation, "task_create_finished", (transition, thread))
+            )
 
     def _start_polling(self) -> None:
         if (

@@ -1597,6 +1597,42 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["state"], "normal")
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
+    def test_stale_task_creation_start_failure_clears_cancelled_transition(self) -> None:
+        class Transition:
+            cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+                return None
+
+            @staticmethod
+            def worker_finished():
+                return None
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        transition = Transition()
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.begin_task_transition.return_value = transition
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.create_mail_task()
+
+        self.assertIs(instance._task_transition, transition)
+        instance._task_generation += 1
+        instance._drain_events()
+
+        self.assertTrue(transition.cancelled)
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_transition_thread)
+
     @staticmethod
     def _provisioning_compensation_failure_app(cleanup):
         transition = mock.Mock(cancelled=False)
