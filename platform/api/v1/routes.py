@@ -8151,6 +8151,15 @@ def admin_list_uploads(
     ),
     db: Session = Depends(get_db),
 ) -> list[AdminUploadResponse]:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(
+            ROLE_OPS_ADMIN,
+            ROLE_SECURITY_AUDITOR,
+            ROLE_PLATFORM_ADMIN,
+        ),
+    )
     jobs = db.scalars(
         select(UploadJob)
         .where(UploadJob.tenant_id == principal.tenant_id)
