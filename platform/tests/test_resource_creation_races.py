@@ -25,6 +25,7 @@ from platform.models import (
     OutboxEvent,
     Task,
     UploadJob,
+    User,
     utc_now,
 )
 
@@ -460,6 +461,69 @@ class ResourceCreationRaceTests(unittest.TestCase):
         self.assert_no_success_side_effects(
             task_id, resource_type=CardAllocation, event_type="card.allocated"
         )
+
+    def test_principal_revocation_before_card_lock_cannot_allocate_afterward(self) -> None:
+        for boundary in ("user_disabled", "device_revoked"):
+            with self.subTest(boundary=boundary):
+                with self.app.state.session_factory() as db:
+                    db.add(
+                        Card(
+                            tenant_id="tenant-resource-race",
+                            provider_ref=f"principal-race-{boundary}",
+                            brand="VISA",
+                            last4="1111",
+                            secret_ref=f"vault://cards/principal-race-{boundary}",
+                        )
+                    )
+                    db.commit()
+                task_id = self.create_task(f"card-principal-{boundary}")
+                entered = Event()
+                release = Event()
+                original = routes._lock_owned_open_task
+
+                def blocked_lock(*args, **kwargs):
+                    args[0].rollback()
+                    entered.set()
+                    if not release.wait(timeout=5):
+                        raise TimeoutError("principal lock test release timed out")
+                    return original(*args, **kwargs)
+
+                with patch(
+                    "platform.api.v1.routes._lock_owned_open_task",
+                    side_effect=blocked_lock,
+                ):
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(
+                            self.request,
+                            "POST",
+                            f"/api/v1/tasks/{task_id}/card-allocations",
+                            headers=self.headers,
+                        )
+                        self.assertTrue(entered.wait(timeout=5))
+                        with self.app.state.session_factory() as db:
+                            if boundary == "user_disabled":
+                                db.get(User, self.identity.user_id).is_active = False
+                            else:
+                                db.get(Device, self.identity.device_id).revoked_at = (
+                                    utc_now()
+                                )
+                            db.commit()
+                        release.set()
+                        created = future.result(timeout=10)
+
+                with self.app.state.session_factory() as db:
+                    db.get(User, self.identity.user_id).is_active = True
+                    db.get(Device, self.identity.device_id).revoked_at = None
+                    task = db.get(Task, task_id)
+                    task.status = "closed"
+                    task.closed_at = utc_now()
+                    db.commit()
+                self.assertEqual(created.status_code, 401, created.text)
+                self.assert_no_success_side_effects(
+                    task_id,
+                    resource_type=CardAllocation,
+                    event_type="card.allocated",
+                )
 
     def test_logout_before_upload_lock_cannot_queue_job_or_outbox_afterward(self) -> None:
         task_id = self.create_task("upload-logout-wins")

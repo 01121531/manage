@@ -494,7 +494,7 @@ def _lock_task_creation_principal(
     db: Session,
     principal: AuthPrincipal,
 ) -> None:
-    """Revalidate the mutable principal immediately before creating a root task."""
+    """Revalidate the mutable operator before a protected task mutation."""
 
     user_claim = db.execute(
         update(User)
@@ -1320,6 +1320,7 @@ def _lock_owned_open_task(
     )
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    _lock_task_creation_principal(db, principal)
     _assert_task_open(task, db, request=request, principal=principal)
     return task
 
