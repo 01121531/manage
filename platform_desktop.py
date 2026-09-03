@@ -608,6 +608,8 @@ class PlatformDesktopApp:
             state="normal" if upload_input_available else "disabled"
         )
         if not authenticated:
+            self.stop_polling()
+            self._cancel_card_reveal()
             self._poll_retry_attempt = 0
             self._paste_sequence.stop()
             self._clear_sensitive_code()
@@ -2222,7 +2224,11 @@ class PlatformDesktopApp:
                 "card_reveal_error",
             } and generation != self._task_generation:
                 continue
-            if kind in {"code", "card_reveal"} and not self._sensitive_focus.is_set():
+            if kind in {"code", "card_reveal"} and (
+                not self._sensitive_focus.is_set()
+                or self._client is None
+                or not self._client.is_authenticated
+            ):
                 continue
             if kind in {
                 "terminal_task_cleanup_succeeded",

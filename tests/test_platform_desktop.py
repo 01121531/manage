@@ -2148,6 +2148,40 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertNotIn("246810", str(instance.code_label.values))
         self.assertNotIn("4111111111111111", str(instance.card_reveal_label.values))
 
+    def test_authentication_loss_blocks_queued_code_and_card_events(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        card = CardRevealSnapshot(
+            id="reveal-1",
+            allocation_id="allocation-1",
+            card_masked="VISA •••• 1111",
+            brand="VISA",
+            expiry_month=12,
+            expiry_year=2030,
+            pan="4111111111111111",
+            reveal_expires_at="2099-08-21T12:00:05Z",
+        )
+        instance._events.put(
+            (
+                instance._poll_generation,
+                "code",
+                MailCodeSnapshot("code_ready", "246810"),
+            )
+        )
+        instance._events.put(
+            (instance._task_generation, "card_reveal", card)
+        )
+
+        instance._client.is_authenticated = False
+        instance._set_authenticated(False)
+        instance._drain_events()
+
+        self.assertIsNone(instance._current_code)
+        self.assertIsNone(instance._current_card_clipboard)
+        instance._write_clipboard.assert_not_called()
+        self.assertNotIn("246810", str(instance.code_label.values))
+        self.assertNotIn("4111111111111111", str(instance.card_reveal_label.values))
+
     def test_non_transient_poll_errors_stop_without_retry(self) -> None:
         for error in (
             PlatformProtocolError("bad response"),
