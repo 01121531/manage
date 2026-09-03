@@ -841,6 +841,7 @@ def login(
     if (
         current_user is None
         or not current_user.is_active
+        or current_user.email != payload.email
         or not current_password_valid
         or current_user.role not in INTERACTIVE_ROLES
         or current_device is None

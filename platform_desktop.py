@@ -4294,7 +4294,7 @@ class PlatformDesktopApp:
         self._set_status("更新已校验，正在退出并替换程序…", SUCCESS)
         try:
             self.root.after(200, self.close)
-        except tk.TclError:
+        except Exception:
             self.close()
 
     @staticmethod

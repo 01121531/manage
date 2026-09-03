@@ -424,6 +424,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const updated = await quarantineCard(row.id, quarantineReason)
       if (
         updated.id !== row.id
+        || updated.tenant_id !== row.tenant_id
         || updated.status !== 'quarantined'
         || updated.is_active
         || updated.quarantine_reason_code !== quarantineReason

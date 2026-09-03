@@ -1020,6 +1020,45 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401, response.text)
         self.assertNotIn("access_token", response.text)
 
+    def test_login_rechecks_email_after_audit_commit(self) -> None:
+        original_commit = Session.commit
+        email_changed = False
+
+        def commit_then_change_email(session: Session) -> None:
+            nonlocal email_changed
+            committing_login = any(
+                isinstance(item, AuditEvent) and item.event_type == "auth.login"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_login or email_changed:
+                return
+            email_changed = True
+            with self.app.state.session_factory() as other:
+                current_user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(current_user)
+                current_user.email = "renamed@example.test"
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_change_email,
+        ):
+            response = self.request(
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "tenant_id": "tenant-a",
+                    "email": "first@example.test",
+                    "password": self.account_password,
+                    "device_id": self.identity.device_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("access_token", response.text)
+
     def test_login_issues_access_token_after_audit_commit(self) -> None:
         original_commit = Session.commit
         login_committed = False

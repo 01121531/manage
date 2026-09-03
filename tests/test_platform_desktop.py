@@ -6018,6 +6018,29 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertTrue(instance._closed)
         self.assertEqual(instance.root.destroy_calls, 1)
 
+    def test_unexpected_update_close_schedule_failure_closes_synchronously(self) -> None:
+        instance = self._event_app()
+        manifest = mock.Mock(sha256="8" * 64)
+        package = Path("verified-update.exe")
+        instance._pending_update_install = (manifest, package)
+        original_after = instance.root.after
+
+        def fail_update_close(delay, callback, *args):
+            if delay == 200:
+                raise RuntimeError("unexpected scheduler failure")
+            return original_after(delay, callback, *args)
+
+        instance.root.after = fail_update_close
+
+        with mock.patch("platform_desktop.launch_update_helper") as launch_helper:
+            instance._finish_update_cleanup_if_ready()
+
+        launch_helper.assert_called_once_with(package, manifest.sha256)
+        self.assertTrue(instance._update_cleanup_completed)
+        self.assertIsNone(instance._pending_update_install)
+        self.assertTrue(instance._closed)
+        self.assertEqual(instance.root.destroy_calls, 1)
+
     def test_update_cleanup_thread_start_failure_exposes_retry(self) -> None:
         instance = self._event_app()
         manifest = mock.Mock(sha256="7" * 64)
