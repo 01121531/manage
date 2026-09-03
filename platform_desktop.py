@@ -1306,8 +1306,24 @@ class PlatformDesktopApp:
                 (action.session_generation, "active_task_discovered", (action, recovery))
             )
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (
+                        action.session_generation,
+                        "active_task_discovery_finished",
+                        (action, thread),
+                    )
+                )
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-active-task-discovery"
+            target=run_worker,
+            daemon=False,
+            name="platform-active-task-discovery",
         )
         self._active_task_discovery_threads.append(thread)
         self._active_task_discovery_thread = thread
@@ -2709,6 +2725,13 @@ class PlatformDesktopApp:
             if kind == "captured_cleanup_finished":
                 if self._cleanup_thread is value:
                     self._cleanup_thread = None
+                continue
+            if kind == "active_task_discovery_finished":
+                action, worker_thread = value
+                if self._active_task_discovery_thread is worker_thread:
+                    self._active_task_discovery_thread = None
+                if self._active_task_discovery_action is action:
+                    self._active_task_discovery_action = None
                 continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}

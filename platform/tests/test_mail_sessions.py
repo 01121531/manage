@@ -2867,6 +2867,64 @@ class MailSessionTests(unittest.TestCase):
                     )
                 self.assertEqual(consumed_events, [])
 
+    def test_terminal_task_mail_retirement_rechecks_operator_after_commit(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        token = self.login()
+        task_id = self.create_task(token, "terminal-mail-commit-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        delivered_code = "728451"
+        self.seed_terminal_code_ready_residue(
+            task_id=task_id,
+            session_id=session_id,
+            task_status="closed",
+            code=delivered_code,
+        )
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            retiring_session = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "mail_session.revoked"
+                for item in session_db.new
+            )
+            original_commit(session_db)
+            if not retiring_session or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(delivered_code, response.text)
+        self.assertNotIn("revoked", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            revoke_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mail_session.revoked",
+                        AuditEvent.entity_id == session_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "revoked")
+        self.assertIsNone(persisted.delivered_code)
+        self.assertEqual(len(revoke_events), 1)
+
     def test_sse_terminal_task_residue_never_exposes_code(self) -> None:
         self.app.state.settings.mail_poll_mode = "worker"
         access_token = self.login()

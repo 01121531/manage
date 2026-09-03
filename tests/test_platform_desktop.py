@@ -3530,6 +3530,36 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(calls, ["discover", "discover"])
         self.assertFalse(instance._active_task_discovery_required)
 
+    def test_stale_discovery_finished_clears_old_action_and_thread(self) -> None:
+        discovery_started = threading.Event()
+        release_discovery = threading.Event()
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def list_tasks(*, limit):
+                self.assertEqual(limit, 1)
+                discovery_started.set()
+                release_discovery.wait(timeout=2)
+                return []
+
+        instance = self._event_app()
+        instance._task_id = None
+        instance._client = Client()
+        instance._discover_active_task()
+        discovery_thread = instance._active_task_discovery_thread
+        self.assertTrue(discovery_started.wait(timeout=1))
+
+        instance._session_generation += 1
+        release_discovery.set()
+        discovery_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._active_task_discovery_action)
+        self.assertIsNone(instance._active_task_discovery_thread)
+        self.assertTrue(instance._active_task_discovery_required)
+
     def test_locked_logout_waits_for_active_task_discovery_before_cleanup(self) -> None:
         discovery_started = threading.Event()
         release_discovery = threading.Event()

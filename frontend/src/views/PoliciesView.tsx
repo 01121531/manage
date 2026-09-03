@@ -178,7 +178,14 @@ function OperationalPolicyPanel({ domain, principal }: {
         okText: '确认回滚',
         okButtonProps: { danger: true },
         cancelText: '取消',
-        onOk: () => perform('rollback', rollback, `${title}已回滚。`),
+        onOk: () => perform('rollback', async () => {
+          const rolledBack = await rollback()
+          if (
+            rolledBack.domain !== domain
+            || rolledBack.active_version !== status.previous_version
+            || rolledBack.previous_version !== status.active_version
+          ) throw new Error('operational policy rollback response binding mismatch')
+        }, `${title}已回滚。`),
       })}
     >回滚上一版本</Button> : null}
   >

@@ -2302,6 +2302,8 @@ def get_mail_code(
         )
         if retired_for_task:
             db.commit()
+            _lock_task_creation_principal(db, principal)
+            db.refresh(session, with_for_update=True)
             return MailCodeResponse(status=session.status)
         db.expire(session)
         db.refresh(session)
