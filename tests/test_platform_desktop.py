@@ -715,6 +715,38 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.login_button.values["text"], "登录平台")
         self.assertEqual(instance.login_button.values["state"], "normal")
 
+    def test_stale_shutdown_cleanup_finished_exposes_same_cleanup_retry(self) -> None:
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+
+        def cleanup() -> None:
+            cleanup_started.set()
+            release_cleanup.wait(timeout=2)
+
+        instance = self._event_app()
+        instance._shutdown_cleanup_action = cleanup
+        instance._shutdown_intent = "logout"
+
+        instance._start_session_shutdown_attempt()
+        cleanup_thread = instance._shutdown_cleanup_thread
+        self.assertTrue(cleanup_started.wait(timeout=1))
+
+        instance._shutdown_generation += 1
+        release_cleanup.set()
+        cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIs(instance._shutdown_cleanup_action, cleanup)
+        self.assertIsNone(instance._shutdown_cleanup_thread)
+        self.assertIsNone(instance._cleanup_thread)
+        self.assertFalse(instance._shutdown_cleanup_in_progress)
+        self.assertEqual(instance.login_button.values["text"], "重试安全清理")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertEqual(
+            instance.login_button.values["command"],
+            instance._retry_session_shutdown,
+        )
+
     def test_logout_waits_for_owned_clipboard_cleanup_before_enabling_login(self) -> None:
         instance = self._event_app()
         secret = "246810"

@@ -2634,10 +2634,12 @@ def get_mail_code(
             principal=principal,
         ):
             db.commit()
-            return MailCodeResponse(status=session.status)
-        db.expire(session)
-        db.refresh(session)
-        db.commit()
+        else:
+            db.expire(session)
+            db.refresh(session)
+            db.commit()
+        _lock_task_creation_principal(db, principal)
+        db.refresh(session, with_for_update=True)
         return MailCodeResponse(status=session.status)
     record_audit(
         db,

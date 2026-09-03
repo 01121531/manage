@@ -4065,6 +4065,7 @@ test('platform admin governs upload policies without browser execution details',
     lease_ttl_seconds: 1_800, reveal_ttl_seconds: 60, allocation_order: 'oldest_available',
     selection_rules: [{ task_type: 'card_checkout', pool_key: 'checkout-cn', region: 'cn-east', brands: ['VISA'], minimum_validity_days: 30, allocation_order: 'oldest_available' }],
   }]
+  let mailPolicyVersions: Array<Record<string, unknown>> = []
   const approveRequests: string[] = []
   const deployRequests: Array<{ policyId: string; rollout: number }> = []
   let rollbackRequests = 0
@@ -4150,7 +4151,19 @@ test('platform admin governs upload policies without browser execution details',
       return fulfill(cardPolicyVersions)
     }
     if (path === '/api/v1/admin/policies/mail/versions' && request.method() === 'GET') {
-      return fulfill([])
+      return fulfill(mailPolicyVersions)
+    }
+    if (path === '/api/v1/admin/policies/mail/versions' && request.method() === 'POST') {
+      const body = request.postDataJSON() as {
+        version: string; change_note: string; session_ttl_seconds: number
+        code_ttl_seconds: number; poll_interval_seconds: number
+      }
+      const created = {
+        id: 'mail-policy-draft-1', ...body, status: 'draft', created_by: 'user-admin',
+        approved_by: null, approved_at: null, created_at: '2026-08-20T00:01:00Z',
+      }
+      mailPolicyVersions = [created]
+      return fulfill({ ...created, version: 'wrong-mail-policy-version' }, 201)
     }
     if (path === '/api/v1/admin/policies/card/rollback' && request.method() === 'POST') {
       cardPolicyRollbackRequests += 1
@@ -4256,6 +4269,16 @@ test('platform admin governs upload policies without browser execution details',
   await expect(page.getByText(/独立审批/).first()).toBeVisible()
   await expect(page.getByText('邮箱策略', { exact: true })).toBeVisible()
   await expect(page.getByText('卡分配策略', { exact: true })).toBeVisible()
+  const mailPolicySummary = page.locator('.ant-card').filter({
+    has: page.getByText('邮箱策略', { exact: true }),
+  })
+  await mailPolicySummary.getByPlaceholder('mail-2026.08.1').fill('mail-2026.09.1')
+  await mailPolicySummary.getByPlaceholder('变更说明').fill('九月邮箱策略')
+  await mailPolicySummary.getByRole('button', { name: '登记草稿' }).click()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '生产策略未确认变更' }).last()).toBeVisible()
+  await expect(page.getByText('邮箱策略草稿已登记，等待另一位管理员审批。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-mail-policy-version')
+  await expect(mailPolicySummary.getByText('mail-2026.09.1', { exact: true })).toBeVisible()
   const cardPolicySummary = page.locator('.ant-card').filter({
     has: page.getByText('卡分配策略', { exact: true }),
   })

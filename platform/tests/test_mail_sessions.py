@@ -1285,6 +1285,74 @@ class MailSessionTests(unittest.TestCase):
             finally:
                 app.state.engine.dispose()
 
+    def test_lost_connector_claim_rechecks_operator_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-lost-connector-claim-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        self.connector.messages.append(
+            MailCodeMessage(
+                message_id="lost-connector-claim-message",
+                watermark="1",
+                code="572184",
+                received_at=utc_now(),
+            )
+        )
+
+        original_commit = Session.commit
+        claim_lost = False
+        demoted = False
+
+        def lose_claim(db: Session, **_kwargs) -> bool:
+            nonlocal claim_lost
+            claim_lost = True
+            db.execute(
+                update(MailSession)
+                .where(MailSession.id == session_id)
+                .values(
+                    status="consumed",
+                    consumed_at=utc_now(),
+                    last_message_hash="concurrent-winner-message-hash",
+                )
+                .execution_options(synchronize_session=False)
+            )
+            return False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            original_commit(session_db)
+            if not claim_lost or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(
+            routes,
+            "claim_connector_message",
+            side_effect=lose_claim,
+        ), patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("consumed", response.text)
+        self.assertNotIn("572184", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+        self.assertEqual(persisted.status, "consumed")
+        self.assertEqual(
+            persisted.last_message_hash,
+            "concurrent-winner-message-hash",
+        )
+
     def test_lost_code_claim_rechecks_operator_after_commit(self) -> None:
         self.app.state.settings.mail_poll_mode = "worker"
         token = self.login()

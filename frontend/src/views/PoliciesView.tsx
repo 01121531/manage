@@ -202,7 +202,14 @@ function OperationalPolicyPanel({ domain, principal }: {
         ? { session_ttl_seconds: 600, code_ttl_seconds: 60, poll_interval_seconds: 5 }
         : { lease_ttl_seconds: 1_800, reveal_ttl_seconds: 60, task_type: 'card_checkout', minimum_validity_days: 0, card_allocation_order: 'oldest_available' }}
       onFinish={(values) => perform('register', async () => {
-        await register(values)
+        const created = await register(values)
+        if (
+          !created.id
+          || created.version !== values.version
+          || created.change_note !== values.change_note
+          || created.status !== 'draft'
+          || created.created_by !== principal.id
+        ) throw new Error('operational policy registration response binding mismatch')
         form.resetFields()
       }, `${title}草稿已登记，等待另一位管理员审批。`)}
     >

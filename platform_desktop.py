@@ -2742,6 +2742,23 @@ class PlatformDesktopApp:
                         "下一步：点击“重试安全清理”重新确认。",
                         ERROR,
                     )
+                if (
+                    self._shutdown_cleanup_thread is value
+                    and self._shutdown_cleanup_in_progress
+                ):
+                    self._shutdown_cleanup_thread = None
+                    self._shutdown_cleanup_in_progress = False
+                    self.login_button.configure(
+                        text="重试安全清理",
+                        command=self._retry_session_shutdown,
+                        state="normal",
+                    )
+                    self._set_status(
+                        "原因：安全退出的清理结果已失效；"
+                        "影响：本地敏感值已清除，但退出尚未完成；"
+                        "下一步：点击“重试安全清理”重新确认。",
+                        ERROR,
+                    )
                 continue
             if kind == "active_task_discovery_finished":
                 action, worker_thread = value
