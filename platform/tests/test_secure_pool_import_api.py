@@ -23,6 +23,7 @@ from platform.models import (
     PoolImportCardIdentityClaim,
     PoolImportContext,
     PoolImportReceipt,
+    User,
 )
 from platform.pool_imports import VerifiedPoolImportReceipt, pool_import_digest
 from platform.schemas import AdminCardImportItem
@@ -1086,6 +1087,61 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertNotIn("vault://", audit_json)
             self.assertIn(first_receipt["ordered_manifest_digest"], audit_json)
             self.assertIn(first_receipt["secure_receipt_fingerprint"], audit_json)
+
+    def test_card_import_revalidates_admin_after_conflict_rollback(self) -> None:
+        payload = [{
+            "provider_ref": "provider-card-race",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        _, import_headers = self.import_headers("card", payload)
+        first = self.request(
+            "POST", "/api/v1/admin/cards/imports", headers=import_headers, json=payload
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+
+        from platform.api.v1 import routes
+
+        original_replay = routes._replay_pool_import_receipt
+        replay_calls = 0
+
+        def miss_early_replay(*args, **kwargs):
+            nonlocal replay_calls
+            replay_calls += 1
+            if replay_calls == 1:
+                return None
+            return original_replay(*args, **kwargs)
+
+        original_rollback = Session.rollback
+        role_changed = False
+
+        def demote_after_rollback(session: Session) -> None:
+            nonlocal role_changed
+            original_rollback(session)
+            if role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.admin.user_id)
+                assert user is not None
+                user.role = "operator"
+                other.commit()
+
+        with (
+            patch.object(routes, "_replay_pool_import_receipt", side_effect=miss_early_replay),
+            patch.object(routes, "_verify_pool_import_context", return_value=None),
+            patch.object(Session, "rollback", new=demote_after_rollback),
+        ):
+            replay = self.request(
+                "POST", "/api/v1/admin/cards/imports", headers=import_headers, json=payload
+            )
+
+        self.assertEqual(replay.status_code, 403, replay.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 1)
+            self.assertEqual(db.scalar(select(func.count()).select_from(PoolImportReceipt)), 1)
 
     def test_duplicate_card_provider_refs_fail_before_receipt_verification(self) -> None:
         receipt_id = str(uuid4())

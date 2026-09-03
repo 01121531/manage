@@ -3297,6 +3297,11 @@ test('security auditor filters and downloads redacted audit evidence', async ({ 
   await expect(page.getByText('upload.reconcile')).toBeVisible()
   await expect(page.getByText('policy-v7')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('must-never-render')
+  const auditRow = page.getByRole('row').filter({ hasText: auditTrace })
+  const copyTraceButton = auditRow.locator('.ant-typography-copy')
+  await expect(copyTraceButton).toHaveCount(1)
+  await copyTraceButton.focus()
+  await expect(copyTraceButton).toBeFocused()
 
   await page.getByLabel('操作者').fill('actor-1')
   await page.getByLabel('关联用户').fill('subject-1')

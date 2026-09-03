@@ -4,6 +4,7 @@ import threading
 import time
 import tkinter as tk
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -3497,6 +3498,41 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIs(instance._active_task_recovery, recovery)
         self.assertEqual(instance.new_task_button.values["text"], "重试接管活动任务")
         self.assertNotIn("raw offline failure", instance.status_label.values["text"])
+
+    def test_takeover_stops_when_refreshed_task_is_terminal(self) -> None:
+        instance = self._event_app()
+        recovery = self._recovery_snapshot()
+        terminal = replace(recovery, task=replace(recovery.task, status="completed"))
+        instance._task_id = recovery.task.id
+        instance._active_task_recovery = recovery
+        transition = mock.Mock(cancelled=False)
+        transition.worker_finished.return_value = None
+        transition.commit.return_value = True
+        client = mock.Mock(is_authenticated=True)
+        client.begin_task_transition.return_value = transition
+        client.get_task_timeline.return_value = terminal
+        instance._client = client
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance.take_over_active_task()
+            instance._drain_events()
+
+        client.create_mail_session.assert_not_called()
+        client.allocate_card.assert_not_called()
+        transition.worker_finished.assert_called_once_with()
+        transition.commit.assert_called_once_with()
+        self.assertIsNone(instance._active_task_recovery_action)
+        self.assertIsNone(instance._active_task_recovery)
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_id)
+        self.assertEqual(instance.new_task_button.values["text"], "创建邮箱任务")
 
     def test_takeover_thread_start_failure_exposes_retry(self) -> None:
         instance = self._event_app()

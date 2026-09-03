@@ -6909,6 +6909,11 @@ def admin_import_cards(
         db.flush()
     except IntegrityError:
         db.rollback()
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
         replay = _replay_pool_import_receipt(
             db,
             principal=principal,
@@ -8003,6 +8008,11 @@ def admin_import_mailboxes(
         db.flush()
     except IntegrityError:
         db.rollback()
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
         replay = _replay_pool_import_receipt(
             db,
             principal=principal,

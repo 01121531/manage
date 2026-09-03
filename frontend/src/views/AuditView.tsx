@@ -35,7 +35,10 @@ export default function AuditPage() {
         ? <Text className="audit-user-agent" title={value}>{value}</Text>
         : '—',
     },
-    { title: '追踪号', dataIndex: 'trace_id', width: 300 },
+    {
+      title: '追踪号', dataIndex: 'trace_id', width: 300,
+      render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text>,
+    },
   ]
 
   function updateFilters(next: AuditFilters) {

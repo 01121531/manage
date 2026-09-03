@@ -1236,6 +1236,15 @@ class PlatformDesktopApp:
             raise PlatformProtocolError("活动任务包含多个未终结上传作业")
         return active[0] if active else None
 
+    @staticmethod
+    def _task_is_terminal(recovery: TaskRecoverySnapshot) -> bool:
+        return recovery.task.status in {
+            "closed",
+            "expired",
+            "cancelled",
+            "completed",
+        }
+
     def _show_discovered_task(self, recovery: TaskRecoverySnapshot) -> None:
         self._active_task_recovery = recovery
         self._task_id = recovery.task.id
@@ -1364,6 +1373,17 @@ class PlatformDesktopApp:
                     or current.task.trace_id != action.trace_id
                 ):
                     raise PlatformProtocolError("活动任务在接管前发生身份漂移")
+                if self._task_is_terminal(current):
+                    transition.worker_finished()
+                    if not transition.cancelled and transition.commit():
+                        self._events.put(
+                            (
+                                action.task_generation,
+                                "active_task_recovery_closed",
+                                (action, PlatformProtocolError("活动任务已终结")),
+                            )
+                        )
+                    return
                 upload = self._recovery_active_upload(current)
                 session = None
                 allocation = None
@@ -1394,6 +1414,8 @@ class PlatformDesktopApp:
                         or current.task.trace_id != action.trace_id
                     ):
                         raise PlatformProtocolError("活动任务在资源恢复后发生身份漂移")
+                    if self._task_is_terminal(current):
+                        raise PlatformProtocolError("活动任务在资源恢复后已终结")
                     self._validate_recovered_resources(current, session, allocation)
                     reconciled_upload = self._recovery_active_upload(current)
                     if reconciled_upload is not None:
