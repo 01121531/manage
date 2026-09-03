@@ -1,7 +1,7 @@
 # Render this template with a deployment-controlled PLATFORM_DOMAIN and mount
 # the certificate/key from a secret volume. Never commit private keys here.
 
-log_format platform_safe escape=json '{"method":"$request_method","uri":"$uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_response_time":"$upstream_response_time"}';
+log_format platform_safe escape=json '{"trace_id":"$request_id","method":"$request_method","uri":"$uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_response_time":"$upstream_response_time"}';
 access_log /dev/stdout platform_safe;
 error_log /dev/stderr emerg;
 
@@ -89,7 +89,8 @@ server {
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
-        return 413 '{"error":{"code":"request_too_large","message":"Request body too large","recovery_hint":"Reduce the request body to 2 MiB or less and retry."}}';
+        add_header X-Trace-Id "$request_id" always;
+        return 413 '{"error":{"code":"request_too_large","message":"Request body too large","recovery_hint":"Reduce the request body to 2 MiB or less and retry.","trace_id":"$request_id"}}';
     }
 
     location @api_rate_limited {
@@ -100,7 +101,8 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
         add_header Retry-After "1" always;
-        return 429 '{"error":{"code":"rate_limited","message":"Too many requests","recovery_hint":"Retry after the number of seconds in Retry-After."}}';
+        add_header X-Trace-Id "$request_id" always;
+        return 429 '{"error":{"code":"rate_limited","message":"Too many requests","recovery_hint":"Retry after the number of seconds in Retry-After.","trace_id":"$request_id"}}';
     }
 
     location = /healthz {

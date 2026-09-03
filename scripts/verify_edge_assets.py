@@ -500,13 +500,15 @@ def validate_edge_assets(
         (
             platform_https_servers,
             "@api_request_too_large",
-            "return 413 '{\"error\":{\"code\":\"request_too_large\",\"message\":\"Request body too large\",\"recovery_hint\":\"Reduce the request body to 2 MiB or less and retry.\"}}';",
+            "return 413 '{\"error\":{\"code\":\"request_too_large\",\"message\":\"Request body too large\",\"recovery_hint\":\"Reduce the request body to 2 MiB or less and retry.\",\"trace_id\":\"$request_id\"}}';",
             False,
+            True,
         ),
         (
             platform_https_servers,
             "@api_rate_limited",
-            "return 429 '{\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many requests\",\"recovery_hint\":\"Retry after the number of seconds in Retry-After.\"}}';",
+            "return 429 '{\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many requests\",\"recovery_hint\":\"Retry after the number of seconds in Retry-After.\",\"trace_id\":\"$request_id\"}}';",
+            True,
             True,
         ),
         (
@@ -514,9 +516,12 @@ def validate_edge_assets(
             "@identity_rate_limited",
             "return 429 '{\"error\":\"rate_limited\",\"error_description\":\"Too many requests; retry after 1 second.\"}';",
             True,
+            False,
         ),
     )
-    for servers, label, return_directive, requires_retry_after in handlers:
+    if rendered.count('\"trace_id\":\"$request_id\"') != 3:
+        safe_error_invalid = True
+    for servers, label, return_directive, requires_retry_after, requires_trace in handlers:
         entries = _location_entries(servers[0]) if len(servers) == 1 else []
         bodies = [body for entry_label, body in entries if entry_label == label]
         if len(bodies) != 1:
@@ -529,10 +534,19 @@ def validate_edge_assets(
         retry_after = 'add_header Retry-After "1" always;'
         if body.count(retry_after) != (1 if requires_retry_after else 0):
             safe_error_invalid = True
+        trace_header = 'add_header X-Trace-Id "$request_id" always;'
+        if body.count(trace_header) != (1 if requires_trace else 0):
+            safe_error_invalid = True
         return_lines = [
             line.strip() for line in body.splitlines() if line.strip().startswith("return ")
         ]
-        if len(return_lines) != 1 or "$" in return_lines[0]:
+        return_variables = (
+            set(re.findall(r"\$[A-Za-z0-9_]+", return_lines[0]))
+            if len(return_lines) == 1
+            else set()
+        )
+        expected_variables = {"$request_id"} if requires_trace else set()
+        if len(return_lines) != 1 or return_variables != expected_variables:
             safe_error_invalid = True
         if re.search(r"\b(?:proxy_pass|rewrite|try_files)\b", body):
             safe_error_invalid = True

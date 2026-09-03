@@ -285,6 +285,8 @@ class EdgeAssetTests(unittest.TestCase):
             '"code":"request_too_large"',
             '"code":"rate_limited"',
             '"recovery_hint"',
+            '"trace_id":"$request_id"',
+            'add_header X-Trace-Id "$request_id" always;',
             '"error":"rate_limited"',
             '"error_description"',
         )
@@ -293,6 +295,11 @@ class EdgeAssetTests(unittest.TestCase):
                 self.assertIn(fragment, self.template)
         self.assertEqual(
             self.template.count('add_header Retry-After "1" always;'),
+            2,
+        )
+        self.assertEqual(self.template.count('"trace_id":"$request_id"'), 3)
+        self.assertEqual(
+            self.template.count('add_header X-Trace-Id "$request_id" always;'),
             2,
         )
 
@@ -305,6 +312,8 @@ class EdgeAssetTests(unittest.TestCase):
             ('add_header Retry-After "1" always;', 'add_header Retry-After "0";'),
             ('"code":"request_too_large"', '"code":"raw_upstream_error"'),
             ('"recovery_hint"', '"raw_details"'),
+            ('"trace_id":"$request_id"', '"trace_id":"$http_x_trace_id"'),
+            ('add_header X-Trace-Id "$request_id" always;', ''),
             ("Request body too large", "$request_body"),
         )
         for old, new in mutations:
