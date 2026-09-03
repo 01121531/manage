@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from platform.api.v1 import routes
 from platform.app import create_app
+from platform.auth import AuthPrincipal, get_operator_principal
 from platform.bootstrap import create_user_with_device
 from platform.cards import CardSecret, CardSecretUnavailable, SecretCardSecretResolver
 from platform.config import Settings
@@ -2192,7 +2193,13 @@ class CardAllocationTests(unittest.TestCase):
             if statement is None or getattr(statement, "_for_update_arg", None) is None:
                 return
             sql = str(statement).lower()
-            for table in ("tasks", "card_allocations", "card_reveal_challenges"):
+            for table in (
+                "tasks",
+                "users",
+                "devices",
+                "card_allocations",
+                "card_reveal_challenges",
+            ):
                 if f"from {table}" in sql:
                     locked_tables.append(table)
                     break
@@ -2214,8 +2221,103 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(revealed.status_code, 200, revealed.text)
         self.assertEqual(
             locked_tables,
-            ["tasks", "card_allocations", "card_reveal_challenges"],
+            [
+                "tasks",
+                "users",
+                "devices",
+                "card_allocations",
+                "card_reveal_challenges",
+            ],
         )
+
+    def test_reveal_rechecks_principal_before_resolving_pan(self) -> None:
+        token = self.login()
+        headers = self.bearer(token)
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+            email="card-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+
+        for boundary in ("user_disabled", "device_revoked"):
+            with self.subTest(boundary=boundary):
+                task_id = self.create_task(token, f"card-reveal-{boundary}")
+                allocation = self.request(
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/card-allocations",
+                    headers=headers,
+                )
+                self.assertEqual(allocation.status_code, 201, allocation.text)
+                allocation_id = allocation.json()["id"]
+                _challenge, grant = self.grant_with_step_up(token, allocation_id)
+                self.assertEqual(grant.status_code, 200, grant.text)
+
+                with self.app.state.session_factory() as db:
+                    if boundary == "user_disabled":
+                        db.get(User, self.identity.user_id).is_active = False
+                    else:
+                        db.get(Device, self.identity.device_id).revoked_at = now
+                    db.commit()
+
+                self.app.dependency_overrides[get_operator_principal] = (
+                    lambda: captured_principal
+                )
+                try:
+                    blocked = self.request(
+                        "POST",
+                        f"/api/v1/card-allocations/{allocation_id}/reveal",
+                        headers=headers,
+                        json={
+                            "reveal_grant": grant.json()["reveal_grant"],
+                            "fields": ["pan"],
+                        },
+                    )
+                finally:
+                    self.app.dependency_overrides.pop(get_operator_principal, None)
+                    with self.app.state.session_factory() as db:
+                        db.get(User, self.identity.user_id).is_active = True
+                        db.get(Device, self.identity.device_id).revoked_at = None
+                        task = db.get(Task, task_id)
+                        task.status = "closed"
+                        task.closed_at = utc_now()
+                        stored_allocation = db.get(CardAllocation, allocation_id)
+                        stored_allocation.status = "released"
+                        stored_allocation.released_at = utc_now()
+                        db.commit()
+
+                self.assertEqual(blocked.status_code, 401, blocked.text)
+                self.assertNotIn("4111111111111111", blocked.text)
+                with self.app.state.session_factory() as db:
+                    stored_allocation = db.get(CardAllocation, allocation_id)
+                    challenge = db.scalar(
+                        select(CardRevealChallenge).where(
+                            CardRevealChallenge.allocation_id == allocation_id
+                        )
+                    )
+                    reveal_events = list(
+                        db.scalars(
+                            select(AuditEvent).where(
+                                AuditEvent.entity_id == allocation_id,
+                                AuditEvent.event_type == "card.revealed",
+                            )
+                        )
+                    )
+                self.assertIsNone(stored_allocation.revealed_at)
+                self.assertIsNone(challenge.consumed_at)
+                self.assertIsNotNone(challenge.grant_token_hash)
+                self.assertEqual(reveal_events, [])
+
+        self.assertEqual(self.card_secret_resolver.secret_refs, [])
 
     def test_reveal_rejects_missing_or_insufficient_step_up(self) -> None:
         token = self.login()

@@ -2836,7 +2836,7 @@ def _assert_revealable(allocation: CardAllocation, now: datetime) -> None:
 def _owned_card_reveal_context(
     db: Session, allocation_id: str, principal: AuthPrincipal
 ) -> tuple[Task, CardAllocation, Card, datetime] | None:
-    """Lock and validate reveal authority in Task -> allocation order."""
+    """Lock and validate reveal authority in Task -> principal -> allocation order."""
 
     task_id = db.scalar(
         select(CardAllocation.task_id).where(
@@ -2861,6 +2861,8 @@ def _owned_card_reveal_context(
     )
     if task is None:
         return None
+
+    _lock_task_creation_principal(db, principal)
 
     allocation = db.scalar(
         select(CardAllocation)
