@@ -1211,10 +1211,10 @@ def revoke_owned_device(
     principal: AuthPrincipal = Depends(get_interactive_principal),
     db: Session = Depends(get_db),
 ) -> AdminDeviceResponse:
-    owner = _lock_user(
+    _lock_admin_write_principal(
         db,
-        tenant_id=principal.tenant_id,
-        user_id=principal.user_id,
+        principal,
+        allowed_roles=tuple(INTERACTIVE_ROLES),
     )
     device = _lock_device(
         db,
@@ -1222,7 +1222,7 @@ def revoke_owned_device(
         user_id=principal.user_id,
         device_id=device_id,
     )
-    if owner is None or device is None:
+    if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     if device.revoked_at is None:
         now = _utc_now()

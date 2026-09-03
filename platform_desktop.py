@@ -1132,8 +1132,11 @@ class PlatformDesktopApp:
         self._active_task_recovery_action = None
         self._active_task_recovery = None
         email = profile.get("email")
+        tenant_id = profile.get("tenant_id")
         device_id = profile.get("device_id")
         summary = str(email) if isinstance(email, str) else "平台账号"
+        if isinstance(tenant_id, str) and tenant_id:
+            summary += f" · 组织 {tenant_id}"
         if isinstance(device_id, str) and device_id:
             summary += f" · 设备 {device_id[:8]}"
         self._profile_summary = summary
@@ -2057,11 +2060,13 @@ class PlatformDesktopApp:
 
         def worker() -> None:
             task_id: str | None = None
+            cleanup: Callable[[], Any] | None = None
             try:
                 if previous_task_id:
                     cleanup = transition.close(previous_task_id)
                     if cleanup is not None:
                         cleanup()
+                        cleanup = None
                 if transition.cancelled:
                     return
                 task = self._client.create_task("mail_code", str(uuid4()))
@@ -2070,6 +2075,7 @@ class PlatformDesktopApp:
                 cleanup = transition.attach(task_id)
                 if cleanup is not None:
                     cleanup()
+                    cleanup = None
                 if transition.cancelled:
                     return
                 session = self._client.create_mail_session(task_id)
@@ -2082,7 +2088,7 @@ class PlatformDesktopApp:
                     allocation,
                 )
             except BaseException as error:
-                cleanup = transition.cancel()
+                cleanup = transition.cancel() or cleanup
                 if cleanup is not None:
                     try:
                         cleanup()

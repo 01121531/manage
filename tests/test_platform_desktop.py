@@ -1019,6 +1019,36 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
                 )
                 self.assertTrue(instance._events.empty())
 
+    def test_lock_race_retains_cleanup_when_post_attach_close_fails(self) -> None:
+        instance, release = self._provisioning_race_app()
+        attempts = []
+
+        def fail_close(task_id, access_token):
+            attempts.append((task_id, access_token))
+            raise PlatformTransportError("close failed")
+
+        instance._client._close_task_with_access_token = fail_close
+        transition = instance._task_transition
+        worker = instance._task_transition_thread
+        instance.lock()
+        release.set()
+        worker.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(
+            attempts,
+            [
+                ("task-created-in-flight", "captured-access"),
+                ("task-created-in-flight", "captured-access"),
+            ],
+        )
+        self.assertIsNotNone(instance._task_compensation)
+        self.assertIs(
+            instance._task_compensation.transition,
+            transition,
+        )
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+
     def test_logout_during_task_switch_closes_previous_and_new_task_once(self) -> None:
         instance, release = self._provisioning_race_app("task-previous")
 
@@ -2625,6 +2655,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             instance._profile_identity,
             ("tenant-B", "user-B", "device-B"),
         )
+        self.assertIn("组织 tenant-B", instance.profile_label.values["text"])
         self.assertIsNone(instance._current_code)
         instance._write_clipboard.assert_not_called()
         self.assertNotIn("246810", str(instance.code_label.values))

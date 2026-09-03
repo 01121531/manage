@@ -1544,6 +1544,69 @@ class PlatformAppTests(unittest.TestCase):
             self.assertIsNone(session.start_watermark)
             self.assertIsNone(session.last_message_hash)
 
+    def test_revoked_actor_device_cannot_revoke_another_owned_device(self) -> None:
+        observed_at = utc_now()
+        with self.app.state.session_factory() as db:
+            actor = db.get(Device, self.identity.device_id)
+            actor.revoked_at = observed_at
+            target = Device(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                name="trusted-target-device",
+            )
+            db.add(target)
+            db.flush()
+            task = Task(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=target.id,
+                task_type="mail_code",
+                idempotency_key="trusted-target-task",
+                trace_id="trusted-target-trace",
+                status="created",
+                expires_at=observed_at + timedelta(minutes=15),
+            )
+            db.add(task)
+            db.commit()
+            target_id = target.id
+            task_id = task.id
+
+        stale_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-a",
+            device_id=self.identity.device_id,
+            email="first@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=observed_at,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                f"/api/v1/devices/{target_id}/revoke",
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        with self.app.state.session_factory() as db:
+            self.assertIsNone(db.get(Device, target_id).revoked_at)
+            self.assertEqual(db.get(Task, task_id).status, "created")
+            self.assertIsNone(
+                db.scalar(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "device.revoked",
+                        AuditEvent.entity_id == target_id,
+                    )
+                )
+            )
+
     def test_audit_never_contains_credentials(self) -> None:
         token = self.login()
         created = self.request(
