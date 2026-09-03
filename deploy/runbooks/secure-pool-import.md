@@ -82,6 +82,12 @@ rejected before the first Vault or API mutation.
    other read, write, or execute bit is allowed. The importer compares mode on
    the same open descriptor before and after the bounded read; `0640`, `0604`
    and `0644` therefore fail before any remote or local mutation.
+   Before requesting either external credential, validate the raw file locally:
+   `python scripts/validate_secure_pool_input.py card --input-file <absolute-path>`
+   or replace `card` with `mailbox`. This command uses the same record parser,
+   file-permission boundary and 1-to-100 item limit as the importer. It makes no
+   network request, writes no file and prints only the pool type and item count;
+   it never prints PAN, mailbox credentials or source records.
    This does not replace the approved workstation cleanup procedure or prove
    secure erasure after the process exits. Run `scripts/secure_pool_import.py`
    `card` or `mailbox` with the exact
