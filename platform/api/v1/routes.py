@@ -8735,6 +8735,11 @@ def admin_register_upload_policy_version(
 ) -> UploadPolicyVersionResponse:
     """Register an immutable snapshot of the current server-owned settings."""
 
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     configured = request.app.state.sub2_policy
     policy = UploadPolicyVersion(
         tenant_id=principal.tenant_id,
@@ -8782,6 +8787,11 @@ def admin_approve_upload_policy_version(
     principal: AuthPrincipal = Depends(require_roles(ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> UploadPolicyVersionResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     policy = db.scalar(
         select(UploadPolicyVersion).where(
             UploadPolicyVersion.id == policy_id,
@@ -8827,6 +8837,11 @@ def admin_deploy_upload_policy_version(
     principal: AuthPrincipal = Depends(require_roles(ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> UploadPolicyDeploymentResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     policy = db.scalar(
         select(UploadPolicyVersion).where(
             UploadPolicyVersion.id == policy_id,
@@ -8923,6 +8938,11 @@ def admin_rollback_upload_policy(
     principal: AuthPrincipal = Depends(require_roles(ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> UploadPolicyDeploymentResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     deployment = db.scalar(
         select(UploadPolicyDeployment).where(
             UploadPolicyDeployment.tenant_id == principal.tenant_id
