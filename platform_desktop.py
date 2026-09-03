@@ -3351,7 +3351,10 @@ class PlatformDesktopApp:
         self._pending_update_install = None
         self._update_generation += 1
         self._set_status("更新已校验，正在退出并替换程序…", SUCCESS)
-        self.root.after(200, self.close)
+        try:
+            self.root.after(200, self.close)
+        except tk.TclError:
+            self.close()
 
     @staticmethod
     def _format_card_details(snapshot: CardRevealSnapshot) -> str:
