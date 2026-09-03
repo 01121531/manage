@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from platform.api.v1 import routes
 from platform.app import create_app
@@ -399,6 +400,88 @@ class ResourceCreationRaceTests(unittest.TestCase):
                 ),
                 1,
             )
+
+    def test_upload_idempotent_replay_returns_status_after_concurrent_task_close(
+        self,
+    ) -> None:
+        task_id = self.create_task("upload-replay-close-task")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.headers,
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            mailbox_id = db.scalar(select(Mailbox.id).limit(1))
+            db.add(
+                MailSession(
+                    tenant_id=task.tenant_id,
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    device_id=task.device_id,
+                    mailbox_id=mailbox_id,
+                    trace_id=task.trace_id,
+                    status="consumed",
+                    consumed_at=now,
+                    expires_at=now + timedelta(minutes=5),
+                )
+            )
+            db.commit()
+
+        payload = {
+            "business_name": "Replay Close Store",
+            "idempotency_key": "upload-replay-close",
+        }
+        created = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/uploads",
+            headers=self.headers,
+            json=payload,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        job_id = created.json()["id"]
+        entered = Event()
+        release = Event()
+        original_scalar = Session.scalar
+        blocked = False
+
+        def block_after_stale_upload_read(session, statement, *args, **kwargs):
+            nonlocal blocked
+            result = original_scalar(session, statement, *args, **kwargs)
+            if not blocked and isinstance(result, UploadJob) and result.id == job_id:
+                blocked = True
+                session.commit()
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("upload replay release timed out")
+            return result
+
+        with patch.object(Session, "scalar", new=block_after_stale_upload_read):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/uploads",
+                    headers=self.headers,
+                    json=payload,
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                closed = self.close_task(task_id)
+                self.assertEqual(closed.status_code, 200, closed.text)
+                release.set()
+                replay = future.result(timeout=10)
+
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["status"], "cancelled")
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            outbox = db.scalar(
+                select(OutboxEvent).where(OutboxEvent.aggregate_id == job_id)
+            )
+        self.assertEqual(job.status, "cancelled")
+        self.assertEqual(outbox.status, "processed")
 
     def test_close_during_mail_watermark_cannot_create_session_afterward(self) -> None:
         task_id = self.create_task("mail-close-wins")

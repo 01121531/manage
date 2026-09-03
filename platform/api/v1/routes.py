@@ -4046,6 +4046,7 @@ def create_upload_job(
                 status_code=409,
                 detail="Idempotency key was already used with different upload data",
             )
+        db.refresh(existing, with_for_update=True)
         response.status_code = 200
         return _upload_job_response(existing)
 
@@ -4206,6 +4207,7 @@ def create_upload_job(
         if existing is not None and (
             existing.task_id == task.id and existing.business_name == payload.business_name
         ):
+            db.refresh(existing, with_for_update=True)
             response.status_code = 200
             return _upload_job_response(existing)
         raise HTTPException(status_code=409, detail="Upload idempotency key is busy") from None
