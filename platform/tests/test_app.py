@@ -1555,6 +1555,78 @@ class PlatformAppTests(unittest.TestCase):
         )
         self.assertEqual(rejected.status_code, 422)
 
+    def test_task_list_rechecks_role_scope_after_expiry_commit(self) -> None:
+        other = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="task-list-other@example.test",
+            password="task-list-other-password",
+            device_name="task-list-other-device",
+        )
+        sensitive_reference = "other-user-expired-sensitive-reference"
+        with self.app.state.session_factory() as db:
+            actor = db.get(User, self.identity.user_id)
+            self.assertIsNotNone(actor)
+            actor.role = "ops_admin"
+            task = Task(
+                tenant_id="tenant-a",
+                user_id=other.user_id,
+                device_id=other.device_id,
+                task_type="mail_code",
+                idempotency_key="task-list-role-scope-boundary",
+                client_reference=sensitive_reference,
+                trace_id="task-list-role-scope-trace",
+                status="created",
+                expires_at=utc_now() - timedelta(seconds=1),
+            )
+            db.add(task)
+            db.commit()
+            task_id = task.id
+
+        token = self.login()
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal demoted
+            expiring_task = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.expired"
+                for item in session.new
+            )
+            original_commit(session)
+            if not expiring_task or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other_db:
+                actor = other_db.get(User, self.identity.user_id)
+                self.assertIsNotNone(actor)
+                actor.role = "operator"
+                original_commit(other_db)
+
+        with mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                "/api/v1/tasks",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), [])
+        self.assertNotIn(sensitive_reference, response.text)
+        self.assertNotIn(task_id, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Task, task_id)
+            expiry_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.expired",
+                        AuditEvent.entity_id == task_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "expired")
+        self.assertEqual(len(expiry_events), 1)
+
     def test_disabled_user_invalidates_existing_token(self) -> None:
         token = self.login()
         with self.app.state.session_factory() as db:

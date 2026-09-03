@@ -4200,7 +4200,10 @@ test('platform admin governs upload policies without browser execution details',
         rollout_percent: 100,
       }
       versions = versions.map((item) => item.id === 'policy-approved-1' ? { ...item, status: 'active' } : item)
-      return fulfill({ policy_version: 'sub2-2026.08.0', rollout_percent: 100 })
+      return fulfill({
+        active_version: 'wrong-deployment-version', previous_version: 'sub2-2026.07.1',
+        rollout_percent: 100, updated_at: '2026-08-20T00:03:00Z',
+      })
     }
     if (path === '/api/v1/admin/policies/upload/rollback') {
       rollbackRequests += 1
@@ -4371,6 +4374,7 @@ test('platform admin governs upload policies without browser execution details',
   await page.waitForTimeout(300)
   expect(policyListRequests).toBe(policyListsBeforeLateDeploy)
   await expect(page.getByText('策略已全量启用。')).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-deployment-version')
   await expect(page.getByRole('button', { name: '锁定' })).toBeFocused()
   await page.getByRole('menuitem', { name: /策略配置/ }).click()
   await expect(policySummary.getByText('当前生效', { exact: true }).locator('..')).toContainText('sub2-2026.08.0')
@@ -4402,7 +4406,7 @@ test('platform admin governs upload policies without browser execution details',
   const policyListsBeforeRollback = policyListRequests
   const versionListsBeforeRollback = uploadPolicyVersionListRequests
   await rollbackDialog.getByRole('button', { name: '确认回滚' }).click()
-  const rollbackError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' })
+  const rollbackError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' }).last()
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(rollbackError).toContainText(marker)
   await expect(rollbackError).toContainText('回滚可能已经生效')
   await expect(rollbackError).toContainText('仅当原目标未达成且原动作仍可用时重试')

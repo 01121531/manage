@@ -1563,26 +1563,29 @@ def list_tasks(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPERATOR, ROLE_OPS_ADMIN)),
     db: Session = Depends(get_db),
 ) -> list[Task]:
+    def load_tasks(*, role: str) -> list[Task]:
+        filters = list(_task_scope_filters(principal, role=role))
+        if status is not None:
+            filters.append(Task.status == status)
+        if user_id is not None:
+            filters.append(Task.user_id == user_id)
+        if trace_id is not None:
+            filters.append(Task.trace_id == trace_id)
+        return list(
+            db.scalars(
+                select(Task)
+                .where(*filters)
+                .order_by(Task.created_at.desc())
+                .limit(limit)
+            )
+        )
+
     current_user = _lock_admin_write_principal(
         db,
         principal,
         allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
     )
-    filters = list(_task_scope_filters(principal, role=current_user.role))
-    if status is not None:
-        filters.append(Task.status == status)
-    if user_id is not None:
-        filters.append(Task.user_id == user_id)
-    if trace_id is not None:
-        filters.append(Task.trace_id == trace_id)
-    tasks = list(
-        db.scalars(
-            select(Task)
-            .where(*filters)
-            .order_by(Task.created_at.desc())
-            .limit(limit)
-        )
-    )
+    tasks = load_tasks(role=current_user.role)
     lifecycle_changed = False
     for task in tasks:
         lifecycle_changed = (
@@ -1591,6 +1594,12 @@ def list_tasks(
         )
     if lifecycle_changed:
         db.commit()
+        current_user = _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
+        )
+        tasks = load_tasks(role=current_user.role)
     return tasks
 
 

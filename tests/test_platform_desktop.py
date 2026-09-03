@@ -2802,6 +2802,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         with mock.patch("platform_desktop.threading.Thread", DeferredThread):
             instance._start_polling()
+        poll_thread = instance._mail_poll_thread
 
         instance._mail_session_id = "mail-2"
         instance._mail_session_token = "new-token"
@@ -2809,6 +2810,9 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         workers[0]()
 
         client.get_mail_code.assert_not_called()
+        instance._drain_events()
+        self.assertIsNone(instance._mail_poll_thread)
+        self.assertIsNotNone(poll_thread)
         self.assertTrue(instance._events.empty())
 
     def test_mail_polling_uses_server_selected_interval(self) -> None:

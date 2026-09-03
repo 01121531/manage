@@ -2452,8 +2452,16 @@ class PlatformDesktopApp:
                 )
 
         self._schedule_next_poll = schedule_next
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put((generation, "mail_poll_finished", thread))
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-code-poll"
+            target=run_worker, daemon=False, name="platform-code-poll"
         )
         self._mail_poll_threads = [
             poll_thread
@@ -2693,6 +2701,10 @@ class PlatformDesktopApp:
                     self._session_restore_thread = None
                 if self._session_restore_action is action:
                     self._session_restore_action = None
+                continue
+            if kind == "mail_poll_finished":
+                if self._mail_poll_thread is value:
+                    self._mail_poll_thread = None
                 continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}

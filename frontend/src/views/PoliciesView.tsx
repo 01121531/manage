@@ -311,6 +311,13 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
     })
   }
 
+  const deployBoundUploadPolicy = async (row: UploadPolicyVersion, rolloutPercent: number) => {
+    const deployed = await deployUploadPolicyVersion(row.id, rolloutPercent)
+    if (deployed.active_version !== row.version || deployed.rollout_percent !== rolloutPercent) {
+      throw new Error('upload policy deployment response binding mismatch')
+    }
+  }
+
   if (loading) return <div className="centered"><Spin /></div>
   if (error || !policy) return <Alert
     type="warning"
@@ -369,7 +376,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
               '开始 10% 灰度',
               row,
               '10%',
-              () => deployUploadPolicyVersion(row.id, 10),
+              () => deployBoundUploadPolicy(row, 10),
               '已开始 10% 灰度。',
             )}
           >灰度 10%</Button> : null}
@@ -384,7 +391,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
               '全量启用策略',
               row,
               '100%',
-              () => deployUploadPolicyVersion(row.id, 100),
+              () => deployBoundUploadPolicy(row, 100),
               '策略已全量启用。',
             )}
           >全量启用</Button>
@@ -401,7 +408,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
               '调整至 50%',
               row,
               '50%',
-              () => deployUploadPolicyVersion(row.id, 50),
+              () => deployBoundUploadPolicy(row, 50),
               '灰度比例已调整为 50%。',
             )}
           >调整为 50%</Button>
@@ -416,7 +423,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
               '扩展至 100%',
               row,
               '100%',
-              () => deployUploadPolicyVersion(row.id, 100),
+              () => deployBoundUploadPolicy(row, 100),
               '策略已扩展至 100%。',
             )}
           >扩展至 100%</Button>
