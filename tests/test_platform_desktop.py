@@ -2204,6 +2204,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         instance._client.prepare_logout_cleanup.assert_called_once_with("task-1")
         cleanup.assert_called_once_with()
+        self.assertIsNone(instance._cleanup_thread)
         self.assertIsNone(instance._task_id)
         self.assertEqual(
             instance.status_label.values["text"],

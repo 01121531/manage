@@ -2706,6 +2706,10 @@ class PlatformDesktopApp:
                 if self._mail_poll_thread is value:
                     self._mail_poll_thread = None
                 continue
+            if kind == "captured_cleanup_finished":
+                if self._cleanup_thread is value:
+                    self._cleanup_thread = None
+                continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}
                 and generation != self._upload_generation
@@ -4004,7 +4008,17 @@ class PlatformDesktopApp:
             else:
                 self._events.put((generation, success_kind, value))
 
-        thread = threading.Thread(target=worker, daemon=False, name=name)
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (generation, "captured_cleanup_finished", thread)
+                )
+
+        thread = threading.Thread(target=run_worker, daemon=False, name=name)
         self._cleanup_thread = thread
         try:
             thread.start()

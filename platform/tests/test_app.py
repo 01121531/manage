@@ -2262,6 +2262,69 @@ class PlatformAppTests(unittest.TestCase):
             )
         self.assertEqual(len(expired_events), 1)
 
+    def test_expired_task_detail_rechecks_operator_after_commit(self) -> None:
+        token = self.login()
+        sensitive_reference = "expired-task-detail-sensitive-reference"
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(token),
+            json={
+                "type": "mail_code",
+                "idempotency_key": "task-detail-expiry-commit-boundary",
+                "client_reference": sensitive_reference,
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["id"]
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            self.assertIsNotNone(task)
+            task.expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal demoted
+            expiring_task = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.expired"
+                for item in session.new
+            )
+            original_commit(session)
+            if not expiring_task or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/tasks/{task_id}",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(sensitive_reference, response.text)
+        self.assertNotIn(created.json()["trace_id"], response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Task, task_id)
+            expiry_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.expired",
+                        AuditEvent.entity_id == task_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "expired")
+        self.assertEqual(len(expiry_events), 1)
+
     def test_closing_task_atomically_stops_resources_and_audits_each_action(self) -> None:
         token = self.login()
         headers = self.bearer(token)

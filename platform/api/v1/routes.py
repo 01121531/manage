@@ -1625,7 +1625,11 @@ def get_task(
         raise HTTPException(status_code=404, detail="Task not found")
     if _expire_task_if_needed(task, db, request=request, principal=principal):
         db.commit()
-        db.refresh(task)
+        task = _lock_task_write_response(
+            db,
+            task_id=task.id,
+            principal=principal,
+        )
     return task
 
 

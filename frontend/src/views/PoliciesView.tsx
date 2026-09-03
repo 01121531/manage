@@ -522,7 +522,13 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
             okText: '确认回滚',
             okButtonProps: { danger: true },
             cancelText: '取消',
-            onOk: () => perform('rollback', rollbackUploadPolicy, '策略已回滚。'),
+            onOk: () => perform('rollback', async () => {
+              const rolledBack = await rollbackUploadPolicy()
+              if (
+                rolledBack.active_version !== targetVersion
+                || rolledBack.previous_version !== currentVersion
+              ) throw new Error('upload policy rollback response binding mismatch')
+            }, '策略已回滚。'),
           })
         }}
       >回滚上一版本</Button> : null}

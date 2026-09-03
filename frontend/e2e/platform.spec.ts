@@ -4215,7 +4215,10 @@ test('platform admin governs upload policies without browser execution details',
       if (rollbackFailures > 0) {
         rollbackFailures -= 1
         blockRollbackRefresh = true
-        return fulfill({ error: { code: 'temporarily_unavailable', message: 'must-never-render-policy-rollback-provider-detail' } }, 503)
+        return fulfill({
+          active_version: 'wrong-rollback-version', previous_version: 'sub2-2026.08.0',
+          rollout_percent: 100, updated_at: '2026-08-20T00:04:00Z',
+        })
       }
       return fulfill({ policy_version: 'sub2-2026.07.1', rollout_percent: 100 })
     }
@@ -4410,7 +4413,8 @@ test('platform admin governs upload policies without browser execution details',
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(rollbackError).toContainText(marker)
   await expect(rollbackError).toContainText('回滚可能已经生效')
   await expect(rollbackError).toContainText('仅当原目标未达成且原动作仍可用时重试')
-  await expect(page.getByText('must-never-render-policy-rollback-provider-detail')).toHaveCount(0)
+  await expect(page.getByText('策略已回滚。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-rollback-version')
   try {
     await expect.poll(() => policyListRequests).toBeGreaterThan(policyListsBeforeRollback)
     await expect.poll(() => uploadPolicyVersionListRequests).toBeGreaterThan(versionListsBeforeRollback)
