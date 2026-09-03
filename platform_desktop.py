@@ -2152,8 +2152,6 @@ class PlatformDesktopApp:
             if is_current():
                 self._events.put((generation, "code", snapshot))
 
-        threading.Thread(target=worker, daemon=True, name="platform-code-poll").start()
-
         def schedule_next() -> None:
             if not self._closed and self._poll_generation == generation and not cancel.is_set():
                 self.root.after(
@@ -2162,6 +2160,18 @@ class PlatformDesktopApp:
                 )
 
         self._schedule_next_poll = schedule_next
+        thread = threading.Thread(
+            target=worker, daemon=True, name="platform-code-poll"
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._poll_retry_attempt += 1
+            self._set_status(
+                "验证码查询线程暂不可用；请求尚未发送，将按当前间隔自动重试。",
+                WARNING,
+            )
+            schedule_next()
 
     def stop_polling(self) -> None:
         self._poll_generation += 1

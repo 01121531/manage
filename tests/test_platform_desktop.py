@@ -2253,6 +2253,36 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         self.assertEqual(instance.root.scheduled[-1][0], 7_000)
 
+    def test_mail_poll_thread_start_failure_schedules_safe_retry_without_request(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock()
+        instance._mail_poll_interval_seconds = 7
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._start_polling()
+
+        instance._client.get_mail_code.assert_not_called()
+        self.assertEqual(instance._task_id, "task-1")
+        self.assertEqual(instance._mail_session_id, "mail-1")
+        self.assertEqual(instance._mail_session_token, "opaque-session-token")
+        self.assertEqual(instance._poll_retry_attempt, 1)
+        retries = [
+            entry
+            for entry in instance.root.scheduled
+            if entry[0] == 7_000 and entry[1] == instance._start_polling
+        ]
+        self.assertEqual(len(retries), 1)
+        self.assertIn("自动重试", instance.status_label.values["text"])
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     def test_transient_poll_error_is_ambiguous_and_never_auto_retries(self) -> None:
         instance = self._event_app()
         instance._events.put(
