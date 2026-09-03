@@ -4276,7 +4276,7 @@ class PlatformDesktopApp:
         manifest, package = pending
         try:
             launch_update_helper(package, manifest.sha256)
-        except UpdateError:
+        except Exception:
             self.check_update_button.configure(
                 text="重试启动更新",
                 command=self._retry_update_helper,

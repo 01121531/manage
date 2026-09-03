@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from platform.app import create_app
-from platform.auth import AuthPrincipal, get_current_principal
+from platform.auth import AuthPrincipal, get_current_principal, hash_password
 from platform.bootstrap import create_oidc_user_with_device, create_user_with_device
 from platform.config import Settings
 from platform.lifecycle import LifecycleSweepResult
@@ -965,6 +965,47 @@ class PlatformAppTests(unittest.TestCase):
                 original_commit(other)
 
         with mock.patch.object(Session, "commit", new=commit_then_revoke):
+            response = self.request(
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "tenant_id": "tenant-a",
+                    "email": "first@example.test",
+                    "password": self.account_password,
+                    "device_id": self.identity.device_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("access_token", response.text)
+
+    def test_login_rechecks_password_after_audit_commit(self) -> None:
+        original_commit = Session.commit
+        password_rotated = False
+
+        def commit_then_rotate_password(session: Session) -> None:
+            nonlocal password_rotated
+            committing_login = any(
+                isinstance(item, AuditEvent) and item.event_type == "auth.login"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_login or password_rotated:
+                return
+            password_rotated = True
+            with self.app.state.session_factory() as other:
+                current_user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(current_user)
+                current_user.password_hash = hash_password(
+                    "rotated-account-password"
+                )
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_rotate_password,
+        ):
             response = self.request(
                 "POST",
                 "/api/v1/auth/login",

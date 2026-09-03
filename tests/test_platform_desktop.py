@@ -6229,6 +6229,42 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             self.assertIsNone(instance._pending_update_install)
             self.assertTrue(instance._update_cleanup_completed)
 
+    def test_unexpected_update_helper_error_retains_exact_retry(self) -> None:
+        instance = self._event_app()
+        manifest = mock.Mock(sha256="f" * 64)
+        package = Path("verified-update.exe")
+        pending = (manifest, package)
+        instance._pending_update_install = pending
+
+        with mock.patch(
+            "platform_desktop.launch_update_helper",
+            side_effect=(RuntimeError("unexpected helper failure"), None),
+        ) as launch_helper:
+            instance._finish_update_cleanup_if_ready()
+
+            self.assertEqual(instance._pending_update_install, pending)
+            self.assertFalse(instance._update_cleanup_completed)
+            self.assertEqual(
+                instance.check_update_button.values["text"],
+                "重试启动更新",
+            )
+            self.assertEqual(instance.check_update_button.values["state"], "normal")
+            self.assertNotIn(
+                "unexpected helper failure", instance.status_label.values["text"]
+            )
+
+            instance.check_update_button.values["command"]()
+
+        self.assertEqual(
+            launch_helper.call_args_list,
+            [
+                mock.call(package, manifest.sha256),
+                mock.call(package, manifest.sha256),
+            ],
+        )
+        self.assertIsNone(instance._pending_update_install)
+        self.assertTrue(instance._update_cleanup_completed)
+
     def test_failed_update_cleanup_retries_same_captured_action_before_install(self) -> None:
         instance = self._event_app()
         attempts = []

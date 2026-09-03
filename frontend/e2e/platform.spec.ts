@@ -883,7 +883,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
           is_active: false,
         }
         blockReleaseCardList = true
-        return fulfill({ ...card, id: 'wrong-release-binding' })
+        return fulfill({ ...card, tenant_id: 'wrong-release-tenant' })
       }
       card = {
         ...card,
@@ -981,7 +981,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   }
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(releaseError).toContainText(marker)
   await expect(page.getByText('隔离已解除；卡资源仍处于停用状态。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-release-binding')
+  await expect(page.locator('body')).not.toContainText('wrong-release-tenant')
   await expect(row.getByText('已停用')).toBeVisible()
   expect(releaseAttempts).toBe(1)
   const enableCard = row.getByRole('button', {

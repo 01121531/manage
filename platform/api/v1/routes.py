@@ -833,9 +833,15 @@ def login(
         user_id=user.id,
         device_id=device.id,
     )
+    current_password_valid = (
+        current_user is not None
+        and current_user.password_hash is not None
+        and verify_password(payload.password, current_user.password_hash)
+    )
     if (
         current_user is None
         or not current_user.is_active
+        or not current_password_valid
         or current_user.role not in INTERACTIVE_ROLES
         or current_device is None
         or current_device.revoked_at is not None
