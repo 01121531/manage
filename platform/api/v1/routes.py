@@ -6596,6 +6596,11 @@ def admin_get_card_timeline(
     ),
     db: Session = Depends(get_db),
 ) -> AdminCardTimelineResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     card = db.scalar(
         select(Card).where(
             Card.id == card_id,
