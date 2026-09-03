@@ -1556,7 +1556,10 @@ class PlatformDesktopApp:
             name="platform-session-restore-compensation",
         )
         barrier.thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._present_session_restore_compensation_failure(barrier)
 
     def _present_session_restore_compensation_failure(
         self, barrier: _SessionRestoreCompensation

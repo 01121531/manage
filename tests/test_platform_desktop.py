@@ -34,6 +34,7 @@ from platform_client import (
 )
 from platform_desktop import (
     PlatformDesktopApp,
+    _SessionRestoreCompensation,
     format_operation_error,
     format_workflow_progress,
 )
@@ -3211,6 +3212,37 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(client.refresh_token, "refresh-B")
         self.assertIsNone(instance._session_restore_action)
         self.assertEqual(instance.auth_label.values["text"], "已登录")
+
+    def test_restore_compensation_thread_start_failure_exposes_retry(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        barrier = _SessionRestoreCompensation(
+            generation=instance._session_generation,
+            action=object(),
+            cleanup=cleanup,
+        )
+        instance._session_restore_compensation = barrier
+
+        class FailingThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            @staticmethod
+            def start():
+                raise RuntimeError("cannot start compensation thread")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._start_session_restore_compensation_attempt(barrier)
+
+        cleanup.assert_not_called()
+        self.assertFalse(barrier.in_progress)
+        self.assertIsNone(barrier.thread)
+        self.assertEqual(instance.login_button.values["text"], "重试安全清理")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertEqual(
+            instance.login_button.values["command"],
+            instance._retry_session_restore_compensation,
+        )
 
     def test_restore_me_timeout_keeps_rotated_refresh_for_offline_recovery(self) -> None:
         instance = self._event_app()
