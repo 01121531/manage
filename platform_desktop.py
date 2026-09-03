@@ -3625,7 +3625,19 @@ class PlatformDesktopApp:
             target=worker, daemon=False, name="platform-card-reveal"
         )
         self._card_reveal_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "card_reveal_error",
+                    PlatformTransportError("card reveal worker unavailable"),
+                )
+            )
+            self._events.put(
+                (generation, "card_reveal_finished", (action, False))
+            )
 
     def submit_upload(self) -> None:
         if self._locked:

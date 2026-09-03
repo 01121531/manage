@@ -4405,6 +4405,31 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIsNone(cancelled._card_reveal_action)
         self.assertIsNone(cancelled._card_reveal_thread)
 
+    def test_card_reveal_thread_start_failure_restores_retry(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with (
+            mock.patch("platform_desktop.messagebox.askyesno", return_value=True),
+            mock.patch("platform_desktop.threading.Thread", FailingThread),
+        ):
+            instance.reveal_card_details()
+            instance._drain_events()
+
+        instance._client.create_card_reveal_challenge.assert_not_called()
+        self.assertIsNone(instance._card_reveal_action)
+        self.assertIsNone(instance._card_reveal_thread)
+        self.assertEqual(instance.copy_card_button.values["state"], "normal")
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     def test_card_reveal_lock_after_step_up_prevents_grant_and_reveal(self) -> None:
         step_up_entered = threading.Event()
         release_step_up = threading.Event()
