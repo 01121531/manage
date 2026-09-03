@@ -5503,7 +5503,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
         return fulfill({ error: { code: 'service_unavailable', message: 'old mailbox response lost' } }, 503)
       }
       if (mailboxStateRequests.length === 2) {
-        return fulfill({ ...mailbox, id: 'wrong-mailbox-binding' })
+        return fulfill({ ...mailbox, status: 'disabled' })
       }
       if (mailboxStateRequests.length === 3) {
         return fulfill({ error: { code: 'service_unavailable', message: 'current mailbox response lost' } }, 503)
@@ -5570,7 +5570,6 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
   await currentEnableMailbox.click()
   await expect(page.getByText(/原因：平台未能确认邮箱连接器状态变更结果。影响：.*下一步：/)).toBeVisible()
   await expect(page.getByText('邮箱连接器已启用。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-mailbox-binding')
   await expect(mailboxRow.getByRole('button', {
     name: '停用邮箱 s***@example.invalid（mailbox-session）', exact: true,
   })).toBeVisible()

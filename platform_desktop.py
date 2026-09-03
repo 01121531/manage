@@ -4781,6 +4781,13 @@ class PlatformDesktopApp:
                     (task_id, outcome),
                 )
             )
+            self._events.put(
+                (
+                    generation,
+                    "terminal_task_cleanup_finished",
+                    (cleanup, thread),
+                )
+            )
 
     def _retry_terminal_task_cleanup(self) -> None:
         if (

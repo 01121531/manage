@@ -2913,6 +2913,73 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(disabled_audits, 1)
 
+    def test_card_cleanup_in_progress_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        card_id, _task_id, allocation_id, upload_id = self.create_card_upload_fixture(
+            admin_token=admin_token,
+            operator_token=operator_token,
+            suffix="in-progress-card-disable",
+        )
+        original_execute = Session.execute
+        original_commit = Session.commit
+        admin_demoted = False
+
+        def lose_allocation_release(session: Session, statement, *args, **kwargs):
+            table = getattr(statement, "table", None)
+            if getattr(statement, "is_update", False) and getattr(
+                table, "name", None
+            ) == "card_allocations":
+                return mock.Mock(rowcount=0)
+            return original_execute(session, statement, *args, **kwargs)
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal admin_demoted
+            card_disabled = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.card_disabled"
+                for item in session.new
+            )
+            original_commit(session)
+            if not card_disabled or admin_demoted:
+                return
+            admin_demoted = True
+            with self.app.state.session_factory() as other:
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(admin)
+                admin.role = "security_auditor"
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "execute",
+            new=lose_allocation_release,
+        ), mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "PATCH",
+                f"/api/v1/admin/cards/{card_id}",
+                headers=self.headers(admin_token),
+                json={"is_active": False},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("card_disable_in_progress", response.text)
+        with self.app.state.session_factory() as db:
+            card = db.get(Card, card_id)
+            allocation = db.get(CardAllocation, allocation_id)
+            upload = db.get(UploadJob, upload_id)
+        self.assertFalse(card.is_active)
+        self.assertEqual(allocation.status, "active")
+        self.assertIsNone(allocation.released_at)
+        self.assertEqual(upload.status, "cancelled")
+
     def test_card_quarantine_rechecks_actor_after_authentication(self) -> None:
         card = provision_card(
             self.app.state.session_factory,

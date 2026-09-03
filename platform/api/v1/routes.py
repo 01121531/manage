@@ -7759,6 +7759,7 @@ def _compensate_unavailable_card(
     *,
     card_id: str,
     principal: AuthPrincipal,
+    allowed_roles: tuple[str, ...] = (ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
     release_reason: str = "admin_card_disabled",
     queued_error_code: str = "card_disabled",
     in_progress_code: str = "card_disable_in_progress",
@@ -7947,6 +7948,22 @@ def _compensate_unavailable_card(
     )
     db.rollback()
     if remaining:
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=allowed_roles,
+        )
+        card = db.scalar(
+            select(Card)
+            .where(
+                Card.id == card_id,
+                Card.tenant_id == principal.tenant_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if card is None:
+            raise HTTPException(status_code=404, detail="Card not found")
         raise BusinessHTTPException(
             status_code=409,
             code=in_progress_code,
@@ -8283,6 +8300,7 @@ def admin_release_card_quarantine(
         db,
         card_id=card_id,
         principal=principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
         release_reason="admin_card_quarantined",
         queued_error_code="card_quarantined",
         in_progress_code="card_quarantine_in_progress",

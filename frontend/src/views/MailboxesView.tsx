@@ -276,7 +276,12 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     setMailboxActionPending(true)
     try {
       const updated = await updateMailboxState(row.id, isActive)
-      if (updated.id !== row.id || updated.is_active !== isActive) throw new Error('mailbox state response binding mismatch')
+      const statusMatches = isActive
+        ? updated.status === 'available' || updated.status === 'busy'
+        : updated.status === 'disabled' && updated.active_session_count === 0
+      if (updated.id !== row.id || updated.is_active !== isActive || !statusMatches) {
+        throw new Error('mailbox state response binding mismatch')
+      }
       if (!isCurrent()) return
       message.success(isActive ? '邮箱连接器已启用。' : '邮箱连接器已停用，活动会话已撤销。')
     } catch {
