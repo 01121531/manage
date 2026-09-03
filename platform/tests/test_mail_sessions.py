@@ -7,7 +7,14 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Barrier, Event, Lock, get_ident
+from threading import (
+    Barrier,
+    Event,
+    Lock,
+    Thread,
+    enumerate as enumerate_threads,
+    get_ident,
+)
 from unittest.mock import patch
 
 import httpx
@@ -3084,6 +3091,96 @@ class MailSessionTests(unittest.TestCase):
 
 
 class MailWorkerLoopTests(unittest.TestCase):
+    def test_blocked_batch_keeps_heartbeat_alive(self) -> None:
+        entered = Event()
+        release = Event()
+        stop_event = Event()
+        maintained = Event()
+        writes: list[str] = []
+
+        def blocked_process(*args: object, **kwargs: object) -> dict[str, int]:
+            entered.set()
+            release.wait(timeout=2)
+            return {"waiting": 1}
+
+        def record_heartbeat(path: str) -> None:
+            writes.append(path)
+            if len(writes) >= 2:
+                maintained.set()
+
+        with (
+            patch.object(mail_worker, "sweep_expired_lifecycle"),
+            patch.object(
+                mail_worker,
+                "process_mail_sessions",
+                side_effect=blocked_process,
+            ),
+            patch.object(
+                mail_worker,
+                "write_worker_heartbeat",
+                side_effect=record_heartbeat,
+            ),
+        ):
+            worker = Thread(
+                target=mail_worker.run_mail_worker,
+                kwargs={
+                    "session_factory": object(),
+                    "connectors": {},
+                    "stop_event": stop_event,
+                    "poll_seconds": 0.01,
+                    "heartbeat_path": "mail-worker.heartbeat",
+                },
+            )
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(timeout=1))
+                self.assertTrue(maintained.wait(timeout=1))
+            finally:
+                stop_event.set()
+                release.set()
+                worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertGreaterEqual(len(writes), 2)
+        self.assertFalse(
+            any(
+                thread.name == "mail-worker-heartbeat" and thread.is_alive()
+                for thread in enumerate_threads()
+            )
+        )
+
+    def test_batch_failure_stops_heartbeat_thread_and_writes_final_heartbeat(self) -> None:
+        writes: list[str] = []
+        with (
+            patch.object(mail_worker, "sweep_expired_lifecycle"),
+            patch.object(
+                mail_worker,
+                "process_mail_sessions",
+                side_effect=RuntimeError("connector failed"),
+            ),
+            patch.object(
+                mail_worker,
+                "write_worker_heartbeat",
+                side_effect=lambda path: writes.append(path),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "connector failed"):
+                mail_worker.run_mail_worker(
+                    object(),
+                    connectors={},
+                    stop_event=Event(),
+                    poll_seconds=0.01,
+                    heartbeat_path="mail-worker.heartbeat",
+                )
+
+        self.assertEqual(writes, ["mail-worker.heartbeat", "mail-worker.heartbeat"])
+        self.assertFalse(
+            any(
+                thread.name == "mail-worker-heartbeat" and thread.is_alive()
+                for thread in enumerate_threads()
+            )
+        )
+
     def test_nonempty_batch_still_waits_before_polling_again(self) -> None:
         class StopAfterFirstWait:
             def __init__(self) -> None:

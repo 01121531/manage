@@ -6,7 +6,7 @@ import hashlib
 from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
-from threading import Event
+from threading import Event, Thread
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
@@ -443,25 +443,48 @@ def run_mail_worker(
 
     if poll_seconds <= 0:
         raise ValueError("poll_seconds must be positive")
+    heartbeat_stop = Event()
+    heartbeat_thread: Thread | None = None
     if heartbeat_path is not None:
         write_worker_heartbeat(heartbeat_path)
-    while not stop_event.is_set():
-        sweep_expired_lifecycle(session_factory)
-        counts = process_mail_sessions(
-            session_factory,
-            connectors=connectors,
-            code_ttl_seconds=code_ttl_seconds,
-        )
-        if batch_reporter is not None:
-            batch_reporter(counts)
         if metrics is not None:
-            metrics.record_batch(counts)
+            metrics.mark_heartbeat()
+
+        def maintain_heartbeat() -> None:
+            interval = min(max(poll_seconds, 0.1), 5)
+            while not heartbeat_stop.wait(interval):
+                write_worker_heartbeat(heartbeat_path)
+                if metrics is not None:
+                    metrics.mark_heartbeat()
+
+        heartbeat_thread = Thread(
+            target=maintain_heartbeat,
+            name="mail-worker-heartbeat",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+    try:
+        while not stop_event.is_set():
+            sweep_expired_lifecycle(session_factory)
+            counts = process_mail_sessions(
+                session_factory,
+                connectors=connectors,
+                code_ttl_seconds=code_ttl_seconds,
+            )
+            if batch_reporter is not None:
+                batch_reporter(counts)
+            if metrics is not None:
+                metrics.record_batch(counts)
+            if heartbeat_path is not None:
+                write_worker_heartbeat(heartbeat_path)
+            if metrics is not None:
+                metrics.mark_heartbeat()
+            stop_event.wait(poll_seconds)
+    finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1)
         if heartbeat_path is not None:
             write_worker_heartbeat(heartbeat_path)
         if metrics is not None:
             metrics.mark_heartbeat()
-        stop_event.wait(poll_seconds)
-    if heartbeat_path is not None:
-        write_worker_heartbeat(heartbeat_path)
-    if metrics is not None:
-        metrics.mark_heartbeat()
