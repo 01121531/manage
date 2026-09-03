@@ -3591,6 +3591,43 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertTrue(instance._closed)
         self.assertEqual(instance.root.destroy_calls, 1)
 
+    def test_update_cleanup_thread_start_failure_exposes_retry(self) -> None:
+        instance = self._event_app()
+        manifest = mock.Mock(sha256="7" * 64)
+        package = Path("verified-update.exe")
+        instance._pending_update_install = (manifest, package)
+        instance._update_cleanup_action = mock.Mock()
+        instance.check_update_button.configure(state="disabled")
+
+        class FailingThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            @staticmethod
+            def is_alive():
+                return False
+
+            @staticmethod
+            def start():
+                raise RuntimeError("cannot start thread")
+
+        with (
+            mock.patch("platform_desktop.threading.Thread", FailingThread),
+            mock.patch("platform_desktop.launch_update_helper") as launch_helper,
+        ):
+            instance._start_update_cleanup_attempt()
+
+        launch_helper.assert_not_called()
+        self.assertEqual(instance._pending_update_install, (manifest, package))
+        self.assertIsNotNone(instance._update_cleanup_action)
+        self.assertFalse(instance._update_cleanup_in_progress)
+        self.assertEqual(instance.check_update_button.values["text"], "重试安全清理")
+        self.assertEqual(instance.check_update_button.values["state"], "normal")
+        self.assertEqual(
+            instance.check_update_button.values["command"],
+            instance._retry_update_cleanup,
+        )
+
     def test_update_waits_for_owned_clipboard_cleanup_before_helper(self) -> None:
         instance = self._event_app()
         secret = "246810"

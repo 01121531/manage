@@ -3257,7 +3257,11 @@ class PlatformDesktopApp:
 
         thread = threading.Thread(target=worker, daemon=False, name=name)
         self._cleanup_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._cleanup_thread = None
+            raise
         return thread
 
     def _start_update_cleanup_attempt(self) -> None:
@@ -3266,14 +3270,28 @@ class PlatformDesktopApp:
         if pending is None or cleanup is None or self._update_cleanup_in_progress:
             return
         generation = self._update_generation
-        thread = self._start_captured_cleanup_attempt(
-            cleanup,
-            generation=generation,
-            success_kind="update_cleanup_succeeded",
-            error_kind="update_cleanup_error",
-            value=pending,
-            name="platform-update-cleanup",
-        )
+        try:
+            thread = self._start_captured_cleanup_attempt(
+                cleanup,
+                generation=generation,
+                success_kind="update_cleanup_succeeded",
+                error_kind="update_cleanup_error",
+                value=pending,
+                name="platform-update-cleanup",
+            )
+        except RuntimeError:
+            self.check_update_button.configure(
+                text="重试安全清理",
+                command=self._retry_update_cleanup,
+                state="normal",
+            )
+            self._set_status(
+                "原因：平台资源或登录会话清理线程未能启动；"
+                "影响：当前版本保持运行且不会安装更新；"
+                "下一步：点击“重试安全清理”。",
+                ERROR,
+            )
+            return
         if thread is None:
             return
         self._update_cleanup_in_progress = True
@@ -3859,14 +3877,28 @@ class PlatformDesktopApp:
         intent = self._shutdown_intent
         if cleanup is None or intent is None or self._shutdown_cleanup_in_progress:
             return
-        thread = self._start_captured_cleanup_attempt(
-            cleanup,
-            generation=self._shutdown_generation,
-            success_kind="shutdown_cleanup_succeeded",
-            error_kind="shutdown_cleanup_error",
-            value=intent,
-            name="platform-session-cleanup",
-        )
+        try:
+            thread = self._start_captured_cleanup_attempt(
+                cleanup,
+                generation=self._shutdown_generation,
+                success_kind="shutdown_cleanup_succeeded",
+                error_kind="shutdown_cleanup_error",
+                value=intent,
+                name="platform-session-cleanup",
+            )
+        except RuntimeError:
+            self.login_button.configure(
+                text="重试安全清理",
+                command=self._retry_session_shutdown,
+                state="normal",
+            )
+            self._set_status(
+                "原因：平台任务或登录会话清理线程未能启动；"
+                "影响：本地敏感值已清除，但退出尚未完成；"
+                "下一步：点击“重试安全清理”。",
+                ERROR,
+            )
+            return
         if thread is None:
             return
         self._shutdown_cleanup_in_progress = True
