@@ -156,7 +156,12 @@ or deleted, while a fresh import can still insert a new receipt. Migration
 `0046_pool_import_context_delete_guard` separately forbids deletion of the
 target-issued context itself for both pools. Issuance, bounded renewal and the
 existing terminal consumption transition remain valid; only destructive row
-removal is closed. The
+removal is closed. The following
+`0047_pool_import_receipt_context_binding` migration rejects every new local
+receipt unless an unconsumed target context has the exact `spi:<context-id>`,
+tenant, pool, manifest digest/count, actor and device binding. It is a
+prospective database guard, so older receipts remain intact; it does not add
+raw card or mailbox data to the receipt. The
 application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed

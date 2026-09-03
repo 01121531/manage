@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 from fastapi import Depends
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,7 @@ from platform.models import (
     Device,
     Mailbox,
     MailSession,
+    PoolImportContext,
     PoolImportReceipt,
     Task,
     OutboxEvent,
@@ -82,7 +84,7 @@ class _AdminTestPoolImportVerifier:
 class _AdminTestPoolImportContextVerifier:
     def verify(
         self,
-        _db: Session,
+        db: Session,
         token: str,
         *,
         tenant_id: str,
@@ -94,14 +96,47 @@ class _AdminTestPoolImportContextVerifier:
         item_count: int,
         receipt_id: str,
         card_provider_refs: list[str] | None,
-    ) -> None:
-        del user_id, device_id, audience, item_count, card_provider_refs
+    ) -> PoolImportContext:
+        del card_provider_refs
         expected = str(uuid5(
             NAMESPACE_URL,
             f"{tenant_id}:{pool_type}:{ordered_manifest_digest}",
         ))
         if token != "admin-test-secure-import-context" or receipt_id != expected:
             raise AssertionError("unexpected test import context")
+        now = datetime.now(timezone.utc)
+        db.execute(
+            text(
+                "INSERT OR IGNORE INTO pool_import_contexts ("
+                "id, context_token_hash, tenant_id, audience, pool_type, "
+                "ordered_manifest_digest, item_count, created_by, device_id, "
+                "trace_id, created_at, expires_at, consumed_at, "
+                "pool_import_receipt_id) VALUES ("
+                ":id, :token_hash, :tenant_id, :audience, :pool_type, "
+                ":digest, :item_count, :created_by, :device_id, :trace_id, "
+                ":created_at, :expires_at, NULL, NULL)"
+            ),
+            {
+                "id": receipt_id,
+                "token_hash": hashlib.sha256(
+                    receipt_id.encode("ascii")
+                ).hexdigest(),
+                "tenant_id": tenant_id,
+                "audience": audience,
+                "pool_type": pool_type,
+                "digest": ordered_manifest_digest,
+                "item_count": item_count,
+                "created_by": user_id,
+                "device_id": device_id,
+                "trace_id": receipt_id,
+                "created_at": now,
+                "expires_at": now + timedelta(minutes=5),
+            },
+        )
+        context = db.get(PoolImportContext, receipt_id)
+        if context is None:
+            raise AssertionError("test import context was not persisted")
+        return context
 
 
 class AdminApiTests(unittest.TestCase):

@@ -320,6 +320,15 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed prospective receipt/context binding for revision 0047. Only
+    # this exact INSERT trigger may pass the dynamic-SQL gate.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_RECEIPTS_CONTEXT_BINDING BEFORE INSERT "
+        r"ON POOL_IMPORT_RECEIPTS FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_RECEIPTS_VALIDATE_CONTEXT_BINDING\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

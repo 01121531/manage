@@ -146,6 +146,16 @@ renewed, and one fresh card and mailbox import can each complete the existing
 terminal consumption linkage. Keep 0046 installed on application rollback so
 authorization and trace history cannot be silently removed.
 
+Revision `0047_pool_import_receipt_context_binding` adds a prospective insert
+guard to local pool-import receipts. It intentionally leaves historical rows
+unchanged. Pause both secure-import pools during the DDL window, install 0047,
+then prove wrong context ID/prefix, tenant, pool, manifest digest/count, actor,
+device and already-consumed context inserts all fail. Before resuming, prove
+one fresh card receipt and one fresh mailbox receipt can each bind their exact
+unconsumed context and complete the existing atomic consumption transaction.
+Keep 0047 installed on application rollback so no new receipt can bypass the
+target-issued authorization identity.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

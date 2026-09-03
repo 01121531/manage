@@ -455,6 +455,42 @@ def _install_pool_import_receipt_constraints(engine: Engine) -> None:
         )
 
 
+def _install_pool_import_receipt_context_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed receipt/context guard in local SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS pool_import_receipts_context_binding
+            BEFORE INSERT ON pool_import_receipts
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM pool_import_contexts
+                WHERE NEW.idempotency_key = 'spi:' || pool_import_contexts.id
+                  AND pool_import_contexts.id
+                        = substr(NEW.idempotency_key, 5)
+                  AND pool_import_contexts.tenant_id = NEW.tenant_id
+                  AND pool_import_contexts.pool_type = NEW.pool_type
+                  AND pool_import_contexts.ordered_manifest_digest
+                        = NEW.request_digest
+                  AND pool_import_contexts.item_count = NEW.item_count
+                  AND pool_import_contexts.created_by = NEW.created_by
+                  AND pool_import_contexts.device_id = NEW.device_id
+                  AND pool_import_contexts.consumed_at IS NULL
+                  AND pool_import_contexts.pool_import_receipt_id IS NULL
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'pool import receipt context binding invalid'
+                );
+            END;
+            """
+        )
+
+
 def _install_pool_import_context_consumption_constraints(engine: Engine) -> None:
     """Mirror the migration-backed context lifecycle guards in local SQLite."""
 
@@ -568,6 +604,7 @@ def initialize_database(
         _install_card_claim_mutation_ledger_constraints(engine)
         _install_pool_import_context_identity_constraints(engine)
         _install_pool_import_receipt_constraints(engine)
+        _install_pool_import_receipt_context_constraints(engine)
         _install_secure_pool_import_consumption_constraints(engine)
         _install_pool_import_context_consumption_constraints(engine)
         _install_pool_import_context_delete_constraints(engine)

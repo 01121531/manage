@@ -107,7 +107,12 @@ The default endpoints are:
   `0046_pool_import_context_delete_guard` also rejects deletion of every issued
   card or mailbox context. New context issuance and pre-consumption expiry
   renewal remain available, but an authorization row cannot be silently
-  removed after issuance or consumption. A
+  removed after issuance or consumption. Migration
+  `0047_pool_import_receipt_context_binding` requires every newly inserted
+  local receipt to match one unconsumed context by `spi:<context-id>`, tenant,
+  pool, manifest digest/count, actor and device. Existing historical receipts
+  are not rewritten; new card and mailbox imports retain their current atomic
+  transaction and separate administration. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

@@ -69,6 +69,10 @@ class DatabaseInitializationTests(unittest.TestCase):
             ) as install_pool_import_receipts,
             patch(
                 "platform.database."
+                "_install_pool_import_receipt_context_constraints"
+            ) as install_pool_import_receipt_context,
+            patch(
+                "platform.database."
                 "_install_pool_import_context_consumption_constraints"
             ) as install_context_consumption,
             patch(
@@ -88,6 +92,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_card_claim_mutations.assert_not_called()
             install_pool_context_identity.assert_not_called()
             install_pool_import_receipts.assert_not_called()
+            install_pool_import_receipt_context.assert_not_called()
             install_secure_consumption.assert_not_called()
             install_context_consumption.assert_not_called()
             install_context_delete.assert_not_called()
@@ -119,6 +124,10 @@ class DatabaseInitializationTests(unittest.TestCase):
             ) as install_pool_import_receipts,
             patch(
                 "platform.database."
+                "_install_pool_import_receipt_context_constraints"
+            ) as install_pool_import_receipt_context,
+            patch(
+                "platform.database."
                 "_install_pool_import_context_consumption_constraints"
             ) as install_context_consumption,
             patch(
@@ -136,6 +145,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_card_claim_mutations.assert_called_once_with(engine)
             install_pool_context_identity.assert_called_once_with(engine)
             install_pool_import_receipts.assert_called_once_with(engine)
+            install_pool_import_receipt_context.assert_called_once_with(engine)
             install_secure_consumption.assert_called_once_with(engine)
             install_context_consumption.assert_called_once_with(engine)
             install_context_delete.assert_called_once_with(engine)

@@ -11,6 +11,7 @@ from unittest import mock
 from scripts.vault_egress_evidence import (
     EVIDENCE_INDEX,
     REQUIRED_SCENARIO_OBSERVATIONS,
+    SECURE_IMPORT_CONTRACT,
     index_errors,
     intake_binding_errors,
     main,
@@ -117,6 +118,12 @@ class VaultEgressEvidenceTests(unittest.TestCase):
     def test_repository_template_is_safe_closed_sealed_aligned_and_gated(self) -> None:
         self.assertEqual(index_errors(self.template), [])
         self.assertEqual(repository_control_errors(), [])
+        self.assertEqual(
+            json.loads(SECURE_IMPORT_CONTRACT.read_text(encoding="utf-8"))[
+                "schema_version"
+            ],
+            41,
+        )
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")
         self.assertFalse(self.template["production_acceptance"])

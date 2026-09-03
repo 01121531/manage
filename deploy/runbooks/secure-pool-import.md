@@ -157,7 +157,12 @@ rejected before the first Vault or API mutation.
    consumed. New context INSERT, bounded pre-consumption expiry renewal and the
    existing final consumption transition must continue to work. Context
    retention remains secret-free; do not add source card or mailbox data to
-   support it.
+   support it. Migration `0047_pool_import_receipt_context_binding` also
+   rejects a new local receipt unless its `spi:<context-id>`, tenant, pool,
+   manifest digest/count, actor and device match one unconsumed target context.
+   The guard is prospective and does not rewrite historical receipts. Both
+   pools must prove one normal fresh import after rollout; neither proof may
+   contain PAN, CVV, mailbox credentials, Vault paths or source content.
    Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.
