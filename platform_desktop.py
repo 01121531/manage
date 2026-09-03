@@ -1521,9 +1521,22 @@ class PlatformDesktopApp:
                 (generation, "session_restored", (action, profile, expires_in))
             )
 
-        threading.Thread(
+        thread = threading.Thread(
             target=worker, daemon=True, name="platform-session-restore"
-        ).start()
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "session_restore_error",
+                    (
+                        action,
+                        PlatformTransportError("session restore worker unavailable"),
+                    ),
+                )
+            )
 
     def _start_session_restore_compensation_attempt(
         self, barrier: _SessionRestoreCompensation

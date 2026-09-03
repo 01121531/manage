@@ -2858,6 +2858,30 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn('kind == "session_refresh_error"', drain_source)
         self.assertIn("self.logout", drain_source)
 
+    def test_session_restore_thread_start_failure_reenables_login(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock()
+        instance._client.has_saved_refresh_session.return_value = True
+
+        class FailingThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            @staticmethod
+            def start():
+                raise RuntimeError("cannot start restore thread")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._attempt_session_restore()
+
+        self.assertIsNotNone(instance._session_restore_action)
+        instance._drain_events()
+        self.assertIsNone(instance._session_restore_action)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+        instance._client.clear_access_token.assert_called_once_with()
+        self.assertIn("网络中断", instance.status_label.values["text"])
+
     def test_restore_me_auth_failure_compensates_rotated_session_once(self) -> None:
         instance = self._event_app()
 
