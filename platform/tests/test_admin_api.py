@@ -3613,6 +3613,54 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(cross_tenant_audit.status_code, 200, cross_tenant_audit.text)
         self.assertEqual(cross_tenant_audit.json(), [])
 
+    def test_pool_import_context_rechecks_actor_after_authentication(self) -> None:
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts",
+                json={
+                    "pool_type": "mailbox",
+                    "ordered_manifest_digest": "a" * 64,
+                    "item_count": 1,
+                },
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            context_count = db.scalar(
+                select(func.count()).select_from(PoolImportContext)
+            )
+            audit_count = db.scalar(
+                select(func.count()).select_from(AuditEvent).where(
+                    AuditEvent.event_type == "admin.pool_import_context_issued"
+                )
+            )
+        self.assertEqual(context_count, 0)
+        self.assertEqual(audit_count, 0)
+
     def test_admin_mailbox_import_rechecks_actor_after_authentication(self) -> None:
         observed_at = datetime.now(timezone.utc)
         stale_principal = AuthPrincipal(

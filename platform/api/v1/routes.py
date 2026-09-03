@@ -6077,6 +6077,11 @@ def admin_create_pool_import_context(
     ),
     db: Session = Depends(get_db),
 ) -> PoolImportContextResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     now = _utc_now()
     card_provider_refs = payload.card_provider_refs or []
     reclaimed_card_context_ids: list[str] = []
@@ -6280,6 +6285,11 @@ def admin_renew_pool_import_context(
 ) -> PoolImportContextResponse:
     if secure_import_context is None:
         raise HTTPException(status_code=422, detail="Secure import context is required")
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     now = _utc_now()
     try:
         context = renew_pool_import_context(
