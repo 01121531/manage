@@ -204,6 +204,17 @@ def _resolve_paths_for_comparison(
         raise ImportFailure(error_message) from None
 
 
+def _require_repository_external_paths(paths: tuple[Path, ...]) -> None:
+    try:
+        repository = REPOSITORY_ROOT.resolve()
+    except (OSError, RuntimeError):
+        raise ImportFailure(
+            "Sensitive import paths must be outside the repository"
+        ) from None
+    if any(path == repository or repository in path.parents for path in paths):
+        raise ImportFailure("Sensitive import paths must be outside the repository")
+
+
 def _create_tls_context(ca_file: Path | None) -> ssl.SSLContext:
     try:
         if ca_file is None:
@@ -953,6 +964,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     )
     if len(set(resolved_paths)) != len(resolved_paths):
         raise ImportFailure(separation_error)
+    _require_repository_external_paths(resolved_paths)
     tls_context = _create_tls_context(ca_file)
     value = _read_json(
         input_path,
@@ -1163,6 +1175,7 @@ def reissue_completed(args: argparse.Namespace) -> tuple[str, int]:
         raise ImportFailure("Reissued receipt output must be outside the execution record")
     if len(set(resolved_paths)) != len(resolved_paths):
         raise ImportFailure(separation_error)
+    _require_repository_external_paths(resolved_paths)
     tls_context = _create_tls_context(ca_file)
     try:
         assessment = assess_execution_directory(execution_path, source_bundle_path)

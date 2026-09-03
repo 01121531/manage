@@ -33,6 +33,11 @@ PRIVATE_FILE_PERMISSION_FINGERPRINT = (
 class SecurePoolImportCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.receipt_id = str(uuid4())
+        self.repository_root_patch = patch.object(
+            secure_pool_import,
+            "REPOSITORY_ROOT",
+            ROOT / ".secure-pool-import-test-repository",
+        )
 
         def issue_context(
             _client: object,
@@ -93,6 +98,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
             "_private_file_permission_fingerprint",
             return_value="test-private-permissions",
         )
+        self.repository_root_patch.start()
         self.platform_context_patch.start()
         self.platform_token_patch.start()
         self.platform_renewal_patch.start()
@@ -105,6 +111,7 @@ class SecurePoolImportCliTests(unittest.TestCase):
         self.platform_renewal_patch.stop()
         self.platform_token_patch.stop()
         self.platform_context_patch.stop()
+        self.repository_root_patch.stop()
 
     @staticmethod
     def _args(**overrides: str) -> argparse.Namespace:
@@ -385,6 +392,94 @@ class SecurePoolImportCliTests(unittest.TestCase):
                 secure_pool_import.ImportFailure
             ):
                 secure_pool_import._card_record({**base, name: "123"})
+
+    def test_import_and_reissue_reject_repository_paths_before_io_or_clients(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = root / "repository"
+            external = root / "external"
+            repository.mkdir()
+            external.mkdir()
+            base = {
+                "input_file": str(external / "input.json"),
+                "platform_token_file": str(external / "platform.token"),
+                "approle_role_id_file": str(external / "role-id"),
+                "approle_secret_id_file": str(external / "secret-id"),
+                "receipt_output": str(external / "receipt.json"),
+                "execution_directory": str(external / "execution"),
+                "ca_file": str(external / "ca.pem"),
+            }
+            repository_fields = (
+                "input_file",
+                "platform_token_file",
+                "approle_role_id_file",
+                "approle_secret_id_file",
+                "receipt_output",
+                "execution_directory",
+                "ca_file",
+            )
+            with (
+                patch.object(secure_pool_import, "REPOSITORY_ROOT", repository),
+                patch.object(
+                    secure_pool_import,
+                    "_create_tls_context",
+                    side_effect=AssertionError("CA must not be loaded"),
+                ),
+                patch.object(
+                    secure_pool_import,
+                    "_read_json",
+                    side_effect=AssertionError("Input must not be read"),
+                ),
+                patch.object(
+                    secure_pool_import,
+                    "PlatformClient",
+                    side_effect=AssertionError("Platform client must not be created"),
+                ),
+            ):
+                for field in repository_fields:
+                    with self.subTest(flow="import", field=field):
+                        value = repository / (
+                            "execution" if field == "execution_directory" else field
+                        )
+                        arguments = self._args(**{**base, field: str(value)})
+                        with self.assertRaisesRegex(
+                            secure_pool_import.ImportFailure,
+                            "^Sensitive import paths must be outside the repository$",
+                        ):
+                            secure_pool_import.run(arguments)
+
+            reissue_output = external / "reissued.json"
+            with (
+                patch.object(secure_pool_import, "REPOSITORY_ROOT", repository),
+                patch.object(
+                    secure_pool_import,
+                    "_create_tls_context",
+                    side_effect=AssertionError("CA must not be loaded"),
+                ),
+                patch.object(
+                    secure_pool_import,
+                    "assess_execution_directory",
+                    side_effect=AssertionError("Execution must not be assessed"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    secure_pool_import.ImportFailure,
+                    "^Sensitive import paths must be outside the repository$",
+                ):
+                    secure_pool_import.reissue_completed(
+                        self._args(
+                            **{
+                                **base,
+                                "input_file": None,
+                                "reissue_from": str(repository / "source.json"),
+                                "receipt_output": str(reissue_output),
+                            }
+                        )
+                    )
+
+            self.assertFalse(reissue_output.exists())
 
     def test_duplicate_card_provider_refs_fail_before_platform_or_vault_use(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
