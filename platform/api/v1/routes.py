@@ -7958,6 +7958,11 @@ def admin_update_mailbox_state(
     ),
     db: Session = Depends(get_db),
 ) -> MailboxStatusResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     mailbox = db.scalar(
         select(Mailbox)
         .where(

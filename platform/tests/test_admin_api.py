@@ -3223,6 +3223,63 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(cross_tenant_audit.status_code, 200, cross_tenant_audit.text)
         self.assertEqual(cross_tenant_audit.json(), [])
 
+    def test_admin_mailbox_state_rechecks_actor_after_authentication(self) -> None:
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="r***@example.test",
+                connector_type="http",
+                task_type="mail_code",
+                secret_ref="vault://secret/mailboxes/recheck-state",
+            )
+            db.add(mailbox)
+            db.commit()
+            mailbox_id = mailbox.id
+
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "PATCH",
+                f"/api/v1/admin/mailboxes/{mailbox_id}",
+                json={"is_active": False},
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            mailbox = db.get(Mailbox, mailbox_id)
+            disabled_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == mailbox_id,
+                        AuditEvent.event_type == "admin.mailbox_disabled",
+                    )
+                )
+            )
+        self.assertTrue(mailbox.is_active)
+        self.assertEqual(disabled_audits, [])
+
     def test_admin_mailbox_management_revokes_sessions_and_rotates_reference(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
