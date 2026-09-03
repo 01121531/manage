@@ -7711,6 +7711,11 @@ def admin_release_card_quarantine(
         ),
         recovery_hint="刷新卡状态后重试解除隔离；隔离屏障不会提前清除",
     )
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     released = db.execute(
         update(Card)
         .where(
