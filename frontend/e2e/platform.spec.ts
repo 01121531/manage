@@ -4590,7 +4590,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       }
       users = users.map((user) => user.id === 'operator-3' ? { ...user, role: 'security_auditor' } : user)
       pendingRoleRequests = pendingRoleRequests.filter((item) => item.id !== 'role-approval-1')
-      return fulfill({ ...applied, tenant_id: 'wrong-role-approval-tenant' })
+      return fulfill({ ...applied, request_trace_id: 'wrong-role-request-trace' })
     }
     if (path === '/api/v1/admin/devices' && request.method() === 'GET') {
       deviceListRequests += 1
@@ -4720,7 +4720,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await approvalDialog.getByRole('button', { name: '审批并应用角色' }).click()
   await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()).toBeVisible()
   await expect(page.getByText('角色变更已由独立管理员审批并应用。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-role-approval-tenant')
+  await expect(page.locator('body')).not.toContainText('wrong-role-request-trace')
   await expect(approvalRow).toHaveCount(0)
   await expect(thirdRow).toContainText('安全审计员')
   await secondCheckbox.check()

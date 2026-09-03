@@ -345,6 +345,61 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
             )
         self.assertEqual(requested_audits, 1)
 
+    def test_request_rechecks_tenant_binding_after_commit(self) -> None:
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        request_id: str | None = None
+        request_moved = False
+
+        def mark_request(*args, **kwargs):
+            nonlocal request_id
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.user_role_change_requested":
+                request_id = kwargs["entity_id"]
+            return result
+
+        def move_after_request_commit(session: Session) -> None:
+            nonlocal request_moved
+            original_commit(session)
+            if request_id is None or request_moved:
+                return
+            request_moved = True
+            with self.app.state.session_factory() as other_db:
+                role_change = other_db.get(AdminRoleChangeRequest, request_id)
+                self.assertIsNotNone(role_change)
+                role_change.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "_utc_now",
+            return_value=self.requested_at,
+        ), mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_request,
+        ), mock.patch.object(Session, "commit", new=move_after_request_commit):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/users/{self.target.user_id}/role-change-requests",
+                headers=self.bearer(self.requester_token),
+                json={"role": "security_auditor"},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("new_role", response.text)
+        with self.app.state.session_factory() as db:
+            role_change = db.get(AdminRoleChangeRequest, request_id)
+            requested_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.user_role_change_requested",
+                    AuditEvent.entity_id == request_id,
+                )
+            )
+        self.assertEqual(role_change.tenant_id, "tenant-b")
+        self.assertEqual(role_change.status, "pending")
+        self.assertEqual(requested_audits, 1)
+
     def test_request_rechecks_requester_after_target_claim_rollback(self) -> None:
         def restart_claim(db, *, user_id, tenant_id):
             db.rollback()

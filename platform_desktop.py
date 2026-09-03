@@ -4891,6 +4891,12 @@ class PlatformDesktopApp:
             self.copy_card_button.configure(state="normal")
 
     def _write_clipboard(self, text: str) -> bool:
+        def clipboard_sequence_number() -> int | None:
+            try:
+                return get_clipboard_sequence_number()
+            except Exception:
+                return None
+
         clipboard_cleared = False
         try:
             self.root.clipboard_clear()
@@ -4900,14 +4906,14 @@ class PlatformDesktopApp:
         except Exception:
             if clipboard_cleared:
                 self._clipboard_clear_generation += 1
-                self._clipboard_owner = (text, get_clipboard_sequence_number())
+                self._clipboard_owner = (text, clipboard_sequence_number())
                 self._clipboard_cleanup_failed = None
                 self._clear_owned_clipboard(text)
             self._set_status(CLIPBOARD_WRITE_ERROR_MESSAGE, ERROR)
             return False
         else:
             self._clipboard_clear_generation += 1
-            self._clipboard_owner = (text, get_clipboard_sequence_number())
+            self._clipboard_owner = (text, clipboard_sequence_number())
             self._clipboard_cleanup_failed = None
             return True
 

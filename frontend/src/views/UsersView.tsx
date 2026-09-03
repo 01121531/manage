@@ -285,6 +285,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
             || approved.new_role !== request.new_role
             || approved.status !== 'applied'
             || approved.approved_by !== principal.id
+            || approved.request_trace_id !== request.request_trace_id
             || approved.applied_at === null
             || approved.approval_trace_id === null
           ) throw new Error('role change approval response binding mismatch')
