@@ -35,6 +35,7 @@ from platform.models import (
     OperationalPolicyVersion,
     PoolImportContext,
     PoolImportReceipt,
+    RevokedAccessToken,
     Task,
     OutboxEvent,
     UploadJob,
@@ -2912,6 +2913,65 @@ class AdminApiTests(unittest.TestCase):
                 )
             )
         self.assertEqual(disabled_audits, 1)
+
+    def test_card_state_rechecks_access_token_revocation_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="post-commit-revoked-token-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/post-commit-revoked-token",
+        )
+        original_commit = Session.commit
+        token_revoked = False
+
+        def commit_then_revoke_token(session: Session) -> None:
+            nonlocal token_revoked
+            card_disabled = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.card_disabled"
+                for item in session.new
+            )
+            original_commit(session)
+            if not card_disabled or token_revoked:
+                return
+            token_revoked = True
+            with self.app.state.session_factory() as other:
+                other.add(
+                    RevokedAccessToken(
+                        token_hash=hashlib.sha256(
+                            admin_token.encode("utf-8")
+                        ).hexdigest(),
+                        tenant_id="tenant-a",
+                        user_id=self.admin.user_id,
+                        device_id=self.admin.device_id,
+                        expires_at=utc_now() + timedelta(minutes=15),
+                        revoked_at=utc_now(),
+                        reason="concurrent_logout",
+                    )
+                )
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_revoke_token):
+            response = self.request(
+                "PATCH",
+                f"/api/v1/admin/cards/{card.card_id}",
+                headers=self.headers(admin_token),
+                json={"is_active": False},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("last4", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+        self.assertFalse(persisted.is_active)
 
     def test_card_cleanup_in_progress_rechecks_actor_after_commit(self) -> None:
         admin_token = self.login(
