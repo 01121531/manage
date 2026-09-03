@@ -2450,6 +2450,59 @@ class CardAllocationTests(unittest.TestCase):
         ):
             self.assertNotIn(sensitive, response.text)
 
+    def test_card_release_rechecks_operator_after_authentication(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-release-stale-operator")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        allocation_id = allocated.json()["id"]
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+            email="card-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            db.get(User, self.identity.user_id).role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_operator_principal] = (
+            lambda: captured_principal
+        )
+        try:
+            response = self.request(
+                "POST", f"/api/v1/card-allocations/{allocation_id}/release"
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_operator_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(CardAllocation, allocation_id)
+            release_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "card.released",
+                        AuditEvent.entity_id == allocation_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "active")
+        self.assertIsNone(persisted.released_at)
+        self.assertEqual(release_events, [])
+
     def test_reveal_rejects_missing_or_insufficient_step_up(self) -> None:
         token = self.login()
         headers = self.bearer(token)

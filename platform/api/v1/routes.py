@@ -1866,6 +1866,8 @@ def create_mail_session(
 ) -> MailSessionCreateResponse:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    _lock_task_creation_principal(db, principal)
+    db.rollback()
     task = db.scalar(
         select(Task).where(
             Task.id == task_id,
@@ -3682,6 +3684,7 @@ def release_card_allocation(
     )
     if task_barrier.rowcount != 1:
         return refresh_after_lost_claim()
+    _lock_task_creation_principal(db, principal)
     task = db.scalar(
         select(Task)
         .where(

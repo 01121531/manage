@@ -2567,7 +2567,7 @@ class PlatformDesktopApp:
                     self.upload_button.configure(state="disabled")
                     self._set_workflow_stage("uploading")
                     self._set_status("已接管活动任务，继续核对原上传作业状态。", SUCCESS)
-                    self.root.after(0, self._poll_upload)
+                    self._schedule_upload_poll(0)
                 elif session is not None and session.status == "consumed":
                     self._mark_current_task_verified()
                     self._set_workflow_stage("code_ready")
@@ -2853,7 +2853,7 @@ class PlatformDesktopApp:
                     self.upload_button.configure(state="disabled")
                     self._set_status("上传作业已进入服务端队列。", ACCENT)
                     self._set_workflow_stage("uploading")
-                    self.root.after(2000, self._poll_upload)
+                    self._schedule_upload_poll(2000)
                 elif snapshot.status == "succeeded":
                     self._reset_task_verification()
                     self.copy_card_button.configure(state="disabled")
@@ -3004,7 +3004,7 @@ class PlatformDesktopApp:
                     self._set_status(
                         "暂时无法获取上传状态；将继续查询，请勿重复提交。", WARNING
                     )
-                    self.root.after(3000, self._poll_upload)
+                    self._schedule_upload_poll(3000)
             elif kind == "terminal_task_cleanup_succeeded":
                 task_id, outcome = value
                 if (
@@ -3788,6 +3788,27 @@ class PlatformDesktopApp:
                     ),
                 )
             )
+
+    def _schedule_upload_poll(self, delay_ms: int) -> None:
+        generation = self._upload_generation
+        job_id = self._upload_job_id
+        task_id = self._task_id
+        business_name = self._upload_business_name
+
+        def poll_if_current() -> None:
+            if (
+                self._upload_generation != generation
+                or self._upload_job_id != job_id
+                or self._task_id != task_id
+                or self._upload_business_name != business_name
+                or self._locked
+                or self._closed
+                or self._terminal_task_cleanup_action is not None
+            ):
+                return
+            self._poll_upload()
+
+        self.root.after(delay_ms, poll_if_current)
 
     def _poll_upload(self) -> None:
         if (

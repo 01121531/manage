@@ -3165,6 +3165,64 @@ class MailSessionTests(unittest.TestCase):
         self.assertEqual(persisted.status, "waiting")
         self.assertEqual(events, [])
 
+    def test_api_session_creation_rechecks_principal_before_connector_call(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-api-stale-principal")
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-mail",
+            device_id=self.identity.device_id,
+            email="mail-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        self.connector.failure_message = "sensitive upstream detail"
+        with self.app.state.session_factory() as db:
+            db.get(Device, self.identity.device_id).revoked_at = now
+            db.commit()
+
+        self.app.dependency_overrides[get_operator_principal] = (
+            lambda: captured_principal
+        )
+        try:
+            response = self.request(
+                "POST", f"/api/v1/tasks/{task_id}/mail-sessions"
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_operator_principal, None)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(self.connector.watermark_calls, 0)
+        with self.app.state.session_factory() as db:
+            mailbox = db.scalar(
+                select(Mailbox).where(Mailbox.tenant_id == "tenant-mail")
+            )
+            sessions = list(
+                db.scalars(
+                    select(MailSession).where(MailSession.task_id == task_id)
+                )
+            )
+            health_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mailbox.health_changed",
+                        AuditEvent.entity_id == mailbox.id,
+                    )
+                )
+            )
+        self.assertEqual(mailbox.health_status, "unknown")
+        self.assertIsNone(mailbox.last_checked_at)
+        self.assertIsNone(mailbox.last_error_code)
+        self.assertEqual(sessions, [])
+        self.assertEqual(health_events, [])
+
     def test_mail_openapi_schemas_do_not_expose_internal_mail_fields(self) -> None:
         schema = self.app.openapi()
         for name in ("MailSessionResponse", "MailCodeResponse"):

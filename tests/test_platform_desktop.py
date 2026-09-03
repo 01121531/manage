@@ -2115,7 +2115,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         retries = [
             entry
             for entry in instance.root.scheduled
-            if entry[0] == 3_000 and entry[1] == instance._poll_upload
+            if entry[0] == 3_000
         ]
         self.assertEqual(len(retries), 1)
         self.assertIn("继续查询", instance.status_label.values["text"])
@@ -2225,6 +2225,45 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn(2000, [delay for delay, _, _ in instance.root.scheduled])
         self.assertNotIn(3000, [delay for delay, _, _ in instance.root.scheduled])
 
+    def test_stale_upload_poll_timer_cannot_restart_against_replaced_job(self) -> None:
+        instance = self._event_app()
+        client = mock.Mock()
+        instance._client = client
+        queued = UploadJobSnapshot(
+            id="upload-1",
+            task_id="task-1",
+            status="queued",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code=None,
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:01Z",
+        )
+        instance._events.put((instance._upload_generation, "upload", queued))
+        instance._drain_events()
+        old_callback = next(
+            callback
+            for delay, callback, _ in instance.root.scheduled
+            if delay == 2_000
+        )
+        instance._upload_generation += 1
+        instance._upload_job_id = "upload-2"
+        instance._task_id = "task-2"
+        instance._upload_business_name = "Other Store"
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            old_callback()
+
+        client.get_upload_job.assert_not_called()
+
     def test_upload_poll_transport_failures_keep_retrying_original_job(self) -> None:
         for error in (
             PlatformTransportError("offline"),
@@ -2309,7 +2348,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn('kind == "upload_poll_error"', source)
         poll_branch = source.split('kind == "upload_poll_error"', 1)[1]
         self.assertIn('upload_button.configure(state="disabled")', poll_branch)
-        self.assertIn('root.after(3000, self._poll_upload)', poll_branch)
+        self.assertIn('_schedule_upload_poll(3000)', poll_branch)
         self.assertIn("请勿重复提交", poll_branch)
 
     def test_code_ready_stays_disabled_until_code_is_consumed(self) -> None:
@@ -3247,7 +3286,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         self.assertEqual(instance._upload_job_id, running.id)
         self.assertEqual(instance._upload_business_name, running.business_name)
-        scheduled = [entry for entry in instance.root.scheduled if entry[1] is instance._poll_upload]
+        scheduled = [entry for entry in instance.root.scheduled if entry[0] == 0]
         self.assertEqual(len(scheduled), 1)
         self.assertEqual(instance.upload_button.values["state"], "disabled")
 
