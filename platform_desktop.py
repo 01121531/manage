@@ -1625,6 +1625,7 @@ class PlatformDesktopApp:
                 return
             finished = True
             self._clipboard_cleanup_pending -= 1
+            self._finish_session_shutdown_if_ready()
             if (
                 self._clipboard_cleanup_pending == 0
                 and self._destroy_pending
@@ -2469,15 +2470,10 @@ class PlatformDesktopApp:
                     or value != self._shutdown_intent
                 ):
                     continue
-                intent = self._shutdown_intent
-                message = self._shutdown_message
                 self._shutdown_cleanup_in_progress = False
                 self._shutdown_cleanup_action = None
-                self._shutdown_intent = None
                 self._task_id = None
-                self._finish_local_logout(message)
-                if intent == "close":
-                    self._destroy_window()
+                self._finish_session_shutdown_if_ready()
             elif kind == "shutdown_cleanup_error":
                 if (
                     generation != self._shutdown_generation
@@ -3798,6 +3794,50 @@ class PlatformDesktopApp:
             ACCENT,
         )
         self._start_session_shutdown_attempt()
+
+    def _retry_shutdown_clipboard_cleanup(self) -> None:
+        failed = self._clipboard_cleanup_failed
+        if failed is None or self._clipboard_cleanup_pending:
+            return
+        self._clipboard_cleanup_failed = None
+        self._clipboard_owner = failed
+        self.login_button.configure(state="disabled")
+        self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
+        self._clear_owned_clipboard(failed[0])
+
+    def _finish_session_shutdown_if_ready(self) -> None:
+        intent = self._shutdown_intent
+        if (
+            intent is None
+            or self._shutdown_cleanup_action is not None
+            or self._shutdown_cleanup_in_progress
+        ):
+            return
+        if self._clipboard_cleanup_pending:
+            self.login_button.configure(state="disabled")
+            self._set_status(
+                "平台会话已撤销，正在确认清除客户端写入的临时剪贴板内容…",
+                ACCENT,
+            )
+            return
+        if self._clipboard_cleanup_failed is not None:
+            self.login_button.configure(
+                text="重试清除剪贴板",
+                command=self._retry_shutdown_clipboard_cleanup,
+                state="normal",
+            )
+            self._set_status(
+                "原因：系统剪贴板持续被占用；"
+                "影响：客户端不会重新开放登录或退出；"
+                "下一步：关闭占用剪贴板的程序后点击“重试清除剪贴板”。",
+                ERROR,
+            )
+            return
+        message = self._shutdown_message
+        self._shutdown_intent = None
+        self._finish_local_logout(message)
+        if intent == "close":
+            self._destroy_window()
 
     def _finish_local_logout(self, message: str) -> None:
         self._terminal_task_cleanup_generation += 1

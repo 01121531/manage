@@ -671,6 +671,69 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.login_button.values["text"], "登录平台")
         self.assertEqual(instance.login_button.values["state"], "normal")
 
+    def test_logout_waits_for_owned_clipboard_cleanup_before_enabling_login(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        clipboard_get = instance.root.clipboard_get
+        attempts = 0
+
+        def busy_once():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise tk.TclError("clipboard busy")
+            return clipboard_get()
+
+        instance.root.clipboard_get = busy_once
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(instance.root.clipboard, secret)
+        self.assertEqual(instance.login_button.values["state"], "disabled")
+        self.assertNotEqual(instance.status_label.values["text"], "已完成安全退出。")
+
+        _, retry, args = instance.root.scheduled.pop(0)
+        retry(*args)
+
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance.login_button.values["text"], "登录平台")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertEqual(instance.status_label.values["text"], "已完成安全退出。")
+
+    def test_logout_clipboard_retry_exhaustion_keeps_login_blocked(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        instance.root.clipboard_get = mock.Mock(
+            side_effect=tk.TclError("clipboard remains busy")
+        )
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        for _ in range(3):
+            _, retry, args = instance.root.scheduled.pop(0)
+            retry(*args)
+        instance._drain_events()
+
+        self.assertEqual(instance.root.clipboard, secret)
+        self.assertEqual(instance.login_button.values["text"], "重试清除剪贴板")
+        self.assertNotEqual(
+            instance.login_button.values["command"], instance.open_login_dialog
+        )
+        self.assertIsNotNone(instance._clipboard_cleanup_failed)
+
+        instance.root.clipboard_get = lambda: instance.root.clipboard
+        instance.login_button.values["command"]()
+
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance.login_button.values["text"], "登录平台")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertEqual(instance.status_label.values["text"], "已完成安全退出。")
+
     def test_failed_logout_retries_same_captured_cleanup_without_close_bypass(self) -> None:
         instance = self._event_app()
         attempts = []
