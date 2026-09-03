@@ -5812,7 +5812,17 @@ def admin_approve_role_change_request(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(role_change, with_for_update=True)
+    role_change = db.scalar(
+        select(AdminRoleChangeRequest)
+        .where(
+            AdminRoleChangeRequest.id == role_change_id,
+            AdminRoleChangeRequest.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if role_change is None:
+        raise HTTPException(status_code=404, detail="Role-change request not found")
     return _admin_role_change_response(role_change)
 
 

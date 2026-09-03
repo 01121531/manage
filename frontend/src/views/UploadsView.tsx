@@ -196,6 +196,7 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
       if (
         updated.id !== target.id
         || updated.task_id !== target.task_id
+        || updated.trace_id !== target.trace_id
         || updated.status !== values.status
       ) {
         throw new Error('upload reconciliation response binding mismatch')

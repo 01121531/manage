@@ -675,6 +675,65 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
         self.assertEqual(event_counts["admin.user_role_change_approved"], 1)
         self.assertEqual(event_counts["admin.user_role_changed"], 1)
 
+    def test_approval_rechecks_tenant_binding_after_cleanup_commit(self) -> None:
+        created = self.create_role_change()
+        original_revoke = routes._revoke_principal_resources
+        original_commit = Session.commit
+        cleanup_complete = False
+        request_moved = False
+
+        def mark_cleanup(*args, **kwargs):
+            nonlocal cleanup_complete
+            result = original_revoke(*args, **kwargs)
+            cleanup_complete = True
+            return result
+
+        def move_request_after_cleanup_commit(session: Session) -> None:
+            nonlocal request_moved
+            original_commit(session)
+            if cleanup_complete and not request_moved:
+                request_moved = True
+                with self.app.state.session_factory() as other_db:
+                    role_change = other_db.get(
+                        AdminRoleChangeRequest,
+                        str(created["id"]),
+                    )
+                    self.assertIsNotNone(role_change)
+                    role_change.tenant_id = "tenant-b"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "_revoke_principal_resources",
+            side_effect=mark_cleanup,
+        ), mock.patch.object(
+            Session,
+            "commit",
+            new=move_request_after_cleanup_commit,
+        ):
+            response = self.approve(str(created["id"]), self.mfa_token())
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("target_user_id", response.text)
+        self.assertEqual(self.user_role(self.target.user_id), "security_auditor")
+        with self.app.state.session_factory() as db:
+            role_change = db.get(AdminRoleChangeRequest, str(created["id"]))
+            event_counts = {
+                event_type: db.scalar(
+                    select(func.count(AuditEvent.id)).where(
+                        AuditEvent.event_type == event_type,
+                    )
+                )
+                for event_type in (
+                    "admin.user_role_change_approved",
+                    "admin.user_role_changed",
+                )
+            }
+        self.assertEqual(role_change.status, "applied")
+        self.assertEqual(role_change.tenant_id, "tenant-b")
+        self.assertEqual(event_counts["admin.user_role_change_approved"], 1)
+        self.assertEqual(event_counts["admin.user_role_changed"], 1)
+
     def test_applied_replay_rechecks_approver_after_cleanup_commit(self) -> None:
         created = self.create_role_change()
         approver_mfa = self.mfa_token()

@@ -2033,13 +2033,16 @@ class PlatformDesktopApp:
             if self._closed or generation != self._clipboard_clear_generation:
                 finish()
                 return
-            if owner[1] is not None and get_clipboard_sequence_number() != owner[1]:
-                if self._clipboard_owner == owner:
-                    self._clipboard_owner = None
-                self._forget_clipboard_cleanup_failure(owner)
-                finish()
-                return
             try:
+                if (
+                    owner[1] is not None
+                    and get_clipboard_sequence_number() != owner[1]
+                ):
+                    if self._clipboard_owner == owner:
+                        self._clipboard_owner = None
+                    self._forget_clipboard_cleanup_failure(owner)
+                    finish()
+                    return
                 if self.root.clipboard_get() != text:
                     if self._clipboard_owner == owner:
                         self._clipboard_owner = None

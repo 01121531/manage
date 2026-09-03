@@ -866,6 +866,31 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.clipboard, "")
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
 
+    def test_clipboard_sequence_check_error_retries_before_destroy(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance._clipboard_owner = (secret, 7)
+        instance.root.clipboard = secret
+
+        with mock.patch(
+            "platform_desktop.get_clipboard_sequence_number",
+            side_effect=[RuntimeError("clipboard sequence unavailable"), 7],
+        ):
+            instance._clear_sensitive_code()
+            _, retry, args = instance.root.scheduled.pop()
+            instance._destroy_window()
+
+            self.assertEqual(instance._clipboard_cleanup_pending, 1)
+            self.assertEqual(instance.root.destroy_calls, 0)
+            retry(*args)
+
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance.root.destroy_calls, 1)
+        self.assertTrue(instance._closed)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy
