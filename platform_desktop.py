@@ -1597,9 +1597,19 @@ class PlatformDesktopApp:
                 return
             self._events.put((generation, "session_refreshed", expires_in))
 
-        threading.Thread(
+        thread = threading.Thread(
             target=worker, daemon=True, name="platform-session-refresh"
-        ).start()
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "session_refresh_error",
+                    PlatformTransportError("session refresh worker unavailable"),
+                )
+            )
 
     def _on_focus_out(self, _event: tk.Event[Any]) -> None:
         self._sensitive_focus.clear()

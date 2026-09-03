@@ -1627,6 +1627,33 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             message="会话已过期，已停止任务并清除临时数据。"
         )
 
+    def test_refresh_thread_start_failure_enters_session_failure_path(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(can_refresh_oidc_session=True)
+        instance._session_deadline = time.monotonic() + 30
+        instance.logout = mock.Mock()
+
+        class FailingThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            @staticmethod
+            def start():
+                raise RuntimeError("cannot start refresh thread")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._update_session_countdown(instance._session_generation)
+
+        self.assertTrue(instance._session_refreshing)
+        self.assertTrue(
+            any(delay == 1000 for delay, _callback, _args in instance.root.scheduled)
+        )
+        instance._drain_events()
+        self.assertFalse(instance._session_refreshing)
+        instance.logout.assert_called_once_with(
+            message="安全会话刷新失败，已停止任务并清除临时数据。"
+        )
+
     def test_session_expiry_completes_captured_cleanup_before_success_message(self) -> None:
         instance = self._event_app()
         cleanup = mock.Mock()
