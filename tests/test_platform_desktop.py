@@ -2188,6 +2188,29 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             message="安全会话刷新失败，已停止任务并清除临时数据。"
         )
 
+    def test_stale_refresh_start_failure_clears_single_flight_state(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock()
+
+        class FailingThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            @staticmethod
+            def start():
+                raise RuntimeError("cannot start refresh thread")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._refresh_session_async(instance._session_generation)
+
+        self.assertTrue(instance._session_refreshing)
+        self.assertIsNotNone(instance._session_refresh_thread)
+        instance._session_generation += 1
+        instance._drain_events()
+
+        self.assertFalse(instance._session_refreshing)
+        self.assertIsNone(instance._session_refresh_thread)
+
     def test_lock_cannot_start_overlapping_session_refresh(self) -> None:
         refresh_started = threading.Event()
         release_refresh = threading.Event()

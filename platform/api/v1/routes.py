@@ -7689,13 +7689,21 @@ def admin_recycle_card_allocation(
         else:
             db.rollback()
 
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     db.expire_all()
     current = db.scalar(
-        select(CardAllocation).where(
+        select(CardAllocation)
+        .where(
             CardAllocation.id == allocation_id,
             CardAllocation.card_id == card_id,
             CardAllocation.tenant_id == principal.tenant_id,
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if current is None:
         raise HTTPException(status_code=404, detail="Card allocation not found")

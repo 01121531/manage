@@ -307,7 +307,12 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         setRevokingDeviceId(row.id)
         try {
           const updated = await revokeDevice(row.id)
-          if (updated.id !== row.id || updated.revoked_at === null) {
+          if (
+            updated.id !== row.id
+            || updated.tenant_id !== principal.tenant_id
+            || updated.user_id !== row.user_id
+            || updated.revoked_at === null
+          ) {
             throw new Error('device revoke response binding mismatch')
           }
           message.success('设备已撤销，相关会话与活动资源已回收。')

@@ -3582,6 +3582,67 @@ class AdminApiTests(unittest.TestCase):
         self.assertIsNone(allocation.released_at)
         self.assertEqual(upload.status, "queued")
 
+    def test_card_recycle_converged_response_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        card_id, _task_id, allocation_id, upload_id = self.create_card_upload_fixture(
+            admin_token=admin_token,
+            operator_token=operator_token,
+            suffix="converged-recycle-admin",
+        )
+        original_commit = Session.commit
+        state_changed = False
+
+        def commit_then_converge_and_demote(session: Session) -> None:
+            nonlocal state_changed
+            recycle_requested = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.card_allocation_recycle_requested"
+                for item in session.new
+            )
+            original_commit(session)
+            if not recycle_requested or state_changed:
+                return
+            state_changed = True
+            with self.app.state.session_factory() as other:
+                allocation = other.get(CardAllocation, allocation_id)
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(allocation)
+                self.assertIsNotNone(admin)
+                allocation.status = "released"
+                allocation.released_at = utc_now()
+                allocation.release_reason_code = "concurrent_release"
+                admin.role = "operator"
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_converge_and_demote,
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card_id}/allocations/{allocation_id}/recycle",
+                headers=self.headers(admin_token),
+                json={"reason_code": "manual_reassignment"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(allocation_id, response.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocation_id)
+            upload = db.get(UploadJob, upload_id)
+        self.assertEqual(allocation.status, "released")
+        self.assertIsNotNone(allocation.released_at)
+        self.assertEqual(upload.status, "queued")
+
     def test_card_timeline_rechecks_actor_after_authentication(self) -> None:
         card = provision_card(
             self.app.state.session_factory,

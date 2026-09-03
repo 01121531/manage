@@ -1945,8 +1945,6 @@ class PlatformDesktopApp:
             thread.start()
         except RuntimeError:
             self._session_refresh_threads.remove(thread)
-            if self._session_refresh_thread is thread:
-                self._session_refresh_thread = None
             self._events.put(
                 (
                     generation,
@@ -1954,6 +1952,7 @@ class PlatformDesktopApp:
                     PlatformTransportError("session refresh worker unavailable"),
                 )
             )
+            self._events.put((generation, "session_refresh_finished", thread))
 
     def _on_focus_out(self, _event: tk.Event[Any]) -> None:
         self._sensitive_focus.clear()
@@ -2738,6 +2737,7 @@ class PlatformDesktopApp:
             if kind == "session_refresh_finished":
                 if self._session_refresh_thread is value:
                     self._session_refresh_thread = None
+                    self._session_refreshing = False
                 continue
             if kind == "update_download_finished":
                 if self._update_download_thread is value:
