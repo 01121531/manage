@@ -9888,6 +9888,8 @@ def admin_deploy_upload_policy_version(
         details={"version": policy.version, "rollout_percent": payload.rollout_percent},
     )
     try:
+        db.flush()
+        deployment_id = deployment.id
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -9899,7 +9901,17 @@ def admin_deploy_upload_policy_version(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(deployment, with_for_update=True)
+    deployment = db.scalar(
+        select(UploadPolicyDeployment)
+        .where(
+            UploadPolicyDeployment.id == deployment_id,
+            UploadPolicyDeployment.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Upload policy deployment not found")
     return _upload_policy_deployment_response(db, deployment)
 
 

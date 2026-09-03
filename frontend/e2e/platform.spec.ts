@@ -4172,7 +4172,7 @@ test('platform admin governs upload policies without browser execution details',
         ? { ...item, status: 'active' }
         : item)
       return fulfill({
-        domain: 'mail', active_version: 'wrong-mail-deployment-version', previous_version: null,
+        domain: 'mail', active_version: 'mail-2026.08.2', previous_version: 'wrong-mail-previous-version',
         rollout_percent: 100, updated_at: '2026-08-20T00:04:00Z',
       })
     }
@@ -4314,7 +4314,7 @@ test('platform admin governs upload policies without browser execution details',
   await mailDeployDialog.getByRole('button', { name: '全量发布', exact: true }).click()
   await expect(page.locator('.ant-message-notice').filter({ hasText: '生产策略未确认变更' }).last()).toBeVisible()
   await expect(page.getByText('邮箱策略已发布到 100%。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-mail-deployment-version')
+  await expect(page.locator('body')).not.toContainText('wrong-mail-previous-version')
   await expect(mailPolicySummary.getByText('当前生效', { exact: true }).locator('..')).toContainText('mail-2026.08.2')
   await mailPolicySummary.getByPlaceholder('mail-2026.08.1').fill('mail-2026.09.1')
   await mailPolicySummary.getByPlaceholder('变更说明').fill('九月邮箱策略')

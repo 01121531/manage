@@ -131,6 +131,7 @@ function OperationalPolicyPanel({ domain, principal }: {
       if (
         deployed.domain !== domain
         || deployed.active_version !== row.version
+        || deployed.previous_version !== (status?.active_version ?? null)
         || deployed.rollout_percent !== percent
       ) throw new Error('operational policy deployment response binding mismatch')
     }, `${title}已发布到 ${percent}%。`),

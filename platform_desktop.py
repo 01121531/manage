@@ -3494,9 +3494,12 @@ class PlatformDesktopApp:
                     continue
                 details = self._format_card_details(value)
                 self._current_card_clipboard = details
-                self.card_reveal_label.configure(
-                    text=self._format_card_display(value), foreground=ACCENT
-                )
+                try:
+                    self.card_reveal_label.configure(
+                        text=self._format_card_display(value), foreground=ACCENT
+                    )
+                except Exception:
+                    pass
                 paste_action = self._paste_sequence.offer_card(details)
                 visible_seconds = max(1, (cleanup_delay_ms + 999) // 1000)
                 if paste_action is None:

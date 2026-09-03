@@ -1028,6 +1028,57 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.clipboard, "")
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
 
+    def test_card_display_error_still_schedules_sensitive_cleanup(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._write_clipboard = PlatformDesktopApp._write_clipboard.__get__(
+            instance
+        )
+        instance._schedule_card_cleanup = (
+            PlatformDesktopApp._schedule_card_cleanup.__get__(instance)
+        )
+        instance.card_reveal_label.configure = mock.Mock(
+            side_effect=RuntimeError("card display unavailable")
+        )
+        snapshot = CardRevealSnapshot(
+            id="reveal-1",
+            allocation_id="allocation-1",
+            card_masked="VISA •••• 1111",
+            brand="VISA",
+            expiry_month=12,
+            expiry_year=2030,
+            pan="4111111111111111",
+            reveal_expires_at="2026-08-20T00:01:00Z",
+        )
+        details = "4111111111111111\t12/30"
+
+        with (
+            mock.patch.object(
+                PlatformDesktopApp,
+                "_card_reveal_cleanup_delay_ms",
+                return_value=5_000,
+            ),
+            mock.patch(
+                "platform_desktop.get_clipboard_sequence_number", return_value=1
+            ),
+        ):
+            instance._events.put((1, "card_reveal", snapshot))
+            instance._drain_events()
+
+            self.assertEqual(instance._current_card_clipboard, details)
+            self.assertEqual(instance.root.clipboard, details)
+            cleanup = next(
+                callback
+                for _delay, callback, _args in instance.root.scheduled
+                if getattr(callback, "__name__", "") == "clear_if_current"
+            )
+            cleanup()
+
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy
