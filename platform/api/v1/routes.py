@@ -3927,6 +3927,31 @@ def create_card_reveal_grant(
         details={"acr": principal.acr},
     )
     db.commit()
+    revalidated = _owned_card_reveal_context(db, allocation_id, principal)
+    if revalidated is None:
+        raise HTTPException(status_code=404, detail="Card allocation not found")
+    _task, allocation, _card, response_now = revalidated
+    challenge = db.scalar(
+        select(CardRevealChallenge)
+        .where(
+            CardRevealChallenge.id == payload.challenge_id,
+            CardRevealChallenge.allocation_id == allocation.id,
+            CardRevealChallenge.tenant_id == principal.tenant_id,
+            CardRevealChallenge.user_id == principal.user_id,
+            CardRevealChallenge.device_id == principal.device_id,
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if (
+        challenge is None
+        or challenge.consumed_at is not None
+        or challenge.grant_token_hash
+        != hashlib.sha256(grant.encode("ascii")).hexdigest()
+        or challenge.grant_expires_at is None
+        or _is_expired(challenge.grant_expires_at, response_now)
+    ):
+        raise HTTPException(status_code=409, detail="Reveal grant is no longer active")
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return CardRevealGrantResponse(

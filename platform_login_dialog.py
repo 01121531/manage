@@ -419,8 +419,10 @@ class PlatformLoginController:
         def worker() -> None:
             try:
                 expires_in = self.client.login_with_authorization_code(
-                    lambda url: self._schedule(
-                        lambda url=url: on_authorization_url(url)
+                    lambda url: self._schedule_current(
+                        generation,
+                        lambda url=url: on_authorization_url(url),
+                        cancel_event=cancel_event,
                     ),
                     cancelled=cancel_event.is_set,
                 )
@@ -430,9 +432,17 @@ class PlatformLoginController:
             except BaseException as error:
                 if generation == self._generation:
                     error = self._compensate_partial_login(error)
-                    self._schedule(lambda error=error: on_error(error))
+                    self._schedule_current(
+                        generation,
+                        lambda error=error: on_error(error),
+                        cancel_event=cancel_event,
+                    )
             else:
-                self._schedule(lambda: on_success(profile, expires_in))
+                self._schedule_current(
+                    generation,
+                    lambda: on_success(profile, expires_in),
+                    cancel_event=cancel_event,
+                )
             finally:
                 def finish() -> None:
                     if generation != self._generation:

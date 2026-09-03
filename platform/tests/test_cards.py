@@ -1861,6 +1861,72 @@ class CardAllocationTests(unittest.TestCase):
         self.assertIsNotNone(stored.consumed_at)
         self.assertNotIn(grant.json()["reveal_grant"], str(events))
 
+    def test_reveal_grant_rechecks_device_after_issue_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-grant-commit-boundary")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        allocation_id = allocation.json()["id"]
+        challenge = self.request(
+            "POST",
+            f"/api/v1/card-allocations/{allocation_id}/reveal-challenges",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(challenge.status_code, 201, challenge.text)
+        oidc_subject = "oidc-card-owner"
+        with self.app.state.session_factory() as db:
+            user = db.get(User, self.identity.user_id)
+            self.assertIsNotNone(user)
+            user.oidc_subject = oidc_subject
+            db.commit()
+        self.app.state.access_token_verifier = MixedStepUpVerifier(
+            main_token=token,
+            user_id=self.identity.user_id,
+            oidc_subject=oidc_subject,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+        )
+        original_commit = Session.commit
+        revoked = False
+
+        def commit_then_revoke(session: Session) -> None:
+            nonlocal revoked
+            issuing_grant = any(
+                isinstance(item, CardRevealChallenge)
+                and item.grant_token_hash is not None
+                for item in session.dirty
+            )
+            original_commit(session)
+            if not issuing_grant or revoked:
+                return
+            revoked = True
+            with self.app.state.session_factory() as other:
+                device = other.get(Device, self.identity.device_id)
+                self.assertIsNotNone(device)
+                device.revoked_at = utc_now()
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_revoke):
+            grant = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/reveal-grants",
+                headers=self.bearer("step-up-token"),
+                json={"challenge_id": challenge.json()["challenge_id"]},
+            )
+
+        self.assertEqual(grant.status_code, 401, grant.text)
+        self.assertNotIn("reveal_grant", grant.text)
+        with self.app.state.session_factory() as db:
+            stored = db.get(
+                CardRevealChallenge,
+                challenge.json()["challenge_id"],
+            )
+        self.assertIsNotNone(stored.grant_token_hash)
+
     def test_reveal_resolver_failure_is_sanitized_and_grant_remains_retryable(
         self,
     ) -> None:

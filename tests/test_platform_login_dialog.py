@@ -485,6 +485,35 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertIn("submit_authorization_code", inspect.getsource(PlatformLoginDialog.submit))
         self.assertIn("submit_device_fallback", inspect.getsource(PlatformLoginDialog))
 
+    def test_cancelled_authorization_code_drops_queued_url_and_success(self):
+        scheduled = []
+        urls = []
+        results = []
+        controller = PlatformLoginController(
+            _FakeClient(),
+            schedule=scheduled.append,
+            thread_factory=_ImmediateThread,
+        )
+
+        self.assertTrue(
+            controller.submit_authorization_code(
+                on_authorization_url=urls.append,
+                on_success=lambda profile, expires: results.append(
+                    (profile, expires)
+                ),
+                on_error=self.fail,
+            )
+        )
+        self.assertEqual(urls, [])
+        controller.cancel()
+
+        for callback in list(scheduled):
+            callback()
+
+        self.assertEqual(urls, [])
+        self.assertEqual(results, [])
+        self.assertFalse(controller.busy)
+
     def test_primary_browser_failure_cancels_pkce_and_enables_device_fallback(self):
         authorization_url = "https://identity.example/authorize?state=opaque"
         for browser_result in (False, OSError("browser unavailable")):

@@ -9,6 +9,11 @@ import { useViewActionScope } from '../useViewActionScope'
 import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableText, formatLocalDateTime, mailboxHealthErrorNames } from './shared'
 
 const { Title, Text } = Typography
+const mailboxImportUnknownMessage = '原因：平台未返回可验证的邮箱池导入回执。影响：本批可能已原子导入，不能按本次错误选择新安全包或推断失败。下一步：恢复上下文已保留，请使用“同一批次核验”确认真实结果。'
+
+function hasRemoteStatus(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && typeof (error as { status?: unknown }).status === 'number')
+}
 
 export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   const { message } = AntApp.useApp()
@@ -164,11 +169,14 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       await refreshMailboxRows(isCurrent, true)
     } catch (error) {
       if (!isCurrent()) return
-      if (!shouldRetainPoolImportForRetry(error)) {
+      const retainedForRetry = mailboxImportRetryRef.current !== null && shouldRetainPoolImportForRetry(error)
+      if (!retainedForRetry) {
         mailboxImportRetryRef.current = null
         setMailboxImportRetryAvailable(false)
       }
-      message.error(error instanceof Error ? error.message : '邮箱池引用清单登记失败')
+      message.error(retainedForRetry && hasRemoteStatus(error)
+        ? mailboxImportUnknownMessage
+        : error instanceof Error ? error.message : '邮箱池引用清单登记失败')
     } finally {
       if (mailboxImportInputRef.current) mailboxImportInputRef.current.value = ''
       mailboxImportPendingRef.current = false
@@ -204,11 +212,14 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       await refreshMailboxRows(isCurrent, true)
     } catch (error) {
       if (!isCurrent()) return
-      if (!shouldRetainPoolImportForRetry(error)) {
+      const retainedForRetry = mailboxImportRetryRef.current !== null && shouldRetainPoolImportForRetry(error)
+      if (!retainedForRetry) {
         mailboxImportRetryRef.current = null
         setMailboxImportRetryAvailable(false)
       }
-      message.error(error instanceof Error ? error.message : '邮箱池引用清单重试失败')
+      message.error(retainedForRetry && hasRemoteStatus(error)
+        ? mailboxImportUnknownMessage
+        : error instanceof Error ? error.message : '邮箱池引用清单重试失败')
     } finally {
       mailboxImportPendingRef.current = false
       if (!isCurrent()) return
