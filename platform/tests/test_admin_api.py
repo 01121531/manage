@@ -2959,6 +2959,79 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(persisted.quarantine_reason_code, "suspected_compromise")
         self.assertEqual(release_audits, [])
 
+    def test_release_card_quarantine_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="post-commit-release-quarantine-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/post-commit-release-quarantine",
+        )
+        quarantined = self.request(
+            "POST",
+            f"/api/v1/admin/cards/{card.card_id}/quarantine",
+            headers=self.headers(admin_token),
+            json={"reason_code": "suspected_compromise"},
+        )
+        self.assertEqual(quarantined.status_code, 200, quarantined.text)
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        release_recorded = False
+        admin_demoted = False
+
+        def mark_release(*args, **kwargs):
+            nonlocal release_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.card_quarantine_released":
+                release_recorded = True
+            return result
+
+        def demote_after_release_commit(session: Session) -> None:
+            nonlocal admin_demoted
+            original_commit(session)
+            if release_recorded and not admin_demoted:
+                admin_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    admin = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_release,
+        ), mock.patch.object(Session, "commit", new=demote_after_release_commit):
+            released = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card.card_id}/release-quarantine",
+                headers=self.headers(admin_token),
+            )
+
+        self.assertEqual(released.status_code, 403, released.text)
+        self.assertNotIn("quarantine_reason_code", released.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+            self.assertIsNotNone(persisted)
+            self.assertFalse(persisted.is_active)
+            self.assertIsNone(persisted.quarantined_at)
+            self.assertIsNone(persisted.quarantine_reason_code)
+            release_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.card_quarantine_released",
+                    AuditEvent.entity_id == card.card_id,
+                )
+            )
+        self.assertEqual(release_audits, 1)
+
     def test_release_non_quarantined_card_rechecks_actor_before_idempotent_return(
         self,
     ) -> None:

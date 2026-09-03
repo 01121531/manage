@@ -1937,9 +1937,10 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             is_authenticated = True
 
             @staticmethod
-            def reauthenticate_for_unlock(*_args, **_kwargs):
+            def reauthenticate_for_unlock(open_authorization_url, **_kwargs):
                 unlock_entered.set()
                 release_unlock.wait(timeout=2)
+                open_authorization_url("https://identity.example.test/unlock")
                 return profile
 
             @staticmethod
@@ -1948,7 +1949,9 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         instance._client = Client()
         instance.lock()
-        with mock.patch("platform_desktop.webbrowser.open", return_value=True):
+        with mock.patch(
+            "platform_desktop.webbrowser.open", return_value=True
+        ) as open_browser:
             instance.unlock()
         self.assertTrue(unlock_entered.wait(timeout=1))
         unlock_thread = instance._unlock_thread
@@ -1968,6 +1971,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             instance._shutdown_cleanup_thread.join(timeout=1)
             instance._drain_events()
 
+            open_browser.assert_not_called()
             self.assertEqual(cleanup_calls, ["logout"])
             self.assertEqual(instance.root.destroy_calls, 1)
         finally:

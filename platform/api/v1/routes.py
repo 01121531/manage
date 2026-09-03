@@ -8136,8 +8136,13 @@ def admin_release_card_quarantine(
         db.commit()
     else:
         db.rollback()
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     db.expire(card)
-    db.refresh(card)
+    db.refresh(card, with_for_update=True)
     return _admin_card_response(card)
 
 

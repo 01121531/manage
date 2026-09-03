@@ -985,7 +985,20 @@ class PlatformDesktopApp:
 
         def worker() -> None:
             try:
+                def cancelled() -> bool:
+                    return (
+                        self._closed
+                        or not self._locked
+                        or action.cancel.is_set()
+                        or self._unlock_action is not action
+                        or generation != self._session_generation
+                    )
+
                 def open_authorization_url(url: str) -> None:
+                    if cancelled():
+                        raise PlatformDeviceAuthorizationError(
+                            "unlock was cancelled"
+                        )
                     if not webbrowser.open(url, new=2):
                         raise PlatformTransportError("无法打开统一身份登录页面")
                     self._events.put((generation, "unlock_authorizing", action))
@@ -995,13 +1008,7 @@ class PlatformDesktopApp:
                     expected_tenant_id=expected_tenant_id,
                     expected_user_id=expected_user_id,
                     expected_device_id=expected_device_id,
-                    cancelled=lambda: (
-                        self._closed
-                        or not self._locked
-                        or action.cancel.is_set()
-                        or self._unlock_action is not action
-                        or generation != self._session_generation
-                    ),
+                    cancelled=cancelled,
                 )
             except BaseException as error:
                 self._events.put((generation, "unlock_error", (action, error)))
