@@ -9338,6 +9338,8 @@ def _deploy_operational_policy(
         details={"version": policy.version, "rollout_percent": payload.rollout_percent},
     )
     try:
+        db.flush()
+        deployment_id = deployment.id
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -9347,7 +9349,18 @@ def _deploy_operational_policy(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(deployment, with_for_update=True)
+    deployment = db.scalar(
+        select(OperationalPolicyDeployment)
+        .where(
+            OperationalPolicyDeployment.id == deployment_id,
+            OperationalPolicyDeployment.tenant_id == principal.tenant_id,
+            OperationalPolicyDeployment.domain == domain,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Policy deployment not found")
     return _operational_policy_deployment_response(db, deployment)
 
 

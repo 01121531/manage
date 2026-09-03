@@ -4161,7 +4161,7 @@ test('platform admin governs upload policies without browser execution details',
       mailPolicyVersions = mailPolicyVersions.map((item) => item.id === 'mail-policy-review-1'
         ? { ...item, status: 'approved', approved_by: 'user-admin', approved_at: '2026-08-20T00:03:00Z' }
         : item)
-      return fulfill({ ...mailPolicyVersions[0], id: 'wrong-mail-approval-binding' })
+      return fulfill({ ...mailPolicyVersions[0], created_by: 'wrong-mail-policy-creator' })
     }
     if (path === '/api/v1/admin/policies/mail/versions/mail-policy-review-1/deploy' && request.method() === 'POST') {
       expect(request.postDataJSON()).toEqual({ rollout_percent: 100 })
@@ -4301,7 +4301,7 @@ test('platform admin governs upload policies without browser execution details',
   await approveMailDraft.dispatchEvent('click')
   await expect(page.locator('.ant-message-notice').filter({ hasText: '生产策略未确认变更' }).last()).toBeVisible()
   await expect(page.getByText('邮箱策略已通过独立审批。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-mail-approval-binding')
+  await expect(page.locator('body')).not.toContainText('wrong-mail-policy-creator')
   await expect(approveMailDraft).toHaveCount(0)
   const fullDeployMail = mailReviewRow.getByRole('button', { name: /全\s*量发\s*布/ })
   await expect(fullDeployMail).toHaveCount(1)

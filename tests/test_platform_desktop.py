@@ -990,6 +990,23 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._start_session_shutdown_attempt.assert_called_once_with()
         self.assertIs(instance._shutdown_cleanup_action, cleanup)
 
+    def test_card_widget_error_does_not_skip_owned_clipboard_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4242424242424242\t12/30"
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance.card_reveal_label.configure = mock.Mock(
+            side_effect=RuntimeError("card widget unavailable")
+        )
+
+        instance._clear_card_details()
+
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

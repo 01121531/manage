@@ -32,6 +32,7 @@ from platform.models import (
     Device,
     Mailbox,
     MailSession,
+    OperationalPolicyDeployment,
     OperationalPolicyVersion,
     PoolImportContext,
     PoolImportReceipt,
@@ -7605,6 +7606,102 @@ class AdminApiTests(unittest.TestCase):
                     AuditEvent.entity_id == registered.json()["id"],
                 )
             )
+        self.assertEqual(deployed_audits, 1)
+
+    def test_operational_policy_deploy_rechecks_tenant_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        registered = self.request(
+            "POST",
+            "/api/v1/admin/policies/mail/versions",
+            headers=self.headers(creator_token),
+            json={
+                "version": "mail-deploy-tenant-recheck-v1",
+                "change_note": "verify deployment tenant binding",
+                "session_ttl_seconds": 600,
+                "code_ttl_seconds": 90,
+                "poll_interval_seconds": 7,
+            },
+        )
+        self.assertEqual(registered.status_code, 201, registered.text)
+        policy_id = registered.json()["id"]
+        approved = self.request(
+            "POST",
+            f"/api/v1/admin/policies/mail/versions/{policy_id}/approve",
+            headers=self.headers(approver_token),
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        deployment_recorded = False
+        deployment_moved = False
+        deployment_id: str | None = None
+
+        def mark_deployment(*args, **kwargs):
+            nonlocal deployment_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "mail_policy.deployed":
+                deployment_recorded = True
+            return result
+
+        def move_deployment_after_commit(session: Session) -> None:
+            nonlocal deployment_id, deployment_moved
+            deployment = session.scalar(
+                select(OperationalPolicyDeployment).where(
+                    OperationalPolicyDeployment.tenant_id == "tenant-a",
+                    OperationalPolicyDeployment.domain == "mail",
+                )
+            )
+            original_commit(session)
+            if not deployment_recorded or deployment_moved or deployment is None:
+                return
+            deployment_id = deployment.id
+            deployment_moved = True
+            with self.app.state.session_factory() as other_db:
+                persisted = other_db.get(OperationalPolicyDeployment, deployment_id)
+                self.assertIsNotNone(persisted)
+                persisted.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_deployment,
+        ), mock.patch.object(
+            Session,
+            "commit",
+            new=move_deployment_after_commit,
+        ):
+            deployed = self.request(
+                "POST",
+                f"/api/v1/admin/policies/mail/versions/{policy_id}/deploy",
+                headers=self.headers(approver_token),
+                json={"rollout_percent": 100},
+            )
+
+        self.assertEqual(deployed.status_code, 404, deployed.text)
+        self.assertNotIn("active_version", deployed.text)
+        with self.app.state.session_factory() as db:
+            deployment = db.get(OperationalPolicyDeployment, deployment_id)
+            deployed_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "mail_policy.deployed",
+                    AuditEvent.entity_id == policy_id,
+                )
+            )
+        self.assertEqual(deployment.tenant_id, "tenant-b")
+        self.assertEqual(deployment.active_policy_id, policy_id)
         self.assertEqual(deployed_audits, 1)
 
     def test_operational_policy_rollback_rechecks_actor_after_commit(self) -> None:

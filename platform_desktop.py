@@ -2108,9 +2108,12 @@ class PlatformDesktopApp:
         self._paste_sequence.stop_if_pending(text)
         self._card_clear_generation += 1
         if not self._closed:
-            self.card_reveal_label.configure(
-                text=CARD_DETAILS_PLACEHOLDER, foreground=TEXT
-            )
+            try:
+                self.card_reveal_label.configure(
+                    text=CARD_DETAILS_PLACEHOLDER, foreground=TEXT
+                )
+            except Exception:
+                pass
         self._clear_owned_clipboard(text)
 
     def _schedule_card_cleanup(self, delay_ms: int) -> None:
