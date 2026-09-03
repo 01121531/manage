@@ -1723,7 +1723,7 @@ class PlatformDesktopApp:
             )
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-session-restore"
+            target=worker, daemon=False, name="platform-session-restore"
         )
         self._session_restore_thread = thread
         try:
@@ -3571,6 +3571,7 @@ class PlatformDesktopApp:
             compensation.thread if compensation is not None else None
         )
         restore_thread = getattr(self, "_session_restore_thread", None)
+        self._session_restore_thread = None
         session_refresh_thread = getattr(self, "_session_refresh_thread", None)
         self._session_refresh_thread = None
         restore_lock = getattr(self, "_session_restore_lock", None)

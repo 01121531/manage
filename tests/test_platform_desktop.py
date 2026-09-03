@@ -4565,8 +4565,11 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._client = RotatingClient()
         instance._attempt_session_restore()
         self.assertTrue(prepare_started.wait(timeout=5))
+        restore_thread = instance._session_restore_thread
+        self.assertFalse(restore_thread.daemon)
 
         cleanup = instance._capture_session_cleanup(None)
+        self.assertIsNone(instance._session_restore_thread)
 
         def run_cleanup():
             cleanup()
@@ -4577,6 +4580,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertFalse(cleanup_finished.wait(timeout=0.05))
         release_prepare.set()
         shutdown.join(timeout=5)
+        restore_thread.join(timeout=1)
 
         self.assertTrue(cleanup_finished.is_set())
         self.assertEqual(order, ["restore-cleanup", "shutdown-cleanup"])

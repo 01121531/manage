@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Input, Modal, Space, Spin, Table, Select, Timeline, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { getCardTimeline, importCards, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
+import { ApiError } from '../api'
 import type { CardAllocationSummary, CardEventSummary, CardImportItem, CardSummary, CardTimeline, PoolImportReceipt } from '../types'
 import { assertPoolImportReceiptBound, readCardPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
@@ -9,9 +10,16 @@ import { CardStatusTag, StatusTag, cardAllocationReasonNames, cardEventActionNam
 
 const { Title, Text } = Typography
 const cardImportUnknownMessage = '原因：平台未返回可验证的信用卡池导入回执。影响：本批可能已原子导入，不能按本次错误选择新安全包或推断失败。下一步：恢复上下文已保留，请使用“同一批次核验”确认真实结果。'
+const cardTimelineBindingError = '平台返回的卡片历史绑定关系无效。'
 
 function hasRemoteStatus(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && typeof (error as { status?: unknown }).status === 'number')
+}
+
+function safeCardTimelineError(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) return error.message
+  if (error instanceof Error && error.message === cardTimelineBindingError) return error.message
+  return fallback
 }
 
 export default function CardsPage({ canManage, canReleaseQuarantine }: {
@@ -195,11 +203,11 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const mismatched = result.card.id !== selectedCardId
         || result.allocations.some((item) => item.card_id !== selectedCardId)
         || result.events.some((item) => item.card_id !== selectedCardId)
-      if (mismatched) throw new Error('平台返回的卡片历史绑定关系无效。')
+      if (mismatched) throw new Error(cardTimelineBindingError)
       if (alive && timelineGenerationRef.current === generation) setCardTimeline(result)
     }).catch((error) => {
       if (alive && timelineGenerationRef.current === generation) {
-        const reason = error instanceof Error ? error.message : '平台未能读取卡片历史。'
+        const reason = safeCardTimelineError(error, '平台未能读取卡片历史。')
         setTimelineError(
           `原因：${reason} `
           + '影响：旧分配历史和回收入口已隐藏，当前租约状态无法安全确认。 '
@@ -489,7 +497,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const mismatched = result.card.id !== selectedCardId
         || result.allocations.some((item) => item.card_id !== selectedCardId)
         || result.events.some((item) => item.card_id !== selectedCardId)
-      if (mismatched) throw new Error('平台返回的卡片历史绑定关系无效。')
+      if (mismatched) throw new Error(cardTimelineBindingError)
       if (timelineGenerationRef.current !== generation) return
       setCardTimeline((current) => {
         if (!current || current.card.id !== selectedCardId) return current
@@ -520,7 +528,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       })
     } catch (error) {
       if (timelineGenerationRef.current === generation) {
-        message.error(error instanceof Error ? error.message : '更早的卡片历史读取失败')
+        message.error(safeCardTimelineError(error, '更早的卡片历史读取失败'))
       }
     } finally {
       timelinePagePendingRef.current = false

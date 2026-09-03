@@ -1075,6 +1075,7 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   const recycleBodies: unknown[] = []
   let cardListRequests = 0
   let timelineRequests = 0
+  let failOlderEventLoad = true
   let blockRecycleRefresh = false
   let releaseRecycleCardList = () => undefined
   const recycleCardListGate = new Promise<void>((resolve) => { releaseRecycleCardList = resolve })
@@ -1121,6 +1122,10 @@ test('ops admin reads masked card history and recycles one exact allocation', as
       if (blockRecycleRefresh) await recycleTimelineGate
       const eventsCursor = new URL(request.url()).searchParams.get('events_cursor')
       if (eventsCursor === 'event-page-2') {
+        if (failOlderEventLoad) {
+          failOlderEventLoad = false
+          return route.abort('failed')
+        }
         return fulfill({
           card: { ...card, status: allocation.status === 'active' ? 'allocated' : 'available' },
           allocations: [allocation],
@@ -1188,6 +1193,10 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   await expect(history.getByText('allocation-timeline', { exact: true }).first()).toBeVisible()
   await expect(history.getByText('状态：available → allocated / active')).toBeVisible()
   await expect(history.getByText(/操作者：\s*operator-user/)).toBeVisible()
+  await history.getByRole('button', { name: '加载更早状态事件' }).click()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '更早的卡片历史读取失败' })).toBeVisible()
+  await expect(page.getByText(/Failed to fetch|NetworkError|ERR_FAILED/)).toHaveCount(0)
+  await expect(history.getByRole('button', { name: '加载更早状态事件' })).toBeEnabled()
   await history.getByRole('button', { name: '加载更早状态事件' }).click()
   await expect(history.getByText('卡资源已登记')).toBeVisible()
   await expect(history.getByRole('button', { name: '加载更早状态事件' })).toHaveCount(0)

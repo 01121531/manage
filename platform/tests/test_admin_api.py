@@ -2828,6 +2828,72 @@ class AdminApiTests(unittest.TestCase):
         self.assertIsNone(persisted.quarantined_at)
         self.assertEqual(quarantine_audits, [])
 
+    def test_card_quarantine_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="post-commit-quarantine-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/post-commit-quarantine",
+        )
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        quarantine_recorded = False
+        admin_demoted = False
+
+        def mark_quarantine(*args, **kwargs):
+            nonlocal quarantine_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.card_quarantined":
+                quarantine_recorded = True
+            return result
+
+        def demote_after_quarantine_commit(session: Session) -> None:
+            nonlocal admin_demoted
+            original_commit(session)
+            if quarantine_recorded and not admin_demoted:
+                admin_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    admin = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_quarantine,
+        ), mock.patch.object(Session, "commit", new=demote_after_quarantine_commit):
+            quarantined = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card.card_id}/quarantine",
+                headers=self.headers(admin_token),
+                json={"reason_code": "suspected_compromise"},
+            )
+
+        self.assertEqual(quarantined.status_code, 403, quarantined.text)
+        self.assertNotIn("quarantine_reason_code", quarantined.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+            self.assertIsNotNone(persisted)
+            self.assertFalse(persisted.is_active)
+            self.assertIsNotNone(persisted.quarantined_at)
+            self.assertEqual(persisted.quarantine_reason_code, "suspected_compromise")
+            quarantine_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.card_quarantined",
+                    AuditEvent.entity_id == card.card_id,
+                )
+            )
+        self.assertEqual(quarantine_audits, 1)
+
     def test_release_card_quarantine_rechecks_actor_after_authentication(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
