@@ -29,6 +29,7 @@ from platform.audit import (
 from platform.card_events import record_card_event, safe_card_event_state
 from platform.auth import (
     AuthPrincipal,
+    DUMMY_PASSWORD_HASH,
     INTERACTIVE_ROLES,
     ROLE_OPS_ADMIN,
     ROLE_OPERATOR,
@@ -602,10 +603,16 @@ def login(
             User.is_active.is_(True),
         )
     )
+    candidate_hash = (
+        user.password_hash
+        if user is not None and user.password_hash is not None
+        else DUMMY_PASSWORD_HASH
+    )
+    password_valid = verify_password(payload.password, candidate_hash)
     if (
         user is None
         or user.password_hash is None
-        or not verify_password(payload.password, user.password_hash)
+        or not password_valid
         or user.role not in INTERACTIVE_ROLES
     ):
         record_audit(

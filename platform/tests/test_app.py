@@ -2065,6 +2065,27 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(response.json()["error"]["code"], "validation_error")
 
+    def test_unknown_account_still_performs_password_verification(self) -> None:
+        with mock.patch(
+            "platform.api.v1.routes.verify_password", return_value=False
+        ) as verify:
+            response = self.request(
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "tenant_id": "tenant-a",
+                    "email": "unknown-account@example.test",
+                    "password": "wrong-password-sentinel",
+                    "device_id": "forged-device-id",
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("access_token", response.text)
+        verify.assert_called_once()
+        encoded = verify.call_args.args[1]
+        self.assertEqual(encoded.split("$", 2)[:2], ["pbkdf2_sha256", "210000"])
+
     def test_login_failures_are_audited_without_enumeration_or_secrets(self) -> None:
         bad_password = "wrong-password-sentinel"
         unknown_email = "unknown-account@example.test"

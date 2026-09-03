@@ -52,6 +52,12 @@ INTERACTIVE_ROLES = frozenset(
 
 
 _PASSWORD_ITERATIONS = 210_000
+# A fixed non-account hash keeps unknown local-login attempts on the same dominant
+# password-verification path as known accounts without creating startup work.
+DUMMY_PASSWORD_HASH = (
+    "pbkdf2_sha256$210000$bG9jYWwtbG9naW4tZHVtbXk$"
+    "w9GNWj28W6GubetFqiIi4zEZ1zlE6avwxY4ZCORdy-U"
+)
 _DEVICE_LAST_SEEN_INTERVAL = timedelta(seconds=60)
 _OIDC_SESSION_HASH_DOMAIN = b"email-platform|oidc-session-v1\0"
 _MAX_ACCESS_TOKEN_CHARS = 8 * 1024
