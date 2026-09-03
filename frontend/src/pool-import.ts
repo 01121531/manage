@@ -24,6 +24,8 @@ export type PoolImportBundle<T> = {
 
 type JsonObject = Record<string, unknown>
 
+export class PoolImportValidationError extends Error {}
+
 function isJsonObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -42,7 +44,7 @@ function containsPanLikeDigits(value: string): boolean {
 }
 
 function parseCardItem(value: unknown, index: number): CardImportItem {
-  const invalid = () => new Error(`安全包第 ${index + 1} 条信用卡元数据无效；未发送任何数据。`)
+  const invalid = () => new PoolImportValidationError(`安全包第 ${index + 1} 条信用卡元数据无效；未发送任何数据。`)
   if (!isJsonObject(value) || !hasExactKeys(
     value,
     ['provider_ref', 'pool_key', 'region', 'brand', 'last4'],
@@ -85,7 +87,7 @@ function parseCardItem(value: unknown, index: number): CardImportItem {
 }
 
 function parseMailboxItem(value: unknown, index: number): MailboxImportItem {
-  const invalid = () => new Error(`安全包第 ${index + 1} 条邮箱元数据无效；未发送任何数据。`)
+  const invalid = () => new PoolImportValidationError(`安全包第 ${index + 1} 条邮箱元数据无效；未发送任何数据。`)
   if (!isJsonObject(value) || !hasExactKeys(
     value,
     ['email_masked', 'connector_type', 'task_type'],
@@ -109,16 +111,16 @@ async function readPoolImportJson<T>(
   parseItem: (value: unknown, index: number) => T,
 ): Promise<PoolImportBundle<T>> {
   if (file.size > MAX_POOL_IMPORT_BYTES) {
-    throw new Error('导入文件不能超过 256 KiB。')
+    throw new PoolImportValidationError('导入文件不能超过 256 KiB。')
   }
   let parsed: unknown
   try {
     parsed = JSON.parse(await file.text())
   } catch {
-    throw new Error('导入文件不是有效的安全包 JSON。')
+    throw new PoolImportValidationError('导入文件不是有效的安全包 JSON。')
   }
   if (!isJsonObject(parsed)) {
-    throw new Error('导入文件必须是安全导入器生成的 JSON 对象。')
+    throw new PoolImportValidationError('导入文件必须是安全导入器生成的 JSON 对象。')
   }
   const keys = Object.keys(parsed)
   const candidate = parsed as {
@@ -151,10 +153,10 @@ async function readPoolImportJson<T>(
     || candidate.items.length < 1
     || candidate.items.length > MAX_POOL_IMPORT_ITEMS
   ) {
-    throw new Error('导入包必须包含格式版本、池类型、有效收据和 1 至 100 条脱敏元数据。')
+    throw new PoolImportValidationError('导入包必须包含格式版本、池类型、有效收据和 1 至 100 条脱敏元数据。')
   }
   if (candidate.pool_type !== expectedPoolType) {
-    throw new Error(expectedPoolType === 'card'
+    throw new PoolImportValidationError(expectedPoolType === 'card'
       ? '该安全包属于邮箱池，不能导入信用卡池。'
       : '该安全包属于信用卡池，不能导入邮箱池。')
   }
@@ -205,7 +207,7 @@ export async function assertPoolImportReceiptBound(
   submissionKey: string,
 ): Promise<void> {
   const label = expectedPoolType === 'card' ? '信用卡池' : '邮箱池'
-  const invalid = () => new Error(`平台返回的${label}导入回执绑定无效；请使用同一批次重试核对。`)
+  const invalid = () => new PoolImportValidationError(`平台返回的${label}导入回执绑定无效；请使用同一批次重试核对。`)
   const submissionMatch = SUBMISSION_KEY_PATTERN.exec(submissionKey)
   if (
     receipt.status !== 'committed'

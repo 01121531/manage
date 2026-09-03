@@ -3637,6 +3637,7 @@ class PlatformDesktopApp:
         upload_submission_thread = getattr(
             self, "_upload_submission_thread", None
         )
+        self._upload_submission_thread = None
         upload_poll_thread = getattr(self, "_upload_poll_thread", None)
         self._upload_poll_thread = None
         update_check_lock = getattr(self, "_update_check_lock", None)
@@ -4158,7 +4159,7 @@ class PlatformDesktopApp:
             self._events.put((generation, "upload_submitted", (action, job)))
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-upload-create"
+            target=worker, daemon=False, name="platform-upload-create"
         )
         self._upload_submission_thread = thread
         try:

@@ -5739,6 +5739,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await expect(page.getByText(
     '安全包第 1 条邮箱元数据无效；未发送任何数据。', { exact: true },
   ).last()).toBeVisible()
+  await expect(page.getByText('邮箱池引用清单登记失败', { exact: true })).toHaveCount(0)
   expect(mailboxImportBodies).toEqual([])
   await expect(page.locator('body')).not.toContainText('mailbox-secret-value')
   const pseudoMaskedEmail = 'alice@example.invalid*'

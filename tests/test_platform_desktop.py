@@ -5938,7 +5938,9 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance.submit_upload()
         upload_thread = instance._upload_submission_thread
         self.assertTrue(upload_started.wait(timeout=1))
+        self.assertFalse(upload_thread.daemon)
         instance.logout()
+        self.assertIsNone(instance._upload_submission_thread)
         self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
         self.assertEqual(order, [])
 

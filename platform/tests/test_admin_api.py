@@ -4355,6 +4355,74 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(mailbox.is_active)
         self.assertEqual(disabled_audits, [])
 
+    def test_admin_mailbox_state_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        with self.app.state.session_factory() as db:
+            mailbox = Mailbox(
+                tenant_id="tenant-a",
+                email_masked="commit***@example.test",
+                connector_type="http",
+                task_type="mail_code",
+                secret_ref="vault://secret/mailboxes/post-commit-state",
+            )
+            db.add(mailbox)
+            db.commit()
+            mailbox_id = mailbox.id
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        disable_recorded = False
+        admin_demoted = False
+
+        def mark_disable(*args, **kwargs):
+            nonlocal disable_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.mailbox_disabled":
+                disable_recorded = True
+            return result
+
+        def demote_after_disable_commit(session: Session) -> None:
+            nonlocal admin_demoted
+            original_commit(session)
+            if disable_recorded and not admin_demoted:
+                admin_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    admin = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_disable,
+        ), mock.patch.object(Session, "commit", new=demote_after_disable_commit):
+            disabled = self.request(
+                "PATCH",
+                f"/api/v1/admin/mailboxes/{mailbox_id}",
+                headers=self.headers(admin_token),
+                json={"is_active": False},
+            )
+
+        self.assertEqual(disabled.status_code, 403, disabled.text)
+        self.assertNotIn("email_masked", disabled.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Mailbox, mailbox_id)
+            self.assertIsNotNone(persisted)
+            self.assertFalse(persisted.is_active)
+            disabled_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.mailbox_disabled",
+                    AuditEvent.entity_id == mailbox_id,
+                )
+            )
+        self.assertEqual(disabled_audits, 1)
+
     def test_admin_mailbox_management_revokes_sessions_and_rotates_reference(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

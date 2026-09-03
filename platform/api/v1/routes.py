@@ -8466,7 +8466,12 @@ def admin_update_mailbox_state(
         )
     if state_changed or revoked_count:
         db.commit()
-        db.refresh(mailbox)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
+    db.refresh(mailbox, with_for_update=True)
     active_session_count = db.scalar(
         select(func.count())
         .select_from(MailSession)

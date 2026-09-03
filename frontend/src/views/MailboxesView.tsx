@@ -2,22 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Card, Empty, Input, Select, Space, Spin, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { importMailboxes, listMailboxes, updateMailboxState } from '../admin-api'
+import { ApiError } from '../api'
 import type { MailboxImportItem, MailboxSummary, PoolImportReceipt } from '../types'
-import { assertPoolImportReceiptBound, readMailboxPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
+import { PoolImportValidationError, assertPoolImportReceiptBound, readMailboxPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { useViewActionScope } from '../useViewActionScope'
 import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableText, formatLocalDateTime, mailboxHealthErrorNames } from './shared'
 
 const { Title, Text } = Typography
 const mailboxImportUnknownMessage = '原因：平台未返回可验证的邮箱池导入回执。影响：本批可能已原子导入，不能按本次错误选择新安全包或推断失败。下一步：恢复上下文已保留，请使用“同一批次核验”确认真实结果。'
-const mailboxReceiptBindingError = '平台返回的邮箱池导入回执绑定无效；请使用同一批次重试核对。'
 
 function mailboxImportFailureMessage(error: unknown, retainedForRetry: boolean, fallback: string): string {
-  if (
-    retainedForRetry
-    && (!(error instanceof Error) || error.message !== mailboxReceiptBindingError)
-  ) return mailboxImportUnknownMessage
-  return error instanceof Error ? error.message : fallback
+  if (error instanceof PoolImportValidationError) return error.message
+  if (retainedForRetry) return mailboxImportUnknownMessage
+  return error instanceof ApiError ? error.message : fallback
 }
 
 export default function MailboxesPage({ canManage }: { canManage: boolean }) {
