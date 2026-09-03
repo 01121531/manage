@@ -2725,6 +2725,23 @@ class PlatformDesktopApp:
             if kind == "captured_cleanup_finished":
                 if self._cleanup_thread is value:
                     self._cleanup_thread = None
+                if (
+                    self._update_cleanup_thread is value
+                    and self._update_cleanup_in_progress
+                ):
+                    self._update_cleanup_thread = None
+                    self._update_cleanup_in_progress = False
+                    self.check_update_button.configure(
+                        text="重试安全清理",
+                        command=self._retry_update_cleanup,
+                        state="normal",
+                    )
+                    self._set_status(
+                        "原因：在线更新的安全清理结果已失效；"
+                        "影响：当前版本保持运行且不会安装更新；"
+                        "下一步：点击“重试安全清理”重新确认。",
+                        ERROR,
+                    )
                 continue
             if kind == "active_task_discovery_finished":
                 action, worker_thread = value

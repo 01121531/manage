@@ -926,6 +926,69 @@ class MailSessionTests(unittest.TestCase):
             self.assertEqual(persisted.status, "expired")
             self.assertIsNone(persisted.consumed_at)
 
+    def test_code_expiry_rechecks_operator_after_commit(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        token = self.login()
+        task_id = self.create_task(token, "mail-code-expiry-commit-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNotNone(persisted)
+            persisted.status = "code_ready"
+            persisted.delivered_code = "461928"
+            persisted.delivered_at = utc_now() - timedelta(minutes=1)
+            persisted.delivered_message_id_hash = hashlib.sha256(
+                MESSAGE_ID_HASH_DOMAIN + b"expired-code-message"
+            ).hexdigest()
+            persisted.code_expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            expiring_code = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "mail_session.code_expired"
+                for item in session_db.new
+            )
+            original_commit(session_db)
+            if not expiring_code or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("waiting", response.text)
+        self.assertNotIn("461928", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            expiry_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mail_session.code_expired",
+                        AuditEvent.entity_id == session_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "waiting")
+        self.assertIsNone(persisted.delivered_code)
+        self.assertEqual(len(expiry_events), 1)
+
     def test_expired_mail_status_rechecks_operator_after_audit_commit(self) -> None:
         token = self.login()
         task_id = self.create_task(token, "mail-expired-status-commit-boundary")

@@ -2416,6 +2416,12 @@ def get_mail_code(
                 details={"status": "waiting", "source": "worker"},
             )
             db.commit()
+            _lock_owned_open_task(
+                db,
+                session.task_id,
+                request=request,
+                principal=principal,
+            )
         db.expire(session)
         db.refresh(session)
 

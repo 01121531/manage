@@ -5669,6 +5669,40 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             instance._retry_update_cleanup,
         )
 
+    def test_stale_update_cleanup_finished_exposes_same_cleanup_retry(self) -> None:
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+
+        def cleanup() -> None:
+            cleanup_started.set()
+            release_cleanup.wait(timeout=2)
+
+        instance = self._event_app()
+        manifest = mock.Mock(sha256="7" * 64)
+        package = Path("verified-update.exe")
+        instance._pending_update_install = (manifest, package)
+        instance._update_cleanup_action = cleanup
+
+        instance._start_update_cleanup_attempt()
+        cleanup_thread = instance._update_cleanup_thread
+        self.assertTrue(cleanup_started.wait(timeout=1))
+
+        instance._update_generation += 1
+        release_cleanup.set()
+        cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIs(instance._update_cleanup_action, cleanup)
+        self.assertIsNone(instance._update_cleanup_thread)
+        self.assertIsNone(instance._cleanup_thread)
+        self.assertFalse(instance._update_cleanup_in_progress)
+        self.assertEqual(instance.check_update_button.values["text"], "重试安全清理")
+        self.assertEqual(instance.check_update_button.values["state"], "normal")
+        self.assertEqual(
+            instance.check_update_button.values["command"],
+            instance._retry_update_cleanup,
+        )
+
     def test_update_waits_for_owned_clipboard_cleanup_before_helper(self) -> None:
         instance = self._event_app()
         secret = "246810"
