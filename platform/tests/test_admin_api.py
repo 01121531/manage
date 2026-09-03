@@ -1346,6 +1346,79 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(registered_audits, 1)
 
+    def test_admin_device_revoke_rechecks_actor_after_final_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        revocation_recorded = False
+        revocation_commit_count = 0
+        admin_demoted = False
+
+        def mark_revocation(*args, **kwargs):
+            nonlocal revocation_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.device_revoked":
+                revocation_recorded = True
+            return result
+
+        def demote_after_final_commit(session: Session) -> None:
+            nonlocal revocation_commit_count, admin_demoted
+            original_commit(session)
+            if revocation_recorded:
+                revocation_commit_count += 1
+            if revocation_commit_count == 2 and not admin_demoted:
+                admin_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    admin = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "operator"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_revocation,
+        ), mock.patch.object(Session, "commit", new=demote_after_final_commit):
+            revoked = self.request(
+                "POST",
+                f"/api/v1/admin/devices/{self.operator.device_id}/revoke",
+                headers=self.headers(admin_token),
+            )
+
+        self.assertEqual(revoked.status_code, 403, revoked.text)
+        self.assertNotIn("revoked_at", revoked.text)
+        devices = self.request(
+            "GET",
+            "/api/v1/admin/devices",
+            headers=self.headers(approver_token),
+        )
+        self.assertEqual(devices.status_code, 200, devices.text)
+        persisted = next(
+            device
+            for device in devices.json()
+            if device["id"] == self.operator.device_id
+        )
+        self.assertIsNotNone(persisted["revoked_at"])
+        with self.app.state.session_factory() as db:
+            revoked_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.device_revoked",
+                    AuditEvent.entity_id == self.operator.device_id,
+                )
+            )
+        self.assertEqual(revoked_audits, 1)
+
     def test_revoke_device_and_card_projection_are_safe(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

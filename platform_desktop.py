@@ -818,7 +818,7 @@ class PlatformDesktopApp:
             self._events.put((generation, "task_history", tasks))
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-task-history"
+            target=worker, daemon=False, name="platform-task-history"
         )
         self._history_threads = [
             existing for existing in self._history_threads if existing.is_alive()
@@ -3606,6 +3606,7 @@ class PlatformDesktopApp:
         self._active_task_discovery_threads = []
         self._active_task_discovery_thread = None
         history_threads = tuple(getattr(self, "_history_threads", ()))
+        self._history_threads = []
         login_worker_threads = tuple(getattr(self, "_login_worker_threads", ()))
         self._login_worker_threads = []
         login_dialog = getattr(self, "_login_dialog", None)

@@ -5849,7 +5849,12 @@ def admin_revoke_device(
         release_reason="admin_device_revoked",
     )
     db.commit()
-    db.refresh(device)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
+    db.refresh(device, with_for_update=True)
     return AdminDeviceResponse.model_validate(device, from_attributes=True)
 
 

@@ -4681,8 +4681,10 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._load_task_history()
         history_thread = instance._history_threads[-1]
         self.assertTrue(history_started.wait(timeout=1))
+        self.assertFalse(history_thread.daemon)
 
         instance.logout()
+        self.assertEqual(instance._history_threads, [])
         self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
         self.assertEqual(order, [])
 

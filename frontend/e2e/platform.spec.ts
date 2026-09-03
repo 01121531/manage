@@ -3213,9 +3213,7 @@ test('audit table isolates stale loads and recovers from the current error', asy
       if (!actor) {
         emptyRequests += 1
         if (allowEmptySuccess) return fulfill([])
-        return fulfill({
-          error: { code: 'service_unavailable', message: 'audit temporarily unavailable' },
-        }, 503)
+        return route.abort('failed')
       }
       if (actor === 'actor-late') {
         await lateRequestGate
@@ -3257,7 +3255,8 @@ test('audit table isolates stale loads and recovers from the current error', asy
   await page.getByText('审计中心', { exact: true }).click()
 
   await expect(page.getByText('数据暂不可用')).toBeVisible()
-  await expect(page.getByRole('alert')).toContainText('平台依赖暂不可用，请稍后重试。')
+  await expect(page.getByRole('alert')).toContainText('平台未能读取当前列表。')
+  await expect(page.getByRole('alert')).not.toContainText('Failed to fetch')
   allowEmptySuccess = true
   const failedEmptyRequests = emptyRequests
   await page.getByRole('button', { name: '重新加载数据' }).click()

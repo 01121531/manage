@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
+import { ApiError } from '../api'
 import type { CardSummary, MailboxSummary, ManagedUserRole } from '../types'
 
 const { Title, Text } = Typography
@@ -202,7 +203,7 @@ export function RemoteTable<T extends object>({ loader, columns, empty, onSettle
     setLoading(true)
     setError(undefined)
     loader().then((items) => { if (alive) setRows(items) }).catch((reason) => {
-      if (alive) setError(reason instanceof Error ? reason.message : '读取失败')
+      if (alive) setError(reason instanceof ApiError ? reason.message : '平台未能读取当前列表。')
     }).finally(() => {
       if (alive) {
         setLoading(false)
