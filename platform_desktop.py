@@ -2201,12 +2201,16 @@ class PlatformDesktopApp:
     def _start_task_cleanup(self, cleanup: Callable[[], None] | None) -> None:
         if cleanup is None:
             return
-        threading.Thread(
+        thread = threading.Thread(
             target=self._run_task_cleanup,
             args=(cleanup,),
             daemon=False,
             name="platform-task-compensation",
-        ).start()
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._run_task_cleanup(cleanup)
 
     def _present_task_compensation_failure(
         self, barrier: _TaskProvisioningCompensation

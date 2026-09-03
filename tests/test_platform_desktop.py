@@ -1506,6 +1506,49 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._write_clipboard.assert_not_called()
         instance.business_entry.get.assert_not_called()
 
+    def test_lock_completes_when_task_compensation_thread_cannot_start(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        cleanup = mock.Mock()
+        transition = mock.Mock()
+        transition.cancel.return_value = cleanup
+        instance._task_transition = transition
+        instance._current_code = "246810"
+        instance._current_card_clipboard = "4111111111111111\t12/30"
+        instance._current_trace_clipboard = "trace-sensitive"
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.lock()
+
+        transition.cancel.assert_called_once_with()
+        cleanup.assert_called_once_with()
+        instance.stop_polling.assert_called_once_with()
+        self.assertIsNone(instance._current_code)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._current_trace_clipboard)
+        self.assertTrue(instance._locked)
+        self.assertEqual(instance.lock_button.values["text"], "解锁")
+        self.assertEqual(instance.lock_button.values["state"], "normal")
+        for widget in (
+            instance.new_task_button,
+            instance.close_active_task_button,
+            instance.copy_button,
+            instance.copy_card_button,
+            instance.upload_button,
+            instance.history_button,
+            instance.check_update_button,
+            instance.business_entry,
+        ):
+            self.assertEqual(widget.values["state"], "disabled")
+
     def test_task_switch_preparation_failure_clears_sensitive_values_but_keeps_owner(self) -> None:
         code = "246810"
         card = "4111111111111111\t12/30"
