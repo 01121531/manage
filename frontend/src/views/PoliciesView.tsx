@@ -46,6 +46,7 @@ function OperationalPolicyPanel({ domain, principal }: {
     let alive = true
     setLoading(true)
     setError(undefined)
+    setError(undefined)
     const statusRequest = domain === 'mail' ? getMailPolicyStatus() : getCardPolicyStatus()
     const versionsRequest = domain === 'mail' ? listMailPolicyVersions() : listCardPolicyVersions()
     Promise.all([statusRequest, versionsRequest]).then(([nextStatus, nextVersions]) => {
@@ -284,7 +285,13 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
   }
 
   if (loading) return <div className="centered"><Spin /></div>
-  if (error || !policy) return <Alert type="warning" showIcon message="策略配置暂不可用" description={error ?? '未读取到策略状态'} />
+  if (error || !policy) return <Alert
+    type="warning"
+    showIcon
+    message="Sub2 上传策略暂不可用"
+    description="原因：平台暂未返回上传策略状态。影响：当前不展示过期版本或发布操作。下一步：检查网络后从此处重新加载。"
+    action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载 Sub2 上传策略</Button>}
+  />
   const columns: TableColumnsType<UploadPolicyVersion> = [
     { title: '版本', dataIndex: 'version' },
     { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },

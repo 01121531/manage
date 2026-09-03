@@ -4199,6 +4199,7 @@ class PlatformDesktopApp:
         self._cancel_card_reveal()
         self._session_generation += 1
         self._session_refreshing = False
+        self._update_generation += 1
         self._shutdown_generation += 1
         self._shutdown_intent = intent
         self._shutdown_message = message

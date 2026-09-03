@@ -4100,6 +4100,38 @@ def reveal_card_allocation(
         },
     )
     db.commit()
+    task = _lock_owned_open_task(
+        db, task.id, request=request, principal=principal
+    )
+    allocation = db.scalar(
+        select(CardAllocation)
+        .where(
+            CardAllocation.id == allocation.id,
+            CardAllocation.task_id == task.id,
+            CardAllocation.card_id == card.id,
+            CardAllocation.tenant_id == principal.tenant_id,
+            CardAllocation.user_id == principal.user_id,
+            CardAllocation.device_id == principal.device_id,
+            CardAllocation.status == "active",
+            CardAllocation.released_at.is_(None),
+            CardAllocation.expires_at > _utc_now(),
+            CardAllocation.revealed_at.is_not(None),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if allocation is None:
+        raise _card_reveal_unavailable()
+    card = db.scalar(
+        select(Card).where(
+            Card.id == allocation.card_id,
+            Card.tenant_id == principal.tenant_id,
+            Card.is_active.is_(True),
+            Card.quarantined_at.is_(None),
+        )
+    )
+    if card is None:
+        raise _card_reveal_unavailable()
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return CardRevealResponse(

@@ -1324,6 +1324,11 @@ test('operator login keeps bearer in memory and exposes task trace', async ({ pa
   await expect(recovery).not.toContainText('立即重试')
   const history = page.getByRole('region', { name: '任务历史与安全提示' })
   await expect(history).toContainText('task-1')
+  const historyRow = history.getByRole('row').filter({ hasText: 'task-1' })
+  await expect(historyRow.locator('.ant-typography-copy')).toHaveCount(2)
+  const historyTraceCopy = historyRow.locator('td').filter({ hasText: taskTrace }).locator('.ant-typography-copy')
+  await historyTraceCopy.focus()
+  await expect(historyTraceCopy).toBeFocused()
   await expect(history).toContainText('超时、失焦、锁定或注销后')
   await expect(page.locator('.content .ant-btn-primary:visible')).toHaveCount(0)
   const closeCurrentTask = page.getByRole('button', { name: '关闭当前任务并清理资源' })
@@ -3782,6 +3787,11 @@ test('platform admin governs upload policies without browser execution details',
     }
     if (path === '/api/v1/admin/policies/upload' && request.method() === 'GET') {
       policyListRequests += 1
+      if (policyListRequests <= 2) {
+        return fulfill({
+          error: { code: 'service_unavailable', message: 'must-never-render-upload-policy-error' },
+        }, 503)
+      }
       return fulfill(policyStatus)
     }
     if (path === '/api/v1/admin/policies/card' && request.method() === 'GET') {
@@ -3871,6 +3881,14 @@ test('platform admin governs upload policies without browser execution details',
   await page.getByRole('button', { name: '安全登录' }).click()
   await page.getByRole('menuitem', { name: /策略配置/ }).click()
 
+  const uploadPolicyError = page.getByRole('alert').filter({ hasText: 'Sub2 上传策略暂不可用' })
+  await expect(uploadPolicyError).toContainText('原因：')
+  await expect(uploadPolicyError).toContainText('影响：')
+  await expect(uploadPolicyError).toContainText('下一步：')
+  await expect(page.getByText('must-never-render-upload-policy-error')).toHaveCount(0)
+  await uploadPolicyError.getByRole('button', { name: '重新加载 Sub2 上传策略' }).click()
+  await expect.poll(() => policyListRequests).toBe(3)
+  await expect(uploadPolicyError).toBeHidden()
   const cardPolicyError = page.getByRole('alert').filter({ hasText: '卡分配策略暂不可用' })
   await expect(cardPolicyError).toContainText('原因：')
   await expect(cardPolicyError).toContainText('影响：')

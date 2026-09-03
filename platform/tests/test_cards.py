@@ -2453,6 +2453,68 @@ class CardAllocationTests(unittest.TestCase):
 
         self.assertEqual(self.card_secret_resolver.secret_refs, [])
 
+    def test_reveal_rechecks_device_after_consumption_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-reveal-commit-boundary")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        allocation_id = allocation.json()["id"]
+        _challenge, grant = self.grant_with_step_up(token, allocation_id)
+        self.assertEqual(grant.status_code, 200, grant.text)
+        original_commit = Session.commit
+        revoked = False
+
+        def commit_then_revoke(session: Session) -> None:
+            nonlocal revoked
+            committing_reveal = any(
+                isinstance(item, AuditEvent) and item.event_type == "card.revealed"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_reveal or revoked:
+                return
+            revoked = True
+            with self.app.state.session_factory() as other:
+                device = other.get(Device, self.identity.device_id)
+                self.assertIsNotNone(device)
+                device.revoked_at = utc_now()
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_revoke):
+            revealed = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/reveal",
+                headers=self.bearer(token),
+                json={
+                    "reveal_grant": grant.json()["reveal_grant"],
+                    "fields": ["pan"],
+                },
+            )
+
+        self.assertEqual(revealed.status_code, 401, revealed.text)
+        self.assertNotIn("4111111111111111", revealed.text)
+        self.assertNotIn('"pan"', revealed.text)
+        with self.app.state.session_factory() as db:
+            challenge = db.scalar(
+                select(CardRevealChallenge).where(
+                    CardRevealChallenge.allocation_id == allocation_id
+                )
+            )
+            reveal_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == allocation_id,
+                        AuditEvent.event_type == "card.revealed",
+                    )
+                )
+            )
+        self.assertIsNotNone(challenge.consumed_at)
+        self.assertEqual(len(reveal_events), 1)
+
     def test_card_allocation_read_rechecks_device_after_authentication(self) -> None:
         token = self.login()
         task_id = self.create_task(token, "card-read-revoked-device")

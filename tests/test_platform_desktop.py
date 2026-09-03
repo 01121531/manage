@@ -4941,6 +4941,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._client.prepare_logout_cleanup.assert_called_once_with(None)
         self.assertEqual(order, ["session-cleanup", "helper"])
 
+    def test_logout_invalidates_late_update_events(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = lambda: None
+        instance._start_session_shutdown_attempt = mock.Mock()
+        instance._begin_update_cleanup = mock.Mock()
+        old_generation = instance._update_generation
+
+        instance.logout()
+        instance._events.put(
+            (old_generation, "update_available", (object(), False))
+        )
+        instance._events.put(
+            (old_generation, "update_downloaded", (object(), Path("late.exe")))
+        )
+        with mock.patch("platform_desktop.messagebox.askyesno") as confirm:
+            instance._drain_events()
+
+        self.assertEqual(instance._update_generation, old_generation + 1)
+        confirm.assert_not_called()
+        instance._begin_update_cleanup.assert_not_called()
+
     def test_card_clipboard_format_never_includes_cvv(self) -> None:
         snapshot = CardRevealSnapshot(
             id="reveal-1",

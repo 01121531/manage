@@ -111,10 +111,10 @@ function OperatorTaskWorkbench({
   const allocation = timeline?.card_allocations[timeline.card_allocations.length - 1]
   const upload = timeline?.uploads[timeline.uploads.length - 1]
   const historyColumns: TableColumnsType<TaskSummary> = [
-    { title: '任务 ID', dataIndex: 'id' },
+    { title: '任务 ID', dataIndex: 'id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '类型', dataIndex: 'type' },
     { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-    { title: 'trace_id', dataIndex: 'trace_id' },
+    { title: 'trace_id', dataIndex: 'trace_id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '创建时间', dataIndex: 'created_at', render: formatLocalDateTime },
   ]
   const uploadRecovery = !upload ? <Alert
