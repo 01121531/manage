@@ -135,6 +135,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._session_restore_compensation = None
         instance._active_task_discovery_action = None
         instance._active_task_discovery_thread = None
+        instance._active_task_discovery_threads = []
         instance._active_task_discovery_required = False
         instance._active_task_recovery_action = None
         instance._active_task_recovery = None
@@ -3266,7 +3267,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
-    def test_logout_waits_for_active_task_discovery_before_cleanup(self) -> None:
+    def test_locked_logout_waits_for_active_task_discovery_before_cleanup(self) -> None:
         discovery_started = threading.Event()
         release_discovery = threading.Event()
         order = []
@@ -3292,7 +3293,10 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._discover_active_task()
         discovery_thread = instance._active_task_discovery_thread
         self.assertTrue(discovery_started.wait(timeout=1))
+        self.assertFalse(discovery_thread.daemon)
 
+        instance.lock()
+        self.assertIsNone(instance._active_task_discovery_thread)
         instance.logout()
         self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
         self.assertEqual(order, [])

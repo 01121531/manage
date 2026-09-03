@@ -4825,7 +4825,7 @@ test('user true-state refresh fails closed without stale privileged actions', as
       if (failNextUserList) {
         failNextUserList = false
         waitForRecoveryList = true
-        return fulfill({ error: { code: 'service_unavailable', message: '用户目录暂不可用' } }, 503)
+        return route.abort('failed')
       }
       if (waitForRecoveryList) {
         waitForRecoveryList = false
@@ -4866,6 +4866,7 @@ test('user true-state refresh fails closed without stale privileged actions', as
   await expect(listAlert).toContainText('原因：')
   await expect(listAlert).toContainText('影响：')
   await expect(listAlert).toContainText('下一步：')
+  await expect(listAlert).not.toContainText('Failed to fetch')
   await expect(operatorRow).toHaveCount(0)
   await expect(page.getByLabel('申请调整 operator-one@example.invalid 角色')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '停用用户 operator-one@example.invalid' })).toHaveCount(0)

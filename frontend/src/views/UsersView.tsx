@@ -54,9 +54,9 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         setRoleRequests(requests)
       }
     })
-      .catch((error) => {
+      .catch(() => {
         if (alive) {
-          setUserListError(error instanceof Error ? error.message : '平台未能读取用户列表。')
+          setUserListError('平台未能读取用户与角色申请真实状态。')
         }
       })
       .finally(() => {

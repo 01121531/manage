@@ -327,6 +327,7 @@ class PlatformDesktopApp:
         self._session_restore_compensation: _SessionRestoreCompensation | None = None
         self._active_task_discovery_action: _ActiveTaskDiscoveryAction | None = None
         self._active_task_discovery_thread: threading.Thread | None = None
+        self._active_task_discovery_threads: list[threading.Thread] = []
         self._active_task_discovery_required = False
         self._active_task_recovery_action: _ActiveTaskRecoveryAction | None = None
         self._active_task_recovery: TaskRecoverySnapshot | None = None
@@ -1276,12 +1277,19 @@ class PlatformDesktopApp:
             )
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-active-task-discovery"
+            target=worker, daemon=False, name="platform-active-task-discovery"
         )
+        self._active_task_discovery_threads = [
+            discovery_thread
+            for discovery_thread in self._active_task_discovery_threads
+            if discovery_thread.is_alive()
+        ]
+        self._active_task_discovery_threads.append(thread)
         self._active_task_discovery_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._active_task_discovery_threads.remove(thread)
             self._events.put(
                 (
                     action.session_generation,
@@ -3584,9 +3592,19 @@ class PlatformDesktopApp:
         terminal_cleanup_thread = getattr(
             self, "_terminal_task_cleanup_thread", None
         )
+        active_task_discovery_threads = tuple(
+            getattr(self, "_active_task_discovery_threads", ())
+        )
         active_task_discovery_thread = getattr(
             self, "_active_task_discovery_thread", None
         )
+        if (
+            active_task_discovery_thread is not None
+            and active_task_discovery_thread not in active_task_discovery_threads
+        ):
+            active_task_discovery_threads += (active_task_discovery_thread,)
+        self._active_task_discovery_threads = []
+        self._active_task_discovery_thread = None
         history_threads = tuple(getattr(self, "_history_threads", ()))
         login_worker_threads = tuple(getattr(self, "_login_worker_threads", ()))
         self._login_worker_threads = []
@@ -3699,11 +3717,9 @@ class PlatformDesktopApp:
                 and terminal_cleanup_thread.is_alive()
             ):
                 terminal_cleanup_thread.join()
-            if (
-                active_task_discovery_thread is not None
-                and active_task_discovery_thread.is_alive()
-            ):
-                active_task_discovery_thread.join()
+            for active_task_discovery_thread in active_task_discovery_threads:
+                if active_task_discovery_thread.is_alive():
+                    active_task_discovery_thread.join()
             for history_thread in history_threads:
                 if history_thread.is_alive():
                     history_thread.join()

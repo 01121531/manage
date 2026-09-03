@@ -1277,6 +1277,75 @@ class AdminApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
 
+    def test_admin_device_registration_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        registration_recorded = False
+        admin_demoted = False
+
+        def mark_registration(*args, **kwargs):
+            nonlocal registration_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.device_registered":
+                registration_recorded = True
+            return result
+
+        def demote_after_registration_commit(session: Session) -> None:
+            nonlocal admin_demoted
+            original_commit(session)
+            if registration_recorded and not admin_demoted:
+                admin_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    admin = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_registration,
+        ), mock.patch.object(Session, "commit", new=demote_after_registration_commit):
+            registered = self.request(
+                "POST",
+                f"/api/v1/admin/users/{self.operator.user_id}/devices",
+                headers=self.headers(admin_token),
+                json={"name": "post-commit-device"},
+            )
+
+        self.assertEqual(registered.status_code, 403, registered.text)
+        self.assertNotIn("post-commit-device", registered.text)
+        devices = self.request(
+            "GET",
+            "/api/v1/admin/devices",
+            headers=self.headers(approver_token),
+        )
+        self.assertEqual(devices.status_code, 200, devices.text)
+        persisted = next(
+            device for device in devices.json() if device["name"] == "post-commit-device"
+        )
+        self.assertEqual(persisted["user_id"], self.operator.user_id)
+        with self.app.state.session_factory() as db:
+            registered_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.device_registered",
+                    AuditEvent.entity_id == persisted["id"],
+                )
+            )
+        self.assertEqual(registered_audits, 1)
+
     def test_revoke_device_and_card_projection_are_safe(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

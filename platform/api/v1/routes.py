@@ -5714,7 +5714,12 @@ def admin_register_device(
     else:
         response.status_code = 200
     db.commit()
-    db.refresh(registration.device)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(registration.device, with_for_update=True)
     return AdminDeviceResponse.model_validate(
         registration.device, from_attributes=True
     )
