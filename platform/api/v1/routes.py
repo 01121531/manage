@@ -9246,7 +9246,12 @@ def admin_approve_upload_policy_version(
         details={"version": policy.version},
     )
     db.commit()
-    db.refresh(policy)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(policy, with_for_update=True)
     return _upload_policy_version_response(policy)
 
 

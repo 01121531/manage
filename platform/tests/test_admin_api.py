@@ -5162,6 +5162,86 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(policies, [])
         self.assertEqual(audits, [])
 
+    def test_upload_policy_approve_rechecks_actor_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        registered = self.request(
+            "POST",
+            "/api/v1/admin/policies/upload/versions",
+            headers=self.headers(creator_token),
+            json={
+                "version": "upload-approve-recheck-v1",
+                "change_note": "verify approval response authorization",
+            },
+        )
+        self.assertEqual(registered.status_code, 201, registered.text)
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        approval_recorded = False
+        approver_demoted = False
+
+        def mark_approval(*args, **kwargs):
+            nonlocal approval_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "upload_policy.approved":
+                approval_recorded = True
+            return result
+
+        def demote_after_approval_commit(session: Session) -> None:
+            nonlocal approver_demoted
+            original_commit(session)
+            if approval_recorded and not approver_demoted:
+                approver_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    approver = other_db.get(User, self.approver.user_id)
+                    self.assertIsNotNone(approver)
+                    approver.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_approval,
+        ), mock.patch.object(Session, "commit", new=demote_after_approval_commit):
+            approved = self.request(
+                "POST",
+                f"/api/v1/admin/policies/upload/versions/{registered.json()['id']}/approve",
+                headers=self.headers(approver_token),
+            )
+
+        self.assertEqual(approved.status_code, 403, approved.text)
+        self.assertNotIn("approved_by", approved.text)
+        versions = self.request(
+            "GET",
+            "/api/v1/admin/policies/upload/versions",
+            headers=self.headers(creator_token),
+        )
+        self.assertEqual(versions.status_code, 200, versions.text)
+        persisted = next(
+            policy for policy in versions.json() if policy["id"] == registered.json()["id"]
+        )
+        self.assertEqual(persisted["status"], "approved")
+        self.assertEqual(persisted["approved_by"], self.approver.user_id)
+        with self.app.state.session_factory() as db:
+            approved_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "upload_policy.approved",
+                    AuditEvent.entity_id == registered.json()["id"],
+                )
+            )
+        self.assertEqual(approved_audits, 1)
+
     def test_upload_policy_deploy_rechecks_actor_after_commit(self) -> None:
         creator_token = self.login(
             "tenant-a",

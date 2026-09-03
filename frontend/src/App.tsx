@@ -342,8 +342,12 @@ export default function App() {
         }
         setAuthConfig(config)
         setOidcManager(manager)
-      } catch (error) {
-        if (active) setStartupError(error instanceof Error ? error.message : '身份服务初始化失败')
+      } catch {
+        if (active) setStartupError(
+          '原因：身份服务配置或本地认证组件未能安全初始化。'
+          + '影响：控制台未建立登录会话，也不会继续加载管理资源。'
+          + '下一步：检查网络后重新加载控制台；持续失败请联系管理员核对身份服务。',
+        )
       }
     }
     initialize()

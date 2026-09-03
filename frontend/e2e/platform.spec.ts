@@ -418,6 +418,31 @@ test('authenticated shell download failure exposes a safe recovery action', asyn
   expect(shellModuleRejected).toBe(true)
 })
 
+test('authentication startup failure hides raw runtime details', async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rawUrl = typeof input === 'string'
+        ? input
+        : input instanceof URL ? input.href : input.url
+      if (new URL(rawUrl, window.location.href).pathname === '/api/v1/auth/config') {
+        throw new Error('must-never-render-auth-startup-runtime-detail')
+      }
+      return originalFetch(input, init)
+    }) as typeof window.fetch
+  })
+
+  await page.goto('/')
+
+  const failure = page.getByRole('alert').filter({ hasText: '控制台无法启动' })
+  await expect(failure).toContainText('原因：身份服务配置或本地认证组件未能安全初始化。')
+  await expect(failure).toContainText('影响：控制台未建立登录会话')
+  await expect(failure).toContainText('下一步：检查网络后重新加载控制台')
+  await expect(page.getByText('must-never-render-auth-startup-runtime-detail')).toHaveCount(0)
+  await expect(failure.getByRole('button', { name: '重新加载控制台' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '安全登录' })).toHaveCount(0)
+})
+
 test('OIDC runtime loads only after auth config selects OIDC mode', async ({ browser }) => {
   for (const mode of ['local', 'oidc'] as const) {
     const context = await browser.newContext()

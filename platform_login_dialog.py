@@ -560,6 +560,7 @@ class PlatformLoginDialog:
     ) -> None:
         self._closed = False
         self._busy = False
+        self._auth_config_thread: threading.Thread | None = None
         self._on_success = on_success
         self._on_close = on_close
         self._owns_root = window is None and parent is None
@@ -951,18 +952,31 @@ class PlatformLoginDialog:
         self._set_status("已取消设备代码登录；可重新选择登录方式。", MUTED)
 
     def _load_auth_config(self, client: PlatformClient) -> None:
+        thread: threading.Thread
+
         def worker() -> None:
             try:
-                config = client.get_auth_config()
-            except BaseException as error:
-                self._schedule(lambda error=error: self._handle_auth_config_error(error))
-            else:
-                self._schedule(lambda: self._apply_auth_mode(str(config["mode"])))
+                try:
+                    config = client.get_auth_config()
+                except BaseException as error:
+                    self._schedule(
+                        lambda error=error: self._handle_auth_config_error(error)
+                    )
+                else:
+                    self._schedule(lambda: self._apply_auth_mode(str(config["mode"])))
+            finally:
+                if self._auth_config_thread is thread:
+                    self._auth_config_thread = None
 
-        thread = threading.Thread(target=worker, daemon=True)
+        thread = threading.Thread(
+            target=worker, daemon=False, name="platform-auth-config"
+        )
+        self._auth_config_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            if self._auth_config_thread is thread:
+                self._auth_config_thread = None
             self._handle_auth_config_error(
                 PlatformTransportError("authentication config worker unavailable")
             )
@@ -1186,11 +1200,16 @@ class PlatformLoginDialog:
             return
 
     def detach_worker_threads(self) -> tuple[threading.Thread, ...]:
-        return self._controller.detach_worker_threads()
+        workers = self._controller.detach_worker_threads()
+        auth_config_thread = self._auth_config_thread
+        self._auth_config_thread = None
+        if auth_config_thread is not None:
+            workers += (auth_config_thread,)
+        return workers
 
     def stop_and_detach_worker_threads(self) -> tuple[threading.Thread, ...]:
         self._controller.stop_workers()
-        return self._controller.detach_worker_threads()
+        return self.detach_worker_threads()
 
     def close(self, *, cancel_authentication: bool = True) -> None:
         if self._closed:

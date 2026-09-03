@@ -24,7 +24,7 @@ class _ImmediateThread:
 class _DeferredThread:
     instances = []
 
-    def __init__(self, *, target, daemon):
+    def __init__(self, *, target, daemon, **_):
         self.target = target
         self.daemon = daemon
         self.started = False
@@ -96,6 +96,10 @@ class _FakeController:
     def cancel(self):
         self.cancel_calls += 1
         return self.cancel_succeeds
+
+    @staticmethod
+    def detach_worker_threads():
+        return ()
 
 
 class _FakeClient:
@@ -219,6 +223,7 @@ class PlatformLoginDialogTests(unittest.TestCase):
         dialog = object.__new__(PlatformLoginDialog)
         dialog._closed = False
         dialog._busy = True
+        dialog._auth_config_thread = None
         dialog._auth_mode = "oidc"
         dialog._device_challenge_generation = 0
         dialog._device_verification_uri = None
@@ -262,6 +267,19 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertEqual(dialog.login_button.options["state"], "disabled")
         self.assertIn("无法连接平台", dialog.status_label.options["text"])
         self.assertNotIn(raw_error, dialog.status_label.options["text"])
+        self.assertIsNone(dialog._auth_config_thread)
+
+    def test_auth_config_worker_is_non_daemon_and_detaches_with_login_workers(self):
+        dialog = self.headless_dialog()
+        _DeferredThread.instances = []
+
+        with mock.patch("platform_login_dialog.threading.Thread", _DeferredThread):
+            dialog._load_auth_config(mock.Mock())
+
+        worker = _DeferredThread.instances[-1]
+        self.assertFalse(worker.daemon)
+        self.assertEqual(dialog.detach_worker_threads(), (worker,))
+        self.assertIsNone(dialog._auth_config_thread)
 
     def test_successful_dismiss_does_not_cancel_authenticated_session(self):
         dialog = self.headless_dialog()
