@@ -1,5 +1,5 @@
 {
-  "schema_version": 39,
+  "schema_version": 40,
   "production_acceptance": false,
   "ingestion_boundary": {
     "operator_action": "administrator_manual_upload",
@@ -232,6 +232,7 @@
     "consumption_record_mutation_policy": "database_append_only_after_insert",
     "consumption_lifecycle_policy": "database_one_way_exact_receipt_bound_terminal",
     "local_receipt_mutation_policy": "database_append_only_after_insert",
+    "context_deletion_policy": "database_forbidden_after_insert",
     "card_identity_claims": {
       "storage": "secret_free_target_database_unique_tenant_provider_ref",
       "claim_tenant_binding": "claim_tenant_must_match_authoritative_context_tenant",

@@ -48,6 +48,7 @@
     "0042_pool_context_identity_lock.py": "934e03a6e002fca2c08e78c262ca630c948dd9aeab698cf0bdf4f47e8e962b50",
     "0043_secure_consumption_lock.py": "328c21c902edd7a890fa2d4190b90e5675201d5e8b28564d2787826a55360d51",
     "0044_pool_context_consumption_terminal.py": "8478271d5d9cf211a878877fab04f0989ff581daa09ec1a7226a28b9ca05d012",
-    "0045_pool_import_receipt_append_only.py": "c44536fa43e65361922084e653e21f4dd5081e358075d0d44f3d7cd000f363ed"
+    "0045_pool_import_receipt_append_only.py": "c44536fa43e65361922084e653e21f4dd5081e358075d0d44f3d7cd000f363ed",
+    "0046_pool_import_context_delete_guard.py": "9a654271164624213f1036d024b94da43982fb8855e5b257d0b2b6f0f67c5233"
   }
 }

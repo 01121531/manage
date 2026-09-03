@@ -152,7 +152,11 @@ three lifecycle fields are immutable. The following
 `0045_pool_import_receipt_append_only` migration makes the linked local
 idempotency receipt append-only as well: its identity, tenant, pool, key,
 manifest digest/count, actor, device, trace and creation time cannot be updated
-or deleted, while a fresh import can still insert a new receipt. The
+or deleted, while a fresh import can still insert a new receipt. Migration
+`0046_pool_import_context_delete_guard` separately forbids deletion of the
+target-issued context itself for both pools. Issuance, bounded renewal and the
+existing terminal consumption transition remain valid; only destructive row
+removal is closed. The
 application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed

@@ -137,6 +137,15 @@ complete the existing exact context/consumption linkage. Keep 0045 installed
 on application rollback so historical tenant, pool, manifest, actor, device,
 trace and idempotency evidence cannot be rewritten or removed.
 
+Revision `0046_pool_import_context_delete_guard` prevents deletion of the
+target-issued authorization context itself. Pause both card and mailbox secure
+imports during the DDL window, install 0046, then prove direct deletion of an
+unconsumed card context and a consumed mailbox context is rejected. Before
+resuming, prove a new context can still be issued, an unconsumed context can be
+renewed, and one fresh card and mailbox import can each complete the existing
+terminal consumption linkage. Keep 0046 installed on application rollback so
+authorization and trace history cannot be silently removed.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

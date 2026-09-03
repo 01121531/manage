@@ -103,7 +103,11 @@ The default endpoints are:
   the linked local idempotency receipt append-only. Its identity, tenant, pool,
   idempotency key, manifest digest/count, actor, device, trace and creation time
   cannot be updated or deleted after insertion; a new card or mailbox import
-  can still insert its own receipt. A
+  can still insert its own receipt. Migration
+  `0046_pool_import_context_delete_guard` also rejects deletion of every issued
+  card or mailbox context. New context issuance and pre-consumption expiry
+  renewal remain available, but an authorization row cannot be silently
+  removed after issuance or consumption. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.

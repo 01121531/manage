@@ -71,6 +71,10 @@ class DatabaseInitializationTests(unittest.TestCase):
                 "platform.database."
                 "_install_pool_import_context_consumption_constraints"
             ) as install_context_consumption,
+            patch(
+                "platform.database."
+                "_install_pool_import_context_delete_constraints"
+            ) as install_context_delete,
         ):
             app = create_app(
                 production_settings(),
@@ -86,6 +90,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_pool_import_receipts.assert_not_called()
             install_secure_consumption.assert_not_called()
             install_context_consumption.assert_not_called()
+            install_context_delete.assert_not_called()
             self.assertEqual(inspect(app.state.engine).get_table_names(), [])
         finally:
             app.state.engine.dispose()
@@ -116,6 +121,10 @@ class DatabaseInitializationTests(unittest.TestCase):
                 "platform.database."
                 "_install_pool_import_context_consumption_constraints"
             ) as install_context_consumption,
+            patch(
+                "platform.database."
+                "_install_pool_import_context_delete_constraints"
+            ) as install_context_delete,
         ):
             engine, _ = initialize_database(
                 "sqlite+pysqlite:///:memory:", create_schema=True
@@ -129,6 +138,7 @@ class DatabaseInitializationTests(unittest.TestCase):
             install_pool_import_receipts.assert_called_once_with(engine)
             install_secure_consumption.assert_called_once_with(engine)
             install_context_consumption.assert_called_once_with(engine)
+            install_context_delete.assert_called_once_with(engine)
         finally:
             engine.dispose()
 

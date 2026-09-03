@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 from platform.database import database_schema_is_current
 
 
-CURRENT = "0045_pool_import_receipt_append_only"
+CURRENT = "0046_pool_import_context_delete_guard"
 
 
 class MigrationReadinessTests(unittest.TestCase):

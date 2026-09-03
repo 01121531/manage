@@ -311,6 +311,15 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed context deletion guard for revision 0046. Only this exact
+    # target and DELETE event are permitted.
+    if re.fullmatch(
+        r"CREATE TRIGGER POOL_IMPORT_CONTEXTS_NO_DELETE BEFORE DELETE ON "
+        r"POOL_IMPORT_CONTEXTS FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_CONTEXTS_PREVENT_DELETE\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

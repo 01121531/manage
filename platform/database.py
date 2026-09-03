@@ -533,6 +533,26 @@ def _install_pool_import_context_consumption_constraints(engine: Engine) -> None
         )
 
 
+def _install_pool_import_context_delete_constraints(engine: Engine) -> None:
+    """Mirror the migration-backed context deletion guard in SQLite."""
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS pool_import_contexts_no_delete
+            BEFORE DELETE ON pool_import_contexts
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'pool import context deletion is forbidden'
+                );
+            END;
+            """
+        )
+
+
 def initialize_database(
     database_url: str,
     *,
@@ -550,6 +570,7 @@ def initialize_database(
         _install_pool_import_receipt_constraints(engine)
         _install_secure_pool_import_consumption_constraints(engine)
         _install_pool_import_context_consumption_constraints(engine)
+        _install_pool_import_context_delete_constraints(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 

@@ -152,6 +152,12 @@ rejected before the first Vault or API mutation.
    direct DELETE must fail, while each new card or mailbox transaction may
    still INSERT one receipt. The row contains only secret-free binding and
    audit metadata; never add PAN, CVV, mailbox credentials or source content.
+   Migration `0046_pool_import_context_delete_guard` rejects direct DELETE of
+   every issued card or mailbox context, whether it is unconsumed, expired or
+   consumed. New context INSERT, bounded pre-consumption expiry renewal and the
+   existing final consumption transition must continue to work. Context
+   retention remains secret-free; do not add source card or mailbox data to
+   support it.
    Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.
