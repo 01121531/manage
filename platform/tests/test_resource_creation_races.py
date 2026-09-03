@@ -29,6 +29,7 @@ from platform.models import (
     User,
     utc_now,
 )
+from platform.uploads import Sub2UploadResult, process_upload_job
 
 
 class BlockingWatermarkConnector:
@@ -543,6 +544,104 @@ class ResourceCreationRaceTests(unittest.TestCase):
             )
         self.assertEqual(job.status, "cancelled")
         self.assertEqual(outbox.status, "processed")
+
+    def test_initial_upload_response_refreshes_after_concurrent_worker_completion(
+        self,
+    ) -> None:
+        task_id = self.create_task("upload-create-worker-task")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.headers,
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            mailbox_id = db.scalar(select(Mailbox.id).limit(1))
+            db.add(
+                MailSession(
+                    tenant_id=task.tenant_id,
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    device_id=task.device_id,
+                    mailbox_id=mailbox_id,
+                    trace_id=task.trace_id,
+                    status="consumed",
+                    consumed_at=now,
+                    expires_at=now + timedelta(minutes=5),
+                )
+            )
+            db.commit()
+
+        queued_recorded = Event()
+        commit_entered = Event()
+        release_commit = Event()
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+
+        def marked_record_audit(*args, **kwargs):
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "upload.queued":
+                queued_recorded.set()
+            return result
+
+        def pause_after_create_commit(session):
+            if (
+                queued_recorded.is_set()
+                and not commit_entered.is_set()
+            ):
+                original_commit(session)
+                commit_entered.set()
+                self.assertTrue(release_commit.wait(timeout=5))
+                return None
+            return original_commit(session)
+
+        class SuccessfulAdapter:
+            @staticmethod
+            def submit(_command):
+                return Sub2UploadResult(external_ref="sub2-race-winner")
+
+        try:
+            with (
+                patch("platform.api.v1.routes.record_audit", side_effect=marked_record_audit),
+                patch.object(Session, "commit", pause_after_create_commit),
+                ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="upload-create-stale"
+                ) as executor,
+            ):
+                created = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/uploads",
+                    headers=self.headers,
+                    json={
+                        "business_name": "Race Business",
+                        "idempotency_key": "upload-create-worker-race",
+                    },
+                )
+                self.assertTrue(commit_entered.wait(timeout=5))
+                with self.app.state.session_factory() as db:
+                    job_id = db.scalar(
+                        select(UploadJob.id).where(
+                            UploadJob.idempotency_key == "upload-create-worker-race"
+                        )
+                    )
+                worker_result = process_upload_job(
+                    self.app.state.session_factory,
+                    job_id,
+                    adapter=SuccessfulAdapter(),
+                    policy=self.app.state.sub2_policy,
+                )
+                self.assertEqual(worker_result.status, "succeeded")
+                release_commit.set()
+                response = created.result(timeout=10)
+        finally:
+            release_commit.set()
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["status"], "succeeded")
+        self.assertEqual(response.json()["external_ref"], "sub2-race-winner")
 
     def test_mail_session_replay_returns_status_after_concurrent_task_close(
         self,

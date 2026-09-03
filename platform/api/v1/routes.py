@@ -4284,6 +4284,7 @@ def create_upload_job(
         aggregate_sequence=job.phase_sequence,
     )
     db.commit()
+    db.refresh(job, with_for_update=True)
     return _upload_job_response(job)
 
 
