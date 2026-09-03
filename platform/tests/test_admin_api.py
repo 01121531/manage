@@ -2973,6 +2973,69 @@ class AdminApiTests(unittest.TestCase):
             persisted = db.get(Card, card.card_id)
         self.assertFalse(persisted.is_active)
 
+    def test_card_state_rechecks_access_token_expiry_after_commit(self) -> None:
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="post-commit-expired-token-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/post-commit-expired-token",
+        )
+        observed_at = utc_now()
+        principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=observed_at,
+            acr=None,
+            amr=(),
+            access_token_hash="e" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=1),
+            access_token_revoked=False,
+        )
+        original_commit = Session.commit
+        card_disabled = False
+
+        def commit_then_advance_time(session: Session) -> None:
+            nonlocal card_disabled
+            disabling = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.card_disabled"
+                for item in session.new
+            )
+            original_commit(session)
+            card_disabled = card_disabled or disabling
+
+        def current_time() -> datetime:
+            if card_disabled:
+                return observed_at + timedelta(minutes=2)
+            return observed_at
+
+        self.app.dependency_overrides[get_current_principal] = lambda: principal
+        try:
+            with mock.patch.object(
+                Session,
+                "commit",
+                new=commit_then_advance_time,
+            ), mock.patch.object(routes, "_utc_now", side_effect=current_time):
+                response = self.request(
+                    "PATCH",
+                    f"/api/v1/admin/cards/{card.card_id}",
+                    json={"is_active": False},
+                )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("last4", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+        self.assertFalse(persisted.is_active)
+
     def test_card_cleanup_in_progress_rechecks_actor_after_commit(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

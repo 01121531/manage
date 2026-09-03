@@ -5748,6 +5748,38 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
+    def test_unexpected_update_download_error_restores_retry(self) -> None:
+        instance = self._event_app()
+        manifest = mock.Mock(version="9.9.9")
+        instance._update_client.download.side_effect = RuntimeError(
+            "unexpected download failure"
+        )
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self) -> None:
+                try:
+                    self.target()
+                except RuntimeError:
+                    pass
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance._download_update(manifest)
+            instance._drain_events()
+
+        instance._update_client.download.assert_called_once_with(manifest)
+        self.assertIsNone(instance._update_download_thread)
+        self.assertEqual(instance.check_update_button.values["state"], "normal")
+        self.assertEqual(
+            instance.status_label.values["text"],
+            "更新下载或完整性校验失败，未修改当前程序。",
+        )
+        self.assertNotIn(
+            "unexpected download failure", instance.status_label.values["text"]
+        )
+
     def test_stale_update_download_finished_clears_old_thread_reference(self) -> None:
         download_started = threading.Event()
         release_download = threading.Event()

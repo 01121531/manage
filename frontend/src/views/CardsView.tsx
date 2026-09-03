@@ -356,6 +356,8 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         updated.id !== row.id
         || updated.is_active !== isActive
         || updated.status !== expectedStatus
+        || updated.quarantine_reason_code !== null
+        || updated.quarantined_at !== null
       ) throw new Error('card state response binding mismatch')
       message.success(isActive ? '卡资源已启用。' : '卡资源已停用，活动租约已释放。')
     } catch {

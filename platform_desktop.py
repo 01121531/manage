@@ -3817,7 +3817,7 @@ class PlatformDesktopApp:
         def worker() -> None:
             try:
                 package = self._update_client.download(manifest)
-            except UpdateError:
+            except Exception:
                 self._events.put((generation, "update_download_error", None))
             else:
                 self._events.put(

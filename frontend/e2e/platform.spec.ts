@@ -5090,7 +5090,11 @@ test('card true-state refresh fails closed before privileged actions recover', a
       expect(request.postDataJSON()).toEqual({ is_active: false })
       cards = cards.map((card) => ({ ...card, is_active: false, status: 'disabled' }))
       failNextCardList = true
-      return fulfill({ ...cards[0], status: 'available' })
+      return fulfill({
+        ...cards[0],
+        quarantine_reason_code: 'suspected_compromise',
+        quarantined_at: '2026-08-20T00:05:00Z',
+      })
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
