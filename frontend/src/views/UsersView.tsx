@@ -334,8 +334,8 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   ]
   const deviceColumns: TableColumnsType<AdminDevice> = [
     { title: '设备名称', dataIndex: 'name', sorter: (left, right) => compareTableText(left.name, right.name) },
-    { title: '设备 ID', dataIndex: 'id' },
-    { title: '所属用户', dataIndex: 'user_id' },
+    { title: '设备 ID', dataIndex: 'id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
+    { title: '所属用户', dataIndex: 'user_id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     {
       title: '状态', dataIndex: 'revoked_at',
       filters: [{ text: '活动', value: 'active' }, { text: '已撤销', value: 'revoked' }],

@@ -1022,6 +1022,22 @@ class PlatformDesktopApp:
         self._locked = False
         self._session_generation += 1
         self._set_authenticated(True)
+        compensation = self._task_compensation
+        if compensation is not None:
+            if compensation.in_progress:
+                self.new_task_button.configure(text="资源关闭中…", state="disabled")
+            else:
+                self._present_task_compensation_failure(compensation)
+            self.close_active_task_button.configure(state="disabled")
+            self.copy_button.configure(state="disabled")
+            self.copy_card_button.configure(state="disabled")
+            self.business_entry.configure(state="disabled")
+            self.upload_button.configure(state="disabled")
+            self.check_update_button.configure(
+                state="normal" if self._update_client is not None else "disabled"
+            )
+            self._update_session_countdown(self._session_generation)
+            return
         if self._active_task_discovery_action is not None:
             self.new_task_button.configure(state="disabled")
         elif self._active_task_discovery_required:
@@ -1335,6 +1351,8 @@ class PlatformDesktopApp:
             or not self._client.is_authenticated
             or self._active_task_recovery_action is not None
             or self._task_transition is not None
+            or self._task_compensation is not None
+            or self._terminal_task_cleanup_action is not None
         ):
             return
         active_upload = self._recovery_active_upload(recovery)

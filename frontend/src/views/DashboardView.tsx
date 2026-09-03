@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Col, Descriptions, Empty, Row, Space, Spin, Statistic, Table } from 'antd'
+import { Alert, Button, Card, Col, Descriptions, Empty, Row, Space, Spin, Statistic, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { getDashboardSummary } from '../admin-api'
 import type { DashboardSummary, Principal } from '../types'
 import { PageHeading, StatusTag, cardAllocationReasonNames, formatLocalDateTime, statusRows } from './shared'
+
+const { Text } = Typography
 
 export default function Dashboard({ principal }: { principal: Principal }) {
   const [summary, setSummary] = useState<DashboardSummary>()
@@ -92,10 +94,10 @@ export default function Dashboard({ principal }: { principal: Principal }) {
         <Table
           size="small"
           columns={[
-            { title: '任务 ID', dataIndex: 'id' },
+            { title: '任务 ID', dataIndex: 'id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
             { title: '类型', dataIndex: 'type' },
             { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-            { title: 'Trace ID', dataIndex: 'trace_id' },
+            { title: 'Trace ID', dataIndex: 'trace_id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
             { title: '创建时间', dataIndex: 'created_at', render: formatLocalDateTime },
           ]}
           dataSource={recentTasks}

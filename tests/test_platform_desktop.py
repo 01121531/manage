@@ -3148,6 +3148,42 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
+    def test_unlock_preserves_failed_task_compensation_as_only_resource_action(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        instance._locked = True
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._active_task_recovery = self._recovery_snapshot()
+        instance._task_compensation = mock.Mock(in_progress=False)
+
+        instance._finish_unlock(
+            {
+                "tenant_id": "tenant-1",
+                "id": "user-1",
+                "device_id": "device-1",
+            }
+        )
+
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(
+            instance.new_task_button.values["command"],
+            instance._retry_task_compensation,
+        )
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+        for widget in (
+            instance.close_active_task_button,
+            instance.copy_button,
+            instance.copy_card_button,
+            instance.business_entry,
+            instance.upload_button,
+        ):
+            self.assertEqual(widget.values["state"], "disabled")
+
+        instance.take_over_active_task()
+
+        instance._client.begin_task_transition.assert_not_called()
+
     def test_active_task_discovery_thread_start_failure_exposes_retry(self) -> None:
         instance = self._event_app()
         instance._task_id = None
