@@ -11,6 +11,9 @@ from email.message import Message
 from pathlib import Path
 
 from admin_oauth import (
+    ADMIN_API_BASE,
+    ADMIN_ORIGIN,
+    PROXY_ID,
     AccountNameStore,
     AccountNameStoreError,
     DEFAULT_MODEL_MAPPING,
@@ -19,7 +22,6 @@ from admin_oauth import (
     AdminTokenStore,
     AuthSession,
     AuthorizationService,
-    ConcurrencyLimitError,
     ProxyIdStore,
     ProxyIdStoreError,
     TokenStoreError,
@@ -107,7 +109,7 @@ class TokenTests(unittest.TestCase):
     def test_proxy_id_store_round_trip_and_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ProxyIdStore(Path(directory) / "proxy_id.txt")
-            self.assertEqual(store.load(), 2940)
+            self.assertEqual(store.load(), 1)
             self.assertEqual(store.save(" 3100 "), 3100)
             self.assertEqual(store.load(), 3100)
             self.assertEqual(normalize_proxy_id(88), 88)
@@ -167,7 +169,7 @@ class PayloadTests(unittest.TestCase):
             },
         )
         self.assertEqual(payload["credentials"]["model_mapping"], DEFAULT_MODEL_MAPPING)
-        self.assertEqual(payload["proxy_id"], 2940)
+        self.assertEqual(payload["proxy_id"], 1)
         self.assertEqual(payload["concurrency"], 40)
         self.assertEqual(payload["group_ids"], [49])
         self.assertEqual(payload["name"], "custom-name")
@@ -205,13 +207,14 @@ class PayloadTests(unittest.TestCase):
 
 
 class ClientFlowTests(unittest.TestCase):
+    def test_default_case_endpoint_is_https(self):
+        self.assertEqual(ADMIN_API_BASE, "https://ai1.aisb.shop/api/v1/admin")
+        self.assertEqual(ADMIN_ORIGIN, "https://ai1.aisb.shop")
+        self.assertEqual(PROXY_ID, 1)
+
     def test_full_request_sequence_and_shapes(self):
         responses = iter(
             (
-                {
-                    "code": 0,
-                    "data": {"allowed": True, "max_concurrency": 50},
-                },
                 {
                     "code": 0,
                     "data": {
@@ -249,63 +252,36 @@ class ClientFlowTests(unittest.TestCase):
         result = service.complete(session, "ac_example", "custom-name")
 
         self.assertEqual(result["id"], 88)
-        self.assertEqual(len(requests), 4)
-        self.assertTrue(requests[0][0].full_url.endswith("/accounts/check-concurrency-limit"))
-        self.assertEqual(requests[0][2]["concurrency"], 40)
-        self.assertTrue(requests[1][0].full_url.endswith("/openai/generate-auth-url"))
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(requests[0][0].full_url.endswith("/openai/generate-auth-url"))
+        self.assertEqual(requests[0][2]["proxy_id"], 3100)
+        self.assertEqual(requests[1][2]["state"], "state-123")
+        self.assertEqual(requests[1][2]["code"], "ac_example")
         self.assertEqual(requests[1][2]["proxy_id"], 3100)
-        self.assertEqual(requests[2][2]["state"], "state-123")
-        self.assertEqual(requests[2][2]["code"], "ac_example")
+        self.assertTrue(requests[2][0].full_url.endswith("/accounts"))
+        self.assertEqual(requests[2][2]["name"], "custom-name")
         self.assertEqual(requests[2][2]["proxy_id"], 3100)
-        self.assertTrue(requests[3][0].full_url.endswith("/accounts"))
-        self.assertEqual(requests[3][2]["name"], "custom-name")
-        self.assertEqual(requests[3][2]["proxy_id"], 3100)
         self.assertEqual(requests[0][0].get_header("Authorization"), "Bearer test-admin-token")
         self.assertTrue(all(timeout == 30 for _, timeout, _ in requests))
 
-    def test_concurrency_rejection_stops_before_link_generation(self):
+    def test_begin_skips_unobserved_concurrency_endpoint(self):
         requests = []
 
         def open_fn(request, timeout):
             del timeout
             requests.append(request)
-            return FakeResponse({"allowed": False, "max_concurrency": 20})
+            return FakeResponse({
+                "auth_url": "https://auth.example/authorize?state=state-123",
+                "session_id": "session-123",
+            })
 
         service = AuthorizationService(AdminApiClient("token", open_fn=open_fn))
-        with self.assertRaises(ConcurrencyLimitError):
-            service.begin()
+        session = service.begin()
+        self.assertEqual(session.session_id, "session-123")
         self.assertEqual(len(requests), 1)
-
-    def test_concurrency_accepts_compatible_success_shapes(self):
-        responses = (
-            {"allowed": 1},
-            {"allowed": "true"},
-            {"data": {"allowed": True, "max_concurrency": 40}},
-            {"max_concurrency": 40},
-            {"success": True},
+        self.assertTrue(
+            requests[0].full_url.endswith("/openai/generate-auth-url")
         )
-        for response in responses:
-            with self.subTest(response=response):
-                client = AdminApiClient(
-                    "token",
-                    open_fn=lambda request, timeout, value=response: FakeResponse(value),
-                )
-                self.assertEqual(client.check_concurrency(), response)
-
-    def test_concurrency_does_not_bypass_explicit_denial(self):
-        responses = (
-            {"allowed": False, "max_concurrency": 40},
-            {"allowed": "false", "max_concurrency": 100},
-            {"max_concurrency": 39},
-        )
-        for response in responses:
-            with self.subTest(response=response):
-                client = AdminApiClient(
-                    "token",
-                    open_fn=lambda request, timeout, value=response: FakeResponse(value),
-                )
-                with self.assertRaises(ConcurrencyLimitError):
-                    client.check_concurrency()
 
     def test_http_auth_error_does_not_echo_token(self):
         token = "secret-admin-token"
@@ -321,7 +297,7 @@ class ClientFlowTests(unittest.TestCase):
             )
 
         with self.assertRaises(AdminApiError) as caught:
-            AdminApiClient(token, open_fn=open_fn).check_concurrency()
+            AdminApiClient(token, open_fn=open_fn).generate_auth_url()
         self.assertNotIn(token, str(caught.exception))
         self.assertEqual(caught.exception.status, 401)
 

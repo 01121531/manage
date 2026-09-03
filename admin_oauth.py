@@ -21,9 +21,9 @@ from scripts.external_json import (
 )
 
 
-ADMIN_API_BASE = "http://subscriber-api.qnxie.com/api/v1/admin"
-ADMIN_ORIGIN = "http://subscriber-api.qnxie.com"
-PROXY_ID = 2940
+ADMIN_API_BASE = "https://ai1.aisb.shop/api/v1/admin"
+ADMIN_ORIGIN = "https://ai1.aisb.shop"
+PROXY_ID = 1
 CONCURRENCY = 40
 GROUP_IDS = [49]
 REQUEST_TIMEOUT_SECONDS = 30
@@ -100,51 +100,6 @@ class AdminApiError(Exception):
         super().__init__(message)
         self.status = status
         self.ambiguous = ambiguous
-
-
-class ConcurrencyLimitError(AdminApiError):
-    def __init__(self, maximum: Any = None) -> None:
-        message = "并发额度不足"
-        if maximum is not None:
-            message += f"，当前最大值为 {maximum}"
-        super().__init__(message)
-        self.maximum = maximum
-
-
-def _concurrency_allowed(data: dict[str, Any]) -> tuple[bool, Any]:
-    """Interpret compatibility variants without bypassing an explicit denial."""
-    candidate = data
-    nested = data.get("data")
-    if "allowed" not in candidate and isinstance(nested, dict):
-        candidate = nested
-
-    maximum = candidate.get("max_concurrency")
-    if maximum is None:
-        maximum = candidate.get("max_allowed_concurrency")
-
-    allowed = candidate.get("allowed")
-    if allowed is True or allowed == 1:
-        return True, maximum
-    if isinstance(allowed, str):
-        normalized = allowed.strip().lower()
-        if normalized in {"true", "1", "yes", "allowed", "ok"}:
-            return True, maximum
-        if normalized in {"false", "0", "no", "denied"}:
-            return False, maximum
-    if allowed is False or allowed == 0:
-        return False, maximum
-
-    try:
-        if maximum is not None:
-            return float(maximum) >= CONCURRENCY, maximum
-    except (TypeError, ValueError):
-        pass
-
-    # Some compatible deployments return only a successful status object.
-    # The create endpoint remains authoritative and will reject excess quota.
-    if candidate.get("success") is True or candidate.get("ok") is True:
-        return True, maximum
-    raise AdminApiError("管理端未返回可识别的并发额度检查结果")
 
 
 class _DataBlob(ctypes.Structure):
@@ -567,20 +522,6 @@ class AdminApiClient:
             raise AdminApiError(_response_error_message(data, "管理端业务请求失败"))
         return data
 
-    def check_concurrency(self) -> dict[str, Any]:
-        data = self._post(
-            "accounts/check-concurrency-limit",
-            {
-                "platform": "openai",
-                "concurrency": CONCURRENCY,
-                "group_ids": list(GROUP_IDS),
-            },
-        )
-        allowed, maximum = _concurrency_allowed(data)
-        if not allowed:
-            raise ConcurrencyLimitError(maximum)
-        return data
-
     def generate_auth_url(self, proxy_id: Any = PROXY_ID) -> AuthSession:
         selected_proxy_id = normalize_proxy_id(proxy_id)
         data = self._post(
@@ -624,7 +565,6 @@ class AuthorizationService:
         self.client = client
 
     def begin(self, proxy_id: Any = PROXY_ID) -> AuthSession:
-        self.client.check_concurrency()
         return self.client.generate_auth_url(proxy_id)
 
     def complete(
