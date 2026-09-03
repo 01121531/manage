@@ -652,6 +652,61 @@ class MailSessionTests(unittest.TestCase):
         self.assertEqual(persisted.status, "consumed")
         self.assertEqual(len(events), 1)
 
+    def test_consumed_code_status_rechecks_operator_after_audit_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-code-status-commit-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNotNone(persisted)
+            persisted.status = "consumed"
+            persisted.consumed_at = utc_now()
+            db.commit()
+
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            checking_status = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "mail_session.code_checked"
+                for item in session_db.new
+            )
+            original_commit(session_db)
+            if not checking_status or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("consumed", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            checked_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mail_session.code_checked",
+                        AuditEvent.entity_id == session_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "consumed")
+        self.assertEqual(len(checked_events), 1)
+
     def test_provider_timestamp_before_task_start_fails_closed(self) -> None:
         token = self.login()
         task_id = self.create_task(token, "pre-task-provider-timestamp")

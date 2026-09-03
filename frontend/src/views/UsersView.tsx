@@ -285,7 +285,10 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         action.pending = true
         setRevokingDeviceId(row.id)
         try {
-          await revokeDevice(row.id)
+          const updated = await revokeDevice(row.id)
+          if (updated.id !== row.id || updated.revoked_at === null) {
+            throw new Error('device revoke response binding mismatch')
+          }
           message.success('设备已撤销，相关会话与活动资源已回收。')
         } catch {
           message.error(

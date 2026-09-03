@@ -2161,6 +2161,33 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         self.assertEqual(calls, ["refresh", "logout-cleanup"])
 
+    def test_stale_session_refresh_finished_clears_old_thread_reference(self) -> None:
+        refresh_started = threading.Event()
+        release_refresh = threading.Event()
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def refresh_oidc_session():
+                refresh_started.set()
+                release_refresh.wait(timeout=2)
+                return 300
+
+        instance = self._event_app()
+        instance._client = Client()
+        instance._refresh_session_async(instance._session_generation)
+        refresh_thread = instance._session_refresh_thread
+        self.assertTrue(refresh_started.wait(timeout=1))
+
+        instance.lock()
+        release_refresh.set()
+        refresh_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._session_refresh_thread)
+        self.assertFalse(instance._session_refreshing)
+
     def test_session_expiry_completes_captured_cleanup_before_success_message(self) -> None:
         instance = self._event_app()
         cleanup = mock.Mock()

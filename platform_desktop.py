@@ -1869,8 +1869,18 @@ class PlatformDesktopApp:
                 return
             self._events.put((generation, "session_refreshed", expires_in))
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (generation, "session_refresh_finished", thread)
+                )
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-session-refresh"
+            target=run_worker, daemon=False, name="platform-session-refresh"
         )
         self._session_refresh_threads.append(thread)
         self._session_refresh_thread = thread
@@ -2654,6 +2664,10 @@ class PlatformDesktopApp:
                     self._task_transition_thread = None
                 if self._task_transition is transition and transition.cancelled:
                     self._task_transition = None
+                continue
+            if kind == "session_refresh_finished":
+                if self._session_refresh_thread is value:
+                    self._session_refresh_thread = None
                 continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}

@@ -4514,7 +4514,10 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       devices = devices.map((device) => device.id === deviceId
         ? { ...device, revoked_at: '2026-08-20T00:05:00Z' }
         : device)
-      return fulfill(devices.find((device) => device.id === deviceId))
+      const updated = devices.find((device) => device.id === deviceId)
+      return fulfill(deviceId === 'device-success'
+        ? { ...updated, id: 'wrong-device-binding' }
+        : updated)
     }
     if (path === '/api/v1/admin/users/operator-1/role-change-requests' && request.method() === 'POST') {
       const body = request.postDataJSON() as { role: string }
@@ -4782,6 +4785,9 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   } finally {
     releaseDeviceRevoke()
   }
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认设备撤销结果' })).toBeVisible()
+  await expect(page.getByText('设备已撤销，相关会话与活动资源已回收。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-device-binding')
   await expect(successDeviceRow.getByText('revoked')).toBeVisible()
   await expect(successDeviceRow.getByRole('button', { name: '撤销设备' })).toBeDisabled()
   await expect.poll(() => deviceListRequests).toBeGreaterThanOrEqual(2)
@@ -4790,7 +4796,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await retryDeviceRow.getByRole('button', { name: '撤销设备' }).click()
   revokeDialog = page.getByRole('dialog', { name: '确认撤销设备？' })
   await revokeDialog.getByRole('button', { name: '撤销设备并回收资源' }).click()
-  const revokeError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认设备撤销结果' })
+  const revokeError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认设备撤销结果' }).last()
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(revokeError).toContainText(marker)
   await expect(revokeError).toContainText('设备可能已被撤销')
   await expect(revokeError).toContainText('正在重新获取设备真实状态')
