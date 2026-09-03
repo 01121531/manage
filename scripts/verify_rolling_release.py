@@ -165,6 +165,29 @@ def verification_errors(root: Path = ROOT) -> list[str]:
     except SyntaxError:
         errors.append("rolling executor is not valid Python")
         return errors
+    sub2_egress_imports = {
+        alias.name
+        for node in rolling_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "scripts.sub2_egress_preflight"
+        for alias in node.names
+    }
+    if not {
+        "Sub2EgressPreflightError",
+        "validate_sub2_egress_policy",
+    }.issubset(sub2_egress_imports):
+        errors.append("rolling executor must import the shared Sub2 egress preflight")
+    if any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "validate_sub2_egress_policy"
+        for node in rolling_tree.body
+    ) or any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Store)
+        and node.id == "validate_sub2_egress_policy"
+        for node in ast.walk(rolling_tree)
+    ):
+        errors.append("rolling executor must not replace the shared Sub2 egress preflight")
     if any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -246,6 +269,52 @@ def verification_errors(root: Path = ROOT) -> list[str]:
             and first.value.func.id == "_validate_route_dir"
         ):
             errors.append("rolling executor must revalidate the active route first under lock")
+        named_calls = [
+            (
+                node.lineno,
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr,
+            )
+            for node in ast.walk(execute_locked)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, (ast.Name, ast.Attribute))
+        ]
+        sub2_calls = [
+            node
+            for node in ast.walk(execute_locked)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "validate_sub2_egress_policy"
+        ]
+        sub2_line = (
+            sub2_calls[0].lineno
+            if len(sub2_calls) == 1
+            and len(sub2_calls[0].args) == 1
+            and isinstance(sub2_calls[0].args[0], ast.Name)
+            and sub2_calls[0].args[0].id == "PRODUCTION_ENV_FILE"
+            and not sub2_calls[0].keywords
+            else None
+        )
+        call_lines = {
+            name: min(line for line, called in named_calls if called == name)
+            for name in (
+                "validate_vault_token_sinks",
+                "compose_environment",
+                "SubprocessRunner",
+            )
+            if any(called == name for _, called in named_calls)
+        }
+        ordered = (
+            call_lines.get("validate_vault_token_sinks"),
+            sub2_line,
+            call_lines.get("compose_environment"),
+            call_lines.get("SubprocessRunner"),
+        )
+        if any(line is None for line in ordered) or tuple(sorted(ordered)) != ordered:
+            errors.append(
+                "rolling Sub2 egress preflight must use the fixed env before runner access"
+            )
     if "switched = route_path.read_bytes()" in rolling_source:
         errors.append("rolling executor must not treat an unauthenticated target route as resumable")
     if rolling_compose is None:

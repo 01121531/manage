@@ -452,6 +452,27 @@ class RollbackAssetTests(unittest.TestCase):
                 )
         self.assertTrue(self.errors(late_initial))
 
+    def test_sub2_egress_preflight_cannot_be_removed_redirected_or_replaced(self) -> None:
+        call = "validate_sub2_egress_policy(PRODUCTION_ENV_FILE)"
+        mutations = (
+            self.rollback_text.replace(call, "pass", 1),
+            self.rollback_text.replace(
+                call,
+                "validate_sub2_egress_policy(Path('unreviewed.env'))",
+                1,
+            ),
+            self.rollback_text.replace(
+                "def execute_rollback(",
+                "def validate_sub2_egress_policy(*_args):\n    return None\n\n\ndef execute_rollback(",
+                1,
+            ),
+        )
+        for changed in mutations:
+            with self.subTest():
+                self.assertTrue(
+                    any("Sub2 egress preflight" in error for error in self.errors(changed))
+                )
+
     def test_checkout_uses_manifest_commit_and_direct_compose_is_rejected(self) -> None:
         wrong_commit = self.rollback_text.replace(
             "_assert_release_checkout(\n            plan.commit,",

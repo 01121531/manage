@@ -324,6 +324,30 @@ class DeployReleaseAssetTests(unittest.TestCase):
             any("fail-closed order" in error for error in self.errors(deploy=late_initial))
         )
 
+    def test_sub2_egress_preflight_cannot_be_removed_redirected_or_replaced(self) -> None:
+        call = "validate_sub2_egress_policy(PRODUCTION_ENV_FILE)"
+        mutations = (
+            self.deploy.replace(call, "pass", 1),
+            self.deploy.replace(
+                call,
+                "validate_sub2_egress_policy(Path('unreviewed.env'))",
+                1,
+            ),
+            self.deploy.replace(
+                "def execute_deployment(",
+                "def validate_sub2_egress_policy(*_args):\n    return None\n\n\ndef execute_deployment(",
+                1,
+            ),
+        )
+        for changed in mutations:
+            with self.subTest():
+                self.assertTrue(
+                    any(
+                        "Sub2 egress preflight" in error
+                        for error in self.errors(deploy=changed)
+                    )
+                )
+
     def test_rollback_plan_loader_and_cli_inputs_are_required(self) -> None:
         no_loader = self.deploy.replace(
             "rollback = load_rollback_plan(",

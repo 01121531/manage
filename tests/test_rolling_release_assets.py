@@ -155,6 +155,46 @@ class RollingReleaseAssetTests(unittest.TestCase):
                 any("stable snapshot" in error for error in verification_errors(root))
             )
 
+    def test_sub2_egress_preflight_cannot_be_removed_redirected_or_replaced(self) -> None:
+        for old, new in (
+            ("validate_sub2_egress_policy(PRODUCTION_ENV_FILE)", "pass"),
+            (
+                "validate_sub2_egress_policy(PRODUCTION_ENV_FILE)",
+                "validate_sub2_egress_policy(Path('unreviewed.env'))",
+            ),
+            (
+                "def _execute_locked(",
+                "def validate_sub2_egress_policy(*_args):\n    return None\n\n\ndef _execute_locked(",
+            ),
+        ):
+            with self.subTest(old=old), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for relative in (
+                    "docker-compose.rolling.yml",
+                    "infra/nginx/email-platform.conf.template",
+                    "infra/nginx/slots/blue.conf",
+                    "infra/nginx/slots/green.conf",
+                    "scripts/rolling_release.py",
+                    "scripts/rolling_release_evidence.py",
+                    "scripts/deploy_release.py",
+                    "scripts/rollback_release.py",
+                    "platform/migrations/versions/0024_schema_compatibility.py",
+                ):
+                    destination = root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / relative, destination)
+                executor = root / "scripts/rolling_release.py"
+                source = executor.read_text(encoding="utf-8")
+                changed = source.replace(old, new, 1)
+                self.assertNotEqual(changed, source)
+                executor.write_text(changed, encoding="utf-8")
+                self.assertTrue(
+                    any(
+                        "Sub2 egress preflight" in error
+                        for error in verification_errors(root)
+                    )
+                )
+
     def test_green_api_and_web_certificates_cannot_be_swapped(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

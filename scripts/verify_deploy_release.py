@@ -304,6 +304,29 @@ def _executor_errors(source: str) -> list[str]:
         for node in ast.walk(module)
     ):
         errors.append("deployment must not replace the shared Vault token sink preflight")
+    sub2_egress_imports = {
+        alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "scripts.sub2_egress_preflight"
+        for alias in node.names
+    }
+    if not {
+        "Sub2EgressPreflightError",
+        "validate_sub2_egress_policy",
+    }.issubset(sub2_egress_imports):
+        errors.append("deployment must import the shared Sub2 egress preflight")
+    if any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "validate_sub2_egress_policy"
+        for node in module.body
+    ) or any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Store)
+        and node.id == "validate_sub2_egress_policy"
+        for node in ast.walk(module)
+    ):
+        errors.append("deployment must not replace the shared Sub2 egress preflight")
     intake_imported = any(
         isinstance(node, ast.ImportFrom)
         and node.module == "scripts.target_intake_preflight"
@@ -520,6 +543,23 @@ def _executor_errors(source: str) -> list[str]:
         errors.append(
             "deployment must run the exact shared Vault token sink preflight twice"
         )
+    sub2_egress_calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "validate_sub2_egress_policy"
+    ]
+    sub2_egress_line = (
+        sub2_egress_calls[0].lineno
+        if len(sub2_egress_calls) == 1
+        and len(sub2_egress_calls[0].args) == 1
+        and isinstance(sub2_egress_calls[0].args[0], ast.Name)
+        and sub2_egress_calls[0].args[0].id == "PRODUCTION_ENV_FILE"
+        and not sub2_egress_calls[0].keywords
+        else None
+    )
+    if sub2_egress_line is None:
+        errors.append("deployment must run the exact shared Sub2 egress preflight")
 
     checkout_calls = [
         node
@@ -759,6 +799,7 @@ def _executor_errors(source: str) -> list[str]:
         "initial Vault token sink preflight": (
             vault_sink_lines[0] if len(vault_sink_lines) == 2 else None
         ),
+        "Sub2 egress preflight": sub2_egress_line,
         "third-party digest injection": call_lines.get(
             "compose_environment", [None]
         )[0],

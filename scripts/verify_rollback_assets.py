@@ -668,6 +668,29 @@ def _release_topology_errors(source: str) -> list[str]:
         for node in ast.walk(module)
     ):
         errors.append("rollback must not replace the shared Vault token sink preflight")
+    sub2_egress_imports = {
+        alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "scripts.sub2_egress_preflight"
+        for alias in node.names
+    }
+    if not {
+        "Sub2EgressPreflightError",
+        "validate_sub2_egress_policy",
+    }.issubset(sub2_egress_imports):
+        errors.append("rollback must import the shared Sub2 egress preflight")
+    if any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "validate_sub2_egress_policy"
+        for node in module.body
+    ) or any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Store)
+        and node.id == "validate_sub2_egress_policy"
+        for node in ast.walk(module)
+    ):
+        errors.append("rollback must not replace the shared Sub2 egress preflight")
     external_yaml_imports = {
         alias.name
         for node in module.body
@@ -1478,9 +1501,28 @@ def _release_topology_errors(source: str) -> list[str]:
             errors.append(
                 "rollback must run the exact shared Vault token sink preflight twice"
             )
+        sub2_egress_calls = [
+            node
+            for node in ast.walk(executor)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "validate_sub2_egress_policy"
+        ]
+        sub2_egress_line = (
+            sub2_egress_calls[0].lineno
+            if len(sub2_egress_calls) == 1
+            and len(sub2_egress_calls[0].args) == 1
+            and isinstance(sub2_egress_calls[0].args[0], ast.Name)
+            and sub2_egress_calls[0].args[0].id == "PRODUCTION_ENV_FILE"
+            and not sub2_egress_calls[0].keywords
+            else None
+        )
+        if sub2_egress_line is None:
+            errors.append("rollback must run the exact shared Sub2 egress preflight")
         positions = [
             edge_tls.lineno if edge_tls is not None else 10**9,
             vault_sink_lines[0] if len(vault_sink_lines) == 2 else 10**9,
+            sub2_egress_line if sub2_egress_line is not None else 10**9,
             min(call_lines.get("compose_environment", [10**9])),
             min(call_lines.get("SubprocessRunner", [10**9])),
             min(call_lines.get("_assert_release_checkout", [10**9])),
