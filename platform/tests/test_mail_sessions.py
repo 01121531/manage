@@ -3303,6 +3303,55 @@ class MailSessionTests(unittest.TestCase):
         self.assertEqual(persisted.status, "waiting")
         self.assertEqual(events, [])
 
+    def test_revoke_mail_session_rechecks_operator_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-revoke-commit-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            committing_revoke = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "mail_session.revoked"
+                for item in session_db.new
+            )
+            original_commit(session_db)
+            if not committing_revoke or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "POST",
+                f"/api/v1/mail-sessions/{session_id}/revoke",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(session.json()["email_masked"], response.text)
+        self.assertNotIn(session.json()["trace_id"], response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mail_session.revoked",
+                        AuditEvent.entity_id == session_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "revoked")
+        self.assertEqual(len(events), 1)
+
     def test_api_session_creation_rechecks_principal_before_connector_call(self) -> None:
         token = self.login()
         task_id = self.create_task(token, "mail-api-stale-principal")

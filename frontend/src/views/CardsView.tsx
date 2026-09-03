@@ -414,7 +414,13 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     action.pending = true
     setQuarantineSaving(true)
     try {
-      await quarantineCard(row.id, quarantineReason)
+      const updated = await quarantineCard(row.id, quarantineReason)
+      if (
+        updated.id !== row.id
+        || updated.status !== 'quarantined'
+        || updated.is_active
+        || updated.quarantine_reason_code !== quarantineReason
+      ) throw new Error('card quarantine response binding mismatch')
       message.success('卡资源已隔离，活动租约及关联资源已回收。')
       setQuarantineTarget(null)
       setQuarantineReason(undefined)

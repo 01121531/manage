@@ -2159,7 +2159,19 @@ class PlatformDesktopApp:
             thread for thread in self._task_transition_threads if thread.is_alive()
         ]
         if self._task_transition_threads:
+            session_generation = self._session_generation
+            task_generation = self._task_generation
+            self.new_task_button.configure(state="disabled")
             self._set_status("上一任务操作仍在安全收尾，请稍后再试。", WARNING)
+
+            def retry_if_current() -> None:
+                if (
+                    session_generation == self._session_generation
+                    and task_generation == self._task_generation
+                ):
+                    self.create_mail_task()
+
+            self.root.after(250, retry_if_current)
             return
         if (
             self._active_task_discovery_action is not None

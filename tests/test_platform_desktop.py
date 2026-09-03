@@ -1105,6 +1105,20 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             self.assertIs(instance._task_transition, transition)
             self.assertEqual(instance._task_transition_threads, [worker])
             self.assertIn("仍在安全收尾", instance.status_label.values["text"])
+            retry = next(
+                callback
+                for delay, callback, _ in instance.root.scheduled
+                if delay == 250
+            )
+
+            release.set()
+            worker.join(timeout=1)
+            retry()
+            replacement = instance._task_transition_thread
+            replacement.join(timeout=1)
+
+            self.assertIsNot(replacement, worker)
+            self.assertIsNot(instance._task_transition, transition)
         finally:
             release.set()
             worker.join(timeout=1)

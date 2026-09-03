@@ -2780,6 +2780,13 @@ def revoke_mail_session(
         details={"task_id": session.task_id, "reason": "user_requested"},
     )
     db.commit()
+    _lock_owned_open_task(
+        db,
+        session.task_id,
+        request=request,
+        principal=principal,
+    )
+    db.refresh(session, with_for_update=True)
     return MailSessionResponse(
         id=session.id,
         trace_id=session.trace_id,
