@@ -1677,6 +1677,35 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
         self.assertEqual(instance.new_task_button.values["state"], "disabled")
 
+    def test_lock_sync_cancel_cleanup_success_clears_recovery_state(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        cleanup = mock.Mock()
+        transition = mock.Mock()
+        transition.cancel.return_value = cleanup
+        instance._task_transition = transition
+        instance._active_task_recovery_action = object()
+        instance._active_task_recovery = object()
+        instance._task_id = "task-recovery"
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("thread unavailable")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.lock()
+        instance._drain_events()
+
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._task_compensation)
+        self.assertIsNone(instance._active_task_recovery_action)
+        self.assertIsNone(instance._active_task_recovery)
+        self.assertIsNone(instance._task_id)
+
     def test_task_switch_preparation_failure_clears_sensitive_values_but_keeps_owner(self) -> None:
         code = "246810"
         card = "4111111111111111\t12/30"

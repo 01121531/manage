@@ -224,7 +224,9 @@ export default function AuthenticatedShell({ principal, oidcManager, roleChangeA
         fontFamily: "Inter, 'Microsoft YaHei UI', 'PingFang SC', sans-serif",
       },
     }}
-  ><AntApp><Layout className="app-shell">
+  ><AntApp>
+    <a className="skip-link" href="#main-content">跳到主内容</a>
+    <Layout className="app-shell">
     <Sider width={240} theme="light" className="sidebar" breakpoint="lg" collapsedWidth="0">
       <div className="brand"><SafetyCertificateOutlined /><span>验证码平台</span></div>
       <Menu mode="inline" selectedKeys={[view]} items={visibleMenuItems} onClick={({ key }) => setView(key as ViewKey)} />
@@ -260,7 +262,7 @@ export default function AuthenticatedShell({ principal, oidcManager, roleChangeA
           <Button icon={<LogoutOutlined />} loading={logoutPending} disabled={logoutPending || deviceRevokePending} onClick={onLogout}>退出登录</Button>
         </div>
       </Header>
-      <Content className="content">
+      <Content id="main-content" tabIndex={-1} className="content">
         {logoutError ? <Alert
           className="section-card"
           type="error"

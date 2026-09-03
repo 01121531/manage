@@ -4094,6 +4094,12 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await page.getByLabel('平台密码').fill('development-password')
   await page.getByLabel('设备标识').fill('admin-device')
   await page.getByRole('button', { name: '安全登录' }).click()
+  const skipLink = page.getByRole('link', { name: '跳到主内容' })
+  await skipLink.focus()
+  await expect(skipLink).toBeVisible()
+  await expect(skipLink).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('#main-content')).toBeFocused()
   await page.getByRole('menuitem', { name: /用户与权限/ }).click()
 
   const userCard = page.locator('.ant-card').filter({

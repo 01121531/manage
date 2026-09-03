@@ -1,4 +1,6 @@
 .app-shell { min-height: 100vh; }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 2000; min-height: 44px; padding: 10px 16px; display: flex; align-items: center; color: #fff; background: #10394c; border-radius: 8px; transform: translateY(-160%); }
+.skip-link:focus { transform: translateY(0); outline: 3px solid #f0b429; outline-offset: 2px; }
 .sidebar { border-right: 1px solid #e3e9ed; position: sticky !important; top: 0; height: 100vh; }
 .brand { height: 72px; display: flex; align-items: center; gap: 12px; padding: 0 24px; color: #10394c; font-size: 17px; font-weight: 700; }
 .brand .anticon { color: #176b87; font-size: 22px; }

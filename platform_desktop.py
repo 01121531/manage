@@ -2344,8 +2344,9 @@ class PlatformDesktopApp:
             except PlatformClientError:
                 self._present_task_compensation_failure(barrier)
             else:
-                barrier.in_progress = False
-                self._task_compensation = None
+                self._events.put(
+                    (barrier.generation, "task_compensation_succeeded", barrier)
+                )
 
     def _drain_events(self) -> None:
         if self._closed:
