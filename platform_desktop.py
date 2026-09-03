@@ -1186,6 +1186,7 @@ class PlatformDesktopApp:
                         raise PlatformProtocolError(
                             "活动任务摘要与任务列表不一致"
                         )
+                    self._recovery_active_upload(recovery)
             except BaseException as error:
                 self._events.put(
                     (action.session_generation, "active_task_discovery_error", (action, error))
@@ -1281,6 +1282,18 @@ class PlatformDesktopApp:
         session: MailSessionSnapshot,
         allocation: CardAllocationSnapshot,
     ) -> None:
+        if recovery.mail_session is None or recovery.mail_session.id != session.id:
+            raise PlatformProtocolError("恢复的邮箱会话不属于活动任务")
+        active_allocations = [
+            candidate
+            for candidate in recovery.card_allocations
+            if candidate.status == "active"
+        ]
+        if (
+            len(active_allocations) != 1
+            or active_allocations[0].id != allocation.id
+        ):
+            raise PlatformProtocolError("恢复的卡租约不属于活动任务")
         if session.trace_id != recovery.task.trace_id:
             raise PlatformProtocolError("恢复的邮箱会话追踪标识不一致")
         if allocation.trace_id != recovery.task.trace_id:
@@ -1368,13 +1381,13 @@ class PlatformDesktopApp:
                     if transition.cancelled:
                         return
                     allocation = self._client.allocate_card(action.task_id)
-                    self._validate_recovered_resources(current, session, allocation)
                     current = self._client.get_task_timeline(action.task_id)
                     if (
                         current.task.id != action.task_id
                         or current.task.trace_id != action.trace_id
                     ):
                         raise PlatformProtocolError("活动任务在资源恢复后发生身份漂移")
+                    self._validate_recovered_resources(current, session, allocation)
                     reconciled_upload = self._recovery_active_upload(current)
                     if reconciled_upload is not None:
                         upload = self._client.get_upload_job(reconciled_upload.id)

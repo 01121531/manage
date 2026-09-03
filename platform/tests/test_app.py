@@ -941,6 +941,68 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.json()["id"], self.identity.user_id)
         self.assertEqual(response.json()["device_id"], self.identity.device_id)
 
+    def test_task_endpoints_use_current_role_after_authentication(self) -> None:
+        admin = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="stale-task-admin@example.test",
+            password="stale-task-admin-password",
+            device_name="stale-task-admin-device",
+            role="ops_admin",
+        )
+        with self.app.state.session_factory() as db:
+            other_task = Task(
+                tenant_id="tenant-a",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                task_type="mail_code",
+                idempotency_key="stale-task-admin-other",
+                trace_id="trace-stale-task-other",
+                status="created",
+                expires_at=utc_now() + timedelta(minutes=15),
+            )
+            db.add(other_task)
+            current_admin = db.get(User, admin.user_id)
+            current_admin.role = "operator"
+            db.commit()
+            other_task_id = other_task.id
+
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=admin.user_id,
+            tenant_id="tenant-a",
+            device_id=admin.device_id,
+            email="stale-task-admin@example.test",
+            role="ops_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            listed = self.request("GET", "/api/v1/tasks")
+            fetched = self.request("GET", f"/api/v1/tasks/{other_task_id}")
+            timeline = self.request(
+                "GET", f"/api/v1/tasks/{other_task_id}/timeline"
+            )
+            closed = self.request(
+                "POST", f"/api/v1/tasks/{other_task_id}/close"
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(listed.json(), [])
+        self.assertEqual(fetched.status_code, 404, fetched.text)
+        self.assertEqual(timeline.status_code, 404, timeline.text)
+        self.assertEqual(closed.status_code, 404, closed.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.get(Task, other_task_id).status, "created")
+
     def test_tasks_are_isolated_by_owner(self) -> None:
         first_token = self.login()
         created = self.request(
@@ -1586,7 +1648,7 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(event["actor_id"], self.identity.user_id)
         self.assertEqual(event["action"], "task.created")
         self.assertEqual(event["result"], "success")
-        self.assertEqual(event["ip_address"], "203.0.113.18")
+        self.assertEqual(event["ip_address"], "127.0.0.1")
         self.assertEqual(event["user_agent"], "Evidence Client/1.0")
 
         exported = self.request(
@@ -1661,7 +1723,7 @@ class PlatformAppTests(unittest.TestCase):
                     self.assertEqual(event.user_agent, "[REDACTED]")
                 if index == 0:
                     with self.subTest(header="X-Real-IP"):
-                        self.assertIsNone(event.ip_address)
+                        self.assertEqual(event.ip_address, "127.0.0.1")
 
         safe = self.request(
             "POST",
@@ -1694,7 +1756,7 @@ class PlatformAppTests(unittest.TestCase):
             )
             self.assertIsNotNone(safe_event)
             self.assertEqual(safe_event.user_agent, "Evidence Client/2.0")
-            self.assertEqual(safe_event.ip_address, "203.0.113.19")
+            self.assertEqual(safe_event.ip_address, "127.0.0.1")
             user = db.get(User, self.identity.user_id)
             self.assertIsNotNone(user)
             user.role = "security_auditor"

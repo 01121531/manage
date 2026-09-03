@@ -2877,6 +2877,51 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
+    def test_active_task_discovery_rejects_multiple_live_uploads_off_ui_thread(
+        self,
+    ) -> None:
+        uploads = tuple(
+            UploadJobSnapshot(
+                id=f"upload-{status}",
+                task_id="task-recovery",
+                status=status,
+                business_name="Example Store",
+                policy_version="v1",
+                external_ref=None,
+                error_code=None,
+                created_at="2026-08-20T00:00:03Z",
+                updated_at="2026-08-20T00:00:04Z",
+                trace_id="trace-recovery",
+            )
+            for status in ("queued", "running")
+        )
+        recovery = self._recovery_snapshot(uploads=uploads)
+        instance = self._event_app()
+        instance._task_id = None
+        client = mock.Mock(is_authenticated=True)
+        client.list_tasks.return_value = [recovery.task]
+        client.get_task_timeline.return_value = recovery
+        instance._client = client
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance._discover_active_task()
+        instance._drain_events()
+
+        self.assertIsNone(instance._active_task_discovery_action)
+        self.assertIsNone(instance._active_task_discovery_thread)
+        self.assertTrue(instance._active_task_discovery_required)
+        self.assertIsNone(instance._task_id)
+        self.assertEqual(instance.new_task_button.values["text"], "重试检查活动任务")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+        self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
+
     def test_active_task_discovery_requires_explicit_takeover(self) -> None:
         instance = self._event_app()
         instance._task_id = None
@@ -2962,6 +3007,73 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._mail_session_token, "s" * 32)
         self.assertEqual(instance._card_allocation_id, "allocation-recovery")
         instance._start_polling.assert_called_once_with()
+
+    def test_active_task_takeover_rejects_resource_ids_outside_timeline(self) -> None:
+        recovery = self._recovery_snapshot()
+        future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        for mismatched_resource in ("mail", "card"):
+            with self.subTest(mismatched_resource=mismatched_resource):
+                cleanup = mock.Mock()
+                transition = mock.Mock(cancelled=False)
+                transition.cancel.return_value = cleanup
+                transition.worker_finished.return_value = None
+                client = mock.Mock(is_authenticated=True)
+                client.begin_task_transition.return_value = transition
+                client.get_task_timeline.return_value = recovery
+                client.create_mail_session.return_value = MailSessionSnapshot(
+                    id=(
+                        "mail-other"
+                        if mismatched_resource == "mail"
+                        else "mail-recovery"
+                    ),
+                    email_masked="m***@example.test",
+                    status="waiting",
+                    expires_at=future,
+                    trace_id="trace-recovery",
+                    session_token="s" * 32,
+                )
+                client.allocate_card.return_value = CardAllocationSnapshot(
+                    id=(
+                        "allocation-other"
+                        if mismatched_resource == "card"
+                        else "allocation-recovery"
+                    ),
+                    card_masked="**** **** **** 1111",
+                    brand="visa",
+                    expiry_month=12,
+                    expiry_year=2030,
+                    status="active",
+                    expires_at=future,
+                    trace_id="trace-recovery",
+                )
+                instance = self._event_app()
+                instance._task_id = recovery.task.id
+                instance._mail_session_id = None
+                instance._mail_session_token = None
+                instance._card_allocation_id = None
+                instance._active_task_recovery = recovery
+                instance._client = client
+                instance._start_polling = mock.Mock()
+
+                with mock.patch("platform_desktop.threading.Thread", InlineThread):
+                    instance.take_over_active_task()
+                instance._drain_events()
+
+                cleanup.assert_called_once_with()
+                transition.commit.assert_not_called()
+                self.assertIsNone(instance._task_id)
+                self.assertIsNone(instance._mail_session_id)
+                self.assertIsNone(instance._mail_session_token)
+                self.assertIsNone(instance._card_allocation_id)
+                instance._start_polling.assert_not_called()
 
     def test_unknown_upload_is_review_only_and_never_rotates_or_closes(self) -> None:
         unknown = UploadJobSnapshot(

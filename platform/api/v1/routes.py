@@ -1261,9 +1261,14 @@ def _find_idempotent_task(
     )
 
 
-def _task_scope_filters(principal: AuthPrincipal) -> tuple[Any, ...]:
+def _task_scope_filters(
+    principal: AuthPrincipal,
+    *,
+    role: str | None = None,
+) -> tuple[Any, ...]:
     filters: tuple[Any, ...] = (Task.tenant_id == principal.tenant_id,)
-    if principal.role == ROLE_OPS_ADMIN:
+    effective_role = principal.role if role is None else role
+    if effective_role == ROLE_OPS_ADMIN:
         return filters
     return filters + (
         Task.user_id == principal.user_id,
@@ -1484,7 +1489,12 @@ def list_tasks(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPERATOR, ROLE_OPS_ADMIN)),
     db: Session = Depends(get_db),
 ) -> list[Task]:
-    filters = list(_task_scope_filters(principal))
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
+    )
+    filters = list(_task_scope_filters(principal, role=current_user.role))
     if status is not None:
         filters.append(Task.status == status)
     if user_id is not None:
@@ -1517,10 +1527,15 @@ def get_task(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPERATOR, ROLE_OPS_ADMIN)),
     db: Session = Depends(get_db),
 ) -> Task:
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
+    )
     task = db.scalar(
         select(Task).where(
             Task.id == task_id,
-            *_task_scope_filters(principal),
+            *_task_scope_filters(principal, role=current_user.role),
         )
     )
     if task is None:
@@ -1542,10 +1557,15 @@ def get_task_timeline(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPERATOR, ROLE_OPS_ADMIN)),
     db: Session = Depends(get_db),
 ) -> TaskTimelineResponse:
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
+    )
     task = db.scalar(
         select(Task).where(
             Task.id == task_id,
-            *_task_scope_filters(principal),
+            *_task_scope_filters(principal, role=current_user.role),
         )
     )
     if task is None:
@@ -1707,11 +1727,16 @@ def close_task(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPERATOR, ROLE_OPS_ADMIN)),
     db: Session = Depends(get_db),
 ) -> Task:
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
+    )
     task = db.scalar(
         select(Task)
         .where(
             Task.id == task_id,
-            *_task_scope_filters(principal),
+            *_task_scope_filters(principal, role=current_user.role),
         )
         .with_for_update()
     )

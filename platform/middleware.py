@@ -121,8 +121,7 @@ class TraceAndErrorMiddleware(BaseHTTPMiddleware):
         trace_id = _trace_id(request.headers.get("X-Trace-Id"))
         request.state.trace_id = trace_id
         audit_context = bind_audit_request_metadata(
-            ip_address=request.headers.get("X-Real-IP")
-            or (request.client.host if request.client is not None else None),
+            ip_address=(request.client.host if request.client is not None else None),
             user_agent=request.headers.get("User-Agent"),
         )
         try:
