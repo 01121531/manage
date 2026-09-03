@@ -112,6 +112,8 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._sensitive_focus.set()
         instance._upload_generation = 1
         instance._update_generation = 1
+        instance._update_check_lock = threading.Lock()
+        instance._update_check_threads = []
         instance._update_download_thread = None
         instance._update_cleanup_in_progress = False
         instance._update_cleanup_completed = False
@@ -4819,6 +4821,33 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn("launch_update_helper", finish_source)
         self.assertIn("SHA-256", drain_source)
 
+    def test_update_check_retains_one_non_daemon_worker(self) -> None:
+        instance = self._event_app()
+        created = []
+
+        class DeferredThread:
+            def __init__(self, **kwargs):
+                self.target = kwargs["target"]
+                self.daemon = kwargs["daemon"]
+                self.started = False
+                created.append(self)
+
+            def start(self):
+                self.started = True
+
+            @staticmethod
+            def is_alive():
+                return True
+
+        with mock.patch("platform_desktop.threading.Thread", DeferredThread):
+            instance.check_for_updates()
+            instance.check_for_updates(silent=True)
+
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0].started)
+        self.assertFalse(created[0].daemon)
+        self.assertEqual(instance._update_check_threads, created)
+
     def test_update_check_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
 
@@ -4841,6 +4870,34 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             "检查更新失败，请稍后重试。",
         )
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+        self.assertEqual(instance._update_check_threads, [])
+
+    def test_session_cleanup_owns_update_check_and_download_threads(self) -> None:
+        instance = self._event_app()
+        order = []
+        check_thread = mock.Mock()
+        check_thread.is_alive.return_value = True
+        check_thread.join.side_effect = lambda: order.append("check-waited")
+        download_thread = mock.Mock()
+        download_thread.is_alive.return_value = True
+        download_thread.join.side_effect = lambda: order.append("download-waited")
+        instance._update_check_threads = [check_thread]
+        instance._update_download_thread = download_thread
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = (
+            lambda: order.append("session-cleanup")
+        )
+
+        cleanup = instance._capture_session_cleanup(None)
+        cleanup()
+
+        check_thread.join.assert_called_once_with()
+        download_thread.join.assert_called_once_with()
+        self.assertEqual(
+            order,
+            ["check-waited", "download-waited", "session-cleanup"],
+        )
+        self.assertEqual(instance._update_check_threads, [])
 
     def test_delayed_update_check_cannot_start_during_session_shutdown(self) -> None:
         for barrier_name in ("_shutdown_cleanup_action", "_update_cleanup_action"):

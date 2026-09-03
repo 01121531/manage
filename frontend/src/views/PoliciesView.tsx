@@ -38,7 +38,8 @@ function OperationalPolicyPanel({ domain, principal }: {
   const [error, setError] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   const [pending, setPending] = useState<string | null>(null)
-  const pendingRef = useRef(false)
+  const pendingRef = useRef<{ key: string; pending: boolean } | null>(null)
+  const pendingRefreshRef = useRef<{ key: string; pending: boolean } | null>(null)
   const isPlatformAdmin = principal.role === 'platform_admin'
   const title = domain === 'mail' ? '邮箱策略' : '卡分配策略'
 
@@ -56,13 +57,23 @@ function OperationalPolicyPanel({ domain, principal }: {
       setError(undefined)
     }).catch(() => {
       if (alive) setError(`${title}状态暂不可用，请稍后刷新。`)
-    }).finally(() => { if (alive) setLoading(false) })
+    }).finally(() => {
+      if (!alive) return
+      setLoading(false)
+      const action = pendingRefreshRef.current
+      if (action !== null) {
+        pendingRefreshRef.current = null
+        if (pendingRef.current === action) pendingRef.current = null
+        setPending((current) => current === action.key ? null : current)
+      }
+    })
     return () => { alive = false }
   }, [domain, refresh, title])
 
   const perform = async (key: string, operation: () => Promise<unknown>, success: string) => {
-    if (pendingRef.current) return
-    pendingRef.current = true
+    if (pendingRef.current?.pending) return
+    const action = { key, pending: true }
+    pendingRef.current = action
     setPending(key)
     try {
       await operation()
@@ -70,9 +81,10 @@ function OperationalPolicyPanel({ domain, principal }: {
     } catch {
       message.error('操作未完成，生产策略未确认变更；正在刷新真实状态。')
     } finally {
-      pendingRef.current = false
-      setPending(null)
-      setRefresh((value) => value + 1)
+      if (pendingRef.current === action) {
+        pendingRefreshRef.current = action
+        setRefresh((value) => value + 1)
+      }
     }
   }
 

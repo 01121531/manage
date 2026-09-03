@@ -335,6 +335,8 @@ class PlatformDesktopApp:
         self._unlock_thread: threading.Thread | None = None
         self._update_generation = 0
         self._update_client: UpdateClient | None = None
+        self._update_check_lock = threading.Lock()
+        self._update_check_threads: list[threading.Thread] = []
         self._update_download_thread: threading.Thread | None = None
         self._update_cleanup_in_progress = False
         self._update_cleanup_completed = False
@@ -3412,31 +3414,49 @@ class PlatformDesktopApp:
             if not silent:
                 self._set_status("在线更新配置无效，请联系管理员。", ERROR)
             return
+        with self._update_check_lock:
+            self._update_check_threads = [
+                thread for thread in self._update_check_threads if thread.is_alive()
+            ]
+            if self._update_check_threads:
+                return
         self._update_generation += 1
         generation = self._update_generation
         self.check_update_button.configure(state="disabled")
         if not silent:
             self._set_status("正在检查新版本…", ACCENT)
 
+        thread: threading.Thread
+
         def worker() -> None:
             try:
-                manifest = self._update_client.check()
-            except UpdateError:
-                self._events.put((generation, "update_error", silent))
-            else:
-                if manifest is None:
-                    self._events.put((generation, "update_current", silent))
+                try:
+                    manifest = self._update_client.check()
+                except UpdateError:
+                    self._events.put((generation, "update_error", silent))
                 else:
-                    self._events.put(
-                        (generation, "update_available", (manifest, silent))
-                    )
+                    if manifest is None:
+                        self._events.put((generation, "update_current", silent))
+                    else:
+                        self._events.put(
+                            (generation, "update_available", (manifest, silent))
+                        )
+            finally:
+                with self._update_check_lock:
+                    if thread in self._update_check_threads:
+                        self._update_check_threads.remove(thread)
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-update-check"
+            target=worker, daemon=False, name="platform-update-check"
         )
+        with self._update_check_lock:
+            self._update_check_threads.append(thread)
         try:
             thread.start()
         except RuntimeError:
+            with self._update_check_lock:
+                if thread in self._update_check_threads:
+                    self._update_check_threads.remove(thread)
             self._events.put((generation, "update_error", silent))
 
     def _download_update(self, manifest: UpdateManifest) -> None:
@@ -3457,7 +3477,7 @@ class PlatformDesktopApp:
                 )
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-update-download"
+            target=worker, daemon=False, name="platform-update-download"
         )
         self._update_download_thread = thread
         try:
@@ -3574,6 +3594,13 @@ class PlatformDesktopApp:
         upload_submission_thread = getattr(
             self, "_upload_submission_thread", None
         )
+        update_check_lock = getattr(self, "_update_check_lock", None)
+        if update_check_lock is None:
+            update_check_threads = tuple(getattr(self, "_update_check_threads", ()))
+        else:
+            with update_check_lock:
+                update_check_threads = tuple(self._update_check_threads)
+                self._update_check_threads = []
         update_download_thread = getattr(self, "_update_download_thread", None)
         try:
             logout_cleanup = (
@@ -3687,6 +3714,9 @@ class PlatformDesktopApp:
                 and upload_submission_thread.is_alive()
             ):
                 upload_submission_thread.join()
+            for update_check_thread in update_check_threads:
+                if update_check_thread.is_alive():
+                    update_check_thread.join()
             if (
                 update_download_thread is not None
                 and update_download_thread.is_alive()

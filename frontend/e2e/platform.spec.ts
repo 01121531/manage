@@ -3960,6 +3960,22 @@ test('platform admin governs upload policies without browser execution details',
   }]
   let policyListRequests = 0
   let cardPolicyStatusRequests = 0
+  let cardPolicyVersionListRequests = 0
+  let cardPolicyRollbackRequests = 0
+  let blockCardPolicyRefresh = false
+  let releaseCardPolicyRefresh = () => undefined
+  const cardPolicyRefreshGate = new Promise<void>((resolve) => { releaseCardPolicyRefresh = resolve })
+  let cardPolicyStatus = {
+    domain: 'card', governance_configured: true, active_version: 'card-2026.08.1' as string | null,
+    previous_version: 'card-2026.07.1' as string | null, rollout_percent: 100 as number | null,
+  }
+  const cardPolicyVersions = [{
+    id: 'card-policy-active-1', version: 'card-2026.08.1', status: 'active',
+    change_note: '当前卡分配策略', created_by: 'user-2', approved_by: 'user-3',
+    approved_at: '2026-08-20T00:00:30Z', created_at: '2026-08-20T00:00:00Z',
+    lease_ttl_seconds: 1_800, reveal_ttl_seconds: 60, allocation_order: 'oldest_available',
+    selection_rules: [{ task_type: 'card_checkout', pool_key: 'checkout-cn', region: 'cn-east', brands: ['VISA'], minimum_validity_days: 30, allocation_order: 'oldest_available' }],
+  }]
   const approveRequests: string[] = []
   const deployRequests: Array<{ policyId: string; rollout: number }> = []
   let rollbackRequests = 0
@@ -4027,10 +4043,8 @@ test('platform admin governs upload policies without browser execution details',
           error: { code: 'service_unavailable', message: 'must-never-render-card-policy-error' },
         }, 503)
       }
-      return fulfill({
-        domain: 'card', governance_configured: false, active_version: null,
-        previous_version: null, rollout_percent: null,
-      })
+      if (blockCardPolicyRefresh) await cardPolicyRefreshGate
+      return fulfill(cardPolicyStatus)
     }
     if (path === '/api/v1/admin/policies/mail' && request.method() === 'GET') {
       return fulfill({
@@ -4041,8 +4055,23 @@ test('platform admin governs upload policies without browser execution details',
         rollout_percent: null,
       })
     }
-    if ((path === '/api/v1/admin/policies/mail/versions' || path === '/api/v1/admin/policies/card/versions') && request.method() === 'GET') {
+    if (path === '/api/v1/admin/policies/card/versions' && request.method() === 'GET') {
+      cardPolicyVersionListRequests += 1
+      if (blockCardPolicyRefresh) await cardPolicyRefreshGate
+      return fulfill(cardPolicyVersions)
+    }
+    if (path === '/api/v1/admin/policies/mail/versions' && request.method() === 'GET') {
       return fulfill([])
+    }
+    if (path === '/api/v1/admin/policies/card/rollback' && request.method() === 'POST') {
+      cardPolicyRollbackRequests += 1
+      cardPolicyStatus = {
+        ...cardPolicyStatus,
+        active_version: 'card-2026.07.1',
+        previous_version: 'card-2026.08.1',
+      }
+      blockCardPolicyRefresh = true
+      return fulfill({ error: { code: 'temporarily_unavailable', message: 'must-never-render-card-policy-rollback-detail' } }, 503)
     }
     if (path === '/api/v1/admin/policies/upload/versions' && request.method() === 'GET') {
       uploadPolicyVersionListRequests += 1
@@ -4129,6 +4158,27 @@ test('platform admin governs upload policies without browser execution details',
   await expect(page.getByText(/独立审批/).first()).toBeVisible()
   await expect(page.getByText('邮箱策略', { exact: true })).toBeVisible()
   await expect(page.getByText('卡分配策略', { exact: true })).toBeVisible()
+  const cardPolicySummary = page.locator('.ant-card').filter({
+    has: page.getByText('卡分配策略', { exact: true }),
+  })
+  const cardPolicyRollback = cardPolicySummary.getByRole('button', { name: '回滚上一版本', exact: true })
+  await cardPolicyRollback.click()
+  const cardPolicyRollbackDialog = page.getByRole('dialog', { name: '确认回滚卡分配策略？' })
+  const cardStatusBeforeRollback = cardPolicyStatusRequests
+  const cardVersionsBeforeRollback = cardPolicyVersionListRequests
+  await cardPolicyRollbackDialog.getByRole('button', { name: '确认回滚' }).click()
+  await expect(page.getByText('must-never-render-card-policy-rollback-detail')).toHaveCount(0)
+  try {
+    await expect.poll(() => cardPolicyStatusRequests).toBeGreaterThan(cardStatusBeforeRollback)
+    await expect.poll(() => cardPolicyVersionListRequests).toBeGreaterThan(cardVersionsBeforeRollback)
+    await expect(cardPolicySummary.locator('.ant-spin')).toBeVisible()
+    expect(cardPolicyRollbackRequests).toBe(1)
+  } finally {
+    releaseCardPolicyRefresh()
+  }
+  await expect(cardPolicySummary.getByText('当前生效', { exact: true }).locator('..')).toContainText('card-2026.07.1')
+  await expect(cardPolicySummary.getByRole('button', { name: '回滚上一版本', exact: true })).toBeEnabled()
+  expect(cardPolicyRollbackRequests).toBe(1)
   await expect(page.getByText('sub2-2026.08.1')).toBeVisible()
   await expect(page.locator('.content .ant-btn-primary:visible')).toHaveCount(3)
   await expect(policySummary.locator('.ant-descriptions-item-content .ant-tag .anticon')).toHaveCount(7)
