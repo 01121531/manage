@@ -3433,6 +3433,72 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(len(scheduled), 1)
         self.assertEqual(instance.upload_button.values["state"], "disabled")
 
+    def test_takeover_running_upload_terminal_refresh_clears_completed_task(self) -> None:
+        running = UploadJobSnapshot(
+            id="upload-running",
+            task_id="task-recovery",
+            status="running",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code=None,
+            created_at="2026-08-20T00:00:03Z",
+            updated_at="2026-08-20T00:00:04Z",
+            trace_id="trace-recovery",
+        )
+        succeeded = replace(running, status="succeeded")
+        recovery = self._recovery_snapshot(uploads=(running,))
+        terminal = replace(
+            recovery,
+            task=replace(recovery.task, status="completed"),
+            uploads=(succeeded,),
+        )
+        instance = self._event_app()
+        instance._task_id = recovery.task.id
+        instance._active_task_recovery = recovery
+        timelines = iter((recovery, terminal))
+
+        class Client:
+            is_authenticated = True
+
+            def begin_task_transition(self, task_id):
+                transition = TaskTransitionCleanup(self, "captured-access")
+                transition.attach(task_id)
+                return transition
+
+            @staticmethod
+            def get_task_timeline(_task_id):
+                return next(timelines)
+
+            @staticmethod
+            def get_upload_job(_job_id):
+                return succeeded
+
+            @staticmethod
+            def create_mail_session(_task_id):
+                raise AssertionError("running upload must not rotate mail token")
+
+            @staticmethod
+            def allocate_card(_task_id):
+                raise AssertionError("running upload must not allocate a card")
+
+            @staticmethod
+            def _close_task_with_access_token(*_):
+                raise AssertionError("terminal refresh must not close an already completed task")
+
+        instance._client = Client()
+
+        instance.take_over_active_task()
+        instance._task_transition_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._active_task_recovery_action)
+        self.assertIsNone(instance._active_task_recovery)
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_id)
+        self.assertEqual(instance.new_task_button.values["text"], "创建邮箱任务")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+
     def test_explicit_close_uses_existing_single_flight_cleanup(self) -> None:
         recovery = self._recovery_snapshot()
         instance = self._event_app()

@@ -3391,21 +3391,25 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
   let uploads = [{
     id: 'upload-committed', task_id: 'task-committed', business_name: 'Committed Result',
     status: 'unknown', policy_version: 'policy-v7', created_at: '2026-08-20T00:00:00Z',
+    trace_id: 'upload-trace-committed',
     secret_ref: 'sub2-secret-token', credential: 'subscriber-credential',
     proxy: 'proxy-internal-7', group: 'group-internal-9', concurrency: 99,
     raw_error: 'raw upstream stack trace',
   }, {
     id: 'upload-retry', task_id: 'task-retry', business_name: 'Retry Result',
     status: 'unknown', policy_version: 'policy-v7', created_at: '2026-08-20T00:01:00Z',
+    trace_id: 'upload-trace-retry',
   }, {
     id: 'upload-running', task_id: 'task-running', business_name: 'Running Result',
     status: 'running', policy_version: 'policy-v7', created_at: '2026-08-20T00:02:00Z',
+    trace_id: 'upload-trace-running',
     secret_ref: 'sub2-secret-token', credential: 'subscriber-credential',
     proxy: 'proxy-internal-7', group: 'group-internal-9', concurrency: 99,
     raw_error: 'raw upstream stack trace',
   }, {
     id: 'upload-late', task_id: 'task-late', business_name: 'Late Result',
     status: 'unknown', policy_version: 'policy-v7', created_at: '2026-08-20T00:03:00Z',
+    trace_id: 'upload-trace-late',
   }]
   const reconcileRequests: Array<{ jobId: string; body: Record<string, unknown> }> = []
   const cancelRequests: string[] = []
@@ -3527,6 +3531,11 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
   await expect(committedReconcile).toHaveCount(1)
   await expect(retryReconcile).toHaveCount(1)
   await expect(runningCancel).toHaveCount(1)
+  await expect(committedRow).toContainText('upload-trace-committed')
+  await expect(committedRow.locator('.ant-typography-copy')).toHaveCount(3)
+  const traceCopyButton = committedRow.locator('td').filter({ hasText: 'upload-trace-committed' }).locator('.ant-typography-copy')
+  await traceCopyButton.focus()
+  await expect(traceCopyButton).toBeFocused()
   await expect(page.locator('.content .ant-btn-primary:visible')).toHaveCount(0)
 
   await committedReconcile.click()

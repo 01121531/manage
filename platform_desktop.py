@@ -1400,6 +1400,24 @@ class PlatformDesktopApp:
                             raise PlatformProtocolError("恢复的上传作业与活动任务不一致")
                         if upload.status not in {"queued", "running"}:
                             current = self._client.get_task_timeline(action.task_id)
+                            if (
+                                current.task.id != action.task_id
+                                or current.task.trace_id != action.trace_id
+                            ):
+                                raise PlatformProtocolError(
+                                    "活动任务在上传终结后发生身份漂移"
+                                )
+                            if self._task_is_terminal(current):
+                                transition.worker_finished()
+                                if not transition.cancelled and transition.commit():
+                                    self._events.put(
+                                        (
+                                            action.task_generation,
+                                            "active_task_recovery_closed",
+                                            (action, PlatformProtocolError("活动任务已终结")),
+                                        )
+                                    )
+                                return
                             upload = self._recovery_active_upload(current)
                             redisplay = True
                 else:

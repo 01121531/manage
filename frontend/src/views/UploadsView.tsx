@@ -199,8 +199,8 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
   }
 
   const columns: TableColumnsType<UploadSummary> = [
-    { title: '上传标识', dataIndex: 'id' },
-    { title: '任务', dataIndex: 'task_id' },
+    { title: '上传标识', dataIndex: 'id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
+    { title: '任务', dataIndex: 'task_id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '业务名称', dataIndex: 'business_name', sorter: (left, right) => compareTableText(left.business_name, right.business_name) },
     {
       title: '状态', dataIndex: 'status',
@@ -219,7 +219,7 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
     },
     { title: '策略版本', dataIndex: 'policy_version' },
     { title: '错误分类', dataIndex: 'error_code', render: (value: string | null) => value ?? '—' },
-    { title: 'trace_id', dataIndex: 'trace_id' },
+    { title: 'trace_id', dataIndex: 'trace_id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '创建时间', dataIndex: 'created_at', sorter: (left, right) => compareTableDate(left.created_at, right.created_at) },
     { title: '操作', render: (_, row) => {
       const showReconcile = canReconcile && row.status === 'unknown'
