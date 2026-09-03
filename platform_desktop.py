@@ -53,6 +53,7 @@ from update_client import (
     UpdateClient,
     UpdateError,
     UpdateManifest,
+    discard_downloaded_update,
     launch_update_helper,
 )
 
@@ -328,6 +329,7 @@ class PlatformDesktopApp:
         self._unlock_thread: threading.Thread | None = None
         self._update_generation = 0
         self._update_client: UpdateClient | None = None
+        self._update_download_thread: threading.Thread | None = None
         self._update_cleanup_in_progress = False
         self._update_cleanup_completed = False
         self._update_cleanup_action: Callable[[], None] | None = None
@@ -2515,6 +2517,11 @@ class PlatformDesktopApp:
                 transition = value[-1]
                 self._start_task_cleanup(transition.cancel())
                 continue
+            if kind.startswith("update_") and generation != self._update_generation:
+                if kind == "update_downloaded":
+                    _manifest, package = value
+                    discard_downloaded_update(package)
+                continue
             if self._locked and kind not in {
                 "unlock_authorizing",
                 "unlock_success",
@@ -2527,8 +2534,6 @@ class PlatformDesktopApp:
                 "terminal_task_cleanup_succeeded",
                 "terminal_task_cleanup_error",
             }:
-                continue
-            if kind.startswith("update_") and generation != self._update_generation:
                 continue
             if kind in {
                 "error",
@@ -3413,9 +3418,12 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=True, name="platform-update-download"
         )
+        self._update_download_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            if self._update_download_thread is thread:
+                self._update_download_thread = None
             self._events.put((generation, "update_download_error", None))
 
     def _begin_update_cleanup(self, manifest: UpdateManifest, package: Path) -> None:
@@ -3506,6 +3514,7 @@ class PlatformDesktopApp:
         upload_submission_thread = getattr(
             self, "_upload_submission_thread", None
         )
+        update_download_thread = getattr(self, "_update_download_thread", None)
         try:
             logout_cleanup = (
                 self._client.prepare_logout_cleanup(task_id)
@@ -3581,6 +3590,11 @@ class PlatformDesktopApp:
                 and upload_submission_thread.is_alive()
             ):
                 upload_submission_thread.join()
+            if (
+                update_download_thread is not None
+                and update_download_thread.is_alive()
+            ):
+                update_download_thread.join()
             try:
                 logout_cleanup()
             except Exception as error:

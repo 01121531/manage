@@ -4167,6 +4167,59 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(context_count, 0)
         self.assertEqual(audit_count, 0)
 
+    def test_pool_import_context_rechecks_actor_after_issue_commit(self) -> None:
+        original_commit = Session.commit
+        role_changed = False
+
+        def commit_then_change_role(session: Session) -> None:
+            nonlocal role_changed
+            committing_issue = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.pool_import_context_issued"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_issue or role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(admin)
+                admin.role = "security_auditor"
+                original_commit(other)
+
+        token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        with mock.patch.object(Session, "commit", new=commit_then_change_role):
+            response = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts",
+                headers=self.headers(token),
+                json={
+                    "pool_type": "mailbox",
+                    "ordered_manifest_digest": "a" * 64,
+                    "item_count": 1,
+                },
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("context_token", response.text)
+        with self.app.state.session_factory() as db:
+            context_count = db.scalar(
+                select(func.count()).select_from(PoolImportContext)
+            )
+            audit_count = db.scalar(
+                select(func.count()).select_from(AuditEvent).where(
+                    AuditEvent.event_type == "admin.pool_import_context_issued"
+                )
+            )
+        self.assertEqual(context_count, 1)
+        self.assertEqual(audit_count, 1)
+
     def test_admin_mailbox_import_rechecks_actor_after_authentication(self) -> None:
         observed_at = datetime.now(timezone.utc)
         stale_principal = AuthPrincipal(

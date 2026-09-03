@@ -8,6 +8,11 @@ import { useScopedConfirm } from '../useScopedConfirm'
 import { CardStatusTag, StatusTag, cardAllocationReasonNames, cardEventActionNames, cardQuarantineReasonNames, compareTableText, formatLocalDateTime, maskedStateLabel } from './shared'
 
 const { Title, Text } = Typography
+const cardImportUnknownMessage = '原因：平台未返回可验证的信用卡池导入回执。影响：本批可能已原子导入，不能按本次错误选择新安全包或推断失败。下一步：恢复上下文已保留，请使用“同一批次核验”确认真实结果。'
+
+function hasRemoteStatus(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && typeof (error as { status?: unknown }).status === 'number')
+}
 
 export default function CardsPage({ canManage, canReleaseQuarantine }: {
   canManage: boolean
@@ -224,11 +229,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.success(`已向信用卡池登记 ${receipt.imported_count} 条资源引用。`)
       refreshCardsFromServer(true)
     } catch (error) {
-      if (!shouldRetainPoolImportForRetry(error)) {
+      const retainedForRetry = cardImportRetryRef.current !== null && shouldRetainPoolImportForRetry(error)
+      if (!retainedForRetry) {
         cardImportRetryRef.current = null
         setCardImportRetryAvailable(false)
       }
-      message.error(error instanceof Error ? error.message : '信用卡池引用清单登记失败')
+      message.error(retainedForRetry && hasRemoteStatus(error)
+        ? cardImportUnknownMessage
+        : error instanceof Error ? error.message : '信用卡池引用清单登记失败')
     } finally {
       if (cardImportInputRef.current) cardImportInputRef.current.value = ''
       cardImportPendingRef.current = false
@@ -260,11 +268,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.success(`已确认信用卡池引用清单，共 ${receipt.imported_count} 条资源。`)
       refreshCardsFromServer(true)
     } catch (error) {
-      if (!shouldRetainPoolImportForRetry(error)) {
+      const retainedForRetry = cardImportRetryRef.current !== null && shouldRetainPoolImportForRetry(error)
+      if (!retainedForRetry) {
         cardImportRetryRef.current = null
         setCardImportRetryAvailable(false)
       }
-      message.error(error instanceof Error ? error.message : '信用卡池引用清单重试失败')
+      message.error(retainedForRetry && hasRemoteStatus(error)
+        ? cardImportUnknownMessage
+        : error instanceof Error ? error.message : '信用卡池引用清单重试失败')
     } finally {
       cardImportPendingRef.current = false
       setSaving(false)

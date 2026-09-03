@@ -6404,6 +6404,11 @@ def admin_create_pool_import_context(
         },
     )
     db.commit()
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     db.refresh(context)
     return PoolImportContextResponse(
         context_token=context_token,
@@ -6490,6 +6495,11 @@ def admin_renew_pool_import_context(
         },
     )
     db.commit()
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     db.refresh(context)
     return PoolImportContextResponse(
         context_token=secure_import_context,

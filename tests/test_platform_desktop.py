@@ -1,5 +1,6 @@
 import inspect
 import queue
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -111,6 +112,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._sensitive_focus.set()
         instance._upload_generation = 1
         instance._update_generation = 1
+        instance._update_download_thread = None
         instance._update_cleanup_in_progress = False
         instance._update_cleanup_completed = False
         instance._update_cleanup_action = None
@@ -4591,6 +4593,50 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             "更新下载或完整性校验失败，未修改当前程序。",
         )
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
+    def test_logout_waits_for_update_download_and_discards_stale_package(self) -> None:
+        download_started = threading.Event()
+        release_download = threading.Event()
+        order = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory).resolve()
+            package = cache / "package-9.9.9-test.exe"
+
+            class UpdateClientStub:
+                @staticmethod
+                def download(_manifest):
+                    download_started.set()
+                    release_download.wait(timeout=2)
+                    package.write_bytes(b"verified package")
+                    order.append("download-complete")
+                    return package
+
+            instance = self._event_app()
+            instance._update_client = UpdateClientStub()
+            instance._client = mock.Mock(is_authenticated=True)
+            instance._client.prepare_logout_cleanup.return_value = (
+                lambda: order.append("logout-cleanup")
+            )
+            instance._begin_update_cleanup = mock.Mock()
+            manifest = mock.Mock(version="9.9.9")
+
+            with mock.patch("update_client.update_cache_dir", return_value=cache):
+                instance._download_update(manifest)
+                download_thread = instance._update_download_thread
+                self.assertTrue(download_started.wait(timeout=1))
+                instance.logout()
+                self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+                self.assertEqual(order, [])
+
+                release_download.set()
+                download_thread.join(timeout=1)
+                instance._shutdown_cleanup_thread.join(timeout=1)
+                instance._drain_events()
+
+            self.assertEqual(order, ["download-complete", "logout-cleanup"])
+            self.assertFalse(package.exists())
+            instance._begin_update_cleanup.assert_not_called()
 
     def test_update_waits_for_referenced_non_daemon_cleanup_before_helper(self) -> None:
         instance = self._event_app()

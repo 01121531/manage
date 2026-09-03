@@ -163,6 +163,24 @@ def update_cache_dir() -> Path:
     return root / "MailCodeHelper" / "updates"
 
 
+def discard_downloaded_update(package: Path) -> bool:
+    """Delete only a completed package owned by the update cache."""
+
+    cache = update_cache_dir().resolve()
+    candidate = package.resolve()
+    if (
+        candidate.parent != cache
+        or candidate.suffix.lower() != ".exe"
+        or not candidate.name.startswith("package-")
+    ):
+        return False
+    try:
+        candidate.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
 def _startup_ready_path(token: str) -> Path | None:
     if not _READY_TOKEN_PATTERN.fullmatch(token):
         return None
@@ -580,6 +598,7 @@ __all__ = [
     "cleanup_update_cache",
     "confirm_update_startup",
     "consume_update_notice",
+    "discard_downloaded_update",
     "file_sha256",
     "is_newer_version",
     "launch_update_helper",
