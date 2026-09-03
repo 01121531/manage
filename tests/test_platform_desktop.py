@@ -708,6 +708,26 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.destroy_calls, 1)
         self.assertTrue(instance._closed)
 
+    def test_code_widget_error_does_not_skip_owned_clipboard_cleanup(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance._clipboard_owner = (secret, None)
+        instance.root.clipboard = secret
+        instance.code_label.configure = mock.Mock(
+            side_effect=RuntimeError("code widget unavailable")
+        )
+        instance.copy_button.configure = mock.Mock(
+            side_effect=RuntimeError("copy widget unavailable")
+        )
+
+        instance._clear_sensitive_code()
+
+        self.assertIsNone(instance._current_code)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

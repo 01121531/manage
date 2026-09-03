@@ -2074,8 +2074,14 @@ class PlatformDesktopApp:
         self._paste_sequence.stop_if_pending(code)
         self._code_clear_generation += 1
         if not self._closed:
-            self.code_label.configure(text="------", foreground=TEXT)
-            self.copy_button.configure(state="disabled")
+            try:
+                self.code_label.configure(text="------", foreground=TEXT)
+            except Exception:
+                pass
+            try:
+                self.copy_button.configure(state="disabled")
+            except Exception:
+                pass
         self._clear_owned_clipboard(code)
 
     def _schedule_code_cleanup(self) -> None:
