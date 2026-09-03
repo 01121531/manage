@@ -256,11 +256,17 @@ class PlatformLoginController:
 
         if not self.client.is_authenticated:
             return error
-        cleanup = self.client.prepare_logout_cleanup(None)
+        try:
+            cleanup = self.client.prepare_logout_cleanup(None)
+        except Exception:
+            return _PartialLoginCleanupError(error)
+        self._cancel_cleanup_action = cleanup
         try:
             cleanup()
-        except PlatformClientError:
+        except Exception:
             return _PartialLoginCleanupError(error)
+        if self._cancel_cleanup_action is cleanup:
+            self._cancel_cleanup_action = None
         return error
 
     def _schedule_current(

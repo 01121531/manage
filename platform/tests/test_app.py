@@ -2296,6 +2296,79 @@ class PlatformAppTests(unittest.TestCase):
         self.assertNotIn(task.id, response.text)
         self.assertEqual(len(task_events), 1)
 
+    def test_task_create_rechecks_access_token_expiry_after_commit(self) -> None:
+        observed_at = utc_now()
+        principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-a",
+            device_id=self.identity.device_id,
+            email="first@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=observed_at,
+            acr=None,
+            amr=(),
+            access_token_hash="f" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=1),
+            access_token_revoked=False,
+        )
+        original_commit = Session.commit
+        task_created = False
+
+        def commit_then_advance_time(session: Session) -> None:
+            nonlocal task_created
+            creating = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.created"
+                for item in session.new
+            )
+            original_commit(session)
+            task_created = task_created or creating
+
+        def current_time() -> datetime:
+            if task_created:
+                return observed_at + timedelta(minutes=2)
+            return observed_at
+
+        self.app.dependency_overrides[get_current_principal] = lambda: principal
+        try:
+            with mock.patch.object(
+                Session,
+                "commit",
+                new=commit_then_advance_time,
+            ), mock.patch(
+                "platform.api.v1.routes._utc_now",
+                side_effect=current_time,
+            ):
+                response = self.request(
+                    "POST",
+                    "/api/v1/tasks",
+                    json={
+                        "type": "mail_code",
+                        "idempotency_key": "task-create-token-expiry-boundary",
+                    },
+                )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        with self.app.state.session_factory() as db:
+            task = db.scalar(
+                select(Task).where(
+                    Task.idempotency_key == "task-create-token-expiry-boundary"
+                )
+            )
+            self.assertIsNotNone(task)
+            task_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.created",
+                        AuditEvent.entity_id == task.id,
+                    )
+                )
+            )
+        self.assertNotIn(task.id, response.text)
+        self.assertEqual(len(task_events), 1)
+
     def test_task_device_is_derived_from_bearer_token(self) -> None:
         token = self.login()
         response = self.request(

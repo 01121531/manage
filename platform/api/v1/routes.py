@@ -680,6 +680,7 @@ def _lock_task_creation_principal(
         or principal.oidc_session_revoked
         or access_token_revoked
         or oidc_session_revoked
+        or _is_expired(principal.access_token_expires_at, now)
     ):
         raise unauthorized()
     if user.role != ROLE_OPERATOR:

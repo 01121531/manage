@@ -170,7 +170,11 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         async () => {
           if (finalUserIds.length === 1) {
             const updated = await disableUser(finalUserIds[0])
-            if (updated.id !== finalUserIds[0] || updated.is_active) {
+            if (
+              updated.id !== finalUserIds[0]
+              || updated.tenant_id !== principal.tenant_id
+              || updated.is_active
+            ) {
               throw new Error('user disable response binding mismatch')
             }
             return
@@ -181,7 +185,11 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           if (
             updated.length !== expectedIds.size
             || returnedIds.size !== expectedIds.size
-            || updated.some((user) => !expectedIds.has(user.id) || user.is_active)
+            || updated.some((user) => (
+              !expectedIds.has(user.id)
+              || user.tenant_id !== principal.tenant_id
+              || user.is_active
+            ))
           ) throw new Error('batch user disable response binding mismatch')
         },
         finalUserIds.length === 1 ? '用户已停用。' : `已停用 ${finalUserIds.length} 个用户。`,

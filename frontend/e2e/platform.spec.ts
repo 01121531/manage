@@ -4641,7 +4641,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       singleDisableIds.push('operator-1')
       await singleDisableGate
       users = users.map((user) => user.id === 'operator-1' ? { ...user, is_active: false } : user)
-      return fulfill({ ...users[1], id: 'wrong-user-binding' })
+      return fulfill({ ...users[1], tenant_id: 'wrong-user-tenant' })
     }
     if (path === '/api/v1/admin/users/batch-disable' && request.method() === 'POST') {
       const body = request.postDataJSON() as { user_ids: string[] }
@@ -4835,7 +4835,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await expect(userActionError).toContainText('相关会话与活动资源也可能已回收')
   await expect(userActionError).toContainText('仅当目标动作仍可用时')
   await expect(page.getByText('用户已停用。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-user-binding')
+  await expect(page.locator('body')).not.toContainText('wrong-user-tenant')
   await expect(firstRow.getByText('disabled')).toBeVisible()
   await expect(firstDisableButton).toBeDisabled()
   await expect(secondRoleSelect).toBeDisabled()
