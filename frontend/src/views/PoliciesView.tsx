@@ -126,7 +126,14 @@ function OperationalPolicyPanel({ domain, principal }: {
     content: '仅新建任务参与确定性灰度；已创建的邮箱会话或卡分配继续使用已固化快照。',
     okText: percent === 100 ? '全量发布' : `灰度 ${percent}%`,
     cancelText: '取消',
-    onOk: () => perform(`deploy-${percent}:${row.id}`, () => deploy(row.id, percent), `${title}已发布到 ${percent}%。`),
+    onOk: () => perform(`deploy-${percent}:${row.id}`, async () => {
+      const deployed = await deploy(row.id, percent)
+      if (
+        deployed.domain !== domain
+        || deployed.active_version !== row.version
+        || deployed.rollout_percent !== percent
+      ) throw new Error('operational policy deployment response binding mismatch')
+    }, `${title}已发布到 ${percent}%。`),
   })
 
   if (loading) return <Card className="section-card" title={title}><Spin /></Card>

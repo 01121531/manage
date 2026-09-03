@@ -1814,6 +1814,9 @@ class PlatformDesktopApp:
                     ),
                 )
             )
+            self._events.put(
+                (generation, "session_restore_finished", (action, thread))
+            )
 
     def _start_session_restore_compensation_attempt(
         self, barrier: _SessionRestoreCompensation

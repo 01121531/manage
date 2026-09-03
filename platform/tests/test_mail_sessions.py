@@ -2945,6 +2945,56 @@ class MailSessionTests(unittest.TestCase):
                 1,
             )
 
+    def test_expired_task_rechecks_operator_after_lifecycle_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-task-expiry-principal-boundary")
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            self.assertIsNotNone(task)
+            task.expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            expiring_task = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.expired"
+                for item in session_db.new
+            )
+            original_commit(session_db)
+            if not expiring_task or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/mail-sessions",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("Task is closed or expired", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Task, task_id)
+            expiry_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.expired",
+                        AuditEvent.entity_id == task_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "expired")
+        self.assertEqual(len(expiry_events), 1)
+
     def test_session_token_is_required_rotated_and_never_exposed_in_audit(self) -> None:
         access_token = self.login()
         task_id = self.create_task(access_token, "mail-token-binding")

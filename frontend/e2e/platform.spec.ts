@@ -4071,6 +4071,10 @@ test('platform admin governs upload policies without browser execution details',
     approved_at: null, created_at: '2026-08-20T00:00:30Z',
     session_ttl_seconds: 600, code_ttl_seconds: 60, poll_interval_seconds: 5,
   }]
+  let mailPolicyStatus = {
+    domain: 'mail', governance_configured: false, active_version: null as string | null,
+    previous_version: null as string | null, rollout_percent: null as number | null,
+  }
   const approveRequests: string[] = []
   const deployRequests: Array<{ policyId: string; rollout: number }> = []
   let rollbackRequests = 0
@@ -4142,13 +4146,7 @@ test('platform admin governs upload policies without browser execution details',
       return fulfill(cardPolicyStatus)
     }
     if (path === '/api/v1/admin/policies/mail' && request.method() === 'GET') {
-      return fulfill({
-        domain: 'mail',
-        governance_configured: false,
-        active_version: null,
-        previous_version: null,
-        rollout_percent: null,
-      })
+      return fulfill(mailPolicyStatus)
     }
     if (path === '/api/v1/admin/policies/card/versions' && request.method() === 'GET') {
       cardPolicyVersionListRequests += 1
@@ -4163,6 +4161,19 @@ test('platform admin governs upload policies without browser execution details',
         ? { ...item, status: 'approved', approved_by: 'user-admin', approved_at: '2026-08-20T00:03:00Z' }
         : item)
       return fulfill({ ...mailPolicyVersions[0], id: 'wrong-mail-approval-binding' })
+    }
+    if (path === '/api/v1/admin/policies/mail/versions/mail-policy-review-1/deploy' && request.method() === 'POST') {
+      expect(request.postDataJSON()).toEqual({ rollout_percent: 100 })
+      mailPolicyStatus = {
+        ...mailPolicyStatus, active_version: 'mail-2026.08.2', previous_version: null, rollout_percent: 100,
+      }
+      mailPolicyVersions = mailPolicyVersions.map((item) => item.id === 'mail-policy-review-1'
+        ? { ...item, status: 'active' }
+        : item)
+      return fulfill({
+        domain: 'mail', active_version: 'wrong-mail-deployment-version', previous_version: null,
+        rollout_percent: 100, updated_at: '2026-08-20T00:04:00Z',
+      })
     }
     if (path === '/api/v1/admin/policies/mail/versions' && request.method() === 'POST') {
       const body = request.postDataJSON() as {
@@ -4291,6 +4302,15 @@ test('platform admin governs upload policies without browser execution details',
   await expect(page.getByText('邮箱策略已通过独立审批。', { exact: true })).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('wrong-mail-approval-binding')
   await expect(approveMailDraft).toHaveCount(0)
+  const fullDeployMail = mailReviewRow.getByRole('button', { name: /全\s*量发\s*布/ })
+  await expect(fullDeployMail).toHaveCount(1)
+  await fullDeployMail.dispatchEvent('click')
+  const mailDeployDialog = page.getByRole('dialog', { name: '确认将 mail-2026.08.2 发布到 100%？' })
+  await mailDeployDialog.getByRole('button', { name: '全量发布', exact: true }).click()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '生产策略未确认变更' }).last()).toBeVisible()
+  await expect(page.getByText('邮箱策略已发布到 100%。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-mail-deployment-version')
+  await expect(mailPolicySummary.getByText('当前生效', { exact: true }).locator('..')).toContainText('mail-2026.08.2')
   await mailPolicySummary.getByPlaceholder('mail-2026.08.1').fill('mail-2026.09.1')
   await mailPolicySummary.getByPlaceholder('变更说明').fill('九月邮箱策略')
   await mailPolicySummary.getByRole('button', { name: '登记草稿' }).click()
