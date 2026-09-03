@@ -677,6 +677,71 @@ class ResourceCreationRaceTests(unittest.TestCase):
                 1,
             )
 
+    def test_initial_card_allocation_returns_status_after_concurrent_task_close(
+        self,
+    ) -> None:
+        task_id = self.create_task("card-create-close")
+        entered = Event()
+        release = Event()
+        allocation_recorded = Event()
+        original_commit = Session.commit
+        original_record_card_event = routes.record_card_event
+        blocked = False
+
+        def mark_allocation_event(*args, **kwargs):
+            result = original_record_card_event(*args, **kwargs)
+            if kwargs.get("action") == "allocation.allocated":
+                allocation_recorded.set()
+            return result
+
+        def block_after_allocation_commit(session: Session) -> None:
+            nonlocal blocked
+            should_block = not blocked and allocation_recorded.is_set()
+            original_commit(session)
+            if should_block:
+                blocked = True
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("card allocation release timed out")
+
+        with patch.object(Session, "commit", new=block_after_allocation_commit), patch(
+            "platform.api.v1.routes.record_card_event",
+            side_effect=mark_allocation_event,
+        ):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/card-allocations",
+                    headers=self.headers,
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                with self.app.state.session_factory() as db:
+                    allocation_id = db.scalar(
+                        select(CardAllocation.id).where(
+                            CardAllocation.task_id == task_id
+                        )
+                    )
+                self.assertIsNotNone(allocation_id)
+                closed = self.close_task(task_id)
+                self.assertEqual(closed.status_code, 200, closed.text)
+                release.set()
+                created = future.result(timeout=10)
+
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.json()["status"], "released")
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocation_id)
+            self.assertEqual(allocation.status, "released")
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(CardAllocation).where(
+                        CardAllocation.task_id == task_id
+                    )
+                ),
+                1,
+            )
+
     def test_close_during_mail_watermark_cannot_create_session_afterward(self) -> None:
         task_id = self.create_task("mail-close-wins")
 

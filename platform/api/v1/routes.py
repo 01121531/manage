@@ -3164,6 +3164,18 @@ def allocate_card(
         ),
     )
     db.commit()
+    db.scalar(
+        select(Task)
+        .where(
+            Task.id == task.id,
+            Task.tenant_id == principal.tenant_id,
+            Task.user_id == principal.user_id,
+            Task.device_id == principal.device_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    db.refresh(allocation, with_for_update=True)
     return _card_allocation_response(allocation, card)
 
 
