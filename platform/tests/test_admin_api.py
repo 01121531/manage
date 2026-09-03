@@ -2403,6 +2403,52 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(exported_audits, [])
 
+    def test_audit_export_rechecks_actor_after_export_audit_commit(self) -> None:
+        original_commit = Session.commit
+        role_changed = False
+
+        def commit_then_change_role(session: Session) -> None:
+            nonlocal role_changed
+            committing_export = any(
+                isinstance(item, AuditEvent) and item.event_type == "audit.exported"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_export or role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(admin)
+                admin.role = "operator"
+                original_commit(other)
+
+        token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        with mock.patch.object(Session, "commit", new=commit_then_change_role):
+            response = self.request(
+                "GET",
+                "/api/v1/admin/audit/export",
+                headers=self.headers(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("admin@example.test", response.text)
+        with self.app.state.session_factory() as db:
+            exported_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.user_id == self.admin.user_id,
+                        AuditEvent.event_type == "audit.exported",
+                    )
+                )
+            )
+        self.assertEqual(len(exported_audits), 1)
+
     def test_audit_list_rechecks_actor_after_authentication(self) -> None:
         observed_at = datetime.now(timezone.utc)
         stale_principal = AuthPrincipal(

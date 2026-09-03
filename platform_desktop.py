@@ -1038,6 +1038,36 @@ class PlatformDesktopApp:
             )
             self._update_session_countdown(self._session_generation)
             return
+        if self._terminal_task_cleanup_action is not None:
+            self.new_task_button.configure(
+                text=(
+                    "任务收尾中…"
+                    if self._terminal_task_cleanup_in_progress
+                    else "重试资源关闭"
+                ),
+                command=self._retry_terminal_task_cleanup,
+                state=(
+                    "disabled" if self._terminal_task_cleanup_in_progress else "normal"
+                ),
+            )
+            self.close_active_task_button.configure(state="disabled")
+            self.copy_button.configure(state="disabled")
+            self.copy_card_button.configure(state="disabled")
+            self.business_entry.configure(state="disabled")
+            self.upload_button.configure(state="disabled")
+            self.check_update_button.configure(
+                state="normal" if self._update_client is not None else "disabled"
+            )
+            self._update_session_countdown(self._session_generation)
+            if not self._terminal_task_cleanup_in_progress:
+                self._set_workflow_stage("stopped")
+                self._set_status(
+                    "原因：平台暂未确认任务资源关闭；"
+                    "影响：任务、卡和邮箱资源不会标记为已安全释放；"
+                    "下一步：检查网络后点击“重试资源关闭”。",
+                    ERROR,
+                )
+            return
         if self._active_task_discovery_action is not None:
             self.new_task_button.configure(state="disabled")
         elif self._active_task_discovery_required:

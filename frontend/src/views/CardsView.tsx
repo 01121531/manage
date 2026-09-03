@@ -552,6 +552,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   }
 
   const columns: TableColumnsType<CardSummary> = [
+    { title: '卡资源 ID', dataIndex: 'id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '提供方引用', dataIndex: 'provider_ref' },
     { title: '卡池', dataIndex: 'pool_key' },
     { title: '地区', dataIndex: 'region' },
@@ -687,7 +688,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         />
         <Text type="secondary" role="status" aria-live="polite">第 {cardCursorHistory.length + 1} 页，显示 {rows.length} / 匹配 {cardTotalCount} 张卡</Text>
       </Space>
-      <Table pagination={false} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的卡资源" /> }} scroll={{ x: 1100 }} />
+      <Table pagination={false} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的卡资源" /> }} scroll={{ x: 1280 }} />
       <Space>
         <Button disabled={loading || cardCursorHistory.length === 0} onClick={showPreviousCardPage}>上一页</Button>
         <Button disabled={loading || !cardHasMore || !cardNextCursor} onClick={showNextCardPage}>下一页</Button>

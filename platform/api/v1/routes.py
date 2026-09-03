@@ -5976,6 +5976,11 @@ def admin_export_audit(
         },
     )
     db.commit()
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_SECURITY_AUDITOR, ROLE_PLATFORM_ADMIN),
+    )
     output = io.StringIO(newline="")
     writer = csv.writer(output, lineterminator="\r\n")
     columns = (

@@ -820,6 +820,10 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await page.getByText('卡池管理', { exact: true }).click()
 
   const row = page.getByRole('row').filter({ hasText: 'provider-quarantine' })
+  await expect(row.getByText('card-quarantine', { exact: true })).toBeVisible()
+  await expect(row.locator('.ant-typography-copy')).toHaveCount(1)
+  await row.locator('.ant-typography-copy').focus()
+  await expect(row.locator('.ant-typography-copy')).toBeFocused()
   await expect(row.getByText('已分配')).toBeVisible()
   await expect(row.locator('.anticon-loading')).toHaveCount(0)
   await row.getByRole('button', { name: /隔\s*离/ }).click()
