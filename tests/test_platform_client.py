@@ -665,6 +665,144 @@ class PlatformClientTests(unittest.TestCase):
         self.assertEqual(form["redirect_uri"], [receiver.redirect_uri])
         self.assertNotIn("password", form)
 
+    def test_cancelled_authorization_code_revokes_late_refresh_token(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        token_endpoint = f"{issuer}/token"
+        revocation_endpoint = f"{issuer}/revoke"
+        config = {
+            "mode": "oidc",
+            "issuer": issuer,
+            "client_id": "email-platform-web",
+            "desktop_client_id": "email-platform-desktop",
+            "audience": "email-platform-api",
+        }
+        discovery = {
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": token_endpoint,
+            "revocation_endpoint": revocation_endpoint,
+        }
+
+        class CancellingOpener(SequenceOpener):
+            client = None
+            cancelled = False
+
+            def __call__(self, request, *, timeout):
+                response = super().__call__(request, timeout=timeout)
+                if request.full_url == token_endpoint and not self.cancelled:
+                    self.cancelled = True
+                    self.client.cancel_authentication()
+                return response
+
+        opener = CancellingOpener([
+            FakeResponse(config),
+            FakeResponse(discovery),
+            FakeResponse({
+                "access_token": "late-access",
+                "refresh_token": "late-refresh-secret",
+                "token_type": "Bearer",
+                "expires_in": 300,
+            }),
+            FakeResponse(config),
+            FakeResponse(discovery),
+            EmptyResponse(),
+        ])
+        store = MemorySessionStore()
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        opener.client = client
+
+        class Receiver:
+            redirect_uri = "http://127.0.0.1:54321/callback"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            @staticmethod
+            def wait_for_code(**_):
+                return "one-time-code"
+
+        with self.assertRaises(PlatformDeviceAuthorizationError) as raised:
+            client.login_with_authorization_code(
+                lambda _: None, loopback_factory=Receiver
+            )
+
+        self.assertEqual(raised.exception.code, "cancelled")
+        self.assertFalse(client.is_authenticated)
+        self.assertIsNone(store.load())
+        revoke_form = urllib.parse.parse_qs(opener.requests[-1][0].data.decode("ascii"))
+        self.assertEqual(revoke_form["token"], ["late-refresh-secret"])
+
+    def test_cancelled_device_flow_revokes_late_refresh_token(self):
+        issuer = "https://identity.example.test/realms/email-platform"
+        token_endpoint = f"{issuer}/token"
+        revocation_endpoint = f"{issuer}/revoke"
+        config = {
+            "mode": "oidc",
+            "issuer": issuer,
+            "client_id": "email-platform-web",
+            "desktop_client_id": "email-platform-desktop",
+            "audience": "email-platform-api",
+        }
+        discovery = {
+            "device_authorization_endpoint": f"{issuer}/device-auth",
+            "token_endpoint": token_endpoint,
+            "revocation_endpoint": revocation_endpoint,
+        }
+
+        class CancellingOpener(SequenceOpener):
+            client = None
+            cancelled = False
+
+            def __call__(self, request, *, timeout):
+                response = super().__call__(request, timeout=timeout)
+                if request.full_url == token_endpoint and not self.cancelled:
+                    self.cancelled = True
+                    self.client.cancel_authentication()
+                return response
+
+        opener = CancellingOpener([
+            FakeResponse(config),
+            FakeResponse(discovery),
+            FakeResponse({
+                "device_code": "opaque-device-code",
+                "user_code": "ABCD-EFGH",
+                "verification_uri": f"{issuer}/device",
+                "expires_in": 600,
+                "interval": 1,
+            }),
+            FakeResponse({
+                "access_token": "late-access",
+                "refresh_token": "late-device-refresh-secret",
+                "token_type": "Bearer",
+                "expires_in": 300,
+            }),
+            FakeResponse(config),
+            FakeResponse(discovery),
+            EmptyResponse(),
+        ])
+        store = MemorySessionStore()
+        client = PlatformClient(
+            "https://platform.example", opener=opener, session_store=store
+        )
+        opener.client = client
+
+        with self.assertRaises(PlatformDeviceAuthorizationError) as raised:
+            client.login_with_device_authorization(
+                lambda _: None,
+                sleep=lambda _: None,
+                monotonic=lambda: 0,
+            )
+
+        self.assertEqual(raised.exception.code, "cancelled")
+        self.assertFalse(client.is_authenticated)
+        self.assertIsNone(store.load())
+        revoke_form = urllib.parse.parse_qs(opener.requests[-1][0].data.decode("ascii"))
+        self.assertEqual(revoke_form["token"], ["late-device-refresh-secret"])
+
     def test_card_reveal_step_up_isolated_from_primary_session(self):
         issuer = "https://identity.example.test/realms/email-platform"
         store = MemorySessionStore()

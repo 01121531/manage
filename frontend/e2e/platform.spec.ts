@@ -2414,6 +2414,11 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
   const timelineRequests: Record<string, number> = {}
   let taskListRequests = 0
   let retryAttempts = 0
+  let blockRetryTaskList = false
+  let releaseRetryTaskList = () => undefined
+  const retryTaskListGate = new Promise<void>((resolve) => {
+    releaseRetryTaskList = resolve
+  })
   let releaseSuccessClose = () => undefined
   const successCloseGate = new Promise<void>((resolve) => {
     releaseSuccessClose = resolve
@@ -2455,6 +2460,7 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
     }
     if (path === '/api/v1/tasks' && request.method() === 'GET') {
       taskListRequests += 1
+      if (blockRetryTaskList) await retryTaskListGate
       return fulfill(Object.values(tasks))
     }
     const timelineMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)\/timeline$/)
@@ -2499,8 +2505,10 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
       if (taskId === 'task-retry') {
         retryAttempts += 1
         if (retryAttempts === 1) {
+          tasks[taskId].status = 'closed'
+          tasks[taskId].closed_at = '2026-08-20T00:10:00Z'
           return fulfill({
-            error: { code: 'service_unavailable', message: 'temporary task service failure' },
+            error: { code: 'service_unavailable', message: 'toxic task close response' },
           }, 503)
         }
       }
@@ -2582,25 +2590,26 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
   await expect(taskDetail.getByText('cancelled')).toBeVisible()
 
   const listsBeforeRetryFailure = taskListRequests
+  blockRetryTaskList = true
   await retryCloseButton.click()
   closeDialog = page.getByRole('dialog', { name: '确认关闭任务 task-retry？', exact: true })
   await expect(closeDialog).toContainText('任务 ID：task-retry')
   await closeDialog.getByRole('button', { name: '关闭任务并回收资源' }).click()
-  const failureNotice = page.getByText(/原因：平台依赖暂不可用，请稍后重试。.*影响：.*下一步：/)
-  await expect(failureNotice).toContainText('任务关闭可能已在服务端提交')
+  const failureNotice = page.getByText(/原因：平台未能确认任务关闭结果。.*影响：.*下一步：/)
+  await expect(failureNotice).toContainText('关闭与卡、邮箱、上传资源回收可能已完成')
   await expect(failureNotice).toContainText('页面不会按失败响应推断最终状态')
-  await expect(failureNotice).toContainText('已刷新任务 task-retry 的真实状态')
-  await expect(failureNotice).toContainText('仅当该任务仍为非终态时')
+  await expect(failureNotice).toContainText('正在重新获取任务 task-retry 的真实状态')
+  await expect(failureNotice).toContainText('完成前不要重复关闭')
+  await expect(page.getByText('toxic task close response')).toHaveCount(0)
   await expect(closeDialog).toBeHidden()
-  await expect.poll(() => taskListRequests).toBeGreaterThan(listsBeforeRetryFailure)
-  await expect(retryCloseButton).toBeEnabled()
+  await expect(retryCloseButton).toBeDisabled()
+  await retryCloseButton.dispatchEvent('click')
   expect(closeTaskIds.filter((id) => id === 'task-retry')).toHaveLength(1)
-
-  await retryCloseButton.click()
-  closeDialog = page.getByRole('dialog', { name: '确认关闭任务 task-retry？', exact: true })
-  await closeDialog.getByRole('button', { name: '关闭任务并回收资源' }).click()
+  releaseRetryTaskList()
+  await expect.poll(() => taskListRequests).toBeGreaterThan(listsBeforeRetryFailure)
   await expect(retryRow.getByText('closed')).toBeVisible()
-  expect(closeTaskIds.filter((id) => id === 'task-retry')).toHaveLength(2)
+  await expect(retryCloseButton).toBeDisabled()
+  expect(closeTaskIds.filter((id) => id === 'task-retry')).toHaveLength(1)
 })
 
 test('task filters fail closed without reviving stale rows or actions', async ({ page }) => {

@@ -5582,7 +5582,12 @@ def admin_disable_user(
         release_reason="admin_user_disabled",
     )
     db.commit()
-    db.refresh(user)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
+    db.refresh(user, with_for_update=True)
     return AdminUserResponse.model_validate(user, from_attributes=True)
 
 

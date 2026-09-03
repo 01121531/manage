@@ -291,6 +291,9 @@ export default function TasksPage({ principal }: { principal: Principal }) {
   const [draftFilters, setDraftFilters] = useState<TaskListFilters>({})
   const [taskFilters, setTaskFilters] = useState<TaskListFilters>({})
   const taskCloseActionRef = useRef<{ taskId: string; pending: boolean } | null>(null)
+  const taskCloseRefreshRef = useRef<{ taskId: string; pending: boolean } | null>(null)
+  const taskCloseRefreshGenerationRef = useRef<number | null>(null)
+  const taskListGenerationRef = useRef(0)
   const timelineRequestGenerationRef = useRef(0)
   const taskListRequestsInFlightRef = useRef(0)
   const timelineRequestsInFlightRef = useRef(0)
@@ -318,6 +321,8 @@ export default function TasksPage({ principal }: { principal: Principal }) {
 
   useEffect(() => {
     let alive = true
+    const generation = taskListGenerationRef.current + 1
+    taskListGenerationRef.current = generation
     const showInitialLoading = !taskListLoadedRef.current
     taskListRequestsInFlightRef.current += 1
     if (showInitialLoading) {
@@ -346,7 +351,19 @@ export default function TasksPage({ principal }: { principal: Principal }) {
       .finally(() => {
         taskListRequestsInFlightRef.current = Math.max(0, taskListRequestsInFlightRef.current - 1)
         taskListLoadedRef.current = true
-        if (alive && showInitialLoading) setLoading(false)
+        if (alive) {
+          if (showInitialLoading) setLoading(false)
+          const action = taskCloseRefreshRef.current
+          if (
+            action !== null
+            && taskCloseRefreshGenerationRef.current === generation
+          ) {
+            taskCloseRefreshRef.current = null
+            taskCloseRefreshGenerationRef.current = null
+            if (taskCloseActionRef.current === action) taskCloseActionRef.current = null
+            setClosingTaskId((current) => current === action.taskId ? null : current)
+          }
+        }
       })
     return () => {
       alive = false
@@ -439,18 +456,19 @@ export default function TasksPage({ principal }: { principal: Principal }) {
         try {
           await closeTask(action.taskId)
           message.success('任务已关闭，相关卡租约、邮箱会话和上传资源已回收。')
-          setRefresh((value) => value + 1)
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : '任务关闭失败'
+        } catch {
           message.error(
-            `原因：${detail} `
-            + '影响：任务关闭可能已在服务端提交并完成关联资源回收，页面不会按失败响应推断最终状态。 '
-            + `下一步：已刷新任务 ${action.taskId} 的真实状态；仅当该任务仍为非终态时，才可从同一对象入口重试。`,
+            '原因：平台未能确认任务关闭结果。'
+            + '影响：关闭与卡、邮箱、上传资源回收可能已完成，页面不会按失败响应推断最终状态。'
+            + `下一步：正在重新获取任务 ${action.taskId} 的真实状态；完成前不要重复关闭，仅当刷新后仍为非终态才重试。`,
           )
-          setRefresh((value) => value + 1)
         } finally {
-          if (taskCloseActionRef.current === action) taskCloseActionRef.current = null
-          setClosingTaskId((current) => current === action.taskId ? null : current)
+          if (taskCloseActionRef.current === action) {
+            taskCloseRefreshRef.current = action
+            taskListGenerationRef.current += 1
+            taskCloseRefreshGenerationRef.current = taskListGenerationRef.current + 1
+            setRefresh((value) => value + 1)
+          }
         }
       },
     })

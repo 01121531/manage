@@ -788,15 +788,21 @@ class PlatformClient:
                 "统一身份授权码兑换失败", code=_safe_oauth_error(token_payload)
             )
         if is_cancelled():
+            self._revoke_cancelled_oidc_refresh_token(token_payload)
             raise PlatformDeviceAuthorizationError(
                 "统一身份登录已取消", code="cancelled"
             )
-        return self._activate_oidc_tokens(
-            token_payload,
-            require_refresh=True,
-            require_token_type=True,
-            expected_generation=generation,
-        )
+        try:
+            return self._activate_oidc_tokens(
+                token_payload,
+                require_refresh=True,
+                require_token_type=True,
+                expected_generation=generation,
+            )
+        except PlatformDeviceAuthorizationError as error:
+            if error.code == "cancelled":
+                self._revoke_cancelled_oidc_refresh_token(token_payload)
+            raise
 
     def reauthenticate_for_card_reveal(
         self,
@@ -1188,15 +1194,21 @@ class PlatformClient:
             if 200 <= status < 300:
                 if is_cancelled():
                     self._clear_access_for_attempt(generation)
+                    self._revoke_cancelled_oidc_refresh_token(token_payload)
                     raise PlatformDeviceAuthorizationError(
                         "统一身份登录已取消", code="cancelled"
                     )
-                return self._activate_oidc_tokens(
-                    token_payload,
-                    require_refresh=True,
-                    require_token_type=True,
-                    expected_generation=generation,
-                )
+                try:
+                    return self._activate_oidc_tokens(
+                        token_payload,
+                        require_refresh=True,
+                        require_token_type=True,
+                        expected_generation=generation,
+                    )
+                except PlatformDeviceAuthorizationError as error:
+                    if error.code == "cancelled":
+                        self._revoke_cancelled_oidc_refresh_token(token_payload)
+                    raise
             error_code = _safe_oauth_error(token_payload)
             if error_code == "authorization_pending":
                 continue
@@ -1387,7 +1399,6 @@ class PlatformClient:
         session_error: PlatformSessionError | None = None
         refresh_token: str | None = None
         with self._state_lock:
-            detached_generation = self._auth_generation
             self._auth_generation += 1
             access_token = self._access_token
             self._access_token = None
@@ -1406,9 +1417,12 @@ class PlatformClient:
             first_error: PlatformClientError | None = None
             with self._refresh_lock:
                 with self._state_lock:
-                    late_tokens = self._pending_refresh_revocations.pop(
-                        detached_generation, []
-                    )
+                    late_tokens = [
+                        token
+                        for tokens in self._pending_refresh_revocations.values()
+                        for token in tokens
+                    ]
+                    self._pending_refresh_revocations.clear()
                 for late_token in late_tokens:
                     if late_token not in remaining_refresh_tokens:
                         remaining_refresh_tokens.append(late_token)
@@ -1436,6 +1450,23 @@ class PlatformClient:
                 raise first_error
 
         return cleanup
+
+    def _revoke_cancelled_oidc_refresh_token(
+        self, token_payload: dict[str, Any]
+    ) -> None:
+        refresh_token = token_payload.get("refresh_token")
+        if not isinstance(refresh_token, str) or not refresh_token.strip():
+            return
+        normalized = refresh_token.strip()
+        try:
+            self._revoke_oidc_refresh_token(normalized)
+        except PlatformClientError:
+            with self._state_lock:
+                pending = self._pending_refresh_revocations.setdefault(
+                    self._auth_generation, []
+                )
+                if normalized not in pending:
+                    pending.append(normalized)
 
     def _revoke_oidc_refresh_token(self, refresh_token: str) -> None:
         """Best-effort remote revocation for a refresh token captured at logout."""
