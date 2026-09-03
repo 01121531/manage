@@ -1833,6 +1833,7 @@ def create_mail_session(
         except IntegrityError:
             db.rollback()
             raise _mail_session_token_conflict() from None
+        db.refresh(existing, with_for_update=True)
         response.status_code = 200
         return MailSessionCreateResponse(
             id=existing.id,

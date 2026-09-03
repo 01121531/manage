@@ -483,6 +483,68 @@ class ResourceCreationRaceTests(unittest.TestCase):
         self.assertEqual(job.status, "cancelled")
         self.assertEqual(outbox.status, "processed")
 
+    def test_mail_session_replay_returns_status_after_concurrent_task_close(
+        self,
+    ) -> None:
+        self.connector.release.set()
+        task_id = self.create_task("mail-replay-close")
+        created = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/mail-sessions",
+            headers=self.headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        session_id = created.json()["id"]
+        entered = Event()
+        release = Event()
+        rotation_ready = Event()
+        original_commit = Session.commit
+        original_new_token = routes._new_unique_mail_session_token
+        blocked = False
+
+        def mark_rotation(db: Session) -> tuple[str, str]:
+            token = original_new_token(db)
+            rotation_ready.set()
+            return token
+
+        def block_after_rotation_commit(session: Session) -> None:
+            nonlocal blocked
+            should_block = (
+                not blocked
+                and rotation_ready.is_set()
+            )
+            original_commit(session)
+            if should_block:
+                blocked = True
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("mail replay release timed out")
+
+        with patch.object(Session, "commit", new=block_after_rotation_commit), patch(
+            "platform.api.v1.routes._new_unique_mail_session_token",
+            side_effect=mark_rotation,
+        ):
+            with ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="mail-replay"
+            ) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/mail-sessions",
+                    headers=self.headers,
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                closed = self.close_task(task_id)
+                self.assertEqual(closed.status_code, 200, closed.text)
+                release.set()
+                replay = future.result(timeout=10)
+
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["status"], "revoked")
+        with self.app.state.session_factory() as db:
+            mail_session = db.get(MailSession, session_id)
+        self.assertEqual(mail_session.status, "revoked")
+
     def test_close_during_mail_watermark_cannot_create_session_afterward(self) -> None:
         task_id = self.create_task("mail-close-wins")
 
