@@ -187,10 +187,11 @@ export function PlaceholderPage({ title, description, notice }: { title: string;
   return <><PageHeading title={title} description={description} /><Card><Empty description={notice} /></Card></>
 }
 
-export function RemoteTable<T extends object>({ loader, columns, empty }: {
+export function RemoteTable<T extends object>({ loader, columns, empty, onSettled }: {
   loader: () => Promise<T[]>
   columns: TableColumnsType<T>
   empty: string
+  onSettled?: () => void
 }) {
   const [rows, setRows] = useState<T[]>([])
   const [loading, setLoading] = useState(true)
@@ -202,7 +203,12 @@ export function RemoteTable<T extends object>({ loader, columns, empty }: {
     setError(undefined)
     loader().then((items) => { if (alive) setRows(items) }).catch((reason) => {
       if (alive) setError(reason instanceof Error ? reason.message : '读取失败')
-    }).finally(() => { if (alive) setLoading(false) })
+    }).finally(() => {
+      if (alive) {
+        setLoading(false)
+        onSettled?.()
+      }
+    })
     return () => { alive = false }
   }, [loader, retryGeneration])
   if (loading) return <div className="centered"><Spin /></div>

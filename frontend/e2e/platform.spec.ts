@@ -4202,6 +4202,11 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   let releaseSingleDisable = () => undefined
   const singleDisableGate = new Promise<void>((resolve) => { releaseSingleDisable = resolve })
   let retryDeviceFailures = 1
+  let blockRetryDeviceList = false
+  let releaseRetryDeviceList = () => undefined
+  const retryDeviceListGate = new Promise<void>((resolve) => {
+    releaseRetryDeviceList = resolve
+  })
   let releaseDeviceRevoke = () => undefined
   const deviceRevokeGate = new Promise<void>((resolve) => { releaseDeviceRevoke = resolve })
 
@@ -4240,6 +4245,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     }
     if (path === '/api/v1/admin/devices' && request.method() === 'GET') {
       deviceListRequests += 1
+      if (blockRetryDeviceList) await retryDeviceListGate
       return fulfill(devices)
     }
     const deviceRevokeMatch = path.match(/^\/api\/v1\/admin\/devices\/([^/]+)\/revoke$/)
@@ -4249,6 +4255,9 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       if (deviceId === 'device-success') await deviceRevokeGate
       if (deviceId === 'device-retry' && retryDeviceFailures > 0) {
         retryDeviceFailures -= 1
+        devices = devices.map((device) => device.id === deviceId
+          ? { ...device, revoked_at: '2026-08-20T00:05:00Z' }
+          : device)
         return fulfill({ error: { code: 'temporarily_unavailable', message: 'must-never-render-device-revoke-provider-detail' } }, 503)
       }
       devices = devices.map((device) => device.id === deviceId
@@ -4524,23 +4533,24 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await expect(successDeviceRow.getByRole('button', { name: '撤销设备' })).toBeDisabled()
   await expect.poll(() => deviceListRequests).toBeGreaterThanOrEqual(2)
 
+  blockRetryDeviceList = true
   await retryDeviceRow.getByRole('button', { name: '撤销设备' }).click()
   revokeDialog = page.getByRole('dialog', { name: '确认撤销设备？' })
   await revokeDialog.getByRole('button', { name: '撤销设备并回收资源' }).click()
   const revokeError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认设备撤销结果' })
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(revokeError).toContainText(marker)
   await expect(revokeError).toContainText('设备可能已被撤销')
-  await expect(revokeError).toContainText('仅当目标仍为活动时')
+  await expect(revokeError).toContainText('正在重新获取设备真实状态')
+  await expect(revokeError).toContainText('完成前不得重复设备或用户治理')
+  await expect(page.getByText('已刷新设备真实状态')).toHaveCount(0)
   await expect(page.getByText('must-never-render-device-revoke-provider-detail')).toHaveCount(0)
   await expect(revokeDialog).toBeHidden()
-  await expect(retryDeviceRow.getByRole('button', { name: '撤销设备' })).toBeEnabled()
+  await expect(retryDeviceRow).toHaveCount(0)
   expect(revokedDeviceIds.filter((id) => id === 'device-retry')).toHaveLength(1)
-
-  await retryDeviceRow.getByRole('button', { name: '撤销设备' }).click()
-  revokeDialog = page.getByRole('dialog', { name: '确认撤销设备？' })
-  await revokeDialog.getByRole('button', { name: '撤销设备并回收资源' }).click()
+  releaseRetryDeviceList()
   await expect(retryDeviceRow.getByText('revoked')).toBeVisible()
-  expect(revokedDeviceIds.filter((id) => id === 'device-retry')).toHaveLength(2)
+  await expect(retryDeviceRow.getByRole('button', { name: '撤销设备' })).toBeDisabled()
+  expect(revokedDeviceIds.filter((id) => id === 'device-retry')).toHaveLength(1)
 })
 
 test('user true-state refresh fails closed without stale privileged actions', async ({ page }) => {

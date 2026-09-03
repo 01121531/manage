@@ -81,6 +81,7 @@ class _FakeController:
 
     def cancel(self):
         self.cancel_calls += 1
+        return True
 
 
 class _FakeClient:
@@ -680,7 +681,7 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertNotIn("bearer-value", message)
         self.assertNotIn("refresh-value", message)
 
-    def test_stale_identity_failure_does_not_cleanup_replacement_session(self):
+    def test_cancel_during_oidc_identity_lookup_cleans_original_session_once(self):
         client = _IdentityFailureClient()
         errors = []
         controller = PlatformLoginController(
@@ -694,20 +695,37 @@ class PlatformLoginDialogTests(unittest.TestCase):
             client.is_authenticated = True
 
         client.me_hook = replace_cancelled_session
-        controller.submit(
-            "tenant",
-            "user@example.test",
-            "platform-secret",
-            "device-1",
+        controller.submit_authorization_code(
+            on_authorization_url=lambda _url: None,
             on_success=self.fail,
             on_error=errors.append,
         )
 
         self.assertTrue(client.is_authenticated)
-        self.assertEqual(client.cleanup_preparations, 0)
-        self.assertEqual(client.cleanup_calls, 0)
+        self.assertEqual(client.cleanup_preparations, 1)
+        self.assertEqual(client.cleanup_calls, 1)
         self.assertEqual(errors, [])
         self.assertFalse(controller.busy)
+
+    def test_cancel_cleanup_failure_blocks_login_and_retries_same_closure(self):
+        client = _IdentityFailureClient(cleanup_fails=True)
+        client.is_authenticated = True
+        controller = PlatformLoginController(
+            client,
+            schedule=lambda callback: callback(),
+            thread_factory=_ImmediateThread,
+        )
+
+        self.assertFalse(controller.cancel())
+        self.assertFalse(controller.submit_authorization_code(
+            on_authorization_url=lambda _url: None,
+            on_success=self.fail,
+            on_error=self.fail,
+        ))
+        client.cleanup_fails = False
+        self.assertTrue(controller.cancel())
+        self.assertEqual(client.cleanup_preparations, 1)
+        self.assertEqual(client.cleanup_calls, 2)
 
     def test_login_error_is_recovery_guidance_without_exception_text(self):
         error = RuntimeError("server reflected platform-secret and bearer token")

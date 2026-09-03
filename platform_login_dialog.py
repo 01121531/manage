@@ -247,6 +247,7 @@ class PlatformLoginController:
         self.busy = False
         self._generation = 0
         self._device_cancel = threading.Event()
+        self._cancel_cleanup_action: Callable[[], None] | None = None
 
     def _compensate_partial_login(self, error: BaseException) -> BaseException:
         """Detach a token issued before identity lookup failed, then clean it once."""
@@ -315,7 +316,7 @@ class PlatformLoginController:
     ) -> bool:
         """Validate and start one background login; return whether it started."""
 
-        if self.busy:
+        if self.busy or self._cancel_cleanup_action is not None:
             return False
         try:
             credentials = make_login_credentials(
@@ -370,7 +371,7 @@ class PlatformLoginController:
         on_error: ErrorCallback,
         on_complete: Callable[[], None] | None = None,
     ) -> bool:
-        if self.busy:
+        if self.busy or self._cancel_cleanup_action is not None:
             return False
         self.busy = True
         self._generation += 1
@@ -437,7 +438,7 @@ class PlatformLoginController:
     ) -> bool:
         """Start the preferred browser Authorization Code + PKCE flow."""
 
-        if self.busy:
+        if self.busy or self._cancel_cleanup_action is not None:
             return False
         self.busy = True
         self._generation += 1
@@ -489,14 +490,28 @@ class PlatformLoginController:
             cancel_event=cancel_event,
         )
 
-    def cancel(self) -> None:
+    def cancel(self) -> bool:
         self._generation += 1
         self._device_cancel.set()
         self.busy = False
+        cleanup = self._cancel_cleanup_action
+        if cleanup is None:
+            prepare_cleanup = getattr(self.client, "prepare_logout_cleanup", None)
+            if prepare_cleanup is None:
+                self.client.cancel_authentication()
+                return True
+            try:
+                cleanup = prepare_cleanup(None)
+            except PlatformClientError:
+                return False
+            self._cancel_cleanup_action = cleanup
         try:
-            self.client.cancel_authentication()
+            cleanup()
         except PlatformClientError:
-            pass
+            return False
+        if self._cancel_cleanup_action is cleanup:
+            self._cancel_cleanup_action = None
+        return True
 
 
 class PlatformLoginDialog:
@@ -1127,8 +1142,14 @@ class PlatformLoginDialog:
         if self._closed:
             return
         self._clear_device_challenge()
+        if not self._controller.cancel():
+            self._set_busy(False)
+            self._set_status(
+                "登录会话清理尚未确认；窗口保持打开，请恢复网络后再次关闭。",
+                ERROR,
+            )
+            return
         self._closed = True
-        self._controller.cancel()
         self.password_var.set("")
         try:
             self.window.grab_release()

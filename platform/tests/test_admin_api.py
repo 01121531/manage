@@ -600,6 +600,57 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(operator.is_active)
         self.assertEqual(disable_events, [])
 
+    def test_batch_disable_rechecks_admin_after_cleanup_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        original_revoke = routes._revoke_principal_resources
+        original_commit = Session.commit
+        cleanup_finished = False
+        role_changed = False
+
+        def revoke_then_mark(*args, **kwargs):
+            nonlocal cleanup_finished
+            result = original_revoke(*args, **kwargs)
+            cleanup_finished = True
+            return result
+
+        def commit_then_change_role(session: Session) -> None:
+            nonlocal role_changed
+            original_commit(session)
+            if not cleanup_finished or role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(admin)
+                admin.role = "operator"
+                original_commit(other)
+
+        with (
+            mock.patch.object(routes, "_revoke_principal_resources", new=revoke_then_mark),
+            mock.patch.object(Session, "commit", new=commit_then_change_role),
+        ):
+            response = self.request(
+                "POST",
+                "/api/v1/admin/users/batch-disable",
+                headers=self.headers(admin_token),
+                json={"user_ids": [self.operator.user_id]},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("operator@example.test", response.text)
+        with self.app.state.session_factory() as db:
+            operator = db.get(User, self.operator.user_id)
+            disable_event_count = db.scalar(
+                select(func.count()).select_from(AuditEvent).where(
+                    AuditEvent.entity_id == self.operator.user_id,
+                    AuditEvent.event_type == "admin.user_disabled",
+                )
+            )
+        self.assertFalse(operator.is_active)
+        self.assertEqual(disable_event_count, 1)
+
     def test_user_disable_wins_after_authentication_before_task_insert(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

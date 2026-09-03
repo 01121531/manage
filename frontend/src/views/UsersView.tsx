@@ -25,6 +25,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   const [deviceRefresh, setDeviceRefresh] = useState(0)
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null)
   const deviceActionRef = useRef<{ deviceId: string; pending: boolean } | null>(null)
+  const deviceActionRefreshRef = useRef<{ deviceId: string; pending: boolean } | null>(null)
   const [userActionKey, setUserActionKey] = useState<string | null>(null)
   const userActionRef = useRef<{ key: string; pending: boolean } | null>(null)
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
@@ -67,7 +68,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   }
 
   function reserveUserAction(key: string) {
-    if (userActionRef.current !== null) return null
+    if (userActionRef.current !== null || deviceActionRef.current !== null) return null
     const action = { key, pending: false }
     userActionRef.current = action
     setUserActionKey(key)
@@ -224,7 +225,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   }
 
   function confirmRevokeDevice(row: AdminDevice) {
-    if (deviceActionRef.current !== null) return
+    if (deviceActionRef.current !== null || userActionRef.current !== null) return
     deviceActionRef.current = { deviceId: row.id, pending: false }
     confirm({
       title: '确认撤销设备？',
@@ -247,17 +248,17 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         try {
           await revokeDevice(row.id)
           message.success('设备已撤销，相关会话与活动资源已回收。')
-          setDeviceRefresh((value) => value + 1)
         } catch {
           message.error(
             '原因：平台未能确认设备撤销结果。'
             + '影响：设备可能已被撤销，关联会话和活动资源也可能已回收；页面不会按失败响应推断最终状态。'
-            + '下一步：已刷新设备真实状态；仅当目标仍为活动时，才从同一设备行重试。',
+            + '下一步：正在重新获取设备真实状态；完成前不得重复设备或用户治理，仅当刷新后目标仍活动才重试。',
           )
-          setDeviceRefresh((value) => value + 1)
         } finally {
-          deviceActionRef.current = null
-          setRevokingDeviceId(null)
+          if (deviceActionRef.current === action) {
+            deviceActionRefreshRef.current = action
+            setDeviceRefresh((value) => value + 1)
+          }
         }
       },
     })
@@ -275,7 +276,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           value={role as ManagedUserRole}
           className="role-select"
           loading={userActionKey === `role-request:${row.id}`}
-          disabled={userActionKey !== null || roleRequests.some((request) => request.target_user_id === row.id)}
+          disabled={userActionKey !== null || revokingDeviceId !== null || roleRequests.some((request) => request.target_user_id === row.id)}
           options={managedUserRoles.map((value) => ({ value, label: roleNames[value] }))}
           onChange={(value: ManagedUserRole) => confirmRoleChange(row, value)}
         />
@@ -291,7 +292,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
     { title: '操作', render: (_, row) => <Button
       danger
       loading={userActionKey === `disable:${row.id}`}
-      disabled={!canDisable(row) || userActionKey !== null}
+      disabled={!canDisable(row) || userActionKey !== null || revokingDeviceId !== null}
       aria-label={`停用用户 ${row.email}`}
       onClick={() => confirmDisable([row.id])}
     >停用</Button> },
@@ -322,13 +323,13 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           <Button
             aria-label={`为角色申请 ${row.id} 重新完成 MFA`}
             loading={userActionKey === `mfa-role:${row.id}`}
-            disabled={userActionKey !== null || !oidcManager || !roleChangeAcr}
+            disabled={userActionKey !== null || revokingDeviceId !== null || !oidcManager || !roleChangeAcr}
             onClick={() => beginFreshMfa(row)}
           >重新 MFA 登录</Button>
           <Button
             aria-label={`审批角色申请 ${row.id}（要求申请后 fresh MFA）`}
             loading={userActionKey === `approve-role:${row.id}`}
-            disabled={userActionKey !== null}
+            disabled={userActionKey !== null || revokingDeviceId !== null}
             onClick={() => confirmRoleRequestApproval(row)}
           >审批（要求 fresh MFA）</Button>
         </Space>,
@@ -349,7 +350,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
     { title: '操作', render: (_, row) => <Button
       danger
       loading={revokingDeviceId === row.id}
-      disabled={row.revoked_at !== null || revokingDeviceId !== null}
+      disabled={row.revoked_at !== null || revokingDeviceId !== null || userActionKey !== null}
       onClick={() => confirmRevokeDevice(row)}
     >撤销设备</Button> },
   ]
@@ -357,7 +358,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   return <><div className="page-heading"><div><Title level={2}>用户与权限</Title><Text type="secondary">按角色授予最小权限；角色变更需要四眼审批和申请后的 fresh MFA，停用会回收活动资源。</Text></div><Button
     danger
     loading={selectedUserIds.length > 0 && userActionKey === selectedDisableKey}
-    disabled={selectedUserIds.length === 0 || userActionKey !== null}
+    disabled={selectedUserIds.length === 0 || userActionKey !== null || revokingDeviceId !== null}
     onClick={() => confirmDisable(selectedUserIds)}
   >批量停用{selectedUserIds.length > 0 ? ` (${selectedUserIds.length})` : ''}</Button></div>
     {userListError ? <Alert
@@ -378,7 +379,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           onChange: (keys) => setSelectedUserIds(keys.map(String)),
           getCheckboxProps: (row) => ({
             'aria-label': `选择用户 ${row.email}`,
-            disabled: !canDisable(row) || userActionKey !== null,
+            disabled: !canDisable(row) || userActionKey !== null || revokingDeviceId !== null,
           }),
         }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
@@ -401,6 +402,18 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         scroll={{ x: 1100 }}
       />
     </Card> : null}
-    <Card className="section-card" title="设备"><RemoteTable key={deviceRefresh} loader={listDevices} columns={deviceColumns} empty="暂无设备" /></Card>
+    <Card className="section-card" title="设备"><RemoteTable
+      key={deviceRefresh}
+      loader={listDevices}
+      columns={deviceColumns}
+      empty="暂无设备"
+      onSettled={() => {
+        const action = deviceActionRefreshRef.current
+        if (action === null) return
+        deviceActionRefreshRef.current = null
+        if (deviceActionRef.current === action) deviceActionRef.current = null
+        setRevokingDeviceId((current) => current === action.deviceId ? null : current)
+      }}
+    /></Card>
   </>
 }

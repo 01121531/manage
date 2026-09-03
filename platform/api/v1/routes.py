@@ -4911,8 +4911,30 @@ def admin_batch_disable_users(
             release_reason="admin_user_batch_disabled",
         )
         db.commit()
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
+    refreshed_users = list(
+        db.scalars(
+            select(User)
+            .where(
+                User.tenant_id == principal.tenant_id,
+                User.id.in_(payload.user_ids),
+            )
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+    refreshed_by_id = {user.id: user for user in refreshed_users}
+    if len(refreshed_by_id) != len(payload.user_ids):
+        raise HTTPException(status_code=404, detail="User not found")
     return [
-        AdminUserResponse.model_validate(by_id[user_id], from_attributes=True)
+        AdminUserResponse.model_validate(
+            refreshed_by_id[user_id], from_attributes=True
+        )
         for user_id in payload.user_ids
     ]
 
