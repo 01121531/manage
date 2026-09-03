@@ -869,8 +869,13 @@ class PlatformLoginDialog:
     def _schedule(self, callback: Callable[[], None]) -> None:
         if self._closed:
             return
+
+        def deliver() -> None:
+            if not self._closed:
+                callback()
+
         try:
-            self.window.after(0, callback)
+            self.window.after(0, deliver)
         except tk.TclError:
             # The user may close the window while the worker is completing.
             return

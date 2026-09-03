@@ -272,6 +272,18 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertEqual(dialog._controller.cancel_calls, 0)
         dialog._on_close.assert_called_once_with()
 
+    def test_queued_worker_callback_is_dropped_after_dialog_closes(self):
+        dialog = self.headless_dialog()
+        callback = mock.Mock()
+
+        dialog._schedule(callback)
+        self.assertEqual(len(dialog.window.after_calls), 1)
+        _, deliver, args = dialog.window.after_calls.pop()
+        dialog.close(cancel_authentication=False)
+        deliver(*args)
+
+        callback.assert_not_called()
+
     def test_device_challenge_keeps_base_uri_and_code_visible_and_copyable(self):
         dialog = self.headless_dialog()
         challenge = self.device_challenge()

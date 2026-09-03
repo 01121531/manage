@@ -745,6 +745,9 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   let blockNextCardList = false
   let releaseCardList = () => undefined
   const cardListGate = new Promise<void>((resolve) => { releaseCardList = resolve })
+  let blockQuarantineCardList = false
+  let releaseQuarantineCardList = () => undefined
+  const quarantineCardListGate = new Promise<void>((resolve) => { releaseQuarantineCardList = resolve })
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -777,6 +780,10 @@ test('platform admin quarantines and explicitly releases a card before enabling 
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'GET') {
       cardListRequests += 1
+      if (blockQuarantineCardList) {
+        blockQuarantineCardList = false
+        await quarantineCardListGate
+      }
       if (blockNextCardList) {
         blockNextCardList = false
         await cardListGate
@@ -796,6 +803,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
         quarantined_at: '2026-08-24T00:01:00Z',
         is_active: false,
       }
+      blockQuarantineCardList = true
       return fulfill({
         error: { code: 'service_unavailable', message: 'must-never-render-quarantine-provider-detail' },
       }, 503)
@@ -862,6 +870,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await dialog.getByRole('combobox').click()
   await page.getByText('疑似信息泄露', { exact: true }).click()
   const confirm = dialog.getByRole('button', { name: /隔离并回收/ })
+  const cardListsBeforeQuarantine = cardListRequests
   await confirm.click()
   try {
     await expect.poll(() => quarantineBodies).toHaveLength(1)
@@ -874,6 +883,14 @@ test('platform admin quarantines and explicitly releases a card before enabling 
 
   await expect(dialog).toBeHidden()
   const quarantineError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认卡资源隔离结果' })
+  try {
+    await expect.poll(() => cardListRequests).toBeGreaterThan(cardListsBeforeQuarantine)
+    await expect(page.locator('.ant-spin')).toBeVisible()
+    await expect(page.getByRole('button', { name: '导入信用卡池安全包 JSON' })).toBeDisabled()
+    await expect(quarantineError).toContainText('正在重新获取卡资源真实状态')
+  } finally {
+    releaseQuarantineCardList()
+  }
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(quarantineError).toContainText(marker)
   await expect(page.getByText('must-never-render-quarantine-provider-detail')).toHaveCount(0)
   await expect(row.getByText('已隔离')).toBeVisible()

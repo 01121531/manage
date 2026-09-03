@@ -8822,7 +8822,12 @@ def _deploy_operational_policy(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Policy deployment changed concurrently") from None
-    db.refresh(deployment)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(deployment, with_for_update=True)
     return _operational_policy_deployment_response(db, deployment)
 
 

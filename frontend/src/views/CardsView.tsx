@@ -385,12 +385,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.error(
         '原因：平台未能确认卡资源隔离结果。'
         + '影响：隔离与关联资源回收可能已经生效，页面不会按失败响应推断最终状态。'
-        + '下一步：已关闭本次确认并刷新卡资源真实状态；仅当该卡仍未隔离时，才从同一行重新发起。',
+        + '下一步：已关闭本次确认并正在重新获取卡资源真实状态；完成前不得执行其他卡治理，仅当刷新后该卡仍未隔离时才重新发起。',
       )
     } finally {
       setQuarantineSaving(false)
-      refreshCardsFromServer()
-      releaseCardAction(action)
+      if (cardActionRef.current === action) {
+        cardActionRefreshRef.current = action
+        refreshCardsFromServer()
+      }
     }
   }
 
