@@ -5791,6 +5791,11 @@ def admin_export_audit(
 ) -> Response:
     """Export bounded, redacted evidence; free-form details are intentionally omitted."""
 
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_SECURITY_AUDITOR, ROLE_PLATFORM_ADMIN),
+    )
     normalized_action = action.strip() if action is not None else None
     query = _audit_query(
         tenant_id=principal.tenant_id,
