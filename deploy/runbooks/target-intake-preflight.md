@@ -388,6 +388,26 @@ successful summary remains `production_acceptance=false`; review it and use it
 to author the separate protected provider contract rather than committing the
 raw HAR or treating the summary as provider authority.
 
+After an independent reviewer has populated a protected Sub2 schema-v3
+candidate, bind its `source_provenance.source_sha256` to the SHA-256 of the
+redacted summary file itself. Then explicitly select the observed HAR entry for
+each required stage and run:
+
+```powershell
+python scripts/align_sub2_har_contract.py --summary D:\email-platform-evidence\sub2-har-shapes.json --contract D:\email-platform-evidence\intake\sub2-contract-redacted.json --balance-check-index 1 --authorization-exchange-index 2 --create-index 3 --status-query-index 4
+```
+
+This command never guesses which endpoint implements a stage. It requires the
+four mappings supplied by the reviewer, validates the candidate with the
+schema-v3 contract checker, and then proves that each declared method and
+request/response field is present in the selected redacted observation. It
+also binds create idempotency/task correlation, the create success reference,
+and status-query lookup/result fields to observed locations. Exit code `1`
+means an external input could not be safely loaded, `2` prints fixed gap codes,
+and `0` proves only shape alignment; every outcome remains
+`production_acceptance=false` and does not prove provider semantics or runtime
+Adapter support.
+
 The committed `deploy/provider-contracts/*.synthetic.json` files document the
 closed Mail and Sub2 field-shape envelopes. Copy only the relevant shape to the
 protected external intake directory, replace its capability mappings with the
