@@ -185,7 +185,10 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
     setReconcilePending(true)
     setSaving(true)
     try {
-      await reconcileUploadJob(target.id, values)
+      const updated = await reconcileUploadJob(target.id, values)
+      if (updated.id !== target.id || updated.status !== values.status) {
+        throw new Error('upload reconciliation response binding mismatch')
+      }
       if (!isCurrent()) return
       message.success('复核终态已提交，正在刷新上传与任务资源状态。')
       form.resetFields()

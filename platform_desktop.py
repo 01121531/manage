@@ -1251,6 +1251,25 @@ class PlatformDesktopApp:
             or self._active_task_recovery_action is not None
         ):
             return
+        self._active_task_discovery_threads = [
+            thread
+            for thread in self._active_task_discovery_threads
+            if thread.is_alive()
+        ]
+        if self._active_task_discovery_threads:
+            session_generation = self._session_generation
+            task_generation = self._task_generation
+            self.new_task_button.configure(state="disabled")
+
+            def retry_if_current() -> None:
+                if (
+                    session_generation == self._session_generation
+                    and task_generation == self._task_generation
+                ):
+                    self._discover_active_task()
+
+            self.root.after(250, retry_if_current)
+            return
         action = _ActiveTaskDiscoveryAction(
             self._session_generation, self._task_generation
         )
@@ -1290,11 +1309,6 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=False, name="platform-active-task-discovery"
         )
-        self._active_task_discovery_threads = [
-            discovery_thread
-            for discovery_thread in self._active_task_discovery_threads
-            if discovery_thread.is_alive()
-        ]
         self._active_task_discovery_threads.append(thread)
         self._active_task_discovery_thread = thread
         try:

@@ -3419,6 +3419,56 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
+    def test_discovery_retries_after_old_lock_generation_finishes(self) -> None:
+        first_started = threading.Event()
+        release_first = threading.Event()
+        second_finished = threading.Event()
+        calls = []
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def list_tasks(*, limit):
+                self.assertEqual(limit, 1)
+                calls.append("discover")
+                if len(calls) == 1:
+                    first_started.set()
+                    release_first.wait(timeout=2)
+                else:
+                    second_finished.set()
+                return []
+
+        instance = self._event_app()
+        instance._task_id = None
+        instance._client = Client()
+        instance._discover_active_task()
+        old_thread = instance._active_task_discovery_thread
+        self.assertTrue(first_started.wait(timeout=1))
+
+        try:
+            instance.lock()
+            instance._locked = False
+            instance._discover_active_task()
+
+            self.assertEqual(calls, ["discover"])
+            retry = next(
+                callback
+                for delay, callback, _ in instance.root.scheduled
+                if delay == 250
+            )
+        finally:
+            release_first.set()
+            old_thread.join(timeout=1)
+
+        retry()
+        self.assertTrue(second_finished.wait(timeout=1))
+        instance._active_task_discovery_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(calls, ["discover", "discover"])
+        self.assertFalse(instance._active_task_discovery_required)
+
     def test_locked_logout_waits_for_active_task_discovery_before_cleanup(self) -> None:
         discovery_started = threading.Event()
         release_discovery = threading.Event()

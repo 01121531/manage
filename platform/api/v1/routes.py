@@ -2423,6 +2423,12 @@ def get_mail_code(
             details={"status": "consumed", "source": "worker"},
         )
         db.commit()
+        _lock_owned_open_task(
+            db,
+            session.task_id,
+            request=request,
+            principal=principal,
+        )
         return MailCodeResponse(
             status="consumed",
             code=delivered_code,
@@ -2592,6 +2598,12 @@ def get_mail_code(
         details={"status": "consumed"},
     )
     db.commit()
+    _lock_owned_open_task(
+        db,
+        session.task_id,
+        request=request,
+        principal=principal,
+    )
     return MailCodeResponse(
         status="consumed",
         code=message.code,
