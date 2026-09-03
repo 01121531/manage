@@ -152,7 +152,16 @@ function OperationalPolicyPanel({ domain, principal }: {
         {row.status === 'draft' ? <Button
           disabled={pending !== null || row.created_by === principal.id}
           loading={pending === `approve:${row.id}`}
-          onClick={() => perform(`approve:${row.id}`, () => approve(row.id), `${title}已通过独立审批。`)}
+          onClick={() => perform(`approve:${row.id}`, async () => {
+            const approved = await approve(row.id)
+            if (
+              approved.id !== row.id
+              || approved.version !== row.version
+              || approved.status !== 'approved'
+              || approved.approved_by !== principal.id
+              || approved.approved_at === null
+            ) throw new Error('operational policy approval response binding mismatch')
+          }, `${title}已通过独立审批。`)}
         >审批</Button> : null}
         {row.status === 'approved' ? <>
           {status.governance_configured ? <Button disabled={pending !== null} onClick={() => confirmDeploy(row, 10)}>灰度 10%</Button> : null}

@@ -4790,6 +4790,52 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             instance._retry_session_restore_compensation,
         )
 
+    def test_stale_restore_compensation_finished_exposes_same_cleanup_retry(self) -> None:
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+        calls = []
+
+        def cleanup() -> None:
+            calls.append("cleanup")
+            cleanup_started.set()
+            release_cleanup.wait(timeout=2)
+
+        instance = self._event_app()
+        barrier = _SessionRestoreCompensation(
+            generation=instance._session_generation,
+            action=object(),
+            cleanup=cleanup,
+        )
+        instance._session_restore_compensation = barrier
+
+        instance._start_session_restore_compensation_attempt(barrier)
+        cleanup_thread = barrier.thread
+        self.assertTrue(cleanup_started.wait(timeout=1))
+
+        instance._session_generation += 1
+        release_cleanup.set()
+        cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIs(instance._session_restore_compensation, barrier)
+        self.assertEqual(barrier.generation, instance._session_generation)
+        self.assertFalse(barrier.in_progress)
+        self.assertIsNone(barrier.thread)
+        self.assertEqual(instance.login_button.values["text"], "重试安全清理")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertEqual(
+            instance.login_button.values["command"],
+            instance._retry_session_restore_compensation,
+        )
+
+        instance.login_button.values["command"]()
+        retry_thread = barrier.thread
+        retry_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(calls, ["cleanup", "cleanup"])
+        self.assertIsNone(instance._session_restore_compensation)
+
     def test_restore_me_timeout_keeps_rotated_refresh_for_offline_recovery(self) -> None:
         instance = self._event_app()
 

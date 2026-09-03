@@ -1429,6 +1429,75 @@ class MailSessionTests(unittest.TestCase):
         self.assertEqual(persisted.status, "consumed")
         self.assertIsNone(persisted.delivered_code)
 
+    def test_lost_code_claim_task_retirement_rechecks_operator_after_commit(
+        self,
+    ) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        token = self.login()
+        task_id = self.create_task(token, "mail-lost-claim-task-retirement")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        delivered_code = "625193"
+        delivered_message_id_hash = hashlib.sha256(
+            MESSAGE_ID_HASH_DOMAIN + b"lost-claim-task-retirement"
+        ).hexdigest()
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNotNone(persisted)
+            persisted.status = "code_ready"
+            persisted.delivered_code = delivered_code
+            persisted.delivered_at = utc_now()
+            persisted.delivered_message_id_hash = delivered_message_id_hash
+            persisted.code_expires_at = utc_now() + timedelta(minutes=1)
+            db.commit()
+
+        original_commit = Session.commit
+        claim_lost = False
+        demoted = False
+
+        def close_task_and_lose_claim(db: Session, **_kwargs) -> bool:
+            nonlocal claim_lost
+            claim_lost = True
+            db.execute(
+                update(Task)
+                .where(Task.id == task_id)
+                .values(status="closed", closed_at=utc_now())
+                .execution_options(synchronize_session=False)
+            )
+            return False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            original_commit(session_db)
+            if not claim_lost or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(
+            routes,
+            "claim_delivered_code",
+            side_effect=close_task_and_lose_claim,
+        ), patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("revoked", response.text)
+        self.assertNotIn(delivered_code, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+        self.assertEqual(persisted.status, "revoked")
+        self.assertIsNone(persisted.delivered_code)
+
     def test_deployed_mail_policy_is_frozen_on_session_and_used_by_worker(self) -> None:
         with self.app.state.session_factory() as db:
             policy = OperationalPolicyVersion(

@@ -1840,8 +1840,22 @@ class PlatformDesktopApp:
                 kind = "session_restore_compensation_succeeded"
             self._events.put((barrier.generation, kind, barrier))
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (
+                        barrier.generation,
+                        "session_restore_compensation_finished",
+                        (barrier, thread),
+                    )
+                )
+
         thread = threading.Thread(
-            target=worker,
+            target=run_worker,
             daemon=False,
             name="platform-session-restore-compensation",
         )
@@ -2759,6 +2773,16 @@ class PlatformDesktopApp:
                         "下一步：点击“重试安全清理”重新确认。",
                         ERROR,
                     )
+                continue
+            if kind == "session_restore_compensation_finished":
+                barrier, worker_thread = value
+                if (
+                    self._session_restore_compensation is barrier
+                    and barrier.thread is worker_thread
+                    and barrier.in_progress
+                ):
+                    barrier.generation = self._session_generation
+                    self._present_session_restore_compensation_failure(barrier)
                 continue
             if kind == "active_task_discovery_finished":
                 action, worker_thread = value
