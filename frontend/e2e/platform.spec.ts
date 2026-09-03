@@ -4536,7 +4536,9 @@ test('platform admin confirms user changes and safely revokes devices', async ({
         applied_at: null,
       }
       pendingRoleRequests = [roleRequest]
-      return fulfill(roleRequest)
+      return fulfill(roleBodies.length === 2
+        ? { ...roleRequest, target_user_id: 'wrong-role-target' }
+        : roleRequest)
     }
     if (path === '/api/v1/admin/users/operator-1/disable' && request.method() === 'POST') {
       singleDisableIds.push('operator-1')
@@ -4677,6 +4679,9 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     { role: 'security_auditor' },
     { role: 'security_auditor' },
   ])
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' })).toBeVisible()
+  await expect(page.getByText('角色变更申请已创建，等待另一位平台管理员完成 fresh MFA 后审批。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-role-target')
   await expect(firstRow).toContainText('操作员')
   await expect(roleSelect).toBeDisabled()
   const pendingRoleCard = page.locator('.ant-card').filter({
@@ -4716,7 +4721,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     releaseSingleDisable()
   }
   await expect(singleDisableDialog).toBeHidden()
-  const userActionError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' })
+  const userActionError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(userActionError).toContainText(marker)
   await expect(userActionError).toContainText('相关会话与活动资源也可能已回收')
   await expect(userActionError).toContainText('仅当目标动作仍可用时')

@@ -5292,6 +5292,39 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
+    def test_stale_update_download_finished_clears_old_thread_reference(self) -> None:
+        download_started = threading.Event()
+        release_download = threading.Event()
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory).resolve()
+            package = cache / "package-9.9.9-test.exe"
+
+            class UpdateClientStub:
+                @staticmethod
+                def download(_manifest):
+                    download_started.set()
+                    release_download.wait(timeout=2)
+                    package.write_bytes(b"verified package")
+                    return package
+
+            instance = self._event_app()
+            instance._client = mock.Mock(is_authenticated=True)
+            instance._update_client = UpdateClientStub()
+            manifest = mock.Mock(version="9.9.9")
+            with mock.patch("update_client.update_cache_dir", return_value=cache):
+                instance._download_update(manifest)
+                download_thread = instance._update_download_thread
+                self.assertTrue(download_started.wait(timeout=1))
+
+                instance.lock()
+                release_download.set()
+                download_thread.join(timeout=1)
+                instance._drain_events()
+
+            self.assertIsNone(instance._update_download_thread)
+            self.assertFalse(package.exists())
+
     def test_logout_waits_for_update_download_and_discards_stale_package(self) -> None:
         download_started = threading.Event()
         release_download = threading.Event()

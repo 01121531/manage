@@ -2459,6 +2459,12 @@ def get_mail_code(
             details={"status": session.status, "source": "worker"},
         )
         db.commit()
+        _lock_owned_open_task(
+            db,
+            session.task_id,
+            request=request,
+            principal=principal,
+        )
         return MailCodeResponse(status="waiting")
 
     mailbox = _mailbox_for_session(db, session)
@@ -2570,6 +2576,12 @@ def get_mail_code(
             details={"status": "waiting"},
         )
         db.commit()
+        _lock_owned_open_task(
+            db,
+            session.task_id,
+            request=request,
+            principal=principal,
+        )
         return MailCodeResponse(status="waiting")
 
     message_hash = hashlib.sha256(
