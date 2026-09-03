@@ -5178,7 +5178,12 @@ class PlatformDesktopApp:
         if self._closed:
             return
         if self._clipboard_cleanup_failed is not None:
-            self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
+            try:
+                self._set_status(
+                    "正在重试清除客户端写入的临时剪贴板内容…", ACCENT
+                )
+            except Exception:
+                pass
             for owner in tuple(self._clipboard_cleanup_failed):
                 self._clipboard_owner = owner
                 self._clear_owned_clipboard(owner[0])

@@ -971,6 +971,53 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
         self.assertEqual(role_change.status, "expired")
         self.assertEqual(denial_count, 1)
 
+    def test_denied_approval_rechecks_tenant_after_commit(self) -> None:
+        created = self.create_role_change()
+        approval_time = self.requested_at + timedelta(days=365)
+        fresh_mfa = self.mfa_token(auth_time=approval_time - timedelta(seconds=1))
+        original_commit = Session.commit
+        request_moved = False
+
+        def commit_then_move_request(session: Session) -> None:
+            nonlocal request_moved
+            denial_recorded = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.user_role_change_approval_denied"
+                for item in session.new
+            )
+            original_commit(session)
+            if not denial_recorded or request_moved:
+                return
+            request_moved = True
+            with self.app.state.session_factory() as other:
+                role_change = other.get(
+                    AdminRoleChangeRequest,
+                    str(created["id"]),
+                )
+                self.assertIsNotNone(role_change)
+                role_change.tenant_id = "tenant-b"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_move_request):
+            response = self.approve(
+                str(created["id"]), fresh_mfa, now=approval_time
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("Role-change request has expired", response.text)
+        with self.app.state.session_factory() as db:
+            role_change = db.get(AdminRoleChangeRequest, str(created["id"]))
+            denial_count = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type
+                    == "admin.user_role_change_approval_denied",
+                    AuditEvent.entity_id == str(created["id"]),
+                )
+            )
+        self.assertEqual(role_change.status, "expired")
+        self.assertEqual(role_change.tenant_id, "tenant-b")
+        self.assertEqual(denial_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

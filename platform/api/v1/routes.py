@@ -5501,6 +5501,7 @@ def _deny_role_change_approval(
     status_code: int,
     detail: str,
 ) -> None:
+    role_change_id = role_change.id
     record_audit(
         db,
         tenant_id=principal.tenant_id,
@@ -5524,7 +5525,17 @@ def _deny_role_change_approval(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(role_change, with_for_update=True)
+    role_change = db.scalar(
+        select(AdminRoleChangeRequest)
+        .where(
+            AdminRoleChangeRequest.id == role_change_id,
+            AdminRoleChangeRequest.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if role_change is None:
+        raise HTTPException(status_code=404, detail="Role-change request not found")
     contracts = {
         403: ("forbidden", "联系管理员确认账号角色和资源权限"),
         404: ("not_found", "刷新列表并确认资源仍然存在"),

@@ -426,6 +426,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       if (
         updated.id !== row.id
         || updated.tenant_id !== row.tenant_id
+        || updated.provider_ref !== row.provider_ref
         || updated.status !== 'quarantined'
         || updated.is_active
         || updated.quarantine_reason_code !== quarantineReason
