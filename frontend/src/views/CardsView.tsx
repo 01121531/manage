@@ -3,7 +3,7 @@ import { Alert, App as AntApp, Button, Card, Descriptions, Empty, Input, Modal, 
 import type { TableColumnsType } from 'antd'
 import { getCardTimeline, importCards, listCards, quarantineCard, recycleCardAllocation, releaseCardQuarantine, updateCardState } from '../admin-api'
 import type { CardAllocationSummary, CardEventSummary, CardImportItem, CardSummary, CardTimeline, PoolImportReceipt } from '../types'
-import { readCardPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
+import { assertPoolImportReceiptBound, readCardPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { CardStatusTag, StatusTag, cardAllocationReasonNames, cardEventActionNames, cardQuarantineReasonNames, compareTableText, formatLocalDateTime, maskedStateLabel } from './shared'
 
@@ -215,9 +215,9 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const receipt = await importCards(
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
-      if (receipt.pool_type !== 'card' || receipt.imported_count !== batch.payload.length) {
-        throw new Error('平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。')
-      }
+      await assertPoolImportReceiptBound(
+        receipt, 'card', batch.payload.length, batch.idempotencyKey,
+      )
       cardImportRetryRef.current = null
       setCardImportRetryAvailable(false)
       setLastCardImportReceipt(receipt)
@@ -251,9 +251,9 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const receipt = await importCards(
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
-      if (receipt.pool_type !== 'card' || receipt.imported_count !== batch.payload.length) {
-        throw new Error('平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。')
-      }
+      await assertPoolImportReceiptBound(
+        receipt, 'card', batch.payload.length, batch.idempotencyKey,
+      )
       cardImportRetryRef.current = null
       setCardImportRetryAvailable(false)
       setLastCardImportReceipt(receipt)

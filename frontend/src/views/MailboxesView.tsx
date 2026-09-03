@@ -3,7 +3,7 @@ import { Alert, App as AntApp, Button, Card, Empty, Input, Select, Space, Spin, 
 import type { TableColumnsType } from 'antd'
 import { importMailboxes, listMailboxes, updateMailboxState } from '../admin-api'
 import type { MailboxImportItem, MailboxSummary, PoolImportReceipt } from '../types'
-import { readMailboxPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
+import { assertPoolImportReceiptBound, readMailboxPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
 import { useViewActionScope } from '../useViewActionScope'
 import { BooleanStateTag, MailboxHealthTag, StatusTag, compareTableText, formatLocalDateTime, mailboxHealthErrorNames } from './shared'
@@ -154,9 +154,9 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       if (!isCurrent()) return
-      if (receipt.pool_type !== 'mailbox' || receipt.imported_count !== batch.payload.length) {
-        throw new Error('平台返回的邮箱池导入回执绑定无效；请使用同一批次重试核对。')
-      }
+      await assertPoolImportReceiptBound(
+        receipt, 'mailbox', batch.payload.length, batch.idempotencyKey,
+      )
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
       setLastMailboxImportReceipt(receipt)
@@ -194,9 +194,9 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       if (!isCurrent()) return
-      if (receipt.pool_type !== 'mailbox' || receipt.imported_count !== batch.payload.length) {
-        throw new Error('平台返回的邮箱池导入回执绑定无效；请使用同一批次重试核对。')
-      }
+      await assertPoolImportReceiptBound(
+        receipt, 'mailbox', batch.payload.length, batch.idempotencyKey,
+      )
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
       setLastMailboxImportReceipt(receipt)

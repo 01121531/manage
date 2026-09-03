@@ -1,4 +1,4 @@
-import type { CardImportItem, MailboxImportItem } from './types'
+import type { CardImportItem, MailboxImportItem, PoolImportReceipt } from './types'
 
 const MAX_POOL_IMPORT_BYTES = 256 * 1024
 const MAX_POOL_IMPORT_ITEMS = 100
@@ -10,6 +10,8 @@ const CONNECTOR_VALUE_PATTERN = /^[a-z][a-z0-9_-]{0,79}$/
 const PROVIDER_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const CARD_BRAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/
 const MASKED_EMAIL_PATTERN = /^[a-z0-9]\*{3}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
+const SUBMISSION_KEY_PATTERN = /^spi:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/
 
 export type PoolImportBundle<T> = {
   schema_version: 3
@@ -173,6 +175,39 @@ export const readCardPoolImportJson = (file: File) => readPoolImportJson(
 export const readMailboxPoolImportJson = (file: File) => readPoolImportJson(
   file, 'mailbox', parseMailboxItem,
 )
+
+export async function assertPoolImportReceiptBound(
+  receipt: PoolImportReceipt,
+  expectedPoolType: 'card' | 'mailbox',
+  expectedCount: number,
+  submissionKey: string,
+): Promise<void> {
+  const label = expectedPoolType === 'card' ? '信用卡池' : '邮箱池'
+  const invalid = () => new Error(`平台返回的${label}导入回执绑定无效；请使用同一批次重试核对。`)
+  const submissionMatch = SUBMISSION_KEY_PATTERN.exec(submissionKey)
+  if (
+    receipt.status !== 'committed'
+    || receipt.pool_type !== expectedPoolType
+    || receipt.imported_count !== expectedCount
+    || !submissionMatch
+    || typeof receipt.secure_receipt_fingerprint !== 'string'
+    || !SHA256_HEX_PATTERN.test(receipt.secure_receipt_fingerprint)
+  ) throw invalid()
+
+  let expectedFingerprint: string
+  try {
+    const digest = await globalThis.crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(submissionMatch[1]),
+    )
+    expectedFingerprint = Array.from(new Uint8Array(digest))
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('')
+  } catch {
+    throw invalid()
+  }
+  if (receipt.secure_receipt_fingerprint !== expectedFingerprint) throw invalid()
+}
 
 export function shouldRetainPoolImportForRetry(error: unknown): boolean {
   if (!error || typeof error !== 'object') return true
