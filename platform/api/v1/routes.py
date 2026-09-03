@@ -451,7 +451,7 @@ def _retire_owned_mail_session_if_task_unavailable(
         trace_id=session.trace_id,
         details={
             "status": session.status,
-            "reason": "task_terminal_or_expired_barrier",
+            "reason": "task_or_principal_unavailable_barrier",
         },
     )
     return True

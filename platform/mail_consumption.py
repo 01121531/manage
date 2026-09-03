@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import case, exists, or_, select, update
+from sqlalchemy import and_, case, exists, or_, select, update
 from sqlalchemy.orm import Session
 
-from platform.models import MailSession, Task
+from platform.models import Device, MailSession, Task, User
 
 
 _MESSAGE_ID_HASH_DOMAIN = b"email-platform:mail-message-id:v1\0"
@@ -24,15 +24,38 @@ def _matching_task_filters() -> tuple[object, ...]:
     )
 
 
-def mail_session_open_task_exists(now: datetime) -> object:
-    """Return the atomic task barrier correlated to a MailSession mutation."""
-
-    return exists(
-        select(Task.id).where(
-            *_matching_task_filters(),
+def _open_task_query(now: datetime):
+    return (
+        select(Task)
+        .join(
+            User,
+            and_(User.id == Task.user_id, User.tenant_id == Task.tenant_id),
+        )
+        .join(
+            Device,
+            and_(
+                Device.id == Task.device_id,
+                Device.user_id == Task.user_id,
+                Device.tenant_id == Task.tenant_id,
+            ),
+        )
+        .where(
             ~Task.status.in_(_TERMINAL_TASK_STATUSES),
             or_(Task.expires_at.is_(None), Task.expires_at > now),
+            User.is_active.is_(True),
+            User.role == "operator",
+            Device.revoked_at.is_(None),
         )
+    )
+
+
+def mail_session_open_task_exists(now: datetime) -> object:
+    """Return the atomic task and principal barrier for a MailSession mutation."""
+
+    return exists(
+        _open_task_query(now)
+        .with_only_columns(Task.id)
+        .where(*_matching_task_filters())
     )
 
 
@@ -42,16 +65,14 @@ def open_task_for_mail_session(
     *,
     now: datetime,
 ) -> Task | None:
-    """Load the exact owning task only while it remains usable by the session."""
+    """Load the owning task only while its task and principal remain usable."""
 
     return db.scalar(
-        select(Task).where(
+        _open_task_query(now).where(
             Task.id == session.task_id,
             Task.tenant_id == session.tenant_id,
             Task.user_id == session.user_id,
             Task.device_id == session.device_id,
-            ~Task.status.in_(_TERMINAL_TASK_STATUSES),
-            or_(Task.expires_at.is_(None), Task.expires_at > now),
         )
     )
 
@@ -62,7 +83,7 @@ def retire_mail_session_if_task_unavailable(
     session_id: str,
     now: datetime,
 ) -> bool:
-    """Clear an active session whose owning task is terminal, due, or invalid."""
+    """Clear a session whose owning task or principal is no longer usable."""
 
     task_is_expired = exists(
         select(Task.id).where(

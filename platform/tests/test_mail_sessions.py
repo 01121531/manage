@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, object_session
 from platform import mail_worker
 from platform.app import create_app
 from platform.api.v1 import routes
+from platform.auth import AuthPrincipal, get_operator_principal
 from platform.bootstrap import create_user_with_device
 from platform.config import Settings
 from platform.database import initialize_database
@@ -40,6 +41,7 @@ from platform.models import (
     OperationalPolicyDeployment,
     OperationalPolicyVersion,
     Task,
+    User,
     utc_now,
 )
 from platform.schemas import MailCodeResponse
@@ -2544,6 +2546,86 @@ class MailSessionTests(unittest.TestCase):
         self.assertIsNone(payload["code"])
         self.assertIsNone(payload.get("received_at"))
         self.assertIsNone(payload.get("message_id_hash"))
+
+    def test_sse_captured_principal_cannot_consume_code_after_revocation_barrier(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        access_token = self.login()
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-mail",
+            device_id=self.identity.device_id,
+            email="mail-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(access_token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+
+        for index, boundary in enumerate(("user_disabled", "device_revoked"), start=1):
+            with self.subTest(boundary=boundary):
+                task_id = self.create_task(access_token, f"sse-principal-{boundary}")
+                created = self.create_session(access_token, task_id)
+                session_id = created.json()["id"]
+                code = f"63{index:04d}"
+                with self.app.state.session_factory() as db:
+                    session = db.get(MailSession, session_id)
+                    session.status = "code_ready"
+                    session.delivered_code = code
+                    session.delivered_message_id_hash = hashlib.sha256(
+                        MESSAGE_ID_HASH_DOMAIN + boundary.encode("utf-8")
+                    ).hexdigest()
+                    session.delivered_at = now
+                    session.code_expires_at = now + timedelta(minutes=1)
+                    if boundary == "user_disabled":
+                        db.get(User, self.identity.user_id).is_active = False
+                    else:
+                        db.get(Device, self.identity.device_id).revoked_at = now
+                    db.commit()
+
+                self.app.dependency_overrides[get_operator_principal] = (
+                    lambda: captured_principal
+                )
+                try:
+                    stream = self.request(
+                        "GET",
+                        f"/api/v1/mail-sessions/{session_id}/events",
+                        headers=self.mail_headers(access_token, session_id),
+                    )
+                finally:
+                    self.app.dependency_overrides.pop(get_operator_principal, None)
+                    with self.app.state.session_factory() as db:
+                        db.get(User, self.identity.user_id).is_active = True
+                        db.get(Device, self.identity.device_id).revoked_at = None
+                        task = db.get(Task, task_id)
+                        task.status = "closed"
+                        task.closed_at = utc_now()
+                        db.commit()
+
+                self.assertEqual(stream.status_code, 200, stream.text)
+                self.assertIn("event: revoked", stream.text)
+                self.assertNotIn(code, stream.text)
+                with self.app.state.session_factory() as db:
+                    session = db.get(MailSession, session_id)
+                    consumed_events = list(
+                        db.scalars(
+                            select(AuditEvent).where(
+                                AuditEvent.entity_id == session_id,
+                                AuditEvent.event_type
+                                == "mail_session.code_consumed",
+                            )
+                        )
+                    )
+                self.assertEqual(session.status, "revoked")
+                self.assertIsNone(session.delivered_code)
+                self.assertIsNone(session.delivered_message_id_hash)
+                self.assertIsNone(session.delivered_at)
+                self.assertIsNone(session.code_expires_at)
+                self.assertEqual(consumed_events, [])
 
     def test_sse_success_returns_the_complete_minimal_code_result(self) -> None:
         self.connector.messages.append(
