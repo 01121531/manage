@@ -3114,6 +3114,57 @@ class MailSessionTests(unittest.TestCase):
             )
         self.assertEqual(len(events), 1)
 
+    def test_revoke_mail_session_rechecks_operator_after_authentication(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "mail-revoke-stale-operator")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-mail",
+            device_id=self.identity.device_id,
+            email="mail-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            db.get(User, self.identity.user_id).role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_operator_principal] = (
+            lambda: captured_principal
+        )
+        try:
+            response = self.request(
+                "POST",
+                f"/api/v1/mail-sessions/{session_id}/revoke",
+                headers=self.mail_headers(token, session_id),
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_operator_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "mail_session.revoked",
+                        AuditEvent.entity_id == session_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "waiting")
+        self.assertEqual(events, [])
+
     def test_mail_openapi_schemas_do_not_expose_internal_mail_fields(self) -> None:
         schema = self.app.openapi()
         for name in ("MailSessionResponse", "MailCodeResponse"):

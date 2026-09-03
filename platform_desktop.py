@@ -2184,11 +2184,15 @@ class PlatformDesktopApp:
             if is_current():
                 self._events.put((generation, "code", snapshot))
 
+        def start_next_if_current() -> None:
+            if is_current():
+                self._start_polling()
+
         def schedule_next() -> None:
-            if not self._closed and self._poll_generation == generation and not cancel.is_set():
+            if is_current():
                 self.root.after(
                     int(self._mail_poll_interval_seconds * 1000),
-                    self._start_polling,
+                    start_next_if_current,
                 )
 
         self._schedule_next_poll = schedule_next

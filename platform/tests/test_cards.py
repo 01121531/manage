@@ -845,6 +845,88 @@ class CardAllocationTests(unittest.TestCase):
             ["allocation.released", "allocation.allocated"],
         )
 
+    def test_replacement_replay_rechecks_operator_after_rollback(self) -> None:
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-card",
+                    provider_ref="provider-card-stale-replay",
+                    brand="MASTERCARD",
+                    last4="2222",
+                    expiry_month=11,
+                    expiry_year=2031,
+                    secret_ref="vault://cards/stale-replay",
+                )
+            )
+            db.commit()
+
+        token = self.login()
+        headers = self.bearer(token)
+        task_id = self.create_task(token, "card-replacement-stale-replay")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=headers,
+        )
+        replaced = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations/{original.json()['id']}/replace",
+            headers=headers,
+        )
+        self.assertEqual(replaced.status_code, 201, replaced.text)
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+            email="card-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        original_lookup = routes._card_replacement_for
+        role_changed = False
+
+        def change_role_after_replay_found(db, allocation, principal):
+            nonlocal role_changed
+            replay = original_lookup(db, allocation, principal)
+            if replay is not None and not role_changed:
+                db.get(User, self.identity.user_id).role = "ops_admin"
+                db.commit()
+                role_changed = True
+            return replay
+
+        self.app.dependency_overrides[get_operator_principal] = (
+            lambda: captured_principal
+        )
+        try:
+            with mock.patch.object(
+                routes,
+                "_card_replacement_for",
+                side_effect=change_role_after_replay_found,
+            ):
+                replay = self.request(
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/card-allocations/{original.json()['id']}/replace",
+                    headers=headers,
+                )
+        finally:
+            self.app.dependency_overrides.pop(get_operator_principal, None)
+
+        self.assertTrue(role_changed)
+        self.assertEqual(replay.status_code, 403, replay.text)
+        for sensitive in (
+            replaced.json()["card_masked"],
+            str(replaced.json()["expiry_year"]),
+            replaced.json()["trace_id"],
+        ):
+            self.assertNotIn(sensitive, replay.text)
+
     def test_replacement_reuses_original_frozen_selection_rule(self) -> None:
         legacy_rule = {
             "task_type": "card_checkout",

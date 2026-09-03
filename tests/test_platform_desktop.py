@@ -2399,6 +2399,42 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         self.assertEqual(instance.root.scheduled[-1][0], 7_000)
 
+    def test_stale_mail_poll_timer_cannot_restart_against_new_session(self) -> None:
+        calls = []
+        instance = self._event_app()
+        instance._mail_poll_interval_seconds = 7
+        client = mock.Mock()
+
+        def get_mail_code(session_id, session_token):
+            calls.append((session_id, session_token))
+            return MailCodeSnapshot(status="waiting", code=None)
+
+        client.get_mail_code.side_effect = get_mail_code
+        instance._client = client
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance._start_polling()
+            instance._drain_events()
+            old_callback = next(
+                callback
+                for delay, callback, _ in instance.root.scheduled
+                if delay == int(instance._mail_poll_interval_seconds * 1000)
+            )
+            instance.stop_polling()
+            instance._mail_session_id = "mail-2"
+            instance._mail_session_token = "token-2"
+            instance._task_generation += 1
+            old_callback()
+
+        self.assertEqual(calls, [("mail-1", "opaque-session-token")])
+
     def test_mail_poll_thread_start_failure_schedules_safe_retry_without_request(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock()
@@ -2423,7 +2459,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         retries = [
             entry
             for entry in instance.root.scheduled
-            if entry[0] == 7_000 and entry[1] == instance._start_polling
+            if entry[0] == 7_000
         ]
         self.assertEqual(len(retries), 1)
         self.assertIn("自动重试", instance.status_label.values["text"])

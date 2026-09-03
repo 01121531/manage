@@ -2586,6 +2586,7 @@ def revoke_mail_session(
     )
     if task_barrier.rowcount != 1:
         return refresh_after_lost_claim()
+    _lock_task_creation_principal(db, principal)
     task = db.scalar(
         select(Task)
         .where(
@@ -3192,6 +3193,7 @@ def allocate_card(
         db.flush()
     except IntegrityError:
         db.rollback()
+        _lock_task_creation_principal(db, principal)
         existing = db.scalar(
             select(CardAllocation).where(
                 CardAllocation.task_id == task.id,
@@ -3362,6 +3364,7 @@ def replace_card_allocation(
         replacement, replacement_card = replay
         response.status_code = 200
         db.rollback()
+        _lock_task_creation_principal(db, principal)
         return _card_allocation_response(replacement, replacement_card)
 
     now = _utc_now()
@@ -3499,6 +3502,7 @@ def replace_card_allocation(
         db.flush()
     except IntegrityError:
         db.rollback()
+        _lock_task_creation_principal(db, principal)
         original = db.scalar(
             select(CardAllocation).where(
                 CardAllocation.id == allocation_id,
