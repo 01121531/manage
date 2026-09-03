@@ -12,7 +12,11 @@ from sqlalchemy import func, select
 
 from platform.bootstrap import create_user_with_device
 from platform.database import initialize_database
-from platform.lifecycle import sweep_expired_lifecycle, transition_task_to_terminal
+from platform.lifecycle import (
+    revoke_principal_resources,
+    sweep_expired_lifecycle,
+    transition_task_to_terminal,
+)
 from platform.mail_worker import run_mail_worker
 from platform.models import (
     AuditEvent,
@@ -520,6 +524,69 @@ class LifecycleSweepTests(unittest.TestCase):
                 )
                 for event in events:
                     self.assertIn("terminal_task_recovery", event.details_json)
+
+    def test_revoke_principal_resources_finalizes_upload_outbox_by_default(self) -> None:
+        now = utc_now()
+        with self.session_factory() as db:
+            queued = self._add_task_resources(
+                db,
+                suffix="revoke-queued",
+                task_expires_at=now + timedelta(minutes=30),
+                allocation_expires_at=now + timedelta(minutes=10),
+                mail_expires_at=now + timedelta(minutes=5),
+                mail_status="active",
+                delivered_code=None,
+                code_expires_at=None,
+                upload_status="queued",
+                outbox_status="pending",
+            )
+            running = self._add_task_resources(
+                db,
+                suffix="revoke-running",
+                task_expires_at=now + timedelta(minutes=30),
+                allocation_expires_at=now + timedelta(minutes=10),
+                mail_expires_at=now + timedelta(minutes=5),
+                mail_status="active",
+                delivered_code=None,
+                code_expires_at=None,
+                upload_status="running",
+                outbox_status="processing",
+            )
+            ids = [
+                tuple(item.id for item in resources)
+                for resources in (queued, running)
+            ]
+            db.commit()
+
+            revoke_principal_resources(
+                db,
+                tenant_id="tenant-lifecycle",
+                user_id=self.identity.user_id,
+                device_id=self.identity.device_id,
+                now=now,
+                actor_user_id=self.identity.user_id,
+                actor_device_id=self.identity.device_id,
+                release_reason="principal_revoked",
+            )
+            db.commit()
+
+        with self.session_factory() as db:
+            queued_task = db.get(Task, ids[0][0])
+            queued_upload = db.get(UploadJob, ids[0][3])
+            queued_outbox = db.get(OutboxEvent, ids[0][4])
+            running_task = db.get(Task, ids[1][0])
+            running_upload = db.get(UploadJob, ids[1][3])
+            running_outbox = db.get(OutboxEvent, ids[1][4])
+
+            self.assertEqual(queued_task.status, "cancelled")
+            self.assertEqual(queued_upload.status, "cancelled")
+            self.assertEqual(queued_outbox.status, "processed")
+            self.assertIsNotNone(queued_outbox.processed_at)
+            self.assertEqual(running_task.status, "cancelled")
+            self.assertEqual(running_upload.status, "unknown")
+            self.assertEqual(running_upload.error_code, "external_unknown")
+            self.assertEqual(running_outbox.status, "processed")
+            self.assertIsNotNone(running_outbox.processed_at)
 
     def test_sweep_repairs_terminal_task_resource_residue_once(self) -> None:
         now = utc_now()

@@ -733,7 +733,7 @@ def revoke_principal_resources(
     actor_device_id: str | None,
     release_reason: str,
     mail_status: str = "expired",
-    finalize_upload_outbox: bool = False,
+    finalize_upload_outbox: bool = True,
 ) -> None:
     """Cancel a principal's tasks and release their resources with full audit."""
 
