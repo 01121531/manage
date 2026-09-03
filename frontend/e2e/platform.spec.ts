@@ -5035,6 +5035,9 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
   const mailboxStateRequests: Array<{ authorization: string; isActive: boolean }> = []
   let releaseOldMutation = () => undefined
   const oldMutationGate = new Promise<void>((resolve) => { releaseOldMutation = resolve })
+  let blockCurrentMailboxList = false
+  let releaseCurrentMailboxList = () => undefined
+  const currentMailboxListGate = new Promise<void>((resolve) => { releaseCurrentMailboxList = resolve })
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -5068,6 +5071,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
     }
     if (path === '/api/v1/mailboxes' && request.method() === 'GET') {
       mailboxListAuthorizations.push(request.headers().authorization ?? '')
+      if (blockCurrentMailboxList) await currentMailboxListGate
       return fulfill(poolPage([mailbox]))
     }
     if (path === '/api/v1/admin/mailboxes/mailbox-session' && request.method() === 'PATCH') {
@@ -5085,6 +5089,9 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
       if (mailboxStateRequests.length === 1) {
         await oldMutationGate
         return fulfill({ error: { code: 'service_unavailable', message: 'old mailbox response lost' } }, 503)
+      }
+      if (mailboxStateRequests.length === 3) {
+        return fulfill({ error: { code: 'service_unavailable', message: 'current mailbox response lost' } }, 503)
       }
       return fulfill(mailbox)
     }
@@ -5157,6 +5164,23 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
     isActive: true,
   }])
   expect(mailboxListAuthorizations.filter((value) => value === `Bearer ${accessValues[1]}`).length).toBeGreaterThan(0)
+
+  blockCurrentMailboxList = true
+  const currentDisableMailbox = mailboxRow.getByRole('button', {
+    name: '停用邮箱 s***@example.invalid（mailbox-session）', exact: true,
+  })
+  await currentDisableMailbox.click()
+  const currentDisableDialog = page.getByRole('dialog', { name: '确认停用邮箱 s***@example.invalid？' })
+  await currentDisableDialog.getByRole('button', { name: /停\s*用并撤\s*销会\s*话/ }).click()
+  await expect.poll(() => mailboxStateRequests).toHaveLength(3)
+  await expect(page.getByText(/下一步：正在重新获取真实状态/)).toBeVisible()
+  const mailboxImportButton = page.getByRole('button', { name: '导入邮箱池安全包 JSON' })
+  await expect(mailboxImportButton).toHaveCount(0)
+  releaseCurrentMailboxList()
+  await expect(mailboxRow.getByRole('button', {
+    name: '启用邮箱 s***@example.invalid（mailbox-session）', exact: true,
+  })).toBeVisible()
+  await expect(mailboxImportButton).toBeEnabled()
 })
 
 test('ops admin imports card and mailbox pools through secure bundles', async ({ page }) => {

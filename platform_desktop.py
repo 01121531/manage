@@ -319,6 +319,8 @@ class PlatformDesktopApp:
         self._history_threads: list[threading.Thread] = []
         self._session_generation = 0
         self._session_restore_action: object | None = None
+        self._session_restore_lock = threading.Lock()
+        self._session_restore_thread: threading.Thread | None = None
         self._session_restore_compensation: _SessionRestoreCompensation | None = None
         self._active_task_discovery_action: _ActiveTaskDiscoveryAction | None = None
         self._active_task_discovery_thread: threading.Thread | None = None
@@ -1685,6 +1687,8 @@ class PlatformDesktopApp:
                         action=action,
                         cleanup=cleanup,
                     )
+                    with self._session_restore_lock:
+                        self._session_restore_compensation = barrier
                     self._events.put(
                         (generation, "session_restore_compensation_ready", barrier)
                     )
@@ -1700,9 +1704,11 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=True, name="platform-session-restore"
         )
+        self._session_restore_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._session_restore_thread = None
             self._events.put(
                 (
                     generation,
@@ -3294,11 +3300,10 @@ class PlatformDesktopApp:
                 if (
                     generation != barrier.generation
                     or self._session_restore_action is not barrier.action
-                    or self._session_restore_compensation is not None
+                    or self._session_restore_compensation is not barrier
                 ):
                     continue
                 self._session_restore_action = None
-                self._session_restore_compensation = barrier
                 if self._client is not None:
                     self._client.clear_access_token()
                 self._set_authenticated(False)
@@ -3505,7 +3510,13 @@ class PlatformDesktopApp:
         compensation_thread = (
             compensation.thread if compensation is not None else None
         )
-        restore_compensation = self._session_restore_compensation
+        restore_thread = getattr(self, "_session_restore_thread", None)
+        restore_lock = getattr(self, "_session_restore_lock", None)
+        if restore_lock is None:
+            restore_lock = threading.Lock()
+        with restore_lock:
+            restore_compensation = self._session_restore_compensation
+            self._session_restore_compensation = None
         restore_compensation_cleanup = (
             restore_compensation.cleanup
             if restore_compensation is not None
@@ -3516,7 +3527,6 @@ class PlatformDesktopApp:
             if restore_compensation is not None
             else None
         )
-        self._session_restore_compensation = None
         terminal_cleanup_thread = getattr(
             self, "_terminal_task_cleanup_thread", None
         )
@@ -3548,9 +3558,10 @@ class PlatformDesktopApp:
                 raise PlatformClientError("session cleanup preparation failed")
 
         late_compensation: _TaskProvisioningCompensation | None = None
+        late_restore_compensation: _SessionRestoreCompensation | None = None
 
         def cleanup_action() -> None:
-            nonlocal late_compensation
+            nonlocal late_compensation, late_restore_compensation
             first_error: Exception | None = None
             if transition_cleanup is not None:
                 try:
@@ -3577,6 +3588,17 @@ class PlatformDesktopApp:
                 except Exception as error:
                     if first_error is None:
                         first_error = error
+            if restore_thread is not None and restore_thread.is_alive():
+                restore_thread.join()
+            if restore_compensation is None and late_restore_compensation is None:
+                with restore_lock:
+                    late_restore_compensation = self._session_restore_compensation
+                    self._session_restore_compensation = None
+            late_restore_cleanup = (
+                late_restore_compensation.cleanup
+                if late_restore_compensation is not None
+                else None
+            )
             if (
                 restore_compensation_thread is not None
                 and restore_compensation_thread.is_alive()
@@ -3585,6 +3607,12 @@ class PlatformDesktopApp:
             if restore_compensation_cleanup is not None:
                 try:
                     restore_compensation_cleanup()
+                except Exception as error:
+                    if first_error is None:
+                        first_error = error
+            if late_restore_cleanup is not None:
+                try:
+                    late_restore_cleanup()
                 except Exception as error:
                     if first_error is None:
                         first_error = error

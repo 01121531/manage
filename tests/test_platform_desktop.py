@@ -127,6 +127,8 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._shutdown_message = ""
         instance._session_generation = 1
         instance._session_restore_action = None
+        instance._session_restore_lock = threading.Lock()
+        instance._session_restore_thread = None
         instance._session_restore_compensation = None
         instance._active_task_discovery_action = None
         instance._active_task_discovery_thread = None
@@ -4422,6 +4424,64 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             order,
             ["restore-waited", "restore-cleanup", "current-session-cleanup"],
         )
+
+    def test_session_cleanup_waits_for_restore_to_publish_detached_cleanup(self) -> None:
+        instance = self._event_app()
+        prepare_started = threading.Event()
+        release_prepare = threading.Event()
+        cleanup_finished = threading.Event()
+        order = []
+
+        class RotatingClient:
+            def __init__(self):
+                self.prepare_calls = 0
+
+            @staticmethod
+            def has_saved_refresh_session():
+                return True
+
+            @staticmethod
+            def refresh_oidc_session():
+                return 600
+
+            @staticmethod
+            def me():
+                raise PlatformAuthenticationError(
+                    "invalid restored identity",
+                    code="invalid_token",
+                    status=401,
+                    recovery_hint="重新登录",
+                )
+
+            def prepare_logout_cleanup(self, _task_id):
+                self.prepare_calls += 1
+                call = self.prepare_calls
+                if call == 1:
+                    prepare_started.set()
+                    self_outer.assertTrue(release_prepare.wait(timeout=5))
+                    return lambda: order.append("restore-cleanup")
+                return lambda: order.append("shutdown-cleanup")
+
+        self_outer = self
+        instance._client = RotatingClient()
+        instance._attempt_session_restore()
+        self.assertTrue(prepare_started.wait(timeout=5))
+
+        cleanup = instance._capture_session_cleanup(None)
+
+        def run_cleanup():
+            cleanup()
+            cleanup_finished.set()
+
+        shutdown = threading.Thread(target=run_cleanup)
+        shutdown.start()
+        self.assertFalse(cleanup_finished.wait(timeout=0.05))
+        release_prepare.set()
+        shutdown.join(timeout=5)
+
+        self.assertTrue(cleanup_finished.is_set())
+        self.assertEqual(order, ["restore-cleanup", "shutdown-cleanup"])
+        self.assertIsNone(instance._session_restore_compensation)
 
     def test_failed_restore_compensation_does_not_skip_remaining_cleanup(self) -> None:
         instance = self._event_app()

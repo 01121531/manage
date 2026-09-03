@@ -7462,7 +7462,21 @@ def admin_recycle_card_allocation(
         )
     )
     if current is not None and current.released_at is not None:
-        return _admin_card_allocation_response(current, card)
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
+        db.refresh(current, with_for_update=True)
+        current_card = db.scalar(
+            select(Card).where(
+                Card.id == current.card_id,
+                Card.tenant_id == principal.tenant_id,
+            )
+        )
+        if current_card is None:
+            raise HTTPException(status_code=404, detail="Card not found")
+        return _admin_card_allocation_response(current, current_card)
     if released:
         raise HTTPException(status_code=500, detail="Released allocation could not be read")
     raise BusinessHTTPException(

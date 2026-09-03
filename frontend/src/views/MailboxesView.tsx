@@ -51,6 +51,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     kind: 'state'
     pending: boolean
   } | null>(null)
+  const mailboxActionRefreshRef = useRef<NonNullable<typeof mailboxActionRef.current> | null>(null)
   const mailboxListGenerationRef = useRef(0)
 
   function failClosedMailboxList() {
@@ -95,7 +96,14 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     }).catch(() => {
       if (mailboxListGenerationRef.current === generation) failClosedMailboxList()
     }).finally(() => {
-      if (mailboxListGenerationRef.current === generation) setLoading(false)
+      if (mailboxListGenerationRef.current === generation) {
+        setLoading(false)
+        const action = mailboxActionRefreshRef.current
+        if (action !== null) {
+          mailboxActionRefreshRef.current = null
+          releaseMailboxAction(action)
+        }
+      }
     })
     return () => {
       controller.abort()
@@ -248,7 +256,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
     setMailboxActionPending(false)
   }
 
-  async function refreshMailboxRows(isCurrent?: () => boolean, firstPage = false) {
+  function refreshMailboxRows(isCurrent?: () => boolean, firstPage = false) {
     if (isCurrent && !isCurrent()) return
     invalidateMailboxList()
     if (firstPage) {
@@ -276,13 +284,12 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       message.error(
         '原因：平台未能确认邮箱连接器状态变更结果。'
         + '影响：变更可能已经生效，页面不会按失败响应推断最终状态。'
-        + '下一步：已刷新真实状态；若目标状态未生效，可从同一入口重试。',
+        + '下一步：正在重新获取真实状态；完成前不要登记、启停或轮换，仅当目标状态仍未生效才从同一行重试。',
       )
     } finally {
       if (!isCurrent()) return
-      await refreshMailboxRows(isCurrent)
-      if (!isCurrent()) return
-      releaseMailboxAction(action)
+      mailboxActionRefreshRef.current = action
+      refreshMailboxRows(isCurrent)
     }
   }
 
