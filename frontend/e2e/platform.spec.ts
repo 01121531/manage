@@ -5387,6 +5387,9 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
         await oldMutationGate
         return fulfill({ error: { code: 'service_unavailable', message: 'old mailbox response lost' } }, 503)
       }
+      if (mailboxStateRequests.length === 2) {
+        return fulfill({ ...mailbox, id: 'wrong-mailbox-binding' })
+      }
       if (mailboxStateRequests.length === 3) {
         return fulfill({ error: { code: 'service_unavailable', message: 'current mailbox response lost' } }, 503)
       }
@@ -5450,6 +5453,9 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
   })
   await expect(currentEnableMailbox).toBeFocused()
   await currentEnableMailbox.click()
+  await expect(page.getByText(/原因：平台未能确认邮箱连接器状态变更结果。影响：.*下一步：/)).toBeVisible()
+  await expect(page.getByText('邮箱连接器已启用。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-mailbox-binding')
   await expect(mailboxRow.getByRole('button', {
     name: '停用邮箱 s***@example.invalid（mailbox-session）', exact: true,
   })).toBeVisible()
@@ -5470,7 +5476,7 @@ test('mailbox mutations cannot refresh through a replacement session', async ({ 
   const currentDisableDialog = page.getByRole('dialog', { name: '确认停用邮箱 s***@example.invalid？' })
   await currentDisableDialog.getByRole('button', { name: /停\s*用并撤\s*销会\s*话/ }).click()
   await expect.poll(() => mailboxStateRequests).toHaveLength(3)
-  await expect(page.getByText(/下一步：正在重新获取真实状态/)).toBeVisible()
+  await expect(page.getByText(/下一步：正在重新获取真实状态/).last()).toBeVisible()
   const mailboxImportButton = page.getByRole('button', { name: '导入邮箱池安全包 JSON' })
   await expect(mailboxImportButton).toHaveCount(0)
   releaseCurrentMailboxList()

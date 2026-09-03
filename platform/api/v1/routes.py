@@ -3843,6 +3843,8 @@ def release_card_allocation(
         ),
     )
     db.commit()
+    _lock_task_creation_principal(db, principal)
+    db.refresh(allocation, with_for_update=True)
     return _card_allocation_response(allocation, card)
 
 

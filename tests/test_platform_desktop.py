@@ -180,6 +180,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._upload_submission_action = None
         instance._upload_submission_thread = None
         instance._upload_poll_thread = None
+        instance._upload_poll_threads = []
         instance._session_refreshing = False
         instance._session_refresh_thread = None
         instance._session_refresh_threads = []
@@ -2398,6 +2399,55 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(len(retries), 1)
         self.assertIn("继续查询", instance.status_label.values["text"])
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
+    def test_new_upload_poll_retries_after_old_generation_worker_finishes(self) -> None:
+        first_started = threading.Event()
+        release_first = threading.Event()
+        calls = []
+        snapshot = UploadJobSnapshot(
+            id="upload-1",
+            task_id="task-1",
+            status="running",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code=None,
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:01Z",
+        )
+
+        def get_upload_job(_job_id):
+            calls.append("poll")
+            if len(calls) == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            return snapshot
+
+        instance = self._event_app()
+        instance._upload_job_id = "upload-1"
+        instance._client = mock.Mock()
+        instance._client.get_upload_job.side_effect = get_upload_job
+
+        instance._poll_upload()
+        old_thread = instance._upload_poll_thread
+        self.assertTrue(first_started.wait(timeout=1))
+        instance._upload_generation += 1
+        instance._poll_upload()
+
+        self.assertEqual(calls, ["poll"])
+        retry = next(
+            callback
+            for delay, callback, _ in instance.root.scheduled
+            if delay == 250
+        )
+        release_first.set()
+        old_thread.join(timeout=1)
+        retry()
+        new_thread = instance._upload_poll_thread
+        new_thread.join(timeout=1)
+
+        self.assertEqual(calls, ["poll", "poll"])
+        self.assertIsNot(new_thread, old_thread)
 
     def test_upload_poll_rejects_each_mismatched_binding_before_enqueue(self) -> None:
         class InlineThread:

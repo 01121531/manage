@@ -304,6 +304,7 @@ class PlatformDesktopApp:
         self._upload_submission_action: _UploadSubmissionAction | None = None
         self._upload_submission_thread: threading.Thread | None = None
         self._upload_poll_thread: threading.Thread | None = None
+        self._upload_poll_threads: list[threading.Thread] = []
         self._poll_generation = 0
         self._poll_retry_attempt = 0
         self._task_generation = 0
@@ -3683,7 +3684,14 @@ class PlatformDesktopApp:
             self, "_upload_submission_thread", None
         )
         self._upload_submission_thread = None
+        upload_poll_threads = tuple(getattr(self, "_upload_poll_threads", ()))
         upload_poll_thread = getattr(self, "_upload_poll_thread", None)
+        if (
+            upload_poll_thread is not None
+            and upload_poll_thread not in upload_poll_threads
+        ):
+            upload_poll_threads += (upload_poll_thread,)
+        self._upload_poll_threads = []
         self._upload_poll_thread = None
         update_check_lock = getattr(self, "_update_check_lock", None)
         if update_check_lock is None:
@@ -3813,8 +3821,9 @@ class PlatformDesktopApp:
                 and upload_submission_thread.is_alive()
             ):
                 upload_submission_thread.join()
-            if upload_poll_thread is not None and upload_poll_thread.is_alive():
-                upload_poll_thread.join()
+            for upload_poll_thread in upload_poll_threads:
+                if upload_poll_thread.is_alive():
+                    upload_poll_thread.join()
             for update_check_thread in update_check_threads:
                 if update_check_thread.is_alive():
                     update_check_thread.join()
@@ -4258,11 +4267,13 @@ class PlatformDesktopApp:
             or self._upload_job_id is None
             or self._closed
             or self._terminal_task_cleanup_action is not None
-            or (
-                self._upload_poll_thread is not None
-                and self._upload_poll_thread.is_alive()
-            )
         ):
+            return
+        self._upload_poll_threads = [
+            thread for thread in self._upload_poll_threads if thread.is_alive()
+        ]
+        if self._upload_poll_threads:
+            self._schedule_upload_poll(250)
             return
         job_id = self._upload_job_id
         task_id = self._task_id
@@ -4288,10 +4299,12 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=False, name="platform-upload-poll"
         )
+        self._upload_poll_threads.append(thread)
         self._upload_poll_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._upload_poll_threads.remove(thread)
             if self._upload_poll_thread is thread:
                 self._upload_poll_thread = None
             self._events.put(
@@ -4335,7 +4348,13 @@ class PlatformDesktopApp:
         self.upload_button.configure(state="disabled")
         task_id = self._task_id
         card_reveal_thread = self._card_reveal_thread
+        upload_poll_threads = tuple(getattr(self, "_upload_poll_threads", ()))
         upload_poll_thread = self._upload_poll_thread
+        if (
+            upload_poll_thread is not None
+            and upload_poll_thread not in upload_poll_threads
+        ):
+            upload_poll_threads += (upload_poll_thread,)
         try:
             transition = self._client.begin_task_transition(task_id)
             cleanup = transition.close(task_id)
@@ -4352,13 +4371,13 @@ class PlatformDesktopApp:
             mail_poll_threads += (mail_poll_thread,)
         self._mail_poll_threads = []
         self._mail_poll_thread = None
-        if self._upload_poll_thread is upload_poll_thread:
-            self._upload_poll_thread = None
+        self._upload_poll_threads = []
+        self._upload_poll_thread = None
 
         if (
             card_reveal_thread is not None
             or mail_poll_threads
-            or upload_poll_thread is not None
+            or upload_poll_threads
         ):
             task_cleanup = cleanup
 
@@ -4372,8 +4391,9 @@ class PlatformDesktopApp:
                 for mail_poll_thread in mail_poll_threads:
                     if mail_poll_thread.is_alive():
                         mail_poll_thread.join()
-                if upload_poll_thread is not None and upload_poll_thread.is_alive():
-                    upload_poll_thread.join()
+                for upload_poll_thread in upload_poll_threads:
+                    if upload_poll_thread.is_alive():
+                        upload_poll_thread.join()
                 task_cleanup()
 
         self._upload_generation += 1
