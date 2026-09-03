@@ -606,6 +606,77 @@ class ResourceCreationRaceTests(unittest.TestCase):
             mail_session = db.get(MailSession, session_id)
         self.assertEqual(mail_session.status, "revoked")
 
+    def test_initial_mail_session_returns_status_after_concurrent_task_close(
+        self,
+    ) -> None:
+        self.connector.release.set()
+        task_id = self.create_task("mail-create-close")
+        entered = Event()
+        release = Event()
+        token_created = Event()
+        original_commit = Session.commit
+        original_new_token = routes._new_unique_mail_session_token
+        blocked = False
+
+        def mark_token(db: Session) -> tuple[str, str]:
+            token = original_new_token(db)
+            token_created.set()
+            return token
+
+        def block_after_create_commit(session: Session) -> None:
+            nonlocal blocked
+            should_block = not blocked and token_created.is_set()
+            original_commit(session)
+            if should_block:
+                blocked = True
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("mail create release timed out")
+
+        with patch.object(Session, "commit", new=block_after_create_commit), patch(
+            "platform.api.v1.routes._new_unique_mail_session_token",
+            side_effect=mark_token,
+        ):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/mail-sessions",
+                    headers=self.headers,
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                with self.app.state.session_factory() as db:
+                    session_id = db.scalar(
+                        select(MailSession.id).where(MailSession.task_id == task_id)
+                    )
+                self.assertIsNotNone(session_id)
+                closed = self.close_task(task_id)
+                self.assertEqual(closed.status_code, 200, closed.text)
+                release.set()
+                created = future.result(timeout=10)
+
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.json()["status"], "revoked")
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.get(MailSession, session_id).status, "revoked")
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(MailSession).where(
+                        MailSession.task_id == task_id
+                    )
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(AuditEvent).where(
+                        AuditEvent.entity_id == session_id,
+                        AuditEvent.event_type == "mail_session.created",
+                    )
+                ),
+                1,
+            )
+
     def test_close_during_mail_watermark_cannot_create_session_afterward(self) -> None:
         task_id = self.create_task("mail-close-wins")
 
