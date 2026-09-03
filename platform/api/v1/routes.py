@@ -2145,16 +2145,8 @@ def create_mail_session(
         },
     )
     db.commit()
-    db.scalar(
-        select(Task)
-        .where(
-            Task.id == task.id,
-            Task.tenant_id == principal.tenant_id,
-            Task.user_id == principal.user_id,
-            Task.device_id == principal.device_id,
-        )
-        .with_for_update()
-        .execution_options(populate_existing=True)
+    _lock_owned_open_task(
+        db, task_id, request=request, principal=principal
     )
     db.refresh(session, with_for_update=True)
     return MailSessionCreateResponse(

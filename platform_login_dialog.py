@@ -278,6 +278,30 @@ class PlatformLoginController:
 
         self._schedule(deliver)
 
+    def _start_worker(
+        self,
+        worker: Callable[[], None],
+        *,
+        generation: int,
+        on_error: ErrorCallback,
+        cancel_event: threading.Event | None = None,
+    ) -> bool:
+        thread = self._thread_factory(target=worker, daemon=True)
+        try:
+            thread.start()
+        except RuntimeError:
+            if cancel_event is not None:
+                cancel_event.set()
+            if generation == self._generation:
+                self.busy = False
+                error = PlatformTransportError("login worker unavailable")
+                self._schedule_current(
+                    generation,
+                    lambda: on_error(error),
+                )
+            return False
+        return True
+
     def submit(
         self,
         tenant_id: str | None,
@@ -332,9 +356,11 @@ class PlatformLoginController:
 
                 self._schedule(finish)
 
-        thread = self._thread_factory(target=worker, daemon=True)
-        thread.start()
-        return True
+        return self._start_worker(
+            worker,
+            generation=generation,
+            on_error=on_error,
+        )
 
     def submit_device(
         self,
@@ -394,9 +420,12 @@ class PlatformLoginController:
 
                 self._schedule(finish)
 
-        thread = self._thread_factory(target=worker, daemon=True)
-        thread.start()
-        return True
+        return self._start_worker(
+            worker,
+            generation=generation,
+            on_error=on_error,
+            cancel_event=cancel_event,
+        )
 
     def submit_authorization_code(
         self,
@@ -453,9 +482,12 @@ class PlatformLoginController:
 
                 self._schedule(finish)
 
-        thread = self._thread_factory(target=worker, daemon=True)
-        thread.start()
-        return True
+        return self._start_worker(
+            worker,
+            generation=generation,
+            on_error=on_error,
+            cancel_event=cancel_event,
+        )
 
     def cancel(self) -> None:
         self._generation += 1

@@ -249,9 +249,12 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           await revokeDevice(row.id)
           message.success('设备已撤销，相关会话与活动资源已回收。')
           setDeviceRefresh((value) => value + 1)
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : '设备撤销失败'
-          message.error(`${reason} 已刷新设备状态，如仍为活动可重试。`)
+        } catch {
+          message.error(
+            '原因：平台未能确认设备撤销结果。'
+            + '影响：设备可能已被撤销，关联会话和活动资源也可能已回收；页面不会按失败响应推断最终状态。'
+            + '下一步：已刷新设备真实状态；仅当目标仍为活动时，才从同一设备行重试。',
+          )
           setDeviceRefresh((value) => value + 1)
         } finally {
           deviceActionRef.current = null

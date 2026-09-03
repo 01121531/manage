@@ -2352,6 +2352,45 @@ class MailSessionTests(unittest.TestCase):
                 1,
             )
 
+    def test_created_session_rechecks_task_after_commit(self) -> None:
+        access_token = self.login()
+        task_id = self.create_task(access_token, "mail-create-task-commit-boundary")
+        original_commit = Session.commit
+        closed = False
+
+        def commit_then_close_task(session: Session) -> None:
+            nonlocal closed
+            creating_session = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "mail_session.created"
+                for item in session.new
+            )
+            original_commit(session)
+            if not creating_session or closed:
+                return
+            closed = True
+            with self.app.state.session_factory() as other:
+                task = other.get(Task, task_id)
+                self.assertIsNotNone(task)
+                task.status = "closed"
+                task.closed_at = utc_now()
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_close_task):
+            created = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/mail-sessions",
+                headers=self.bearer(access_token),
+            )
+
+        self.assertEqual(created.status_code, 409, created.text)
+        self.assertNotIn("session_token", created.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                len(list(db.scalars(select(MailSession).where(MailSession.task_id == task_id)))),
+                1,
+            )
+
     def test_session_token_is_required_rotated_and_never_exposed_in_audit(self) -> None:
         access_token = self.login()
         task_id = self.create_task(access_token, "mail-token-binding")

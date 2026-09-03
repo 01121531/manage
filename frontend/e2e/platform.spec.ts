@@ -4183,7 +4183,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       if (deviceId === 'device-success') await deviceRevokeGate
       if (deviceId === 'device-retry' && retryDeviceFailures > 0) {
         retryDeviceFailures -= 1
-        return fulfill({ error: { code: 'temporarily_unavailable', message: '设备服务暂不可用' } }, 503)
+        return fulfill({ error: { code: 'temporarily_unavailable', message: 'must-never-render-device-revoke-provider-detail' } }, 503)
       }
       devices = devices.map((device) => device.id === deviceId
         ? { ...device, revoked_at: '2026-08-20T00:05:00Z' }
@@ -4448,8 +4448,11 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await retryDeviceRow.getByRole('button', { name: '撤销设备' }).click()
   revokeDialog = page.getByRole('dialog', { name: '确认撤销设备？' })
   await revokeDialog.getByRole('button', { name: '撤销设备并回收资源' }).click()
-  await expect(page.getByText('请求未完成，请稍后重试。 已刷新设备状态，如仍为活动可重试。')).toBeVisible()
-  await expect(page.getByText('设备服务暂不可用')).toHaveCount(0)
+  const revokeError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认设备撤销结果' })
+  for (const marker of ['原因：', '影响：', '下一步：']) await expect(revokeError).toContainText(marker)
+  await expect(revokeError).toContainText('设备可能已被撤销')
+  await expect(revokeError).toContainText('仅当目标仍为活动时')
+  await expect(page.getByText('must-never-render-device-revoke-provider-detail')).toHaveCount(0)
   await expect(revokeDialog).toBeHidden()
   await expect(retryDeviceRow.getByRole('button', { name: '撤销设备' })).toBeEnabled()
   expect(revokedDeviceIds.filter((id) => id === 'device-retry')).toHaveLength(1)

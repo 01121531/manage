@@ -374,6 +374,57 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertEqual(client.login_args[-1], "device-1")
         self.assertFalse(controller.busy)
 
+    def test_controller_thread_start_failure_restores_all_login_flows(self):
+        raw_error = "raw thread creation failure"
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start():
+                raise RuntimeError(raw_error)
+
+        for flow in ("local", "device", "authorization_code"):
+            with self.subTest(flow=flow):
+                errors = []
+                published = []
+                controller = PlatformLoginController(
+                    _FakeClient(),
+                    schedule=lambda callback: callback(),
+                    thread_factory=FailingThread,
+                )
+                if flow == "local":
+                    started = controller.submit(
+                        "tenant",
+                        "user@example.test",
+                        "platform-secret",
+                        "device-1",
+                        on_success=self.fail,
+                        on_error=errors.append,
+                    )
+                elif flow == "device":
+                    started = controller.submit_device(
+                        on_challenge=published.append,
+                        on_success=self.fail,
+                        on_error=errors.append,
+                    )
+                else:
+                    started = controller.submit_authorization_code(
+                        on_authorization_url=published.append,
+                        on_success=self.fail,
+                        on_error=errors.append,
+                    )
+
+                self.assertFalse(started)
+                self.assertFalse(controller.busy)
+                self.assertEqual(published, [])
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], PlatformTransportError)
+                self.assertNotIn(raw_error, str(errors[0]))
+                if flow != "local":
+                    self.assertTrue(controller._device_cancel.is_set())
+
     def test_controller_device_login_returns_challenge_and_safe_profile(self):
         client = _FakeClient()
         challenges = []
