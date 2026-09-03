@@ -224,6 +224,8 @@ export async function assertPoolImportReceiptBound(
     || receipt.key_version < 1
     || typeof receipt.consumed_at !== 'string'
     || !Number.isFinite(Date.parse(receipt.consumed_at))
+    || typeof receipt.trace_id !== 'string'
+    || receipt.trace_id.trim().length === 0
   ) throw invalid()
 
   let expectedFingerprint = ''

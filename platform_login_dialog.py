@@ -1236,11 +1236,11 @@ class PlatformLoginDialog:
         self.password_var.set("")
         try:
             self.window.grab_release()
-        except tk.TclError:
+        except Exception:
             pass
         try:
             self.window.destroy()
-        except tk.TclError:
+        except Exception:
             pass
         if self._on_close is not None:
             self._on_close()

@@ -5898,7 +5898,13 @@ def admin_disable_user(
         principal,
         allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
     )
-    db.refresh(user, with_for_update=True)
+    user = _lock_user(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=user_id,
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
     return AdminUserResponse.model_validate(user, from_attributes=True)
 
 

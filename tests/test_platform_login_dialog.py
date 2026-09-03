@@ -291,6 +291,23 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertEqual(dialog._controller.cancel_calls, 0)
         dialog._on_close.assert_called_once_with()
 
+    def test_unexpected_tk_cleanup_errors_do_not_block_parent_close(self):
+        dialog = self.headless_dialog()
+        dialog.window.grab_release = mock.Mock(
+            side_effect=RuntimeError("unexpected grab failure")
+        )
+        dialog.window.destroy = mock.Mock(
+            side_effect=RuntimeError("unexpected destroy failure")
+        )
+
+        dialog.close(cancel_authentication=False)
+
+        self.assertTrue(dialog._closed)
+        self.assertEqual(dialog.password_var.get(), "")
+        dialog.window.grab_release.assert_called_once_with()
+        dialog.window.destroy.assert_called_once_with()
+        dialog._on_close.assert_called_once_with()
+
     def test_queued_worker_callback_is_dropped_after_dialog_closes(self):
         dialog = self.headless_dialog()
         callback = mock.Mock()
