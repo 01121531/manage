@@ -3775,9 +3775,12 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
     def test_online_update_uses_background_check_and_verified_helper(self) -> None:
         check_source = inspect.getsource(PlatformDesktopApp.check_for_updates)
         drain_source = inspect.getsource(PlatformDesktopApp._drain_events)
+        finish_source = inspect.getsource(
+            PlatformDesktopApp._finish_update_cleanup_if_ready
+        )
         self.assertIn("self._update_client.check()", check_source)
         self.assertIn('name="platform-update-check"', check_source)
-        self.assertIn("launch_update_helper", drain_source)
+        self.assertIn("launch_update_helper", finish_source)
         self.assertIn("SHA-256", drain_source)
 
     def test_update_check_thread_start_failure_restores_retry(self) -> None:
@@ -3800,6 +3803,30 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(
             instance.status_label.values["text"],
             "检查更新失败，请稍后重试。",
+        )
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
+    def test_update_download_thread_start_failure_restores_retry(self) -> None:
+        instance = self._event_app()
+        manifest = mock.Mock(version="9.9.9")
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._download_update(manifest)
+            instance._drain_events()
+
+        instance._update_client.download.assert_not_called()
+        self.assertEqual(instance.check_update_button.states, ["disabled", "normal"])
+        self.assertEqual(
+            instance.status_label.values["text"],
+            "更新下载或完整性校验失败，未修改当前程序。",
         )
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 

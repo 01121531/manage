@@ -3192,9 +3192,13 @@ class PlatformDesktopApp:
                     (generation, "update_downloaded", (manifest, package))
                 )
 
-        threading.Thread(
+        thread = threading.Thread(
             target=worker, daemon=True, name="platform-update-download"
-        ).start()
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put((generation, "update_download_error", None))
 
     def _begin_update_cleanup(self, manifest: UpdateManifest, package: Path) -> None:
         """Detach the session and prove remote cleanup before replacing the EXE."""
