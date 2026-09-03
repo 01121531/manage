@@ -5432,6 +5432,56 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(cleanup_calls, ["logout"])
         self.assertIsNone(instance._card_reveal_action)
 
+    def test_logout_waits_for_inflight_upload_submission_before_cleanup(self) -> None:
+        upload_started = threading.Event()
+        release_upload = threading.Event()
+        order = []
+        queued = UploadJobSnapshot(
+            id="upload-1",
+            task_id="task-1",
+            status="queued",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code=None,
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:01Z",
+        )
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def create_upload_job(*_):
+                upload_started.set()
+                release_upload.wait(timeout=2)
+                order.append("upload-created")
+                return queued
+
+            @staticmethod
+            def prepare_logout_cleanup(_task_id):
+                return lambda: order.append("logout-cleanup")
+
+        instance = self._event_app()
+        instance._client = Client()
+        instance._verified_task_id = "task-1"
+        instance.business_entry = mock.Mock()
+        instance.business_entry.get.return_value = "Example Store"
+
+        instance.submit_upload()
+        upload_thread = instance._upload_submission_thread
+        self.assertTrue(upload_started.wait(timeout=1))
+        instance.logout()
+        self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+        self.assertEqual(order, [])
+
+        release_upload.set()
+        upload_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(order, ["upload-created", "logout-cleanup"])
+
     def test_card_reveal_close_waits_for_inflight_reveal_before_cleanup(self) -> None:
         reveal_entered = threading.Event()
         release_reveal = threading.Event()

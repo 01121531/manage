@@ -1176,6 +1176,8 @@ test('operator login keeps bearer in memory and exposes task trace', async ({ pa
   let taskStatus = 'created'
   let taskListRequests = 0
   let timelineRequests = 0
+  let successfulTimelineRequests = 0
+  let timelineAvailable = false
   let closeRequests = 0
   let releaseClose = () => undefined
   const closeGate = new Promise<void>((resolve) => { releaseClose = resolve })
@@ -1242,7 +1244,11 @@ test('operator login keeps bearer in memory and exposes task trace', async ({ pa
     }
     if (path === '/api/v1/tasks/task-1/timeline') {
       timelineRequests += 1
-      const advanced = timelineRequests >= 2
+      if (!timelineAvailable) {
+        return fulfill({ error: { code: 'service_unavailable', message: 'private timeline failure' } }, 503)
+      }
+      successfulTimelineRequests += 1
+      const advanced = successfulTimelineRequests >= 2
       return fulfill({
         task: {
           id: 'task-1', tenant_id: 'tenant-1', user_id: 'user-1',
@@ -1312,6 +1318,14 @@ test('operator login keeps bearer in memory and exposes task trace', async ({ pa
   await expect(page.getByRole('button', { name: '锁定' })).toBeVisible()
   await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible()
   await page.getByText('任务中心', { exact: true }).click()
+  const currentTimelineError = page.getByRole('alert').filter({ hasText: '当前资源状态暂不可用' })
+  await expect(currentTimelineError).toContainText('下一步：')
+  await expect(page.getByText('private timeline failure')).toHaveCount(0)
+  const requestsBeforeTimelineRetry = timelineRequests
+  timelineAvailable = true
+  await currentTimelineError.getByRole('button', { name: '重新加载当前任务资源' }).click()
+  await expect.poll(() => timelineRequests).toBeGreaterThan(requestsBeforeTimelineRetry)
+  await expect(currentTimelineError).toBeHidden()
   const progress = page.getByRole('region', { name: '当前任务进度' })
   for (const step of ['已登录', '已分配卡', '等待验证码', '已获取', '上传中', '完成']) {
     await expect(progress).toContainText(step)
@@ -2529,6 +2543,7 @@ test('task filters fail closed without reviving stale rows or actions', async ({
   const lateTask = makeTask('task-late-filter-result', 'user-late')
   const currentTask = makeTask('task-current-filter-result', 'user-current-success')
   const requestedUsers: string[] = []
+  let timelineRequests = 0
   let releaseLateRequest = () => undefined
   let lateRequestCompleted = false
   const lateRequestGate = new Promise<void>((resolve) => { releaseLateRequest = resolve })
@@ -2584,6 +2599,7 @@ test('task filters fail closed without reviving stale rows or actions', async ({
       return fulfill([currentTask])
     }
     if (path === `/api/v1/tasks/${currentTask.id}/timeline`) {
+      timelineRequests += 1
       return fulfill({
         error: { code: 'service_unavailable', message: 'timeline unavailable' },
       }, 503)
@@ -2616,6 +2632,11 @@ test('task filters fail closed without reviving stale rows or actions', async ({
     for (const marker of ['原因：', '影响：', '下一步：']) {
       await expect(listError).toContainText(marker)
     }
+    const errorRequestsBeforeRetry = requestedUsers.filter((value) => value === 'user-current-error').length
+    await listError.getByRole('button', { name: '重新加载任务列表' }).click()
+    await expect.poll(
+      () => requestedUsers.filter((value) => value === 'user-current-error').length,
+    ).toBe(errorRequestsBeforeRetry + 1)
     await expect(page.getByRole('button', { name: `关闭任务 ${oldTask.id}` })).toHaveCount(0)
     await expect(page.getByText(oldTask.id, { exact: true })).toHaveCount(0)
     await expect(page.getByText('任务详情', { exact: true })).toHaveCount(0)
@@ -2642,6 +2663,10 @@ test('task filters fail closed without reviving stale rows or actions', async ({
   await expect(page.getByText('任务详情', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: `查看任务 ${currentTask.id} 详情` }).click()
   await expect(page.getByText(currentTask.id, { exact: true })).toBeVisible()
+  const timelineError = page.getByRole('alert').filter({ hasText: '资源时间线暂不可用' })
+  await expect(timelineError).toContainText('下一步：')
+  await timelineError.getByRole('button', { name: '重新加载资源时间线' }).click()
+  await expect.poll(() => timelineRequests).toBe(2)
 })
 
 test('ops admin filters and governs same-tenant cross-device tasks', async ({ page }) => {

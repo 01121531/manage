@@ -98,6 +98,7 @@ function OperatorTaskWorkbench({
   timelineError,
   closingTaskId,
   onClose,
+  onRetryTimeline,
 }: {
   tasks: TaskSummary[]
   activeTasks: TaskSummary[]
@@ -107,6 +108,7 @@ function OperatorTaskWorkbench({
   timelineError: boolean
   closingTaskId: string | null
   onClose: (task: TaskSummary) => void
+  onRetryTimeline: () => void
 }) {
   const allocation = timeline?.card_allocations[timeline.card_allocations.length - 1]
   const upload = timeline?.uploads[timeline.uploads.length - 1]
@@ -218,7 +220,8 @@ function OperatorTaskWorkbench({
                 type="error"
                 showIcon
                 message="当前资源状态暂不可用"
-                description="原因：资源时间线读取失败。影响：页面不会根据旧数据给出恢复动作。下一步：请检查网络后重新进入任务中心。"
+                description="原因：资源时间线读取失败。影响：页面不会根据旧数据给出恢复动作。下一步：请检查网络后从此处重新加载。"
+                action={<Button onClick={onRetryTimeline}>重新加载当前任务资源</Button>}
               /> : timelineLoading || !timeline ? <div className="operator-workbench-loading"><Spin /></div> : uploadRecovery}
               <Button
                 danger
@@ -464,6 +467,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
         showIcon
         message="当前任务暂不可用"
         description={taskListError}
+        action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载当前任务</Button>}
       /> : <OperatorTaskWorkbench
         tasks={rows}
         activeTasks={activeTasks}
@@ -473,6 +477,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
         timelineError={timelineError}
         closingTaskId={closingTaskId}
         onClose={confirmCloseTask}
+        onRetryTimeline={() => setRefresh((value) => value + 1)}
       />}
     </>
   }
@@ -543,6 +548,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
       showIcon
       message="任务列表暂不可用"
       description={taskListError}
+      action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载任务列表</Button>}
     /> : <Table
       columns={columns}
       dataSource={rows}
@@ -566,7 +572,13 @@ export default function TasksPage({ principal }: { principal: Principal }) {
         <Descriptions.Item label="创建时间">{selectedTask.created_at}</Descriptions.Item>
       </Descriptions>
       {timelineLoading ? <div className="centered"><Spin /></div> : null}
-      {timelineError ? <Alert type="warning" showIcon message="资源时间线暂不可用" description="任务主状态仍可查看，请稍后刷新真实资源链。" /> : null}
+      {timelineError ? <Alert
+        type="warning"
+        showIcon
+        message="资源时间线暂不可用"
+        description="原因：资源时间线读取失败。影响：任务主状态仍可查看，但当前不会展示过期资源链。下一步：检查网络后从此处重新加载。"
+        action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载资源时间线</Button>}
+      /> : null}
       {visibleTaskTimeline ? <>
         <Descriptions className="task-resource-chain" title="资源链" column={{ xs: 1, md: 2 }}>
           <Descriptions.Item label="邮箱会话">

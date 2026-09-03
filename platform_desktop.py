@@ -3498,6 +3498,9 @@ class PlatformDesktopApp:
         if unlock_action is not None:
             unlock_action.cancel.set()
         card_reveal_thread = getattr(self, "_card_reveal_thread", None)
+        upload_submission_thread = getattr(
+            self, "_upload_submission_thread", None
+        )
         try:
             logout_cleanup = (
                 self._client.prepare_logout_cleanup(task_id)
@@ -3566,6 +3569,11 @@ class PlatformDesktopApp:
                     raise PlatformTimeoutError(
                         "card reveal did not stop before session cleanup"
                     )
+            if (
+                upload_submission_thread is not None
+                and upload_submission_thread.is_alive()
+            ):
+                upload_submission_thread.join()
             try:
                 logout_cleanup()
             except Exception as error:
