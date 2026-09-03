@@ -3658,6 +3658,35 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         shutdown_source = inspect.getsource(PlatformDesktopApp._begin_session_shutdown)
         self.assertIn("self._close_task_history()", shutdown_source)
 
+    def test_task_history_thread_start_failure_restores_retry(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._history_window = mock.Mock()
+        instance._history_window.winfo_exists.return_value = True
+        instance._history_status = RecordingWidget()
+        instance._history_refresh_button = RecordingWidget()
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._load_task_history()
+            instance._drain_events()
+
+        instance._client.list_tasks.assert_not_called()
+        self.assertEqual(
+            instance._history_refresh_button.states,
+            ["disabled", "normal"],
+        )
+        self.assertNotIn(
+            "raw thread failure", instance._history_status.values["text"]
+        )
+
     def test_task_history_late_closed_window_events_do_not_touch_reopened_window(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

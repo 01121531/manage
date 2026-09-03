@@ -802,9 +802,19 @@ class PlatformDesktopApp:
                 return
             self._events.put((generation, "task_history", tasks))
 
-        threading.Thread(
+        thread = threading.Thread(
             target=worker, daemon=True, name="platform-task-history"
-        ).start()
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "task_history_error",
+                    PlatformTransportError("task history worker unavailable"),
+                )
+            )
 
     def _render_task_history(self, tasks: list[TaskSnapshot]) -> None:
         if self._history_tree is None or self._history_window is None:
