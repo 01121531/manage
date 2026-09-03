@@ -1688,6 +1688,13 @@ class PlatformDesktopApp:
                         lambda: clear_if_owned(retries_remaining - 1),
                     )
                 except tk.TclError:
+                    self._remember_clipboard_cleanup_failure(owner)
+                    self._set_status(
+                        "原因：系统剪贴板持续被占用；"
+                        "影响：客户端无法确认已清除自己写入的临时内容，窗口不会退出；"
+                        "下一步：关闭占用剪贴板的程序后再次点击关闭。",
+                        ERROR,
+                    )
                     finish()
                     return
             else:

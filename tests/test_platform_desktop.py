@@ -3463,6 +3463,42 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             self.assertIsNone(instance._pending_update_install)
             self.assertTrue(instance._update_cleanup_completed)
 
+    def test_update_retry_schedule_failure_blocks_helper(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        instance.root.clipboard_get = mock.Mock(
+            side_effect=tk.TclError("clipboard busy")
+        )
+        original_after = instance.root.after
+
+        def fail_clipboard_retry(delay, callback, *args):
+            if delay == 50:
+                raise tk.TclError("window cannot schedule retry")
+            return original_after(delay, callback, *args)
+
+        instance.root.after = fail_clipboard_retry
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = lambda: None
+        manifest = mock.Mock(sha256="9" * 64)
+        package = Path("verified-update.exe")
+        pending = (manifest, package)
+
+        with mock.patch("platform_desktop.launch_update_helper") as launch_helper:
+            instance._events.put(
+                (instance._update_generation, "update_downloaded", pending)
+            )
+            instance._drain_events()
+            instance._update_cleanup_thread.join(timeout=1)
+            instance._drain_events()
+
+            launch_helper.assert_not_called()
+            self.assertEqual(instance.root.clipboard, secret)
+            self.assertIsNotNone(instance._clipboard_cleanup_failed)
+            self.assertEqual(instance._pending_update_install, pending)
+            self.assertFalse(instance._update_cleanup_completed)
+
     def test_update_waits_for_owned_clipboard_cleanup_before_helper(self) -> None:
         instance = self._event_app()
         secret = "246810"
