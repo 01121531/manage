@@ -334,6 +334,7 @@ class PlatformDesktopApp:
         self._session_deadline = 0.0
         self._session_refreshing = False
         self._session_refresh_thread: threading.Thread | None = None
+        self._session_refresh_threads: list[threading.Thread] = []
         self._unlock_action: _UnlockAction | None = None
         self._unlock_thread: threading.Thread | None = None
         self._update_generation = 0
@@ -1812,6 +1813,11 @@ class PlatformDesktopApp:
     def _refresh_session_async(self, generation: int) -> None:
         if self._client is None or self._session_refreshing:
             return
+        self._session_refresh_threads = [
+            thread for thread in self._session_refresh_threads if thread.is_alive()
+        ]
+        if self._session_refresh_threads:
+            return
         self._session_refreshing = True
         self._set_status("正在刷新安全会话…", MUTED)
 
@@ -1826,10 +1832,12 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=False, name="platform-session-refresh"
         )
+        self._session_refresh_threads.append(thread)
         self._session_refresh_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._session_refresh_threads.remove(thread)
             if self._session_refresh_thread is thread:
                 self._session_refresh_thread = None
             self._events.put(
@@ -3579,7 +3587,16 @@ class PlatformDesktopApp:
         )
         restore_thread = getattr(self, "_session_restore_thread", None)
         self._session_restore_thread = None
+        session_refresh_threads = tuple(
+            getattr(self, "_session_refresh_threads", ())
+        )
         session_refresh_thread = getattr(self, "_session_refresh_thread", None)
+        if (
+            session_refresh_thread is not None
+            and session_refresh_thread not in session_refresh_threads
+        ):
+            session_refresh_threads += (session_refresh_thread,)
+        self._session_refresh_threads = []
         self._session_refresh_thread = None
         restore_lock = getattr(self, "_session_restore_lock", None)
         if restore_lock is None:
@@ -3691,11 +3708,9 @@ class PlatformDesktopApp:
                         first_error = error
             if restore_thread is not None and restore_thread.is_alive():
                 restore_thread.join()
-            if (
-                session_refresh_thread is not None
-                and session_refresh_thread.is_alive()
-            ):
-                session_refresh_thread.join()
+            for session_refresh_thread in session_refresh_threads:
+                if session_refresh_thread.is_alive():
+                    session_refresh_thread.join()
             if restore_compensation is None and late_restore_compensation is None:
                 with restore_lock:
                     late_restore_compensation = self._session_restore_compensation

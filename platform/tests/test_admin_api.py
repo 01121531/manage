@@ -374,6 +374,81 @@ class AdminApiTests(unittest.TestCase):
         )
         self.assertEqual(forbidden.status_code, 403)
 
+    def test_upload_reconcile_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        _, _, _, job_id = self.create_card_upload_fixture(
+            admin_token=admin_token,
+            operator_token=operator_token,
+            suffix="reconcile-post-commit",
+        )
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            self.assertIsNotNone(job)
+            job.status = "unknown"
+            job.error_code = "external_unknown"
+            db.commit()
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        reconciliation_recorded = False
+        admin_demoted = False
+
+        def mark_reconciliation(*args, **kwargs):
+            nonlocal reconciliation_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "upload.reconciled":
+                reconciliation_recorded = True
+            return result
+
+        def demote_after_reconciliation_commit(session: Session) -> None:
+            nonlocal admin_demoted
+            original_commit(session)
+            if reconciliation_recorded and not admin_demoted:
+                admin_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    admin = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "operator"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_reconciliation,
+        ), mock.patch.object(Session, "commit", new=demote_after_reconciliation_commit):
+            reconciled = self.request(
+                "POST",
+                f"/api/v1/upload-jobs/{job_id}/reconcile",
+                headers=self.headers(admin_token),
+                json={"status": "failed", "error_code": "not_created"},
+            )
+
+        self.assertEqual(reconciled.status_code, 403, reconciled.text)
+        self.assertNotIn("error_code", reconciled.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(UploadJob, job_id)
+            self.assertIsNotNone(persisted)
+            self.assertEqual(persisted.status, "failed")
+            self.assertEqual(persisted.error_code, "not_created")
+            reconciled_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "upload.reconciled",
+                    AuditEvent.entity_id == job_id,
+                )
+            )
+        self.assertEqual(reconciled_audits, 1)
+
     def test_admin_user_list_rechecks_actor_after_authentication(self) -> None:
         observed_at = datetime.now(timezone.utc)
         stale_principal = AuthPrincipal(

@@ -291,8 +291,12 @@ export default function TasksPage({ principal }: { principal: Principal }) {
   const [draftFilters, setDraftFilters] = useState<TaskListFilters>({})
   const [taskFilters, setTaskFilters] = useState<TaskListFilters>({})
   const taskCloseActionRef = useRef<{ taskId: string; pending: boolean } | null>(null)
-  const taskCloseRefreshRef = useRef<{ taskId: string; pending: boolean } | null>(null)
-  const taskCloseRefreshGenerationRef = useRef<number | null>(null)
+  const taskCloseRefreshRef = useRef<{
+    action: { taskId: string; pending: boolean }
+    waitForTimeline: boolean
+    taskListSettled: boolean
+    timelineSettled: boolean
+  } | null>(null)
   const taskListGenerationRef = useRef(0)
   const timelineRequestGenerationRef = useRef(0)
   const taskListRequestsInFlightRef = useRef(0)
@@ -300,6 +304,19 @@ export default function TasksPage({ principal }: { principal: Principal }) {
   const operatorAutoRefreshPendingRef = useRef(false)
   const taskListLoadedRef = useRef(false)
   const isOpsAdmin = principal.role === 'ops_admin'
+
+  function settleTaskCloseRefresh(
+    kind: 'task-list' | 'timeline',
+    barrier: NonNullable<typeof taskCloseRefreshRef.current> | null,
+  ) {
+    if (!barrier || taskCloseRefreshRef.current !== barrier) return
+    if (kind === 'task-list') barrier.taskListSettled = true
+    if (kind === 'timeline' && barrier.waitForTimeline) barrier.timelineSettled = true
+    if (!barrier.taskListSettled || !barrier.timelineSettled) return
+    taskCloseRefreshRef.current = null
+    if (taskCloseActionRef.current === barrier.action) taskCloseActionRef.current = null
+    setClosingTaskId((current) => current === barrier.action.taskId ? null : current)
+  }
 
   function applyTaskFilters(nextFilters: TaskListFilters) {
     taskListLoadedRef.current = false
@@ -322,6 +339,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
   useEffect(() => {
     let alive = true
     const generation = taskListGenerationRef.current + 1
+    const closeRefresh = taskCloseRefreshRef.current
     taskListGenerationRef.current = generation
     const showInitialLoading = !taskListLoadedRef.current
     taskListRequestsInFlightRef.current += 1
@@ -353,16 +371,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
         taskListLoadedRef.current = true
         if (alive) {
           if (showInitialLoading) setLoading(false)
-          const action = taskCloseRefreshRef.current
-          if (
-            action !== null
-            && taskCloseRefreshGenerationRef.current === generation
-          ) {
-            taskCloseRefreshRef.current = null
-            taskCloseRefreshGenerationRef.current = null
-            if (taskCloseActionRef.current === action) taskCloseActionRef.current = null
-            setClosingTaskId((current) => current === action.taskId ? null : current)
-          }
+          settleTaskCloseRefresh('task-list', closeRefresh)
         }
       })
     return () => {
@@ -377,6 +386,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
   }, [loading, selectedTask, selectedTaskId])
   useEffect(() => {
     const requestGeneration = timelineRequestGenerationRef.current + 1
+    const closeRefresh = taskCloseRefreshRef.current
     timelineRequestGenerationRef.current = requestGeneration
     if (!selectedTaskId) {
       setTaskTimeline(undefined)
@@ -402,7 +412,10 @@ export default function TasksPage({ principal }: { principal: Principal }) {
     }).finally(() => {
       timelineRequestsInFlightRef.current = Math.max(0, timelineRequestsInFlightRef.current - 1)
       operatorAutoRefreshPendingRef.current = false
-      if (alive && timelineRequestGenerationRef.current === requestGeneration) setTimelineLoading(false)
+      if (alive && timelineRequestGenerationRef.current === requestGeneration) {
+        setTimelineLoading(false)
+        settleTaskCloseRefresh('timeline', closeRefresh)
+      }
     })
     return () => {
       alive = false
@@ -464,9 +477,14 @@ export default function TasksPage({ principal }: { principal: Principal }) {
           )
         } finally {
           if (taskCloseActionRef.current === action) {
-            taskCloseRefreshRef.current = action
+            const waitForTimeline = selectedTaskId === action.taskId
             taskListGenerationRef.current += 1
-            taskCloseRefreshGenerationRef.current = taskListGenerationRef.current + 1
+            taskCloseRefreshRef.current = {
+              action,
+              waitForTimeline,
+              taskListSettled: false,
+              timelineSettled: !waitForTimeline,
+            }
             setRefresh((value) => value + 1)
           }
         }

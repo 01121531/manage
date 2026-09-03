@@ -2564,6 +2564,11 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
   const retryTaskListGate = new Promise<void>((resolve) => {
     releaseRetryTaskList = resolve
   })
+  let blockRetryTimeline = false
+  let releaseRetryTimeline = () => undefined
+  const retryTimelineGate = new Promise<void>((resolve) => {
+    releaseRetryTimeline = resolve
+  })
   let releaseSuccessClose = () => undefined
   const successCloseGate = new Promise<void>((resolve) => {
     releaseSuccessClose = resolve
@@ -2613,6 +2618,7 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
       const taskId = timelineMatch[1]
       const task = tasks[taskId]
       timelineRequests[taskId] = (timelineRequests[taskId] ?? 0) + 1
+      if (taskId === 'task-retry' && blockRetryTimeline) await retryTimelineGate
       return fulfill({
         task,
         workbench_step: task.status === 'closed' ? 'completed' : 'uploading',
@@ -2736,6 +2742,9 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
 
   const listsBeforeRetryFailure = taskListRequests
   blockRetryTaskList = true
+  blockRetryTimeline = true
+  await retryRow.getByRole('button', { name: '查看任务 task-retry 详情', exact: true }).click()
+  await expect.poll(() => timelineRequests['task-retry'] ?? 0).toBeGreaterThanOrEqual(1)
   await retryCloseButton.click()
   closeDialog = page.getByRole('dialog', { name: '确认关闭任务 task-retry？', exact: true })
   await expect(closeDialog).toContainText('任务 ID：task-retry')
@@ -2752,8 +2761,11 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
   expect(closeTaskIds.filter((id) => id === 'task-retry')).toHaveLength(1)
   releaseRetryTaskList()
   await expect.poll(() => taskListRequests).toBeGreaterThan(listsBeforeRetryFailure)
+  await expect(retryCloseButton).toHaveClass(/ant-btn-loading/)
+  releaseRetryTimeline()
   await expect(retryRow.getByText('closed')).toBeVisible()
   await expect(retryCloseButton).toBeDisabled()
+  await expect(retryCloseButton).not.toHaveClass(/ant-btn-loading/)
   expect(closeTaskIds.filter((id) => id === 'task-retry')).toHaveLength(1)
 })
 

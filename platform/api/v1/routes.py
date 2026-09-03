@@ -4786,7 +4786,16 @@ def reconcile_upload_job(
             ),
         )
         db.commit()
-    db.refresh(job)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(
+            ROLE_OPS_ADMIN,
+            ROLE_SECURITY_AUDITOR,
+            ROLE_PLATFORM_ADMIN,
+        ),
+    )
+    db.refresh(job, with_for_update=True)
     return _upload_job_response(job)
 
 

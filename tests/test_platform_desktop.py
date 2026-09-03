@@ -180,6 +180,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._upload_poll_thread = None
         instance._session_refreshing = False
         instance._session_refresh_thread = None
+        instance._session_refresh_threads = []
         instance._unlock_action = None
         instance._unlock_thread = None
         instance._profile_summary = "operator@example.test"
@@ -2067,6 +2068,47 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance.logout.assert_called_once_with(
             message="安全会话刷新失败，已停止任务并清除临时数据。"
         )
+
+    def test_lock_cannot_start_overlapping_session_refresh(self) -> None:
+        refresh_started = threading.Event()
+        release_refresh = threading.Event()
+        calls = []
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def refresh_oidc_session():
+                calls.append("refresh")
+                refresh_started.set()
+                release_refresh.wait(timeout=2)
+                return 300
+
+            @staticmethod
+            def prepare_logout_cleanup(_task_id):
+                return lambda: calls.append("logout-cleanup")
+
+        instance = self._event_app()
+        instance._client = Client()
+        instance._refresh_session_async(instance._session_generation)
+        refresh_thread = instance._session_refresh_thread
+        self.assertTrue(refresh_started.wait(timeout=1))
+
+        instance.lock()
+        instance._refresh_session_async(instance._session_generation)
+
+        self.assertEqual(calls, ["refresh"])
+        self.assertIs(instance._session_refresh_thread, refresh_thread)
+        instance.logout()
+        self.assertEqual(instance._session_refresh_threads, [])
+        self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+
+        release_refresh.set()
+        refresh_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(calls, ["refresh", "logout-cleanup"])
 
     def test_session_expiry_completes_captured_cleanup_before_success_message(self) -> None:
         instance = self._event_app()
