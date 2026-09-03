@@ -5123,9 +5123,16 @@ class PlatformDesktopApp:
         self._paste_observer.close()
         self._clipboard_clear_generation += 1
         self._closed = True
-        if self._login_dialog is not None and self._login_dialog.exists():
-            self._login_dialog.close()
-        self.root.destroy()
+        try:
+            if self._login_dialog is not None and self._login_dialog.exists():
+                self._login_dialog.close()
+            self.root.destroy()
+        except Exception:
+            self._closed = False
+            self._set_status(
+                "窗口关闭尚未完成；请再次点击关闭。",
+                ERROR,
+            )
 
     def close(self) -> None:
         if self._closed:

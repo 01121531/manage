@@ -1410,7 +1410,14 @@ def revoke_owned_device(
         principal,
         revoked_device_id=device.id,
     )
-    db.refresh(device, with_for_update=True)
+    device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=device.id,
+    )
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
     return AdminDeviceResponse.model_validate(device, from_attributes=True)
 
 

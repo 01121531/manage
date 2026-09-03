@@ -609,6 +609,35 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.destroy_calls, 1)
         self.assertTrue(instance._closed)
 
+    def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
+        instance = self._event_app()
+        original_destroy = instance.root.destroy
+        attempts = 0
+
+        def fail_once():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("unexpected destroy failure")
+            original_destroy()
+
+        instance.root.destroy = fail_once
+
+        instance._destroy_window()
+
+        self.assertFalse(instance._closed)
+        self.assertEqual(instance.root.destroy_calls, 0)
+        self.assertIn("再次点击关闭", instance.status_label.values["text"])
+        self.assertNotIn(
+            "unexpected destroy failure", instance.status_label.values["text"]
+        )
+
+        instance._destroy_window()
+
+        self.assertEqual(attempts, 2)
+        self.assertTrue(instance._closed)
+        self.assertEqual(instance.root.destroy_calls, 1)
+
     def test_close_cleanup_event_does_not_reschedule_destroyed_root(self) -> None:
         class DestroySensitiveRoot(RootStub):
             def after(self, delay, callback, *args):
