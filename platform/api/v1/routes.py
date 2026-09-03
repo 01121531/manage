@@ -7085,6 +7085,11 @@ def admin_recycle_card_allocation(
     ),
     db: Session = Depends(get_db),
 ) -> AdminCardAllocationResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     row = db.execute(
         select(CardAllocation, Card)
         .join(Card, Card.id == CardAllocation.card_id)

@@ -2348,6 +2348,73 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(event_types.count("admin.card_quarantined"), 1)
         self.assertEqual(event_types.count("admin.card_quarantine_released"), 1)
 
+    def test_card_recycle_rechecks_actor_after_authentication(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        card_id, _task_id, allocation_id, upload_id = self.create_card_upload_fixture(
+            admin_token=admin_token,
+            operator_token=operator_token,
+            suffix="stale-recycle-admin",
+        )
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card_id}/allocations/{allocation_id}/recycle",
+                json={"reason_code": "manual_reassignment"},
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocation_id)
+            upload = db.get(UploadJob, upload_id)
+            recycle_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == allocation_id,
+                        AuditEvent.event_type.in_(
+                            (
+                                "admin.card_allocation_recycle_requested",
+                                "admin.card_allocation_recycled",
+                            )
+                        ),
+                    )
+                )
+            )
+        self.assertEqual(allocation.status, "active")
+        self.assertIsNone(allocation.released_at)
+        self.assertEqual(upload.status, "queued")
+        self.assertEqual(recycle_audits, [])
+
     def test_card_timeline_and_targeted_recycle_are_safe_idempotent_and_tenant_bound(
         self,
     ) -> None:
