@@ -59,7 +59,9 @@ server {
     location /api/ {
         error_page 413 = @api_request_too_large;
         error_page 429 = @api_rate_limited;
+        error_page 502 504 = @api_upstream_unavailable;
         limit_req zone=platform_api burst=20 nodelay;
+        proxy_intercept_errors on;
         proxy_pass https://active_api;
         proxy_ssl_trusted_certificate /run/secrets/internal-tls/ca.crt;
         proxy_ssl_server_name on;
@@ -103,6 +105,17 @@ server {
         add_header Retry-After "1" always;
         add_header X-Trace-Id "$request_id" always;
         return 429 '{"error":{"code":"rate_limited","message":"Too many requests","recovery_hint":"Retry after the number of seconds in Retry-After.","trace_id":"$request_id"}}';
+    }
+
+    location @api_upstream_unavailable {
+        default_type application/json;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+        add_header X-Trace-Id "$request_id" always;
+        return 503 '{"error":{"code":"service_unavailable","message":"Service is temporarily unavailable","recovery_hint":"Retry later; contact an administrator with trace_id if the problem persists.","trace_id":"$request_id"}}';
     }
 
     location = /healthz {

@@ -273,17 +273,21 @@ class EdgeAssetTests(unittest.TestCase):
                     errors,
                 )
 
-    def test_edge_generated_413_and_429_are_fixed_safe_json(self) -> None:
+    def test_edge_generated_api_errors_are_fixed_safe_json(self) -> None:
         required = (
             "error_page 413 = @api_request_too_large;",
             "error_page 429 = @api_rate_limited;",
+            "error_page 502 504 = @api_upstream_unavailable;",
             "error_page 429 = @identity_rate_limited;",
+            "proxy_intercept_errors on;",
             "location @api_request_too_large {",
             "location @api_rate_limited {",
+            "location @api_upstream_unavailable {",
             "location @identity_rate_limited {",
             'add_header Retry-After "1" always;',
             '"code":"request_too_large"',
             '"code":"rate_limited"',
+            '"code":"service_unavailable"',
             '"recovery_hint"',
             '"trace_id":"$request_id"',
             'add_header X-Trace-Id "$request_id" always;',
@@ -297,16 +301,23 @@ class EdgeAssetTests(unittest.TestCase):
             self.template.count('add_header Retry-After "1" always;'),
             2,
         )
-        self.assertEqual(self.template.count('"trace_id":"$request_id"'), 3)
+        self.assertEqual(self.template.count('"trace_id":"$request_id"'), 4)
         self.assertEqual(
             self.template.count('add_header X-Trace-Id "$request_id" always;'),
-            2,
+            3,
         )
+        self.assertEqual(self.template.count("proxy_intercept_errors on;"), 1)
 
         mutations = (
             ("error_page 413 = @api_request_too_large;", ""),
             ("error_page 429 = @api_rate_limited;", ""),
+            ("error_page 502 504 = @api_upstream_unavailable;", ""),
+            (
+                "error_page 502 504 = @api_upstream_unavailable;",
+                "error_page 502 503 504 = @api_upstream_unavailable;",
+            ),
             ("error_page 429 = @identity_rate_limited;", ""),
+            ("proxy_intercept_errors on;", ""),
             ("default_type application/json;", "default_type text/html;"),
             ('add_header Retry-After "1" always;', ""),
             ('add_header Retry-After "1" always;', 'add_header Retry-After "0";'),

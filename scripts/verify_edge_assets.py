@@ -408,6 +408,7 @@ def validate_edge_assets(
     expected_error_pages = [
         "error_page 413 = @api_request_too_large;",
         "error_page 429 = @api_rate_limited;",
+        "error_page 502 504 = @api_upstream_unavailable;",
         "error_page 429 = @identity_rate_limited;",
     ]
     error_page_directives = [
@@ -422,12 +423,12 @@ def validate_edge_assets(
     if len(api_rate_blocks) == 1:
         safe_error_invalid = safe_error_invalid or any(
             api_rate_blocks[0].count(directive) != 1
-            for directive in expected_error_pages[:2]
+            for directive in expected_error_pages[:3]
         )
     if len(identity_rate_blocks) == 1:
         safe_error_invalid = (
             safe_error_invalid
-            or identity_rate_blocks[0].count(expected_error_pages[2]) != 1
+            or identity_rate_blocks[0].count(expected_error_pages[3]) != 1
         )
 
     server_blocks = _server_blocks(rendered)
@@ -512,6 +513,13 @@ def validate_edge_assets(
             True,
         ),
         (
+            platform_https_servers,
+            "@api_upstream_unavailable",
+            "return 503 '{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Service is temporarily unavailable\",\"recovery_hint\":\"Retry later; contact an administrator with trace_id if the problem persists.\",\"trace_id\":\"$request_id\"}}';",
+            False,
+            True,
+        ),
+        (
             identity_https_servers,
             "@identity_rate_limited",
             "return 429 '{\"error\":\"rate_limited\",\"error_description\":\"Too many requests; retry after 1 second.\"}';",
@@ -519,7 +527,28 @@ def validate_edge_assets(
             False,
         ),
     )
-    if rendered.count('\"trace_id\":\"$request_id\"') != 3:
+    if rendered.count('\"trace_id\":\"$request_id\"') != 4:
+        safe_error_invalid = True
+    platform_entries = (
+        _location_entries(platform_https_servers[0])
+        if len(platform_https_servers) == 1
+        else []
+    )
+    api_bodies = [body for label, body in platform_entries if label == "/api/"]
+    intercept_directive = "proxy_intercept_errors on;"
+    upstream_error_page = "error_page 502 504 = @api_upstream_unavailable;"
+    if (
+        len(api_bodies) != 1
+        or rendered.count(intercept_directive) != 1
+        or api_bodies[0].count(intercept_directive) != 1
+        or api_bodies[0].count(upstream_error_page) != 1
+        or [
+            line.strip()
+            for line in api_bodies[0].splitlines()
+            if "@api_upstream_unavailable" in line
+        ]
+        != [upstream_error_page]
+    ):
         safe_error_invalid = True
     for servers, label, return_directive, requires_retry_after, requires_trace in handlers:
         entries = _location_entries(servers[0]) if len(servers) == 1 else []
@@ -550,10 +579,7 @@ def validate_edge_assets(
             safe_error_invalid = True
         if re.search(r"\b(?:proxy_pass|rewrite|try_files)\b", body):
             safe_error_invalid = True
-    if (
-        "proxy_intercept_errors on;" in rendered
-        or "recursive_error_pages on;" in rendered
-    ):
+    if "recursive_error_pages on;" in rendered:
         safe_error_invalid = True
     if safe_error_invalid:
         errors.append(
