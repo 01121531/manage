@@ -8676,7 +8676,12 @@ def _register_operational_policy(
         details={"version": policy.version},
     )
     db.commit()
-    db.refresh(policy)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(policy, with_for_update=True)
     return _operational_policy_record_response(policy)
 
 

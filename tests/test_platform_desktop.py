@@ -175,6 +175,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._upload_business_name = "Example Store"
         instance._upload_submission_action = None
         instance._upload_submission_thread = None
+        instance._upload_poll_thread = None
         instance._session_refreshing = False
         instance._session_refresh_thread = None
         instance._unlock_action = None
@@ -2317,6 +2318,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._task_id, "task-1")
         self.assertEqual(instance._upload_business_name, "Example Store")
         self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertIsNone(instance._upload_poll_thread)
         retries = [
             entry
             for entry in instance.root.scheduled
@@ -2958,6 +2960,32 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         instance._poll_upload()
         client.get_upload_job.assert_not_called()
+
+    def test_terminal_cleanup_waits_for_upload_poll_worker(self) -> None:
+        instance = self._event_app()
+        order = []
+        poll_thread = mock.Mock()
+        poll_thread.is_alive.return_value = True
+        poll_thread.join.side_effect = lambda: order.append("poll-waited")
+        instance._upload_poll_thread = poll_thread
+        transition = mock.Mock()
+        transition.close.return_value = lambda: order.append("task-cleanup")
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.begin_task_transition.return_value = transition
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance._begin_terminal_task_cleanup("completed")
+
+        poll_thread.join.assert_called_once_with()
+        self.assertEqual(order, ["poll-waited", "task-cleanup"])
+        self.assertIsNone(instance._upload_poll_thread)
 
     def test_succeeded_upload_blocks_until_same_captured_cleanup_retries(self) -> None:
         instance = self._event_app()

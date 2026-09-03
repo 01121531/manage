@@ -301,6 +301,7 @@ class PlatformDesktopApp:
         self._upload_business_name: str | None = None
         self._upload_submission_action: _UploadSubmissionAction | None = None
         self._upload_submission_thread: threading.Thread | None = None
+        self._upload_poll_thread: threading.Thread | None = None
         self._poll_generation = 0
         self._poll_retry_attempt = 0
         self._task_generation = 0
@@ -3058,6 +3059,7 @@ class PlatformDesktopApp:
                     self._upload_submission_thread = None
                     self.upload_button.configure(text="提交上传")
                 else:
+                    self._upload_poll_thread = None
                     snapshot = value
                 self._upload_job_id = snapshot.id
                 self.upload_label.configure(text=snapshot.status)
@@ -3195,6 +3197,7 @@ class PlatformDesktopApp:
                         ERROR,
                     )
             elif kind == "upload_poll_error":
+                self._upload_poll_thread = None
                 if isinstance(value, PlatformAuthenticationError):
                     if self._client is not None:
                         self._client.clear_access_token()
@@ -3594,6 +3597,8 @@ class PlatformDesktopApp:
         upload_submission_thread = getattr(
             self, "_upload_submission_thread", None
         )
+        upload_poll_thread = getattr(self, "_upload_poll_thread", None)
+        self._upload_poll_thread = None
         update_check_lock = getattr(self, "_update_check_lock", None)
         if update_check_lock is None:
             update_check_threads = tuple(getattr(self, "_update_check_threads", ()))
@@ -3714,6 +3719,8 @@ class PlatformDesktopApp:
                 and upload_submission_thread.is_alive()
             ):
                 upload_submission_thread.join()
+            if upload_poll_thread is not None and upload_poll_thread.is_alive():
+                upload_poll_thread.join()
             for update_check_thread in update_check_threads:
                 if update_check_thread.is_alive():
                     update_check_thread.join()
@@ -4159,6 +4166,10 @@ class PlatformDesktopApp:
             or self._upload_job_id is None
             or self._closed
             or self._terminal_task_cleanup_action is not None
+            or (
+                self._upload_poll_thread is not None
+                and self._upload_poll_thread.is_alive()
+            )
         ):
             return
         job_id = self._upload_job_id
@@ -4183,11 +4194,14 @@ class PlatformDesktopApp:
             self._events.put((generation, "upload", job))
 
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-upload-poll"
+            target=worker, daemon=False, name="platform-upload-poll"
         )
+        self._upload_poll_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            if self._upload_poll_thread is thread:
+                self._upload_poll_thread = None
             self._events.put(
                 (
                     generation,
@@ -4228,6 +4242,7 @@ class PlatformDesktopApp:
         self.business_entry.configure(state="disabled")
         self.upload_button.configure(state="disabled")
         task_id = self._task_id
+        upload_poll_thread = self._upload_poll_thread
         try:
             transition = self._client.begin_task_transition(task_id)
             cleanup = transition.close(task_id)
@@ -4238,6 +4253,15 @@ class PlatformDesktopApp:
         if cleanup is None:
             self._set_status("平台未能准备任务资源关闭，请重新登录后处理。", ERROR)
             return
+        if self._upload_poll_thread is upload_poll_thread:
+            self._upload_poll_thread = None
+
+        task_cleanup = cleanup
+
+        def cleanup() -> None:
+            if upload_poll_thread is not None and upload_poll_thread.is_alive():
+                upload_poll_thread.join()
+            task_cleanup()
 
         self._upload_generation += 1
         self._terminal_task_cleanup_generation += 1

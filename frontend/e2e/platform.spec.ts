@@ -2048,7 +2048,7 @@ test('logout keeps the session until server cleanup succeeds and is single-fligh
           error: {
             code: 'service_unavailable',
             message: 'cleanup unavailable',
-            recovery_hint: '请检查平台网络。',
+            recovery_hint: 'must-never-render-logout-internal-recovery-detail',
           },
         }, 503)
       }
@@ -2087,6 +2087,7 @@ test('logout keeps the session until server cleanup succeeds and is single-fligh
   await expect(logoutFailure).toContainText('原因：平台依赖暂不可用，安全退出未确认。')
   await expect(logoutFailure).toContainText('影响：您仍保持登录')
   await expect(logoutFailure).toContainText('下一步：检查网络后再次点击“退出登录”')
+  await expect(page.getByText('must-never-render-logout-internal-recovery-detail')).toHaveCount(0)
   await expect(page.getByText('operator@example.invalid')).toBeVisible()
   await expect(logoutButton).toBeEnabled()
   await expect(lockButton).toBeEnabled()

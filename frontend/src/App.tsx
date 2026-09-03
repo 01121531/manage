@@ -406,13 +406,10 @@ export default function App() {
     }).catch((error: unknown) => {
       if (sessionGenerationRef.current !== generation) return
       const detail = error instanceof Error ? error.message : '平台暂时无法确认退出。'
-      const recovery = error instanceof ApiError && error.recoveryHint
-        ? ` ${error.recoveryHint}`
-        : ''
       const actionName = intent === 'lock' ? '锁定' : '退出'
       setLogoutError({
         title: intent === 'lock' ? '安全锁定未完成' : '安全退出未完成',
-        description: `原因：${detail}${recovery} `
+        description: `原因：${detail} `
           + `影响：您仍保持登录，平台不会显示${actionName}成功。 `
           + `下一步：检查网络后再次点击“${intent === 'lock' ? '锁定' : '退出登录'}”。`,
       })
