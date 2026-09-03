@@ -2313,6 +2313,32 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertFalse(instance._current_task_is_verified())
         self.assertEqual(instance.upload_button.values["state"], "disabled")
 
+    def test_terminal_cleanup_thread_start_failure_exposes_retry(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._terminal_task_cleanup_action = cleanup
+        instance._terminal_task_cleanup_task_id = "task-1"
+        instance._terminal_task_cleanup_outcome = "completed"
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("thread unavailable")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._start_terminal_task_cleanup_attempt()
+            instance._drain_events()
+
+        cleanup.assert_not_called()
+        self.assertIs(instance._terminal_task_cleanup_action, cleanup)
+        self.assertFalse(instance._terminal_task_cleanup_in_progress)
+        self.assertIsNone(instance._terminal_task_cleanup_thread)
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+
     def test_succeeded_upload_blocks_until_same_captured_cleanup_retries(self) -> None:
         instance = self._event_app()
         release_first_attempt = threading.Event()

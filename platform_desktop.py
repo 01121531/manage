@@ -3761,7 +3761,16 @@ class PlatformDesktopApp:
         )
         self._terminal_task_cleanup_in_progress = True
         self._terminal_task_cleanup_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "terminal_task_cleanup_error",
+                    (task_id, outcome),
+                )
+            )
 
     def _retry_terminal_task_cleanup(self) -> None:
         if (
