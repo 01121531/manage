@@ -715,6 +715,37 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.login_button.values["text"], "登录平台")
         self.assertEqual(instance.login_button.values["state"], "normal")
 
+    def test_logout_cleanup_prepare_failure_retries_with_captured_client(self) -> None:
+        instance = self._event_app()
+        calls = []
+
+        def prepare(task_id):
+            calls.append(("prepare", task_id))
+            if len(calls) == 1:
+                raise RuntimeError("unexpected prepare failure")
+            return lambda: calls.append(("cleanup", task_id))
+
+        original_client = mock.Mock(is_authenticated=True)
+        instance._client = original_client
+        original_client.prepare_logout_cleanup.side_effect = prepare
+
+        instance.logout(message="已完成安全退出。")
+        instance._client = mock.Mock()
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(
+            calls,
+            [
+                ("prepare", "task-1"),
+                ("prepare", "task-1"),
+                ("cleanup", "task-1"),
+            ],
+        )
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.status_label.values["text"], "已完成安全退出。")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
     def test_stale_shutdown_cleanup_finished_exposes_same_cleanup_retry(self) -> None:
         cleanup_started = threading.Event()
         release_cleanup = threading.Event()

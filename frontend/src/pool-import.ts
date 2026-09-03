@@ -218,6 +218,8 @@ export async function assertPoolImportReceiptBound(
     || !SHA256_HEX_PATTERN.test(receipt.secure_receipt_fingerprint)
     || typeof receipt.ordered_manifest_digest !== 'string'
     || !SHA256_HEX_PATTERN.test(receipt.ordered_manifest_digest)
+    || typeof receipt.consumed_at !== 'string'
+    || !Number.isFinite(Date.parse(receipt.consumed_at))
   ) throw invalid()
 
   let expectedFingerprint = ''

@@ -5698,10 +5698,11 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
       }
       if (cardImportBodies.length === 3) {
         return fulfill({
-          id: 'wrong-card-manifest-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
-          ordered_manifest_digest: 'a'.repeat(64), secure_receipt_fingerprint: cardReceiptFingerprint,
-          key_version: 3, consumed_at: '2026-08-20T00:00:00Z',
-          trace_id: 'wrong-card-manifest-trace', created_at: '2026-08-20T00:00:00Z',
+          id: 'missing-card-consumed-at-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
+          ordered_manifest_digest: '08603be66c89a429df9ef89deb4e864c5b6523f3b6b03f114fd6285ef96e71f8',
+          secure_receipt_fingerprint: cardReceiptFingerprint,
+          key_version: 3, consumed_at: null,
+          trace_id: 'missing-card-consumed-at-trace', created_at: '2026-08-20T00:00:00Z',
         })
       }
       return fulfill({

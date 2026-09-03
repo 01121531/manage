@@ -4017,15 +4017,25 @@ class PlatformDesktopApp:
             update_download_threads += (update_download_thread,)
         self._update_download_threads = []
         self._update_download_thread = None
+        cleanup_client = self._client
         try:
             logout_cleanup = (
-                self._client.prepare_logout_cleanup(task_id)
-                if self._client is not None
+                cleanup_client.prepare_logout_cleanup(task_id)
+                if cleanup_client is not None
                 else lambda: None
             )
         except Exception:
+            captured_logout_cleanup: Callable[[], None] | None = None
+
             def logout_cleanup() -> None:
-                raise PlatformClientError("session cleanup preparation failed")
+                nonlocal captured_logout_cleanup
+                if cleanup_client is None:
+                    return
+                if captured_logout_cleanup is None:
+                    captured_logout_cleanup = cleanup_client.prepare_logout_cleanup(
+                        task_id
+                    )
+                captured_logout_cleanup()
 
         late_compensation: _TaskProvisioningCompensation | None = None
         late_restore_compensation: _SessionRestoreCompensation | None = None

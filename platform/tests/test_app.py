@@ -944,6 +944,32 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.json()["id"], self.identity.user_id)
         self.assertEqual(response.json()["device_id"], self.identity.device_id)
 
+    def test_me_rechecks_identity_after_authentication(self) -> None:
+        observed_at = utc_now()
+        stale_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-a",
+            device_id=self.identity.device_id,
+            email="stale@example.test",
+            role="ops_admin",
+            identity_kind="local",
+            auth_time=observed_at,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request("GET", "/api/v1/me")
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["email"], "first@example.test")
+        self.assertEqual(response.json()["role"], "operator")
+
     def test_login_rechecks_device_after_issue_commit(self) -> None:
         original_commit = Session.commit
         revoked = False

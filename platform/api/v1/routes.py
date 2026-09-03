@@ -937,13 +937,21 @@ def auth_config(request: Request) -> AuthConfigResponse:
 
 
 @router.get("/me", response_model=MeResponse, tags=["auth"])
-def me(principal: AuthPrincipal = Depends(get_interactive_principal)) -> MeResponse:
+def me(
+    principal: AuthPrincipal = Depends(get_interactive_principal),
+    db: Session = Depends(get_db),
+) -> MeResponse:
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=tuple(INTERACTIVE_ROLES),
+    )
     return MeResponse(
-        id=principal.user_id,
-        tenant_id=principal.tenant_id,
-        email=principal.email,
+        id=current_user.id,
+        tenant_id=current_user.tenant_id,
+        email=current_user.email,
         device_id=principal.device_id,
-        role=principal.role,
+        role=current_user.role,
     )
 
 
