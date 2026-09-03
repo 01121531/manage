@@ -3924,10 +3924,11 @@ class AdminApiTests(unittest.TestCase):
             response.json(),
             {
                 "policy_version": "sub2-policy-safe-view",
-                "status": "ready",
+                "status": "not_configured",
                 "upload_endpoint_configured": True,
                 "upload_secret_configured": True,
                 "network_route_configured": True,
+                "unknown_reconciliation_configured": False,
                 "server_managed": True,
                 "governance_configured": False,
                 "active_version": None,
@@ -3948,6 +3949,21 @@ class AdminApiTests(unittest.TestCase):
             "credential_ref",
         ):
             self.assertNotIn(forbidden, serialized)
+
+        with mock.patch(
+            "platform.api.v1.routes.sub2_unknown_reconciliation_configured",
+            return_value=True,
+        ):
+            fully_configured = self.request(
+                "GET",
+                "/api/v1/admin/policies/upload",
+                headers=self.headers(admin_token),
+            )
+        self.assertEqual(fully_configured.status_code, 200, fully_configured.text)
+        self.assertEqual(fully_configured.json()["status"], "ready")
+        self.assertTrue(
+            fully_configured.json()["unknown_reconciliation_configured"]
+        )
 
         self.app.state.settings.sub2_upload_url = (
             "https://ai1.aisb.shop/api/v1/admin/accounts"

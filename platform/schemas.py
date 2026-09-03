@@ -611,6 +611,7 @@ class UploadPolicyStatusResponse(BaseModel):
     upload_endpoint_configured: bool
     upload_secret_configured: bool
     network_route_configured: bool
+    unknown_reconciliation_configured: bool
     server_managed: bool = True
     governance_configured: bool = False
     active_version: str | None = None

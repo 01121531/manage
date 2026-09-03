@@ -382,7 +382,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
       type="warning"
       showIcon
       message="上传策略尚未完整配置"
-      description="请在服务端完成上传接口、上传密钥和网络路径配置后再开放生产上传。"
+      description="请在服务端完成上传接口、上传密钥、网络路径以及 unknown 状态/幂等核对能力后再开放生产上传。"
     /> : null}
     <Card title="Sub2 上传策略">
       <Descriptions column={{ xs: 1, md: 2 }}>
@@ -392,6 +392,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
         <Descriptions.Item label="上传接口"><BooleanStateTag value={policy.upload_endpoint_configured} trueLabel="已配置" falseLabel="未配置" /></Descriptions.Item>
         <Descriptions.Item label="上传密钥"><BooleanStateTag value={policy.upload_secret_configured} trueLabel="已配置" falseLabel="未配置" /></Descriptions.Item>
         <Descriptions.Item label="网络路径"><BooleanStateTag value={policy.network_route_configured} trueLabel="已配置" falseLabel="未配置" /></Descriptions.Item>
+        <Descriptions.Item label="状态/幂等核对"><BooleanStateTag value={policy.unknown_reconciliation_configured} trueLabel="已配置" falseLabel="未配置" /></Descriptions.Item>
         <Descriptions.Item label="治理状态"><BooleanStateTag value={policy.governance_configured} trueLabel="已启用" falseLabel="未启用" /></Descriptions.Item>
         <Descriptions.Item label="当前生效">{policy.active_version ?? '使用服务端默认配置'}</Descriptions.Item>
         <Descriptions.Item label="上一版本">{policy.previous_version ?? '无'}</Descriptions.Item>

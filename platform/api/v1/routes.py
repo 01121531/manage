@@ -129,7 +129,11 @@ from platform.pool_import_contexts import (
     pool_import_context_token_hash,
     renew_pool_import_context,
 )
-from platform.uploads import sub2_upload_endpoint_configured, transition_upload_phase
+from platform.uploads import (
+    sub2_unknown_reconciliation_configured,
+    sub2_upload_endpoint_configured,
+    transition_upload_phase,
+)
 from platform.schemas import (
     ApiErrorResponse,
     AdminCardImportItem,
@@ -8239,10 +8243,14 @@ def admin_upload_policy_status(
     )
     upload_secret_configured = bool(settings.sub2_credential_ref)
     network_route_configured = bool(settings.sub2_proxy_ref)
+    unknown_reconciliation_configured = (
+        sub2_unknown_reconciliation_configured()
+    )
     ready = (
         upload_endpoint_configured
         and upload_secret_configured
         and network_route_configured
+        and unknown_reconciliation_configured
     )
     deployment = db.scalar(
         select(UploadPolicyDeployment).where(
@@ -8277,6 +8285,7 @@ def admin_upload_policy_status(
         upload_endpoint_configured=upload_endpoint_configured,
         upload_secret_configured=upload_secret_configured,
         network_route_configured=network_route_configured,
+        unknown_reconciliation_configured=unknown_reconciliation_configured,
         governance_configured=governance_configured,
         active_version=active.version if active is not None else None,
         previous_version=previous.version if previous is not None else None,

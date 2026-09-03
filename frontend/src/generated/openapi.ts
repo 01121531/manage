@@ -2566,6 +2566,8 @@ export interface components {
              * @enum {string}
              */
             status: "ready" | "not_configured";
+            /** Unknown Reconciliation Configured */
+            unknown_reconciliation_configured: boolean;
             /** Upload Endpoint Configured */
             upload_endpoint_configured: boolean;
             /** Upload Secret Configured */

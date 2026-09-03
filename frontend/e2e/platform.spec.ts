@@ -3700,7 +3700,7 @@ test('platform admin governs upload policies without browser execution details',
   let policyStatus = {
     policy_version: 'sub2-2026.07.1', status: 'ready', server_managed: true,
     upload_endpoint_configured: true, upload_secret_configured: true,
-    network_route_configured: true, governance_configured: true,
+    network_route_configured: true, unknown_reconciliation_configured: true, governance_configured: true,
     active_version: 'sub2-2026.07.1' as string | null, previous_version: null as string | null, rollout_percent: 100 as number | null,
   }
   const policySummary = page.locator('.ant-card').filter({

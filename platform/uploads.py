@@ -535,6 +535,12 @@ def sub2_upload_endpoint_configured(value: str | None) -> bool:
     return True
 
 
+def sub2_unknown_reconciliation_configured() -> bool:
+    """Report whether the runtime can verify ambiguous provider outcomes."""
+
+    return _SUB2_STATUS_QUERY_SUPPORTED and _SUB2_IDEMPOTENCY_LOOKUP_SUPPORTED
+
+
 def _secret_text(secret: Mapping[str, object], *names: str) -> str:
     for name in names:
         value = secret.get(name)

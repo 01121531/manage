@@ -3366,6 +3366,10 @@
             "title": "Status",
             "type": "string"
           },
+          "unknown_reconciliation_configured": {
+            "title": "Unknown Reconciliation Configured",
+            "type": "boolean"
+          },
           "upload_endpoint_configured": {
             "title": "Upload Endpoint Configured",
             "type": "boolean"
@@ -3380,7 +3384,8 @@
           "status",
           "upload_endpoint_configured",
           "upload_secret_configured",
-          "network_route_configured"
+          "network_route_configured",
+          "unknown_reconciliation_configured"
         ],
         "title": "UploadPolicyStatusResponse",
         "type": "object"
