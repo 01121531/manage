@@ -246,6 +246,44 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
         self.assertIsNone(created.get("applied_at"))
         self.assertEqual(self.user_role(self.target.user_id), "operator")
 
+    def test_request_rechecks_requester_after_authentication(self) -> None:
+        original_resolve = auth._resolve_principal
+        demoted = False
+
+        def demote_after_authentication(*args, **kwargs):
+            nonlocal demoted
+            principal = original_resolve(*args, **kwargs)
+            if not demoted:
+                with self.app.state.session_factory() as db:
+                    requester = db.get(User, self.requester.user_id)
+                    self.assertIsNotNone(requester)
+                    requester.role = "security_auditor"
+                    db.commit()
+                demoted = True
+            return principal
+
+        with mock.patch.object(
+            auth, "_resolve_principal", side_effect=demote_after_authentication
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/users/{self.target.user_id}/role-change-requests",
+                headers=self.bearer(self.requester_token),
+                json={"role": "security_auditor"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(self.user_role(self.target.user_id), "operator")
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.scalar(
+                    select(func.count(AdminRoleChangeRequest.id)).where(
+                        AdminRoleChangeRequest.target_user_id == self.target.user_id
+                    )
+                ),
+                0,
+            )
+
     def test_target_claim_restarts_once_after_an_inconsistent_empty_read(self) -> None:
         db = mock.Mock()
         target = mock.Mock(spec=User)

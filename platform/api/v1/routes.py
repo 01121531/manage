@@ -4686,6 +4686,46 @@ def admin_request_user_role_change(
 ) -> AdminRoleChangeResponse:
     if user_id == principal.user_id:
         raise HTTPException(status_code=409, detail="Cannot change the current user role")
+    participant_ids = sorted({principal.user_id, user_id})
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(
+            update(User)
+            .where(
+                User.id == principal.user_id,
+                User.tenant_id == principal.tenant_id,
+            )
+            .values(role=User.role)
+            .execution_options(synchronize_session=False)
+        )
+    participants = {
+        participant.id: participant
+        for participant in db.scalars(
+            select(User)
+            .where(
+                User.tenant_id == principal.tenant_id,
+                User.id.in_(participant_ids),
+            )
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    }
+    actor = participants.get(principal.user_id)
+    actor_device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+    )
+    if (
+        actor is None
+        or not actor.is_active
+        or actor_device is None
+        or actor_device.revoked_at is not None
+    ):
+        raise unauthorized()
+    if actor.role != ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Insufficient role")
     user = _claim_admin_role_change_target(
         db,
         user_id=user_id,
