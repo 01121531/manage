@@ -583,7 +583,35 @@ def _lock_owned_device_revoke_response_principal(
         user_id=principal.user_id,
         device_id=principal.device_id,
     )
-    if user is None or not user.is_active or actor_device is None:
+    now = _utc_now()
+    access_token_revoked = db.scalar(
+        select(RevokedAccessToken.token_hash).where(
+            RevokedAccessToken.token_hash == principal.access_token_hash,
+            RevokedAccessToken.expires_at > now,
+        )
+    ) is not None
+    oidc_session_revoked = (
+        principal.oidc_session_hash is not None
+        and db.scalar(
+            select(RevokedOidcSession.session_hash).where(
+                RevokedOidcSession.session_hash == principal.oidc_session_hash,
+                or_(
+                    RevokedOidcSession.expires_at.is_(None),
+                    RevokedOidcSession.expires_at > now,
+                ),
+            )
+        )
+        is not None
+    )
+    if (
+        user is None
+        or not user.is_active
+        or actor_device is None
+        or principal.access_token_revoked
+        or principal.oidc_session_revoked
+        or access_token_revoked
+        or oidc_session_revoked
+    ):
         raise unauthorized()
     if user.role not in INTERACTIVE_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient role")

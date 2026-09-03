@@ -3780,7 +3780,7 @@ class PlatformDesktopApp:
             try:
                 try:
                     manifest = self._update_client.check()
-                except UpdateError:
+                except Exception:
                     self._events.put((generation, "update_error", silent))
                 else:
                     if manifest is None:

@@ -5639,6 +5639,37 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
         self.assertEqual(instance._update_check_threads, [])
 
+    def test_unexpected_update_check_error_restores_retry(self) -> None:
+        instance = self._event_app()
+        instance._update_client.check.side_effect = RuntimeError(
+            "unexpected update failure"
+        )
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self) -> None:
+                try:
+                    self.target()
+                except RuntimeError:
+                    pass
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance.check_for_updates()
+            instance._drain_events()
+
+        instance._update_client.check.assert_called_once_with()
+        self.assertEqual(instance._update_check_threads, [])
+        self.assertEqual(instance.check_update_button.values["state"], "normal")
+        self.assertEqual(
+            instance.status_label.values["text"],
+            "检查更新失败，请稍后重试。",
+        )
+        self.assertNotIn(
+            "unexpected update failure", instance.status_label.values["text"]
+        )
+
     def test_session_cleanup_owns_update_check_and_download_threads(self) -> None:
         instance = self._event_app()
         order = []
