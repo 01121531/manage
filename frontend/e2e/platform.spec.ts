@@ -5093,8 +5093,7 @@ test('card true-state refresh fails closed before privileged actions recover', a
       failNextCardList = true
       return fulfill({
         ...cards[0],
-        quarantine_reason_code: 'suspected_compromise',
-        quarantined_at: '2026-08-20T00:05:00Z',
+        tenant_id: 'wrong-card-state-tenant',
       })
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
@@ -5124,6 +5123,7 @@ test('card true-state refresh fails closed before privileged actions recover', a
   await expect(page.getByText('provider-refresh')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /[启停]用卡 provider-refresh/ })).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('sensitive card inventory detail')
+  await expect(page.locator('body')).not.toContainText('wrong-card-state-tenant')
 
   const retry = listError.getByRole('button', { name: '重新获取卡资源真实状态' })
   await retry.click()

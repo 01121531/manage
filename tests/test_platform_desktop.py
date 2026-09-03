@@ -675,6 +675,39 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.destroy_calls, 1)
         self.assertTrue(instance._closed)
 
+    def test_clipboard_failure_status_error_still_finishes_cleanup(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        instance.root.clipboard_get = mock.Mock(
+            side_effect=tk.TclError("clipboard busy")
+        )
+        original_after = instance.root.after
+        instance.root.after = mock.Mock(
+            side_effect=RuntimeError("retry scheduling failed")
+        )
+        instance.status_label.configure = mock.Mock(
+            side_effect=RuntimeError("status widget unavailable")
+        )
+
+        instance._clear_sensitive_code()
+
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertIsNotNone(instance._clipboard_cleanup_failed)
+
+        instance.status_label.configure = mock.Mock()
+        instance.root.after = original_after
+        instance.root.clipboard_get = lambda: instance.root.clipboard
+        instance._destroy_window()
+        instance.close()
+
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertIsNone(instance._clipboard_cleanup_failed)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance.root.destroy_calls, 1)
+        self.assertTrue(instance._closed)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

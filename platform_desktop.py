@@ -2015,6 +2015,20 @@ class PlatformDesktopApp:
             ):
                 self._destroy_window()
 
+        def record_failure() -> None:
+            self._remember_clipboard_cleanup_failure(owner)
+            try:
+                self._set_status(
+                    "原因：系统剪贴板持续被占用；"
+                    "影响：客户端无法确认已清除自己写入的临时内容，窗口不会退出；"
+                    "下一步：关闭占用剪贴板的程序后再次点击关闭。",
+                    ERROR,
+                )
+            except Exception:
+                pass
+            finally:
+                finish()
+
         def clear_if_owned(retries_remaining: int) -> None:
             if self._closed or generation != self._clipboard_clear_generation:
                 finish()
@@ -2036,14 +2050,7 @@ class PlatformDesktopApp:
                 self.root.update_idletasks()
             except Exception:
                 if retries_remaining <= 0:
-                    self._remember_clipboard_cleanup_failure(owner)
-                    self._set_status(
-                        "原因：系统剪贴板持续被占用；"
-                        "影响：客户端无法确认已清除自己写入的临时内容，窗口不会退出；"
-                        "下一步：关闭占用剪贴板的程序后再次点击关闭。",
-                        ERROR,
-                    )
-                    finish()
+                    record_failure()
                     return
                 try:
                     self.root.after(
@@ -2051,14 +2058,7 @@ class PlatformDesktopApp:
                         lambda: clear_if_owned(retries_remaining - 1),
                     )
                 except Exception:
-                    self._remember_clipboard_cleanup_failure(owner)
-                    self._set_status(
-                        "原因：系统剪贴板持续被占用；"
-                        "影响：客户端无法确认已清除自己写入的临时内容，窗口不会退出；"
-                        "下一步：关闭占用剪贴板的程序后再次点击关闭。",
-                        ERROR,
-                    )
-                    finish()
+                    record_failure()
                     return
             else:
                 if self._clipboard_owner == owner:

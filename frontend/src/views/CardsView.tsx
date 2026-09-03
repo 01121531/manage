@@ -354,6 +354,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const expectedStatus = isActive ? 'available' : 'disabled'
       if (
         updated.id !== row.id
+        || updated.tenant_id !== row.tenant_id
         || updated.is_active !== isActive
         || updated.status !== expectedStatus
         || updated.quarantine_reason_code !== null
