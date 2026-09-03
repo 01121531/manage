@@ -1094,6 +1094,11 @@ def list_mailboxes(
 ) -> MailboxPageResponse:
     """List one stable page of safe masked mailbox connector status."""
 
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     now = _utc_now()
     normalized_q = _normalize_pool_list_search(q)
     filter_digest = _pool_list_filter_digest(
@@ -5961,6 +5966,11 @@ def admin_list_cards(
     ),
     db: Session = Depends(get_db),
 ) -> AdminCardPageResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     normalized_q = _normalize_pool_list_search(q)
     filter_digest = _pool_list_filter_digest(
         "cards", normalized_q, pool_key, status

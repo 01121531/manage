@@ -1154,6 +1154,52 @@ class AdminApiTests(unittest.TestCase):
                 },
             )
 
+    def test_pool_lists_recheck_actor_after_authentication(self) -> None:
+        provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="stale-card-list",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/stale-list",
+        )
+        with self.app.state.session_factory() as db:
+            db.add(Mailbox(
+                tenant_id="tenant-a",
+                email_masked="stale***@example.test",
+                connector_type="http",
+                task_type="mail_code",
+                secret_ref="vault://secret/mailboxes/stale-list",
+            ))
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "operator"
+            db.commit()
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            cards = self.request("GET", "/api/v1/admin/cards")
+            mailboxes = self.request("GET", "/api/v1/mailboxes")
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(cards.status_code, 403, cards.text)
+        self.assertEqual(mailboxes.status_code, 403, mailboxes.text)
+
     def test_card_list_uses_filter_bound_stable_keyset_pages(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
