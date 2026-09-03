@@ -4959,6 +4959,11 @@ def admin_list_role_change_requests(
     principal: AuthPrincipal = Depends(require_roles(ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> list[AdminRoleChangeResponse]:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     now = _utc_now()
     statement = select(AdminRoleChangeRequest).where(
         AdminRoleChangeRequest.tenant_id == principal.tenant_id
