@@ -5036,9 +5036,18 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
           trace_id: 'wrong-card-trace', created_at: '2026-08-20T00:00:00Z',
         })
       }
+      if (cardImportBodies.length === 3) {
+        return fulfill({
+          id: 'wrong-card-manifest-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
+          ordered_manifest_digest: 'a'.repeat(64), secure_receipt_fingerprint: cardReceiptFingerprint,
+          key_version: 3, consumed_at: '2026-08-20T00:00:00Z',
+          trace_id: 'wrong-card-manifest-trace', created_at: '2026-08-20T00:00:00Z',
+        })
+      }
       return fulfill({
         id: 'card-import-receipt', status: 'committed', pool_type: 'card', imported_count: body.length,
-        ordered_manifest_digest: 'a'.repeat(64), secure_receipt_fingerprint: cardReceiptFingerprint,
+        ordered_manifest_digest: '08603be66c89a429df9ef89deb4e864c5b6523f3b6b03f114fd6285ef96e71f8',
+        secure_receipt_fingerprint: cardReceiptFingerprint,
         key_version: 3, consumed_at: '2026-08-20T00:00:00Z',
         trace_id: 'card-import-trace', created_at: '2026-08-20T00:00:00Z',
       })
@@ -5073,9 +5082,18 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
           trace_id: 'wrong-mailbox-trace', created_at: '2026-08-20T00:00:00Z',
         })
       }
+      if (mailboxImportBodies.length === 4) {
+        return fulfill({
+          id: 'wrong-mailbox-manifest-receipt', status: 'committed', pool_type: 'mailbox', imported_count: body.length,
+          ordered_manifest_digest: 'c'.repeat(64), secure_receipt_fingerprint: mailboxReceiptFingerprint,
+          key_version: 4, consumed_at: '2026-08-20T00:00:00Z',
+          trace_id: 'wrong-mailbox-manifest-trace', created_at: '2026-08-20T00:00:00Z',
+        })
+      }
       return fulfill({
         id: 'mailbox-import-receipt', status: 'committed', pool_type: 'mailbox', imported_count: body.length,
-        ordered_manifest_digest: 'c'.repeat(64), secure_receipt_fingerprint: mailboxReceiptFingerprint,
+        ordered_manifest_digest: 'ebb9345a1c63f91f3f188372caf463a8ec99034ffb286477666067cd7b0b5946',
+        secure_receipt_fingerprint: mailboxReceiptFingerprint,
         key_version: 4, consumed_at: '2026-08-20T00:00:00Z',
         trace_id: 'mailbox-import-trace', created_at: '2026-08-20T00:00:00Z',
       }, 201)
@@ -5159,13 +5177,26 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await expect.poll(() => cardImportBodies).toEqual([
     secureCardItems, secureCardItems, secureCardItems,
   ])
-  expect(cardImportKeys).toEqual([cardSubmissionKey, cardSubmissionKey, cardSubmissionKey])
+  await expect(page.getByText(
+    '平台返回的信用卡池导入回执绑定无效；请使用同一批次重试核对。', { exact: true },
+  ).last()).toBeVisible()
+  await expect(cardRecovery).toBeVisible()
+  await expect(page.getByText('最近一次信用卡池导入已确认：1 条', { exact: true })).toHaveCount(0)
+  await cardRecovery.getByRole('button', { name: '使用同一批次核验信用卡池导入' }).click()
+  await expect.poll(() => cardImportBodies).toEqual([
+    secureCardItems, secureCardItems, secureCardItems, secureCardItems,
+  ])
+  expect(cardImportKeys).toEqual([
+    cardSubmissionKey, cardSubmissionKey, cardSubmissionKey, cardSubmissionKey,
+  ])
   expect(cardImportKeys[1]).toBe(cardImportKeys[0])
   expect(cardImportReceipts).toEqual([
     'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
-    'epir1.card-receipt.signature',
+    'epir1.card-receipt.signature', 'epir1.card-receipt.signature',
   ])
-  expect(cardImportContexts).toEqual([cardContextToken, cardContextToken, cardContextToken])
+  expect(cardImportContexts).toEqual([
+    cardContextToken, cardContextToken, cardContextToken, cardContextToken,
+  ])
   await expect(page.getByRole('row').filter({ hasText: 'provider-imported' })).toBeVisible()
   await expect(page.getByText('最近一次信用卡池导入已确认：1 条', { exact: true })).toBeVisible()
   await expect(page.getByText('card-import-receipt', { exact: true })).toBeVisible()
@@ -5268,15 +5299,28 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await expect.poll(() => mailboxImportBodies).toEqual([
     secureMailboxItems, secureMailboxItems, secureMailboxItems, secureMailboxItems,
   ])
+  await expect(page.getByText(
+    '平台返回的邮箱池导入回执绑定无效；请使用同一批次重试核对。', { exact: true },
+  ).last()).toBeVisible()
+  await expect(mailboxRecovery).toBeVisible()
+  await expect(page.getByText('最近一次邮箱池导入已确认：1 条', { exact: true })).toHaveCount(0)
+  await mailboxRecovery.getByRole('button', { name: '使用同一批次核验邮箱池导入' }).click()
+  await expect.poll(() => mailboxImportBodies).toEqual([
+    secureMailboxItems, secureMailboxItems, secureMailboxItems, secureMailboxItems,
+    secureMailboxItems,
+  ])
   expect(mailboxImportKeys).toEqual([
     mailboxSubmissionKey, mailboxSubmissionKey, mailboxSubmissionKey, mailboxSubmissionKey,
+    mailboxSubmissionKey,
   ])
   expect(mailboxImportReceipts).toEqual([
     'epir1.mail-receipt.signature', 'epir1.mail-receipt.signature',
     'epir1.mail-receipt.signature', 'epir1.mail-receipt.signature',
+    'epir1.mail-receipt.signature',
   ])
   expect(mailboxImportContexts).toEqual([
     mailboxContextToken, mailboxContextToken, mailboxContextToken, mailboxContextToken,
+    mailboxContextToken,
   ])
   await expect(page.getByRole('row').filter({ hasText: 'i***@example.invalid' })).toBeVisible()
   await expect(page.getByText('最近一次邮箱池导入已确认：1 条', { exact: true })).toBeVisible()

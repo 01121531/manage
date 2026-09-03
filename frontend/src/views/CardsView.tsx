@@ -216,7 +216,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       await assertPoolImportReceiptBound(
-        receipt, 'card', batch.payload.length, batch.idempotencyKey,
+        receipt, 'card', batch.payload, batch.idempotencyKey,
       )
       cardImportRetryRef.current = null
       setCardImportRetryAvailable(false)
@@ -252,7 +252,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
       await assertPoolImportReceiptBound(
-        receipt, 'card', batch.payload.length, batch.idempotencyKey,
+        receipt, 'card', batch.payload, batch.idempotencyKey,
       )
       cardImportRetryRef.current = null
       setCardImportRetryAvailable(false)

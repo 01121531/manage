@@ -176,10 +176,32 @@ export const readMailboxPoolImportJson = (file: File) => readPoolImportJson(
   file, 'mailbox', parseMailboxItem,
 )
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (isJsonObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`
+  }
+  const encoded = JSON.stringify(value)
+  if (encoded === undefined) throw new Error('unsupported canonical value')
+  return encoded
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(value),
+  )
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 export async function assertPoolImportReceiptBound(
   receipt: PoolImportReceipt,
   expectedPoolType: 'card' | 'mailbox',
-  expectedCount: number,
+  expectedItems: CardImportItem[] | MailboxImportItem[],
   submissionKey: string,
 ): Promise<void> {
   const label = expectedPoolType === 'card' ? '信用卡池' : '邮箱池'
@@ -188,25 +210,41 @@ export async function assertPoolImportReceiptBound(
   if (
     receipt.status !== 'committed'
     || receipt.pool_type !== expectedPoolType
-    || receipt.imported_count !== expectedCount
+    || receipt.imported_count !== expectedItems.length
     || !submissionMatch
     || typeof receipt.secure_receipt_fingerprint !== 'string'
     || !SHA256_HEX_PATTERN.test(receipt.secure_receipt_fingerprint)
+    || typeof receipt.ordered_manifest_digest !== 'string'
+    || !SHA256_HEX_PATTERN.test(receipt.ordered_manifest_digest)
   ) throw invalid()
 
-  let expectedFingerprint: string
+  let expectedFingerprint = ''
+  let expectedManifestDigest = ''
   try {
-    const digest = await globalThis.crypto.subtle.digest(
-      'SHA-256',
-      new TextEncoder().encode(submissionMatch[1]),
-    )
-    expectedFingerprint = Array.from(new Uint8Array(digest))
-      .map((value) => value.toString(16).padStart(2, '0'))
-      .join('')
+    const normalizedItems: unknown[] = expectedPoolType === 'card'
+      ? (expectedItems as CardImportItem[]).map((item) => ({
+          ...item,
+          expiry_month: item.expiry_month ?? null,
+          expiry_year: item.expiry_year ?? null,
+        }))
+      : expectedItems
+    const digests = await Promise.all([
+      sha256Hex(submissionMatch[1]),
+      sha256Hex(
+        `email-platform:pool-import-manifest:v2\0${expectedPoolType}\0${canonicalJson(normalizedItems)}`,
+      ),
+    ])
+    expectedFingerprint = digests[0]
+    expectedManifestDigest = digests[1]
   } catch {
     throw invalid()
   }
-  if (receipt.secure_receipt_fingerprint !== expectedFingerprint) throw invalid()
+  if (
+    receipt.secure_receipt_fingerprint !== expectedFingerprint
+    || receipt.ordered_manifest_digest !== expectedManifestDigest
+  ) {
+    throw invalid()
+  }
 }
 
 export function shouldRetainPoolImportForRetry(error: unknown): boolean {

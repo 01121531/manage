@@ -155,7 +155,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       )
       if (!isCurrent()) return
       await assertPoolImportReceiptBound(
-        receipt, 'mailbox', batch.payload.length, batch.idempotencyKey,
+        receipt, 'mailbox', batch.payload, batch.idempotencyKey,
       )
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
@@ -195,7 +195,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
       )
       if (!isCurrent()) return
       await assertPoolImportReceiptBound(
-        receipt, 'mailbox', batch.payload.length, batch.idempotencyKey,
+        receipt, 'mailbox', batch.payload, batch.idempotencyKey,
       )
       mailboxImportRetryRef.current = null
       setMailboxImportRetryAvailable(false)
