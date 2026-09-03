@@ -2227,6 +2227,60 @@ class AdminApiTests(unittest.TestCase):
                 3,
             )
 
+    def test_card_quarantine_rechecks_actor_after_authentication(self) -> None:
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="stale-quarantine-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/stale-quarantine",
+        )
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card.card_id}/quarantine",
+                json={"reason_code": "suspected_compromise"},
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+            quarantine_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == card.card_id,
+                        AuditEvent.event_type == "admin.card_quarantined",
+                    )
+                )
+            )
+        self.assertTrue(persisted.is_active)
+        self.assertIsNone(persisted.quarantined_at)
+        self.assertEqual(quarantine_audits, [])
+
     def test_card_quarantine_is_distinct_idempotent_and_requires_explicit_release(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

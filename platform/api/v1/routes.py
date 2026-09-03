@@ -7574,6 +7574,11 @@ def admin_quarantine_card(
     ),
     db: Session = Depends(get_db),
 ) -> AdminCardResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     card = db.scalar(
         select(Card).where(
             Card.id == card_id,
