@@ -4573,23 +4573,55 @@ def admin_batch_disable_users(
 ) -> list[AdminUserResponse]:
     if principal.user_id in payload.user_ids:
         raise HTTPException(status_code=409, detail="Cannot disable the current user")
-    users = list(
+    participant_ids = sorted({principal.user_id, *payload.user_ids})
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(
+            update(User)
+            .where(
+                User.id == principal.user_id,
+                User.tenant_id == principal.tenant_id,
+            )
+            .values(role=User.role)
+            .execution_options(synchronize_session=False)
+        )
+    participants = list(
         db.scalars(
             select(User)
             .where(
                 User.tenant_id == principal.tenant_id,
-                User.id.in_(payload.user_ids),
+                User.id.in_(participant_ids),
             )
             .order_by(User.id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
     )
-    by_id = {user.id: user for user in users}
+    participants_by_id = {user.id: user for user in participants}
+    actor = participants_by_id.get(principal.user_id)
+    actor_device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+    )
+    if (
+        actor is None
+        or not actor.is_active
+        or actor_device is None
+        or actor_device.revoked_at is not None
+    ):
+        raise unauthorized()
+    if actor.role not in {ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN}:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    by_id = {
+        user_id: participants_by_id[user_id]
+        for user_id in payload.user_ids
+        if user_id in participants_by_id
+    }
     if len(by_id) != len(payload.user_ids):
         raise HTTPException(status_code=404, detail="User not found")
-    if principal.role != ROLE_PLATFORM_ADMIN and any(
-        user.role == ROLE_PLATFORM_ADMIN for user in users
+    if actor.role != ROLE_PLATFORM_ADMIN and any(
+        user.role == ROLE_PLATFORM_ADMIN for user in by_id.values()
     ):
         raise HTTPException(status_code=403, detail="Cannot disable a platform administrator")
     for user_id in payload.user_ids:

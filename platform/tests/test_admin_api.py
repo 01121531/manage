@@ -443,6 +443,51 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(operator.is_active)
         self.assertEqual(disable_events, [])
 
+    def test_batch_disable_rechecks_admin_after_authentication(self) -> None:
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                "/api/v1/admin/users/batch-disable",
+                json={"user_ids": [self.operator.user_id]},
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            operator = db.get(User, self.operator.user_id)
+            disable_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == self.operator.user_id,
+                        AuditEvent.event_type == "admin.user_disabled",
+                    )
+                )
+            )
+        self.assertTrue(operator.is_active)
+        self.assertEqual(disable_events, [])
+
     def test_user_disable_wins_after_authentication_before_task_insert(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
