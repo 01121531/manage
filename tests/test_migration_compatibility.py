@@ -17,7 +17,7 @@ SAFE_EXPANSION = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0047_pool_import_receipt_context_binding"
+down_revision = "0048_pool_import_receipt_completion_guard"
 
 def _backfill():
     # DROP TABLE comments and string literals are not SQL operations.
@@ -44,7 +44,7 @@ SAFE_NEW_TABLE_UNIQUE = '''from alembic import op
 import sqlalchemy as sa
 
 revision = "0031_expand"
-down_revision = "0047_pool_import_receipt_context_binding"
+down_revision = "0048_pool_import_receipt_completion_guard"
 
 def upgrade():
     op.create_table(
@@ -261,7 +261,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def test_branch_missing_parent_and_stale_review_are_rejected(self) -> None:
         broken = SAFE_EXPANSION.replace(
-            'down_revision = "0047_pool_import_receipt_context_binding"',
+            'down_revision = "0048_pool_import_receipt_completion_guard"',
             'down_revision = "missing_parent"',
         )
         self.add_reviewed(broken)
@@ -483,6 +483,25 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 'FUNCTION pool_import_receipts_validate_context_binding(); '
                 'SELECT 1")'
             ),
+            "pool import receipt completion guard wrong target": (
+                'op.execute("CREATE CONSTRAINT TRIGGER '
+                'pool_import_receipts_completion_guard AFTER INSERT ON users '
+                'DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_receipts_validate_completion()")'
+            ),
+            "pool import receipt completion guard wrong event": (
+                'op.execute("CREATE CONSTRAINT TRIGGER '
+                'pool_import_receipts_completion_guard AFTER UPDATE ON '
+                'pool_import_receipts DEFERRABLE INITIALLY DEFERRED FOR EACH '
+                'ROW EXECUTE FUNCTION '
+                'pool_import_receipts_validate_completion()")'
+            ),
+            "pool import receipt completion guard not deferred": (
+                'op.execute("CREATE CONSTRAINT TRIGGER '
+                'pool_import_receipts_completion_guard AFTER INSERT ON '
+                'pool_import_receipts FOR EACH ROW EXECUTE FUNCTION '
+                'pool_import_receipts_validate_completion()")'
+            ),
             "dynamic sql": 'statement = make_sql()\n    op.execute(statement)',
         }
         for label, body in unsafe_bodies.items():
@@ -493,7 +512,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 source = f'''from alembic import op
 import sqlalchemy as sa
 revision = "0031_expand"
-down_revision = "0047_pool_import_receipt_context_binding"
+down_revision = "0048_pool_import_receipt_completion_guard"
 def upgrade():
     {body}
 def downgrade():

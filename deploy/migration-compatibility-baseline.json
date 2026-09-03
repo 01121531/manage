@@ -50,6 +50,7 @@
     "0044_pool_context_consumption_terminal.py": "8478271d5d9cf211a878877fab04f0989ff581daa09ec1a7226a28b9ca05d012",
     "0045_pool_import_receipt_append_only.py": "c44536fa43e65361922084e653e21f4dd5081e358075d0d44f3d7cd000f363ed",
     "0046_pool_import_context_delete_guard.py": "9a654271164624213f1036d024b94da43982fb8855e5b257d0b2b6f0f67c5233",
-    "0047_pool_import_receipt_context_binding.py": "6da404b6acfba955bc3aa9343b79a39b54432d4f022af43cef891faf6c14ec21"
+    "0047_pool_import_receipt_context_binding.py": "6da404b6acfba955bc3aa9343b79a39b54432d4f022af43cef891faf6c14ec21",
+    "0048_pool_import_receipt_completion_guard.py": "cf9fb5ede53baf664abd6475e8283b0ff73ca07f7d4d6f81fe0b0dcdd149e453"
   }
 }

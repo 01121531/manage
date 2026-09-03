@@ -26,7 +26,7 @@ class SecureImportVaultContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "infra" / "vault" / "secure-import-contract.json").read_text()
         )
-        self.assertEqual(contract["schema_version"], 41)
+        self.assertEqual(contract["schema_version"], 42)
         self.assertFalse(contract["production_acceptance"])
         self.assertEqual(
             contract["ingestion_boundary"],
@@ -477,6 +477,10 @@ class SecureImportVaultContractTests(unittest.TestCase):
                 ),
                 "local_receipt_context_binding": (
                     "database_exact_unconsumed_context_required_on_insert"
+                ),
+                "local_receipt_completion_policy": (
+                    "postgresql_deferred_same_transaction_context_and_"
+                    "consumption_required"
                 ),
                 "context_deletion_policy": "database_forbidden_after_insert",
             },

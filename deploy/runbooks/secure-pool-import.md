@@ -163,6 +163,11 @@ rejected before the first Vault or API mutation.
    The guard is prospective and does not rewrite historical receipts. Both
    pools must prove one normal fresh import after rollout; neither proof may
    contain PAN, CVV, mailbox credentials, Vault paths or source content.
+   PostgreSQL migration `0048_pool_import_receipt_completion_guard` additionally
+   checks each new receipt at transaction commit. A receipt-only transaction
+   must fail; a valid transaction must also contain the exact context terminal
+   linkage and one signed-receipt consumption row. This is PostgreSQL-only;
+   SQLite development runs are not target evidence for the deferred guard.
    Keep the card-import
    application and these migrations aligned during rollout because older code
    attempts deletion.

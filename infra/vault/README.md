@@ -161,7 +161,12 @@ removal is closed. The following
 receipt unless an unconsumed target context has the exact `spi:<context-id>`,
 tenant, pool, manifest digest/count, actor and device binding. It is a
 prospective database guard, so older receipts remain intact; it does not add
-raw card or mailbox data to the receipt. The
+raw card or mailbox data to the receipt. PostgreSQL migration
+`0048_pool_import_receipt_completion_guard` then evaluates each new receipt at
+transaction commit and rejects it unless the exact context is consumed by that
+receipt and a signed-receipt consumption row references it. This prospective
+guard preserves historical rows and applies equally to both pools. SQLite has
+no equivalent deferred trigger and is not production evidence. The
 application also records a
 dedicated audit event with only claim/context counts and SHA-256 fingerprints
 of prior context IDs, never provider references or context tokens. Consumed

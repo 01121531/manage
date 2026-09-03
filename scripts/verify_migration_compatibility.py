@@ -329,6 +329,17 @@ def _sql_error(sql: str) -> str | None:
         code,
     ):
         return None
+    # Reviewed PostgreSQL transaction-completion invariant for revision 0048.
+    # It must remain deferred so the existing receipt -> consumption -> context
+    # update order can complete before the database evaluates the new receipt.
+    if re.fullmatch(
+        r"CREATE CONSTRAINT TRIGGER POOL_IMPORT_RECEIPTS_COMPLETION_GUARD "
+        r"AFTER INSERT ON POOL_IMPORT_RECEIPTS DEFERRABLE INITIALLY DEFERRED "
+        r"FOR EACH ROW EXECUTE FUNCTION "
+        r"POOL_IMPORT_RECEIPTS_VALIDATE_COMPLETION\(\);?",
+        code,
+    ):
+        return None
     rules = (
         (r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|RENAME\s+TABLE)\b", "destructive SQL"),
         (r"\bCREATE\s+UNIQUE\s+INDEX\b", "unique-index contract SQL"),

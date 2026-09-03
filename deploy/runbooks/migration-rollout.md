@@ -156,6 +156,14 @@ unconsumed context and complete the existing atomic consumption transaction.
 Keep 0047 installed on application rollback so no new receipt can bypass the
 target-issued authorization identity.
 
+Revision `0048_pool_import_receipt_completion_guard` adds a PostgreSQL-only,
+deferred constraint trigger. Pause both imports, install 0048, then prove a
+transaction containing only a newly inserted receipt fails at commit. Prove a
+fresh card import and a fresh mailbox import each commit only after the exact
+context has its terminal receipt/time linkage and the signed-receipt
+consumption row exists. Historical rows are not scanned. Do not use SQLite as
+evidence for this commit-time constraint, and keep 0048 installed on rollback.
+
 ## Rollout sequence
 
 1. Record the release, baseline/current heads, verifier output and database backup.

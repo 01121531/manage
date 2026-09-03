@@ -122,7 +122,7 @@ class VaultEgressEvidenceTests(unittest.TestCase):
             json.loads(SECURE_IMPORT_CONTRACT.read_text(encoding="utf-8"))[
                 "schema_version"
             ],
-            41,
+            42,
         )
         self.assertTrue(self.template["synthetic"])
         self.assertEqual(self.template["index_status"], "pending")

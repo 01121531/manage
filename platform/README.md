@@ -112,7 +112,12 @@ The default endpoints are:
   local receipt to match one unconsumed context by `spi:<context-id>`, tenant,
   pool, manifest digest/count, actor and device. Existing historical receipts
   are not rewritten; new card and mailbox imports retain their current atomic
-  transaction and separate administration. A
+  transaction and separate administration. PostgreSQL migration
+  `0048_pool_import_receipt_completion_guard` adds a deferred commit-time
+  check: every new receipt must finish that transaction linked from its exact
+  consumed context and referenced by one signed-receipt consumption row.
+  Historical receipts are unchanged. SQLite cannot provide the equivalent
+  deferred constraint trigger and remains a development-only approximation. A
   reclamation writes a dedicated
   audit event containing only claim/context counts and SHA-256 fingerprints of
   the prior context IDs; provider references and context tokens are excluded.
