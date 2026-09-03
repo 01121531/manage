@@ -5496,6 +5496,11 @@ def admin_list_devices(
     ),
     db: Session = Depends(get_db),
 ) -> list[AdminDeviceResponse]:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     devices = db.scalars(
         select(Device)
         .where(Device.tenant_id == principal.tenant_id)
