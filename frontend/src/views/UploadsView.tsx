@@ -59,7 +59,11 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
     try {
       const updated = await cancelUploadJob(row.id)
       const expectedStatus = row.status === 'queued' ? 'cancelled' : 'cancel_pending'
-      if (updated.id !== row.id || updated.status !== expectedStatus) {
+      if (
+        updated.id !== row.id
+        || updated.task_id !== row.task_id
+        || updated.status !== expectedStatus
+      ) {
         throw new Error('upload cancel response binding mismatch')
       }
       if (!isCurrent()) return

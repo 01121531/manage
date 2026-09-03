@@ -4897,7 +4897,7 @@ class PlatformDesktopApp:
             clipboard_cleared = True
             self.root.clipboard_append(text)
             self.root.update_idletasks()
-        except tk.TclError:
+        except Exception:
             if clipboard_cleared:
                 self._clipboard_clear_generation += 1
                 self._clipboard_owner = (text, get_clipboard_sequence_number())

@@ -3856,6 +3856,62 @@ class AdminApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
 
+    def test_release_non_quarantined_card_rechecks_target_binding_before_return(
+        self,
+    ) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="idempotent-release-moved-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/idempotent-release-moved",
+        )
+        disabled = self.request(
+            "PATCH",
+            f"/api/v1/admin/cards/{card.card_id}",
+            headers=self.headers(admin_token),
+            json={"is_active": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+
+        original_lock = routes._lock_admin_card_response
+        card_moved = False
+
+        def move_then_lock(db: Session, *, tenant_id: str, card_id: str):
+            nonlocal card_moved
+            if not card_moved:
+                card_moved = True
+                current_card = db.get(Card, card_id)
+                self.assertIsNotNone(current_card)
+                current_card.tenant_id = "tenant-b"
+                db.commit()
+            return original_lock(db, tenant_id=tenant_id, card_id=card_id)
+
+        with mock.patch.object(
+            routes,
+            "_lock_admin_card_response",
+            new=move_then_lock,
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card.card_id}/release-quarantine",
+                headers=self.headers(admin_token),
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("4242", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+        self.assertEqual(persisted.tenant_id, "tenant-b")
+        self.assertFalse(persisted.is_active)
+
     def test_card_quarantine_is_distinct_idempotent_and_requires_explicit_release(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

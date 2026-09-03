@@ -6647,6 +6647,23 @@ def _admin_card_response(card: Card, *, allocated: bool = False) -> AdminCardRes
     )
 
 
+def _lock_admin_card_response(
+    db: Session,
+    *,
+    tenant_id: str,
+    card_id: str,
+) -> Card:
+    card = db.scalar(
+        select(Card)
+        .where(Card.id == card_id, Card.tenant_id == tenant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+    return card
+
+
 @router.post(
     "/admin/pool-import-contexts",
     response_model=PoolImportContextResponse,
@@ -8452,6 +8469,11 @@ def admin_release_card_quarantine(
                 message="Only quarantined cards can be released from quarantine",
                 recovery_hint="刷新卡状态后选择适用的操作",
             )
+        card = _lock_admin_card_response(
+            db,
+            tenant_id=principal.tenant_id,
+            card_id=card_id,
+        )
         return _admin_card_response(card)
 
     db.rollback()
