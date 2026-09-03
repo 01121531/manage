@@ -1007,6 +1007,27 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.clipboard, "")
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
 
+    def test_card_cleanup_schedule_error_clears_details_immediately(self) -> None:
+        instance = self._event_app()
+        details = "4242424242424242\t12/30"
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance._schedule_card_cleanup = (
+            PlatformDesktopApp._schedule_card_cleanup.__get__(instance)
+        )
+        instance.root.after = mock.Mock(
+            side_effect=RuntimeError("cleanup scheduling failed")
+        )
+
+        scheduled = instance._schedule_card_cleanup(5_000)
+
+        self.assertFalse(scheduled)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

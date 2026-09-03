@@ -4186,7 +4186,11 @@ test('platform admin governs upload policies without browser execution details',
         approved_by: null, approved_at: null, created_at: '2026-08-20T00:01:00Z',
       }
       mailPolicyVersions = [created, ...mailPolicyVersions]
-      return fulfill({ ...created, version: 'wrong-mail-policy-version' }, 201)
+      return fulfill({
+        ...created,
+        approved_by: 'wrong-premature-approver',
+        approved_at: '2026-08-20T00:01:30Z',
+      }, 201)
     }
     if (path === '/api/v1/admin/policies/card/rollback' && request.method() === 'POST') {
       cardPolicyRollbackRequests += 1
@@ -4317,7 +4321,7 @@ test('platform admin governs upload policies without browser execution details',
   await mailPolicySummary.getByRole('button', { name: '登记草稿' }).click()
   await expect(page.locator('.ant-message-notice').filter({ hasText: '生产策略未确认变更' }).last()).toBeVisible()
   await expect(page.getByText('邮箱策略草稿已登记，等待另一位管理员审批。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-mail-policy-version')
+  await expect(page.locator('body')).not.toContainText('wrong-premature-approver')
   await expect(mailPolicySummary.getByText('mail-2026.09.1', { exact: true })).toBeVisible()
   const cardPolicySummary = page.locator('.ant-card').filter({
     has: page.getByText('卡分配策略', { exact: true }),

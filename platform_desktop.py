@@ -2116,7 +2116,7 @@ class PlatformDesktopApp:
                 pass
         self._clear_owned_clipboard(text)
 
-    def _schedule_card_cleanup(self, delay_ms: int) -> None:
+    def _schedule_card_cleanup(self, delay_ms: int) -> bool:
         self._card_clear_generation += 1
         generation = self._card_clear_generation
 
@@ -2124,7 +2124,12 @@ class PlatformDesktopApp:
             if generation == self._card_clear_generation:
                 self._clear_card_details()
 
-        self.root.after(delay_ms, clear_if_current)
+        try:
+            self.root.after(delay_ms, clear_if_current)
+        except Exception:
+            self._clear_card_details()
+            return False
+        return True
 
     @staticmethod
     def _card_reveal_cleanup_delay_ms(
@@ -3508,9 +3513,16 @@ class PlatformDesktopApp:
                 if not copied:
                     self._discard_card_after_clipboard_failure()
                     continue
-                self._schedule_card_cleanup(cleanup_delay_ms)
+                cleanup_scheduled = self._schedule_card_cleanup(cleanup_delay_ms)
                 self.copy_card_button.configure(state="disabled")
-                self._set_status(status, SUCCESS)
+                if cleanup_scheduled:
+                    self._set_status(status, SUCCESS)
+                else:
+                    self._set_status(
+                        "无法安排卡详情自动清理；为避免敏感信息残留，"
+                        "卡详情与客户端写入的剪贴板内容已立即清除。",
+                        ERROR,
+                    )
             elif kind == "card_reveal_error":
                 if self._card_allocation_id is not None and self._client is not None and self._client.is_authenticated:
                     self.copy_card_button.configure(state="normal")

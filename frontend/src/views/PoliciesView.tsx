@@ -226,6 +226,8 @@ function OperationalPolicyPanel({ domain, principal }: {
           || created.change_note !== values.change_note
           || created.status !== 'draft'
           || created.created_by !== principal.id
+          || created.approved_by !== null
+          || created.approved_at !== null
         ) throw new Error('operational policy registration response binding mismatch')
         form.resetFields()
       }, `${title}草稿已登记，等待另一位管理员审批。`)}

@@ -7805,6 +7805,119 @@ class AdminApiTests(unittest.TestCase):
             self.assertEqual(second_policy.status, "retired")
         self.assertEqual(rolled_back_audits, 1)
 
+    def test_operational_policy_rollback_rechecks_tenant_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+
+        def register_approve_deploy(version: str, rollout_percent: int) -> str:
+            registered = self.request(
+                "POST",
+                "/api/v1/admin/policies/mail/versions",
+                headers=self.headers(creator_token),
+                json={
+                    "version": version,
+                    "change_note": f"review {version}",
+                    "session_ttl_seconds": 600,
+                    "code_ttl_seconds": 90,
+                    "poll_interval_seconds": 7,
+                },
+            )
+            self.assertEqual(registered.status_code, 201, registered.text)
+            policy_id = registered.json()["id"]
+            approved = self.request(
+                "POST",
+                f"/api/v1/admin/policies/mail/versions/{policy_id}/approve",
+                headers=self.headers(approver_token),
+            )
+            self.assertEqual(approved.status_code, 200, approved.text)
+            deployed = self.request(
+                "POST",
+                f"/api/v1/admin/policies/mail/versions/{policy_id}/deploy",
+                headers=self.headers(approver_token),
+                json={"rollout_percent": rollout_percent},
+            )
+            self.assertEqual(deployed.status_code, 200, deployed.text)
+            return policy_id
+
+        first_policy_id = register_approve_deploy(
+            "mail-rollback-tenant-recheck-v1", 100
+        )
+        register_approve_deploy("mail-rollback-tenant-recheck-v2", 25)
+        with self.app.state.session_factory() as db:
+            deployment_id = db.scalar(
+                select(OperationalPolicyDeployment.id).where(
+                    OperationalPolicyDeployment.tenant_id == "tenant-a",
+                    OperationalPolicyDeployment.domain == "mail",
+                )
+            )
+        self.assertIsNotNone(deployment_id)
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        rollback_recorded = False
+        deployment_moved = False
+
+        def mark_rollback(*args, **kwargs):
+            nonlocal rollback_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "mail_policy.rolled_back":
+                rollback_recorded = True
+            return result
+
+        def move_deployment_after_rollback_commit(session: Session) -> None:
+            nonlocal deployment_moved
+            original_commit(session)
+            if not rollback_recorded or deployment_moved:
+                return
+            deployment_moved = True
+            with self.app.state.session_factory() as other_db:
+                deployment = other_db.get(
+                    OperationalPolicyDeployment,
+                    deployment_id,
+                )
+                self.assertIsNotNone(deployment)
+                deployment.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_rollback,
+        ), mock.patch.object(
+            Session,
+            "commit",
+            new=move_deployment_after_rollback_commit,
+        ):
+            rolled_back = self.request(
+                "POST",
+                "/api/v1/admin/policies/mail/rollback",
+                headers=self.headers(creator_token),
+            )
+
+        self.assertEqual(rolled_back.status_code, 404, rolled_back.text)
+        self.assertNotIn("active_version", rolled_back.text)
+        with self.app.state.session_factory() as db:
+            deployment = db.get(OperationalPolicyDeployment, deployment_id)
+            rolled_back_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "mail_policy.rolled_back",
+                    AuditEvent.entity_id == first_policy_id,
+                )
+            )
+        self.assertEqual(deployment.tenant_id, "tenant-b")
+        self.assertEqual(deployment.active_policy_id, first_policy_id)
+        self.assertEqual(rolled_back_audits, 1)
+
     def test_mail_and_card_policy_governance_is_tenant_scoped_and_four_eyes(self) -> None:
         creator_token = self.login(
             "tenant-a",
