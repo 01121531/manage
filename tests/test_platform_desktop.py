@@ -116,6 +116,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._update_check_lock = threading.Lock()
         instance._update_check_threads = []
         instance._update_download_thread = None
+        instance._update_download_threads = []
         instance._update_cleanup_in_progress = False
         instance._update_cleanup_completed = False
         instance._update_cleanup_action = None
@@ -4996,10 +4997,14 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         check_thread = mock.Mock()
         check_thread.is_alive.return_value = True
         check_thread.join.side_effect = lambda: order.append("check-waited")
+        old_download_thread = mock.Mock()
+        old_download_thread.is_alive.return_value = True
+        old_download_thread.join.side_effect = lambda: order.append("old-download-waited")
         download_thread = mock.Mock()
         download_thread.is_alive.return_value = True
         download_thread.join.side_effect = lambda: order.append("download-waited")
         instance._update_check_threads = [check_thread]
+        instance._update_download_threads = [old_download_thread, download_thread]
         instance._update_download_thread = download_thread
         instance._client = mock.Mock()
         instance._client.prepare_logout_cleanup.return_value = (
@@ -5010,12 +5015,20 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         cleanup()
 
         check_thread.join.assert_called_once_with()
+        old_download_thread.join.assert_called_once_with()
         download_thread.join.assert_called_once_with()
         self.assertEqual(
             order,
-            ["check-waited", "download-waited", "session-cleanup"],
+            [
+                "check-waited",
+                "old-download-waited",
+                "download-waited",
+                "session-cleanup",
+            ],
         )
         self.assertEqual(instance._update_check_threads, [])
+        self.assertEqual(instance._update_download_threads, [])
+        self.assertIsNone(instance._update_download_thread)
 
     def test_delayed_update_check_cannot_start_during_session_shutdown(self) -> None:
         for barrier_name in ("_shutdown_cleanup_action", "_update_cleanup_action"):

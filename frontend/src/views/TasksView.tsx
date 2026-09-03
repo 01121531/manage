@@ -402,11 +402,12 @@ export default function TasksPage({ principal }: { principal: Principal }) {
     setTimelineError(false)
     setTimelineLoading(true)
     getTaskTimeline(requestedTaskId).then((value) => {
-      if (
-        alive
-        && timelineRequestGenerationRef.current === requestGeneration
-        && value.task.id === requestedTaskId
-      ) setTaskTimeline(value)
+      if (!alive || timelineRequestGenerationRef.current !== requestGeneration) return
+      if (value.task.id !== requestedTaskId) {
+        setTimelineError(true)
+        return
+      }
+      setTaskTimeline(value)
     }).catch(() => {
       if (alive && timelineRequestGenerationRef.current === requestGeneration) setTimelineError(true)
     }).finally(() => {

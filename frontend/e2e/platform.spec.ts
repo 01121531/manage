@@ -3071,6 +3071,7 @@ test('task details never mix a filtered task with a stale or late timeline', asy
   let filteredListRequests = 0
   let timelineARequests = 0
   let timelineAResponses = 0
+  let timelineBRequests = 0
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -3106,7 +3107,8 @@ test('task details never mix a filtered task with a stale or late timeline', asy
       if (url.searchParams.get('user_id') === taskB.user_id) {
         const requestIndex = filteredListRequests
         filteredListRequests += 1
-        await (requestIndex === 0 ? firstFilteredListGate : secondFilteredListGate)
+        if (requestIndex === 0) await firstFilteredListGate
+        if (requestIndex === 2) await secondFilteredListGate
         return fulfill([taskB])
       }
       return fulfill([taskA, taskB])
@@ -3118,6 +3120,8 @@ test('task details never mix a filtered task with a stale or late timeline', asy
       return fulfill(timeline(taskA, 'a', '1111'))
     }
     if (path === `/api/v1/tasks/${taskB.id}/timeline`) {
+      timelineBRequests += 1
+      if (timelineBRequests === 1) return fulfill(timeline(taskA, 'a', '1111'))
       return fulfill(timeline(taskB, 'b', '2222'))
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
@@ -3153,6 +3157,11 @@ test('task details never mix a filtered task with a stale or late timeline', asy
   await expect(taskARow).toHaveCount(0)
   await expect(page.getByText('任务详情', { exact: true })).toHaveCount(0)
   await taskBRow.getByRole('button', { name: `查看任务 ${taskB.id} 详情`, exact: true }).click()
+  const mismatchedTimelineError = page.getByRole('alert').filter({ hasText: '资源时间线暂不可用' })
+  await expect(mismatchedTimelineError).toBeVisible()
+  await expect(page.getByText('a***@example.invalid')).toHaveCount(0)
+  await mismatchedTimelineError.getByRole('button', { name: '重新加载资源时间线' }).click()
+  await expect.poll(() => timelineBRequests).toBe(2)
   await expect(page.getByText('b***@example.invalid')).toBeVisible()
   await expect(page.getByText('**** **** **** 2222')).toBeVisible()
   await expect(page.getByText('business-b')).toBeVisible()
@@ -3168,7 +3177,7 @@ test('task details never mix a filtered task with a stale or late timeline', asy
   await page.getByLabel('用户 ID').fill(taskB.user_id)
     await page.getByRole('button', { name: /^筛\s*选$/ }).click()
   try {
-    await expect.poll(() => filteredListRequests).toBe(2)
+    await expect.poll(() => filteredListRequests).toBe(3)
     await expect(page.getByText('任务详情', { exact: true })).toHaveCount(0)
   } finally {
     releaseSecondFilteredList()

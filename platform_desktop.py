@@ -342,6 +342,7 @@ class PlatformDesktopApp:
         self._update_check_lock = threading.Lock()
         self._update_check_threads: list[threading.Thread] = []
         self._update_download_thread: threading.Thread | None = None
+        self._update_download_threads: list[threading.Thread] = []
         self._update_cleanup_in_progress = False
         self._update_cleanup_completed = False
         self._update_cleanup_action: Callable[[], None] | None = None
@@ -3513,10 +3514,17 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=False, name="platform-update-download"
         )
+        self._update_download_threads = [
+            download_thread
+            for download_thread in self._update_download_threads
+            if download_thread.is_alive()
+        ]
+        self._update_download_threads.append(thread)
         self._update_download_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._update_download_threads.remove(thread)
             if self._update_download_thread is thread:
                 self._update_download_thread = None
             self._events.put((generation, "update_download_error", None))
@@ -3664,7 +3672,17 @@ class PlatformDesktopApp:
             with update_check_lock:
                 update_check_threads = tuple(self._update_check_threads)
                 self._update_check_threads = []
+        update_download_threads = tuple(
+            getattr(self, "_update_download_threads", ())
+        )
         update_download_thread = getattr(self, "_update_download_thread", None)
+        if (
+            update_download_thread is not None
+            and update_download_thread not in update_download_threads
+        ):
+            update_download_threads += (update_download_thread,)
+        self._update_download_threads = []
+        self._update_download_thread = None
         try:
             logout_cleanup = (
                 self._client.prepare_logout_cleanup(task_id)
@@ -3779,11 +3797,9 @@ class PlatformDesktopApp:
             for update_check_thread in update_check_threads:
                 if update_check_thread.is_alive():
                     update_check_thread.join()
-            if (
-                update_download_thread is not None
-                and update_download_thread.is_alive()
-            ):
-                update_download_thread.join()
+            for update_download_thread in update_download_threads:
+                if update_download_thread.is_alive():
+                    update_download_thread.join()
             try:
                 logout_cleanup()
             except Exception as error:

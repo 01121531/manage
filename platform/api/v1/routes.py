@@ -5174,7 +5174,12 @@ def admin_request_user_role_change(
         },
     )
     db.commit()
-    db.refresh(role_change)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(role_change, with_for_update=True)
     return _admin_role_change_response(role_change, now=now)
 
 
