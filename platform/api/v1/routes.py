@@ -622,11 +622,35 @@ def _lock_task_creation_principal(
         user_id=principal.user_id,
         device_id=principal.device_id,
     )
+    now = _utc_now()
+    access_token_revoked = db.scalar(
+        select(RevokedAccessToken.token_hash).where(
+            RevokedAccessToken.token_hash == principal.access_token_hash,
+            RevokedAccessToken.expires_at > now,
+        )
+    ) is not None
+    oidc_session_revoked = (
+        principal.oidc_session_hash is not None
+        and db.scalar(
+            select(RevokedOidcSession.session_hash).where(
+                RevokedOidcSession.session_hash == principal.oidc_session_hash,
+                or_(
+                    RevokedOidcSession.expires_at.is_(None),
+                    RevokedOidcSession.expires_at > now,
+                ),
+            )
+        )
+        is not None
+    )
     if (
         user is None
         or not user.is_active
         or device is None
         or device.revoked_at is not None
+        or principal.access_token_revoked
+        or principal.oidc_session_revoked
+        or access_token_revoked
+        or oidc_session_revoked
     ):
         raise unauthorized()
     if user.role != ROLE_OPERATOR:

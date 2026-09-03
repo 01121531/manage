@@ -870,7 +870,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
         is_active: false,
       }
       blockQuarantineCardList = true
-      return fulfill({ ...card, id: 'wrong-quarantine-binding' })
+      return fulfill({ ...card, quarantined_at: null })
     }
     if (path === '/api/v1/admin/cards/card-quarantine/release-quarantine' && request.method() === 'POST') {
       releaseAttempts += 1
@@ -963,7 +963,6 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   }
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(quarantineError).toContainText(marker)
   await expect(page.getByText('卡资源已隔离，活动租约及关联资源已回收。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-quarantine-binding')
   await expect(row.getByText('已隔离')).toBeVisible()
   await expect(row.getByRole('button', { name: /启用卡/ })).toHaveCount(0)
   const cardListsBeforeRelease = cardListRequests

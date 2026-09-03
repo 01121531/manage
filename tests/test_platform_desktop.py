@@ -1937,6 +1937,39 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
         self.assertEqual(instance.new_task_button.values["state"], "disabled")
 
+    def test_unexpected_lock_compensation_error_releases_single_flight(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        cleanup = mock.Mock(side_effect=RuntimeError("unexpected cleanup failure"))
+        transition = mock.Mock()
+        transition.cancel.return_value = cleanup
+        instance._task_transition = transition
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self) -> None:
+                try:
+                    self.target()
+                except RuntimeError:
+                    pass
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance.lock()
+
+        barrier = instance._task_compensation
+        self.assertIsNotNone(barrier)
+        self.assertTrue(barrier.in_progress)
+        self.assertIsNotNone(barrier.thread)
+        instance._drain_events()
+
+        self.assertIs(instance._task_compensation, barrier)
+        self.assertFalse(barrier.in_progress)
+        self.assertIsNone(barrier.thread)
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(instance.new_task_button.values["state"], "disabled")
+
     def test_lock_sync_cancel_cleanup_success_clears_recovery_state(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

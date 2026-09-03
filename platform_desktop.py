@@ -2683,8 +2683,22 @@ class PlatformDesktopApp:
                 kind = "task_compensation_succeeded"
             self._events.put((barrier.generation, kind, barrier))
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (
+                        barrier.generation,
+                        "task_compensation_finished",
+                        (barrier, thread),
+                    )
+                )
+
         thread = threading.Thread(
-            target=worker,
+            target=run_worker,
             daemon=False,
             name="platform-task-cancel-compensation",
         )

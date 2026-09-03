@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import unittest
@@ -23,6 +24,7 @@ from platform.models import (
     Mailbox,
     MailSession,
     OutboxEvent,
+    RevokedAccessToken,
     Task,
     UploadJob,
     User,
@@ -2177,6 +2179,66 @@ class PlatformAppTests(unittest.TestCase):
                     select(AuditEvent).where(AuditEvent.event_type == "task.created")
                 )
             )
+        self.assertEqual(len(task_events), 1)
+
+    def test_task_create_rechecks_access_token_revocation_after_commit(self) -> None:
+        token = self.login()
+        original_commit = Session.commit
+        token_revoked = False
+
+        def commit_then_revoke_token(session: Session) -> None:
+            nonlocal token_revoked
+            task_created = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.created"
+                for item in session.new
+            )
+            original_commit(session)
+            if not task_created or token_revoked:
+                return
+            token_revoked = True
+            with self.app.state.session_factory() as other:
+                other.add(
+                    RevokedAccessToken(
+                        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                        tenant_id="tenant-a",
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        expires_at=utc_now() + timedelta(minutes=15),
+                        revoked_at=utc_now(),
+                        reason="concurrent_logout",
+                    )
+                )
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_revoke_token):
+            response = self.request(
+                "POST",
+                "/api/v1/tasks",
+                headers=self.bearer(token),
+                json={
+                    "type": "mail_code",
+                    "idempotency_key": "task-create-token-revocation-boundary",
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        with self.app.state.session_factory() as db:
+            task = db.scalar(
+                select(Task).where(
+                    Task.idempotency_key
+                    == "task-create-token-revocation-boundary"
+                )
+            )
+            self.assertIsNotNone(task)
+            task_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.created",
+                        AuditEvent.entity_id == task.id,
+                    )
+                )
+            )
+        self.assertNotIn(task.id, response.text)
         self.assertEqual(len(task_events), 1)
 
     def test_task_device_is_derived_from_bearer_token(self) -> None:

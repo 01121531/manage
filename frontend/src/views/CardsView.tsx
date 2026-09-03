@@ -425,6 +425,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         || updated.status !== 'quarantined'
         || updated.is_active
         || updated.quarantine_reason_code !== quarantineReason
+        || updated.quarantined_at === null
       ) throw new Error('card quarantine response binding mismatch')
       message.success('卡资源已隔离，活动租约及关联资源已回收。')
       setQuarantineTarget(null)
