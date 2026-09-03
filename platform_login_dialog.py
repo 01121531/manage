@@ -1143,7 +1143,7 @@ class PlatformLoginDialog:
             return
         self._clear_device_challenge()
         if not self._controller.cancel():
-            self._set_busy(False)
+            self._set_busy(True)
             self._set_status(
                 "登录会话清理尚未确认；窗口保持打开，请恢复网络后再次关闭。",
                 ERROR,

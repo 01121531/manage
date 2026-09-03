@@ -4202,6 +4202,11 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   let releaseSingleDisable = () => undefined
   const singleDisableGate = new Promise<void>((resolve) => { releaseSingleDisable = resolve })
   let retryDeviceFailures = 1
+  let blockSingleDisableDeviceList = false
+  let releaseSingleDisableDeviceList = () => undefined
+  const singleDisableDeviceListGate = new Promise<void>((resolve) => {
+    releaseSingleDisableDeviceList = resolve
+  })
   let blockRetryDeviceList = false
   let releaseRetryDeviceList = () => undefined
   const retryDeviceListGate = new Promise<void>((resolve) => {
@@ -4245,6 +4250,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
     }
     if (path === '/api/v1/admin/devices' && request.method() === 'GET') {
       deviceListRequests += 1
+      if (blockSingleDisableDeviceList) await singleDisableDeviceListGate
       if (blockRetryDeviceList) await retryDeviceListGate
       return fulfill(devices)
     }
@@ -4453,6 +4459,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   const submittedSingleVisibleIds = (await singleTargetList.getByRole('listitem').allTextContents())
     .map((value) => value.match(/（([^（）]+)）$/)?.[1])
   const confirmSingleDisable = singleDisableDialog.getByRole('button', { name: '确认停用' })
+  blockSingleDisableDeviceList = true
   await confirmSingleDisable.click()
   try {
     await expect.poll(() => singleDisableIds).toEqual(submittedSingleVisibleIds)
@@ -4473,7 +4480,12 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await expect(page.getByText('must-never-render-user-disable-provider-detail')).toHaveCount(0)
   await expect(firstRow.getByText('disabled')).toBeVisible()
   await expect(firstDisableButton).toBeDisabled()
+  await expect(secondRoleSelect).toBeDisabled()
+  await expect(secondDisableButton).toBeDisabled()
   expect(singleDisableIds).toEqual(['operator-1'])
+  releaseSingleDisableDeviceList()
+  await expect(secondRoleSelect).toBeEnabled()
+  await expect(secondDisableButton).toBeEnabled()
 
   await secondCheckbox.check()
   await thirdCheckbox.check()

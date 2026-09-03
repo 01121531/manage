@@ -28,6 +28,11 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   const deviceActionRefreshRef = useRef<{ deviceId: string; pending: boolean } | null>(null)
   const [userActionKey, setUserActionKey] = useState<string | null>(null)
   const userActionRef = useRef<{ key: string; pending: boolean } | null>(null)
+  const userActionRefreshRef = useRef<{
+    action: { key: string; pending: boolean }
+    usersSettled: boolean
+    devicesSettled: boolean
+  } | null>(null)
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [roleRequests, setRoleRequests] = useState<RoleChangeRequest[]>([])
   const isPlatformAdmin = principal.role === 'platform_admin'
@@ -54,7 +59,11 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           setUserListError(error instanceof Error ? error.message : '平台未能读取用户列表。')
         }
       })
-      .finally(() => { if (alive) setLoading(false) })
+      .finally(() => {
+        if (!alive) return
+        setLoading(false)
+        settleUserActionRefresh('users')
+      })
     return () => { alive = false }
   }, [isPlatformAdmin, refresh])
 
@@ -81,6 +90,16 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
     setUserActionKey(null)
   }
 
+  function settleUserActionRefresh(source: 'users' | 'devices') {
+    const refreshAction = userActionRefreshRef.current
+    if (refreshAction === null) return
+    if (source === 'users') refreshAction.usersSettled = true
+    else refreshAction.devicesSettled = true
+    if (!refreshAction.usersSettled || !refreshAction.devicesSettled) return
+    userActionRefreshRef.current = null
+    releaseUserAction(refreshAction.action)
+  }
+
   async function runUserAction(
     action: { key: string; pending: boolean },
     operation: () => Promise<unknown>,
@@ -104,9 +123,13 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
       return false
     } finally {
       if (isCurrent()) {
+        userActionRefreshRef.current = {
+          action,
+          usersSettled: false,
+          devicesSettled: false,
+        }
         refreshUsersFromServer()
         setDeviceRefresh((value) => value + 1)
-        releaseUserAction(action)
       }
     }
   }
@@ -408,6 +431,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
       columns={deviceColumns}
       empty="暂无设备"
       onSettled={() => {
+        settleUserActionRefresh('devices')
         const action = deviceActionRefreshRef.current
         if (action === null) return
         deviceActionRefreshRef.current = null
