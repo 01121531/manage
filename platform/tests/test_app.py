@@ -979,6 +979,45 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401, response.text)
         self.assertNotIn("access_token", response.text)
 
+    def test_login_issues_access_token_after_audit_commit(self) -> None:
+        original_commit = Session.commit
+        login_committed = False
+
+        def commit_then_mark_login(session: Session) -> None:
+            nonlocal login_committed
+            committing_login = any(
+                isinstance(item, AuditEvent) and item.event_type == "auth.login"
+                for item in session.new
+            )
+            original_commit(session)
+            login_committed = login_committed or committing_login
+
+        def issue_token(**_: object) -> str:
+            self.assertTrue(login_committed)
+            return "issued-after-login-commit"
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_mark_login,
+        ), mock.patch(
+            "platform.api.v1.routes.create_access_token",
+            side_effect=issue_token,
+        ):
+            response = self.request(
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "tenant_id": "tenant-a",
+                    "email": "first@example.test",
+                    "password": self.account_password,
+                    "device_id": self.identity.device_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["access_token"], "issued-after-login-commit")
+
     def test_task_endpoints_use_current_role_after_authentication(self) -> None:
         admin = create_user_with_device(
             self.app.state.session_factory,

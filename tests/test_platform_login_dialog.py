@@ -913,6 +913,42 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertEqual(client.cleanup_preparations, 1)
         self.assertEqual(client.cleanup_calls, 2)
 
+    def test_cancel_unexpected_cleanup_error_retries_same_closure(self):
+        class RuntimeCleanupClient(_IdentityFailureClient):
+            def prepare_logout_cleanup(self, task_id):
+                self.cleanup_preparations += 1
+                self.is_authenticated = False
+                if task_id is not None:
+                    raise AssertionError("login cleanup must be device scoped")
+
+                def cleanup():
+                    self.cleanup_calls += 1
+                    if self.cleanup_calls == 1:
+                        raise RuntimeError("unexpected cleanup failure")
+
+                return cleanup
+
+        client = RuntimeCleanupClient()
+        client.is_authenticated = True
+        controller = PlatformLoginController(
+            client,
+            schedule=lambda callback: callback(),
+            thread_factory=_ImmediateThread,
+        )
+
+        self.assertFalse(controller.cancel())
+        self.assertFalse(
+            controller.submit_authorization_code(
+                on_authorization_url=lambda _url: None,
+                on_success=self.fail,
+                on_error=self.fail,
+            )
+        )
+        self.assertTrue(controller.cancel())
+        self.assertEqual(client.cleanup_preparations, 1)
+        self.assertEqual(client.cleanup_calls, 2)
+        self.assertIsNone(controller._cancel_cleanup_action)
+
     def test_login_error_is_recovery_guidance_without_exception_text(self):
         error = RuntimeError("server reflected platform-secret and bearer token")
         message = format_login_error(error)

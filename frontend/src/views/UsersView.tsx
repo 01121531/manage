@@ -279,6 +279,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
           const approved = await approveRoleChangeRequest(request.id)
           if (
             approved.id !== request.id
+            || approved.tenant_id !== principal.tenant_id
             || approved.target_user_id !== request.target_user_id
             || approved.expected_old_role !== request.expected_old_role
             || approved.new_role !== request.new_role

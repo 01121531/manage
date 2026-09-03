@@ -810,14 +810,6 @@ def login(
 
     settings: Settings = request.app.state.settings
     device.last_seen_at = _utc_now()
-    access_token = create_access_token(
-        secret=request.app.state.jwt_hmac_secret,
-        user_id=user.id,
-        tenant_id=user.tenant_id,
-        device_id=device.id,
-        ttl_seconds=settings.access_token_ttl_seconds,
-        role=user.role,
-    )
     record_audit(
         db,
         tenant_id=user.tenant_id,
@@ -849,6 +841,14 @@ def login(
         or current_device.revoked_at is not None
     ):
         raise unauthorized()
+    access_token = create_access_token(
+        secret=request.app.state.jwt_hmac_secret,
+        user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+        device_id=current_device.id,
+        ttl_seconds=settings.access_token_ttl_seconds,
+        role=current_user.role,
+    )
     return TokenResponse(
         access_token=access_token,
         expires_in=settings.access_token_ttl_seconds,

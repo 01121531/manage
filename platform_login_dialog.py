@@ -545,12 +545,12 @@ class PlatformLoginController:
                 return True
             try:
                 cleanup = prepare_cleanup(None)
-            except PlatformClientError:
+            except Exception:
                 return False
             self._cancel_cleanup_action = cleanup
         try:
             cleanup()
-        except PlatformClientError:
+        except Exception:
             return False
         if self._cancel_cleanup_action is cleanup:
             self._cancel_cleanup_action = None
