@@ -8556,6 +8556,9 @@ def admin_mail_policy_status(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> OperationalPolicyStatusResponse:
+    _lock_admin_write_principal(
+        db, principal, allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    )
     return _operational_policy_status(db, tenant_id=principal.tenant_id, domain="mail")
 
 
@@ -8564,6 +8567,9 @@ def admin_list_mail_policy_versions(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> list[MailPolicyVersionResponse]:
+    _lock_admin_write_principal(
+        db, principal, allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    )
     return _list_operational_policy_versions(db, tenant_id=principal.tenant_id, domain="mail")  # type: ignore[return-value]
 
 
@@ -8612,6 +8618,9 @@ def admin_card_policy_status(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> OperationalPolicyStatusResponse:
+    _lock_admin_write_principal(
+        db, principal, allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    )
     return _operational_policy_status(db, tenant_id=principal.tenant_id, domain="card")
 
 
@@ -8620,6 +8629,9 @@ def admin_list_card_policy_versions(
     principal: AuthPrincipal = Depends(require_roles(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> list[CardPolicyVersionResponse]:
+    _lock_admin_write_principal(
+        db, principal, allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    )
     return _list_operational_policy_versions(db, tenant_id=principal.tenant_id, domain="card")  # type: ignore[return-value]
 
 
@@ -8677,6 +8689,9 @@ def admin_upload_policy_status(
 ) -> UploadPolicyStatusResponse:
     """Return safe server-owned upload policy status without execution details."""
 
+    _lock_admin_write_principal(
+        db, principal, allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    )
     settings: Settings = request.app.state.settings
     upload_endpoint_configured = sub2_upload_endpoint_configured(
         settings.sub2_upload_url
@@ -8778,6 +8793,9 @@ def admin_list_upload_policy_versions(
     ),
     db: Session = Depends(get_db),
 ) -> list[UploadPolicyVersionResponse]:
+    _lock_admin_write_principal(
+        db, principal, allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN)
+    )
     policies = db.scalars(
         select(UploadPolicyVersion)
         .where(UploadPolicyVersion.tenant_id == principal.tenant_id)

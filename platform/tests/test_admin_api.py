@@ -4647,6 +4647,43 @@ class AdminApiTests(unittest.TestCase):
         )
         self.assertEqual(ops_audit.status_code, 403, ops_audit.text)
 
+    def test_policy_reads_recheck_actor_after_authentication(self) -> None:
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "operator"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            for path in (
+                "/api/v1/admin/policies/mail",
+                "/api/v1/admin/policies/mail/versions",
+                "/api/v1/admin/policies/card",
+                "/api/v1/admin/policies/card/versions",
+                "/api/v1/admin/policies/upload",
+                "/api/v1/admin/policies/upload/versions",
+            ):
+                with self.subTest(path=path):
+                    response = self.request("GET", path)
+                    self.assertEqual(response.status_code, 403, response.text)
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
     def test_upload_policy_status_is_privileged_and_hides_execution_details(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
