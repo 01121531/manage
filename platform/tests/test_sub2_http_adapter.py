@@ -18,6 +18,7 @@ from platform.uploads import (
     Sub2UploadCommand,
     Sub2UploadResult,
     UploadUnknownError,
+    sub2_upload_endpoint_configured,
 )
 
 ALLOWED_ORIGINS = ("https://sub2-upload.example",)
@@ -190,6 +191,22 @@ class HttpSub2AdapterTests(unittest.TestCase):
 
         self.assertEqual(resolver.refs, [])
         self.assertEqual(opener.requests, [])
+
+    def test_upload_endpoint_readiness_uses_the_constructor_url_boundary(self) -> None:
+        self.assertTrue(
+            sub2_upload_endpoint_configured(
+                "https://sub2-upload.example/api/upload"
+            )
+        )
+        for value in (
+            None,
+            "",
+            "http://sub2-upload.example/api/upload",
+            "https://ai1.aisb.shop/api/v1/admin/accounts",
+            "https://ai1.aisb.shop/api/v1/admin/accounts/42/duplicate",
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(sub2_upload_endpoint_configured(value))
 
     def test_exact_allowed_origin_accepts_business_path_and_effective_default_port(self) -> None:
         resolver = RecordingResolver()

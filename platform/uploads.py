@@ -500,6 +500,26 @@ def _is_ai1_observed_control_plane_url(value: str) -> bool:
     return bool(account_id) and "/" not in account_id
 
 
+def normalize_generic_sub2_upload_url(value: str) -> str:
+    normalized = _normalize_https_url(value)
+    if _is_ai1_observed_control_plane_url(normalized):
+        raise ValueError(
+            "Observed account-control endpoint cannot be used as the generic "
+            "Sub2 upload URL"
+        )
+    return normalized
+
+
+def sub2_upload_endpoint_configured(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        normalize_generic_sub2_upload_url(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _secret_text(secret: Mapping[str, object], *names: str) -> str:
     for name in names:
         value = secret.get(name)
@@ -549,12 +569,7 @@ class HttpSub2Adapter:
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
-        self.upload_url = _normalize_https_url(upload_url)
-        if _is_ai1_observed_control_plane_url(self.upload_url):
-            raise ValueError(
-                "Observed account-control endpoint cannot be used as the generic "
-                "Sub2 upload URL"
-            )
+        self.upload_url = normalize_generic_sub2_upload_url(upload_url)
         origin_keys = tuple(
             _origin_key(origin, allow_path=False) for origin in allowed_origins
         )

@@ -3949,6 +3949,22 @@ class AdminApiTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, serialized)
 
+        self.app.state.settings.sub2_upload_url = (
+            "https://ai1.aisb.shop/api/v1/admin/accounts"
+        )
+        misconfigured = self.request(
+            "GET",
+            "/api/v1/admin/policies/upload",
+            headers=self.headers(admin_token),
+        )
+        self.assertEqual(misconfigured.status_code, 200, misconfigured.text)
+        self.assertEqual(misconfigured.json()["status"], "not_configured")
+        self.assertFalse(
+            misconfigured.json()["upload_endpoint_configured"]
+        )
+        self.assertNotIn("ai1.aisb.shop", misconfigured.text)
+        self.app.state.settings.sub2_upload_url = "https://sub2.example.test/upload"
+
         self.app.state.settings.environment = "production"
         managed = self.request(
             "GET",

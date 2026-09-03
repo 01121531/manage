@@ -129,7 +129,7 @@ from platform.pool_import_contexts import (
     pool_import_context_token_hash,
     renew_pool_import_context,
 )
-from platform.uploads import transition_upload_phase
+from platform.uploads import sub2_upload_endpoint_configured, transition_upload_phase
 from platform.schemas import (
     ApiErrorResponse,
     AdminCardImportItem,
@@ -8234,7 +8234,9 @@ def admin_upload_policy_status(
     """Return safe server-owned upload policy status without execution details."""
 
     settings: Settings = request.app.state.settings
-    upload_endpoint_configured = bool(settings.sub2_upload_url)
+    upload_endpoint_configured = sub2_upload_endpoint_configured(
+        settings.sub2_upload_url
+    )
     upload_secret_configured = bool(settings.sub2_credential_ref)
     network_route_configured = bool(settings.sub2_proxy_ref)
     ready = (
