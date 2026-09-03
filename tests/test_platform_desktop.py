@@ -1046,20 +1046,33 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         for boundary in ("lock", "logout"):
             with self.subTest(boundary=boundary):
                 instance, release = self._provisioning_race_app()
+                worker = instance._task_transition_thread
 
                 getattr(instance, boundary)()
                 release.set()
-                instance._task_transition_thread.join(timeout=1)
+                worker.join(timeout=1)
                 if boundary == "logout":
                     instance._shutdown_cleanup_thread.join(timeout=1)
-                    instance._drain_events()
+                instance._drain_events()
 
-                self.assertFalse(instance._task_transition_thread.is_alive())
+                self.assertFalse(worker.is_alive())
                 self.assertEqual(
                     instance._client.closed,
                     [("task-created-in-flight", "captured-access")],
                 )
                 self.assertTrue(instance._events.empty())
+
+    def test_cancelled_task_create_finished_clears_old_worker_state(self) -> None:
+        instance, release = self._provisioning_race_app()
+        worker = instance._task_transition_thread
+
+        instance.lock()
+        release.set()
+        worker.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_transition_thread)
 
     def test_lock_race_retains_cleanup_when_post_attach_close_fails(self) -> None:
         instance, release = self._provisioning_race_app()

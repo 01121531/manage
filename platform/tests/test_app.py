@@ -1454,6 +1454,67 @@ class PlatformAppTests(unittest.TestCase):
         )
         self.assertEqual(hidden.status_code, 404)
 
+    def test_expired_task_timeline_rechecks_operator_after_commit(self) -> None:
+        token = self.login()
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(token),
+            json={
+                "type": "mail_code",
+                "idempotency_key": "timeline-expiry-commit-boundary",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["id"]
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            self.assertIsNotNone(task)
+            task.expires_at = utc_now() - timedelta(seconds=1)
+            db.commit()
+
+        original_commit = Session.commit
+        demoted = False
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal demoted
+            expiring_task = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.expired"
+                for item in session.new
+            )
+            original_commit(session)
+            if not expiring_task or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/tasks/{task_id}/timeline",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(created.json()["trace_id"], response.text)
+        self.assertNotIn(task_id, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Task, task_id)
+            expiry_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.expired",
+                        AuditEvent.entity_id == task_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "expired")
+        self.assertEqual(len(expiry_events), 1)
+
     def test_task_history_is_newest_first_and_bounded(self) -> None:
         token = self.login()
         headers = self.bearer(token)
