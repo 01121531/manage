@@ -4609,6 +4609,11 @@ def admin_list_users(
     ),
     db: Session = Depends(get_db),
 ) -> list[AdminUserResponse]:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     users = db.scalars(
         select(User)
         .where(User.tenant_id == principal.tenant_id)
