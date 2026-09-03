@@ -487,7 +487,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
     { title: '状态', dataIndex: 'status', filters: statusFilters, onFilter: (value, row) => row.status === value, render: (value: string) => <StatusTag value={value} /> },
     { title: '过期时间', dataIndex: 'expires_at', render: (value: string | null) => value ?? '—' },
     { title: '创建时间', dataIndex: 'created_at', sorter: (left, right) => left.created_at.localeCompare(right.created_at) },
-    { title: 'trace_id', dataIndex: 'trace_id', ellipsis: true },
+    { title: 'trace_id', dataIndex: 'trace_id', ellipsis: true, render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '操作', render: (_, row) => <Space><Button
       type="link"
       onClick={() => setSelectedTaskId(row.id)}
@@ -554,7 +554,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
     {!loading && !taskListError && selectedTask ? <Card className="task-detail-card" title="任务详情" size="small">
       <Descriptions column={{ xs: 1, md: 2 }}>
         <Descriptions.Item label="任务标识">{selectedTask.id}</Descriptions.Item>
-        <Descriptions.Item label="trace_id">{selectedTask.trace_id}</Descriptions.Item>
+        <Descriptions.Item label="trace_id"><Text code copyable={{ text: selectedTask.trace_id }}>{selectedTask.trace_id}</Text></Descriptions.Item>
         <Descriptions.Item label="归属用户">{selectedTask.user_id}</Descriptions.Item>
         <Descriptions.Item label="归属设备">{selectedTask.device_id}</Descriptions.Item>
         <Descriptions.Item label="主状态"><StatusTag value={selectedTask.status} /></Descriptions.Item>

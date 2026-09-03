@@ -2280,6 +2280,75 @@ class UploadJobTests(unittest.TestCase):
         self.assertEqual(job.status, "queued")
         self.assertEqual(cancel_events, [])
 
+    def test_upload_conflict_rechecks_operator_after_rollback(self) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(token)
+        created = self.create_upload(token, task_id, "upload-rollback-recheck")
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-upload",
+            device_id=self.identity.device_id,
+            email="upload-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        original_scalar = Session.scalar
+        original_rollback = Session.rollback
+        upload_lookups = 0
+        role_changed = False
+
+        def scalar(session, statement, *args, **kwargs):
+            nonlocal upload_lookups
+            entity = statement.column_descriptions[0].get("entity")
+            if entity is UploadJob:
+                upload_lookups += 1
+                if upload_lookups == 1:
+                    return None
+            return original_scalar(session, statement, *args, **kwargs)
+
+        def rollback(session):
+            nonlocal role_changed
+            result = original_rollback(session)
+            if not role_changed:
+                role_changed = True
+                with self.app.state.session_factory() as other:
+                    other.get(User, self.identity.user_id).role = "security_auditor"
+                    other.commit()
+            return result
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            with mock.patch.object(Session, "scalar", scalar), mock.patch.object(
+                Session,
+                "rollback",
+                rollback,
+            ):
+                replay = self.request(
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/uploads",
+                    json={
+                        "business_name": "Example Store",
+                        "idempotency_key": "upload-rollback-recheck",
+                    },
+                )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(replay.status_code, 403, replay.text)
+        for sensitive in (
+            created.json()["business_name"],
+            created.json()["trace_id"],
+            created.json()["id"],
+        ):
+            self.assertNotIn(sensitive, replay.text)
+
     def test_admin_roles_cancel_tenant_uploads_with_actor_subject_audit(self) -> None:
         owner_token = self.login()
         with self.app.state.session_factory() as db:

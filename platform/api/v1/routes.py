@@ -4340,6 +4340,7 @@ def create_upload_job(
         db.flush()
     except IntegrityError:
         db.rollback()
+        _lock_task_creation_principal(db, principal)
         existing = db.scalar(
             select(UploadJob).where(
                 UploadJob.tenant_id == principal.tenant_id,

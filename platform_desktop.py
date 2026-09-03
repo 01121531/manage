@@ -3164,7 +3164,11 @@ class PlatformDesktopApp:
             elif kind == "task_history":
                 self._render_task_history(value)
             elif kind == "task_history_error":
-                if self._history_refresh_button is not None:
+                if isinstance(value, PlatformAuthenticationError):
+                    if self._client is not None:
+                        self._client.clear_access_token()
+                    self._set_authenticated(False)
+                elif self._history_refresh_button is not None:
                     self._history_refresh_button.configure(state="normal")
                 if self._history_status is not None:
                     self._history_status.configure(

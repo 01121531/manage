@@ -4121,6 +4121,37 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             "raw thread failure", instance._history_status.values["text"]
         )
 
+    def test_task_history_authentication_error_clears_sensitive_state(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._history_status = RecordingWidget()
+        instance._history_refresh_button = RecordingWidget()
+        instance._current_code = "246810"
+        instance._current_card_clipboard = "4111111111111111\t12/30"
+        instance._events.put(
+            (
+                instance._history_generation,
+                "task_history_error",
+                PlatformAuthenticationError(
+                    "expired",
+                    code="unauthorized",
+                    status=401,
+                    recovery_hint="重新登录后再试",
+                ),
+            )
+        )
+
+        instance._drain_events()
+
+        instance._client.clear_access_token.assert_called_once_with()
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+        self.assertIsNone(instance._current_code)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertEqual(instance.copy_button.values["state"], "disabled")
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertEqual(instance.history_button.values["state"], "disabled")
+
     def test_task_history_late_closed_window_events_do_not_touch_reopened_window(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

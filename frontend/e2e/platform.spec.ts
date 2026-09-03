@@ -2720,6 +2720,7 @@ test('ops admin filters and governs same-tenant cross-device tasks', async ({ pa
   expect(appliedQuery?.get('trace_id')).toBe(taskTrace)
 
   await page.getByRole('button', { name: `查看任务 ${task.id} 详情`, exact: true }).click()
+  await expect(page.locator('.task-detail-card .ant-typography-copy')).toHaveCount(1)
   await expect(page.getByText('o***@example.invalid')).toBeVisible()
   await expect(page.getByText('**** **** **** 4242')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('4111111111114242')
