@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from platform.config import Settings
-from platform.uploads import validate_generic_sub2_upload_endpoint
+from platform.uploads import (
+    sub2_unknown_reconciliation_configured,
+    validate_generic_sub2_upload_endpoint,
+)
 from scripts.external_json import read_stable_bytes
 
 
@@ -77,6 +80,8 @@ def validate_sub2_egress_policy(
             inventory["PLATFORM_SUB2_UPLOAD_URL"],
             origins,
         )
+        if not sub2_unknown_reconciliation_configured():
+            raise _InvalidPolicy
     except (OSError, RuntimeError, UnicodeError, ValueError):
         raise Sub2EgressPreflightError(
             "production Sub2 egress policy preflight failed"

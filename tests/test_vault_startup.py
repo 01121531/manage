@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from infra import mail_worker, worker
@@ -32,6 +33,31 @@ class VaultStartupTests(unittest.TestCase):
             mock.patch.object(worker, "run_upload_worker") as run_worker,
         ):
             with self.assertRaisesRegex(RuntimeError, "safe startup failure"):
+                worker.main()
+
+        metrics.assert_not_called()
+        run_worker.assert_not_called()
+
+    def test_managed_sub2_worker_rejects_submit_only_runtime_before_metrics(self) -> None:
+        application = SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(environment="production")
+            )
+        )
+        with (
+            mock.patch.object(worker, "create_app", return_value=application),
+            mock.patch.object(
+                worker,
+                "sub2_unknown_reconciliation_configured",
+                return_value=False,
+            ),
+            mock.patch.object(worker, "start_worker_metrics_server") as metrics,
+            mock.patch.object(worker, "run_upload_worker") as run_worker,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "^Sub2 unknown-result reconciliation is unavailable$",
+            ):
                 worker.main()
 
         metrics.assert_not_called()

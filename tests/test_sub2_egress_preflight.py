@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from scripts.sub2_egress_preflight import (
     Sub2EgressPreflightError,
@@ -37,10 +38,27 @@ class Sub2EgressPreflightTests(unittest.TestCase):
     def test_matching_external_policy_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, _ = self._fixture(Path(directory))
-            validate_sub2_egress_policy(
-                repository / ".env",
-                repository_root=repository,
-            )
+            with mock.patch(
+                "scripts.sub2_egress_preflight."
+                "sub2_unknown_reconciliation_configured",
+                return_value=True,
+            ):
+                validate_sub2_egress_policy(
+                    repository / ".env",
+                    repository_root=repository,
+                )
+
+    def test_submit_only_runtime_is_not_releasable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, _ = self._fixture(Path(directory))
+            with self.assertRaisesRegex(
+                Sub2EgressPreflightError,
+                "^production Sub2 egress policy preflight failed$",
+            ):
+                validate_sub2_egress_policy(
+                    repository / ".env",
+                    repository_root=repository,
+                )
 
     def test_missing_url_fails_closed_without_locator(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -21,6 +21,7 @@ from platform.uploads import (
     RedisSub2ConcurrencyLimiter,
     UnconfiguredSub2Adapter,
     run_upload_worker,
+    sub2_unknown_reconciliation_configured,
 )
 from platform.worker_metrics import WorkerMetrics, start_worker_metrics_server
 
@@ -43,6 +44,10 @@ def _log_upload_status_counts(status_counts: dict[str, int]) -> None:
 
 def main() -> None:
     application = create_app(service_role="worker")
+    environment = application.state.settings.environment
+    managed_environment = environment.strip().lower() not in {"development", "test"}
+    if managed_environment and not sub2_unknown_reconciliation_configured():
+        raise RuntimeError("Sub2 unknown-result reconciliation is unavailable")
     stop_event = Event()
 
     def stop(*_: object) -> None:
@@ -51,7 +56,6 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     metrics = WorkerMetrics("sub2")
-    environment = application.state.settings.environment
     default_metrics_host = (
         "127.0.0.1"
         if environment.strip().lower() in {"development", "test"}
@@ -77,7 +81,6 @@ def main() -> None:
         if upload_url
         else UnconfiguredSub2Adapter()
     )
-    managed_environment = environment.strip().lower() not in {"development", "test"}
     redis_url = application.state.settings.resolved_redis_url(
         require_file=managed_environment
     )
