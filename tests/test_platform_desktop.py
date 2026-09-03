@@ -3151,6 +3151,45 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
+    def test_logout_waits_for_active_task_discovery_before_cleanup(self) -> None:
+        discovery_started = threading.Event()
+        release_discovery = threading.Event()
+        order = []
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def list_tasks(*, limit):
+                self.assertEqual(limit, 1)
+                discovery_started.set()
+                release_discovery.wait(timeout=2)
+                order.append("discovery-finished")
+                return []
+
+            @staticmethod
+            def prepare_logout_cleanup(_task_id):
+                return lambda: order.append("logout-cleanup")
+
+        instance = self._event_app()
+        instance._task_id = None
+        instance._client = Client()
+        instance._discover_active_task()
+        discovery_thread = instance._active_task_discovery_thread
+        self.assertTrue(discovery_started.wait(timeout=1))
+
+        instance.logout()
+        self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+        self.assertEqual(order, [])
+
+        release_discovery.set()
+        discovery_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(order, ["discovery-finished", "logout-cleanup"])
+        self.assertIsNone(instance._active_task_recovery)
+
     def test_unlock_preserves_failed_task_compensation_as_only_resource_action(
         self,
     ) -> None:

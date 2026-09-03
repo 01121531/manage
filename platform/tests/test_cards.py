@@ -1927,6 +1927,46 @@ class CardAllocationTests(unittest.TestCase):
             )
         self.assertIsNotNone(stored.grant_token_hash)
 
+    def test_reveal_challenge_rechecks_device_after_issue_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-challenge-commit-boundary")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        allocation_id = allocation.json()["id"]
+        original_commit = Session.commit
+        revoked = False
+
+        def commit_then_revoke(session: Session) -> None:
+            nonlocal revoked
+            issuing_challenge = any(
+                isinstance(item, CardRevealChallenge)
+                and item.grant_token_hash is None
+                for item in session.identity_map.values()
+            )
+            original_commit(session)
+            if not issuing_challenge or revoked:
+                return
+            revoked = True
+            with self.app.state.session_factory() as other:
+                device = other.get(Device, self.identity.device_id)
+                self.assertIsNotNone(device)
+                device.revoked_at = utc_now()
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_revoke):
+            challenge = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/reveal-challenges",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(challenge.status_code, 401, challenge.text)
+        self.assertNotIn("challenge_id", challenge.text)
+
     def test_reveal_resolver_failure_is_sanitized_and_grant_remains_retryable(
         self,
     ) -> None:

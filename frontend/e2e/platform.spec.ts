@@ -787,7 +787,9 @@ test('platform admin quarantines and explicitly releases a card before enabling 
         quarantined_at: '2026-08-24T00:01:00Z',
         is_active: false,
       }
-      return fulfill(card)
+      return fulfill({
+        error: { code: 'service_unavailable', message: 'must-never-render-quarantine-provider-detail' },
+      }, 503)
     }
     if (path === '/api/v1/admin/cards/card-quarantine/release-quarantine' && request.method() === 'POST') {
       releaseAttempts += 1
@@ -848,6 +850,10 @@ test('platform admin quarantines and explicitly releases a card before enabling 
     releaseQuarantine()
   }
 
+  await expect(dialog).toBeHidden()
+  const quarantineError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认卡资源隔离结果' })
+  for (const marker of ['原因：', '影响：', '下一步：']) await expect(quarantineError).toContainText(marker)
+  await expect(page.getByText('must-never-render-quarantine-provider-detail')).toHaveCount(0)
   await expect(row.getByText('已隔离')).toBeVisible()
   await expect(row.getByRole('button', { name: /启用卡/ })).toHaveCount(0)
   await row.getByRole('button', { name: /解除隔离卡 provider-quarantine/ }).click()

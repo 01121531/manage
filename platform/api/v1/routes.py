@@ -3829,11 +3829,33 @@ def create_card_reveal_challenge(
         trace_id=allocation.trace_id,
         details={"required_acr": challenge.required_acr},
     )
+    db.flush()
+    challenge_id = challenge.id
     db.commit()
+    revalidated = _owned_card_reveal_context(db, allocation_id, principal)
+    if revalidated is None:
+        raise HTTPException(status_code=404, detail="Card allocation not found")
+    _task, allocation, _card, response_now = revalidated
+    challenge = db.scalar(
+        select(CardRevealChallenge)
+        .where(
+            CardRevealChallenge.id == challenge_id,
+            CardRevealChallenge.allocation_id == allocation.id,
+            CardRevealChallenge.tenant_id == principal.tenant_id,
+            CardRevealChallenge.user_id == principal.user_id,
+            CardRevealChallenge.device_id == principal.device_id,
+            CardRevealChallenge.consumed_at.is_(None),
+            CardRevealChallenge.grant_token_hash.is_(None),
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if challenge is None or _is_expired(challenge.expires_at, response_now):
+        raise HTTPException(status_code=409, detail="Reveal challenge is no longer active")
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return CardRevealChallengeResponse(
-        challenge_id=challenge.id,
+        challenge_id=challenge_id,
         acr_values=challenge.required_acr,
         expires_at=challenge.expires_at,
     )

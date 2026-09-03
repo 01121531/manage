@@ -3505,6 +3505,9 @@ class PlatformDesktopApp:
         terminal_cleanup_thread = getattr(
             self, "_terminal_task_cleanup_thread", None
         )
+        active_task_discovery_thread = getattr(
+            self, "_active_task_discovery_thread", None
+        )
         unlock_action = getattr(self, "_unlock_action", None)
         unlock_thread = getattr(self, "_unlock_thread", None)
         if unlock_action is not None:
@@ -3571,6 +3574,11 @@ class PlatformDesktopApp:
                 and terminal_cleanup_thread.is_alive()
             ):
                 terminal_cleanup_thread.join()
+            if (
+                active_task_discovery_thread is not None
+                and active_task_discovery_thread.is_alive()
+            ):
+                active_task_discovery_thread.join()
             if unlock_thread is not None and unlock_thread.is_alive():
                 unlock_thread.join(CARD_REVEAL_SHUTDOWN_WAIT_SECONDS)
                 if unlock_thread.is_alive():

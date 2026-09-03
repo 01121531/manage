@@ -372,12 +372,13 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.success('卡资源已隔离，活动租约及关联资源已回收。')
       setQuarantineTarget(null)
       setQuarantineReason(undefined)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : '平台未能确认卡资源隔离状态。'
+    } catch {
+      setQuarantineTarget(null)
+      setQuarantineReason(undefined)
       message.error(
-        `原因：${reason} `
-        + '影响：平台可能已完成隔离和关联资源回收，页面不会按失败响应推断结果。 '
-        + '下一步：已刷新卡资源真实状态；若仍未隔离，可从同一入口重试。',
+        '原因：平台未能确认卡资源隔离结果。'
+        + '影响：隔离与关联资源回收可能已经生效，页面不会按失败响应推断最终状态。'
+        + '下一步：已关闭本次确认并刷新卡资源真实状态；仅当该卡仍未隔离时，才从同一行重新发起。',
       )
     } finally {
       setQuarantineSaving(false)
