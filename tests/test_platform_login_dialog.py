@@ -89,12 +89,13 @@ class _FakeWindow:
 
 
 class _FakeController:
-    def __init__(self):
+    def __init__(self, *, cancel_succeeds=True):
         self.cancel_calls = 0
+        self.cancel_succeeds = cancel_succeeds
 
     def cancel(self):
         self.cancel_calls += 1
-        return True
+        return self.cancel_succeeds
 
 
 class _FakeClient:
@@ -670,6 +671,19 @@ class PlatformLoginDialogTests(unittest.TestCase):
                 dialog._set_busy.assert_called_once_with(False)
                 self.assertIn("设备代码登录", dialog.status_label.options["text"])
                 self.assertNotIn(authorization_url, dialog.status_label.options["text"])
+
+    def test_browser_failure_keeps_login_blocked_when_cleanup_is_unconfirmed(self):
+        dialog = self.headless_dialog()
+        dialog._controller = _FakeController(cancel_succeeds=False)
+
+        with mock.patch("platform_login_dialog.webbrowser.open", return_value=False):
+            dialog._handle_authorization_url(
+                "https://identity.example/authorize?state=opaque"
+            )
+
+        dialog._set_busy.assert_called_once_with(True)
+        self.assertIn("清理尚未确认", dialog.status_label.options["text"])
+        self.assertNotIn("请使用设备代码登录", dialog.status_label.options["text"])
 
     def test_identity_failure_compensates_each_partially_issued_login_once(self):
         for flow in ("local", "device", "authorization_code"):

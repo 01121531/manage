@@ -63,6 +63,32 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const [recycleReason, setRecycleReason] = useState<string>()
   const [recycleSaving, setRecycleSaving] = useState(false)
   const cardListGenerationRef = useRef(0)
+  const recycleRefreshRef = useRef<{
+    action: { cardId: string; pending: boolean }
+    cardListGeneration: number
+    timelineGeneration: number
+    cardListSettled: boolean
+    timelineSettled: boolean
+  } | null>(null)
+
+  function settleRecycleRefresh(
+    kind: 'card-list' | 'timeline',
+    generation: number,
+    cardListFailed = false,
+  ) {
+    const barrier = recycleRefreshRef.current
+    if (!barrier) return
+    if (kind === 'card-list' && barrier.cardListGeneration === generation) {
+      barrier.cardListSettled = true
+      if (cardListFailed) barrier.timelineSettled = true
+    }
+    if (kind === 'timeline' && barrier.timelineGeneration === generation) {
+      barrier.timelineSettled = true
+    }
+    if (!barrier.cardListSettled || !barrier.timelineSettled) return
+    recycleRefreshRef.current = null
+    releaseCardAction(barrier.action)
+  }
 
   function invalidateCardList(clearSelection = true) {
     cardListGenerationRef.current += 1
@@ -90,6 +116,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   useEffect(() => {
     const controller = new AbortController()
     const generation = cardListGenerationRef.current + 1
+    let failed = false
     cardListGenerationRef.current = generation
     setLoading(true)
     setCardListError(undefined)
@@ -111,6 +138,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     })
       .catch(() => {
         if (cardListGenerationRef.current === generation) {
+          failed = true
           setSelectedCardId(null)
           setCardTimeline(null)
           setCardListError(
@@ -128,6 +156,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
             cardActionRefreshRef.current = null
             releaseCardAction(action)
           }
+          settleRecycleRefresh('card-list', generation, failed)
         }
       })
     return () => {
@@ -178,7 +207,10 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         )
       }
     }).finally(() => {
-      if (alive && timelineGenerationRef.current === generation) setTimelineLoading(false)
+      if (alive && timelineGenerationRef.current === generation) {
+        setTimelineLoading(false)
+        settleRecycleRefresh('timeline', generation)
+      }
     })
     return () => {
       alive = false
@@ -535,7 +567,15 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     } finally {
       setRecycleSaving(false)
       refreshCardsFromServer()
-      releaseCardAction(action)
+      if (cardActionRef.current === action) {
+        recycleRefreshRef.current = {
+          action,
+          cardListGeneration: cardListGenerationRef.current + 1,
+          timelineGeneration: timelineGenerationRef.current + 2,
+          cardListSettled: false,
+          timelineSettled: false,
+        }
+      }
     }
   }
 

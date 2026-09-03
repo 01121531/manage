@@ -996,6 +996,13 @@ test('ops admin reads masked card history and recycles one exact allocation', as
     trace_id: 'trace-timeline', created_at: '2026-08-24T00:01:00Z',
   }
   const recycleBodies: unknown[] = []
+  let cardListRequests = 0
+  let timelineRequests = 0
+  let blockRecycleRefresh = false
+  let releaseRecycleCardList = () => undefined
+  const recycleCardListGate = new Promise<void>((resolve) => { releaseRecycleCardList = resolve })
+  let releaseRecycleTimeline = () => undefined
+  const recycleTimelineGate = new Promise<void>((resolve) => { releaseRecycleTimeline = resolve })
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -1028,9 +1035,13 @@ test('ops admin reads masked card history and recycles one exact allocation', as
       })
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'GET') {
+      cardListRequests += 1
+      if (blockRecycleRefresh) await recycleCardListGate
       return fulfill(poolPage([{ ...card, status: allocation.status === 'active' ? 'allocated' : 'available' }]))
     }
     if (path === '/api/v1/admin/cards/card-timeline/timeline' && request.method() === 'GET') {
+      timelineRequests += 1
+      if (blockRecycleRefresh) await recycleTimelineGate
       const eventsCursor = new URL(request.url()).searchParams.get('events_cursor')
       if (eventsCursor === 'event-page-2') {
         return fulfill({
@@ -1073,6 +1084,7 @@ test('ops admin reads masked card history and recycles one exact allocation', as
         released_at: '2026-08-24T00:05:00Z',
         release_reason_code: 'manual_reassignment',
       }
+      blockRecycleRefresh = true
       return fulfill({
         error: {
           code: 'service_unavailable',
@@ -1111,6 +1123,8 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   await recycleReasonSelect.click()
   await recycleReasonSelect.press('Enter')
   await expect(confirmRecycle).toBeEnabled()
+  const cardListsBeforeRecycle = cardListRequests
+  const timelinesBeforeRecycle = timelineRequests
   await confirmRecycle.click()
 
   await expect.poll(() => recycleBodies).toEqual([{ reason_code: 'manual_reassignment' }])
@@ -1118,7 +1132,15 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   const recycleError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认活动租约回收结果' })
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(recycleError).toContainText(marker)
   await expect(page.getByText('must-never-render-recycle-provider-detail')).toHaveCount(0)
+  await expect.poll(() => cardListRequests).toBeGreaterThan(cardListsBeforeRecycle)
+  await expect.poll(() => timelineRequests).toBeGreaterThan(timelinesBeforeRecycle)
+  const importCards = page.getByRole('button', { name: '导入信用卡池安全包 JSON' })
+  await expect(importCards).toBeDisabled()
+  releaseRecycleCardList()
+  await expect(importCards).toBeDisabled()
+  releaseRecycleTimeline()
   await expect(history.getByText('人工重新分配', { exact: true })).toBeVisible()
+  await expect(importCards).toBeEnabled()
   await expect(history.getByRole('button', { name: /回收活动租约/ })).toHaveCount(0)
   expect(recycleBodies).toEqual([{ reason_code: 'manual_reassignment' }])
 })

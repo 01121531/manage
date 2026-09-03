@@ -944,9 +944,10 @@ class PlatformLoginDialog:
     def cancel_device_fallback(self) -> None:
         if self._closed or self._device_verification_uri is None:
             return
-        self._controller.cancel()
-        self._set_busy(False)
         self._clear_device_challenge()
+        if not self._cancel_authentication():
+            return
+        self._set_busy(False)
         self._set_status("已取消设备代码登录；可重新选择登录方式。", MUTED)
 
     def _load_auth_config(self, client: PlatformClient) -> None:
@@ -1080,7 +1081,9 @@ class PlatformLoginDialog:
     def _expire_device_challenge(self, generation: int) -> None:
         if self._closed or generation != self._device_challenge_generation:
             return
-        self._controller.cancel()
+        if not self._cancel_authentication():
+            self._clear_device_challenge()
+            return
         self._set_busy(False)
         self._clear_device_challenge()
         self._set_status("设备代码已过期并清理，请重新发起设备登录。", ERROR)
@@ -1093,11 +1096,22 @@ class PlatformLoginDialog:
         except (OSError, webbrowser.Error):
             opened = False
         if not opened:
-            self._controller.cancel()
+            if not self._cancel_authentication():
+                return
             self._set_busy(False)
             self._set_status("无法打开系统浏览器，请使用设备代码登录。", ERROR)
             return
         self._set_status("浏览器已打开，完成平台登录后返回此窗口。", ACCENT)
+
+    def _cancel_authentication(self) -> bool:
+        if self._controller.cancel():
+            return True
+        self._set_busy(True)
+        self._set_status(
+            "登录会话清理尚未确认；请恢复网络后再次关闭窗口。",
+            ERROR,
+        )
+        return False
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -1182,12 +1196,7 @@ class PlatformLoginDialog:
         if self._closed:
             return
         self._clear_device_challenge()
-        if cancel_authentication and not self._controller.cancel():
-            self._set_busy(True)
-            self._set_status(
-                "登录会话清理尚未确认；窗口保持打开，请恢复网络后再次关闭。",
-                ERROR,
-            )
+        if cancel_authentication and not self._cancel_authentication():
             return
         self._closed = True
         self.password_var.set("")

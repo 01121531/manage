@@ -9334,7 +9334,12 @@ def admin_deploy_upload_policy_version(
         raise HTTPException(
             status_code=409, detail="Upload policy deployment changed concurrently"
         ) from None
-    db.refresh(deployment)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(deployment, with_for_update=True)
     return _upload_policy_deployment_response(db, deployment)
 
 
