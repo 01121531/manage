@@ -371,6 +371,23 @@ to a reviewed provider contract without independent authenticated evidence.
 Validate this repository observation with
 `python scripts/verify_sub2_case_observation.py`.
 
+When an authenticated browser capture is available, keep the raw HAR in a
+protected directory outside this repository and generate a write-once,
+value-free shape summary locally:
+
+```powershell
+python scripts/summarize_sub2_har.py --input D:\email-platform-private\sub2.har --output D:\email-platform-evidence\sub2-har-shapes.json --expected-origin https://ai1.aisb.shop
+```
+
+The output includes only same-origin `/api/v1/admin/` methods, templated paths,
+field/header/query names, status codes, and JSON body shapes. It never copies
+header, query, request, response, Cookie, authorization, redirect, timing, IP,
+or comment values. The input and output must be absolute external paths, the
+output must not already exist, and the tool performs no network requests. A
+successful summary remains `production_acceptance=false`; review it and use it
+to author the separate protected provider contract rather than committing the
+raw HAR or treating the summary as provider authority.
+
 The committed `deploy/provider-contracts/*.synthetic.json` files document the
 closed Mail and Sub2 field-shape envelopes. Copy only the relevant shape to the
 protected external intake directory, replace its capability mappings with the
