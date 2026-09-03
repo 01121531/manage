@@ -5914,6 +5914,11 @@ def admin_list_audit(
     ),
     db: Session = Depends(get_db),
 ) -> list[AdminAuditResponse]:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_SECURITY_AUDITOR, ROLE_PLATFORM_ADMIN),
+    )
     query = _audit_query(
         tenant_id=principal.tenant_id,
         task_id=task_id,
