@@ -210,7 +210,9 @@ export async function assertPoolImportReceiptBound(
   const invalid = () => new PoolImportValidationError(`平台返回的${label}导入回执绑定无效；请使用同一批次重试核对。`)
   const submissionMatch = SUBMISSION_KEY_PATTERN.exec(submissionKey)
   if (
-    receipt.status !== 'committed'
+    typeof receipt.id !== 'string'
+    || receipt.id.trim().length === 0
+    || receipt.status !== 'committed'
     || receipt.pool_type !== expectedPoolType
     || receipt.imported_count !== expectedItems.length
     || !submissionMatch

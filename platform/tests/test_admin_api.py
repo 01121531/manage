@@ -1495,6 +1495,66 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(revoked_audits, 1)
 
+    def test_admin_device_revoke_rechecks_target_binding_after_final_commit(
+        self,
+    ) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        original_commit = Session.commit
+        revocation_started = False
+        revocation_commit_count = 0
+
+        def commit_then_change_binding(session: Session) -> None:
+            nonlocal revocation_started, revocation_commit_count
+            if any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.device_revoked"
+                for item in session.new
+            ):
+                revocation_started = True
+            original_commit(session)
+            if not revocation_started:
+                return
+            revocation_commit_count += 1
+            if revocation_commit_count != 2:
+                return
+            with self.app.state.session_factory() as other_db:
+                target = other_db.get(Device, self.operator.device_id)
+                self.assertIsNotNone(target)
+                target.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_change_binding,
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/devices/{self.operator.device_id}/revoke",
+                headers=self.headers(admin_token),
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("tenant-b", response.text)
+        with self.app.state.session_factory() as db:
+            target = db.get(Device, self.operator.device_id)
+            revoke_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "admin.device_revoked",
+                        AuditEvent.entity_id == self.operator.device_id,
+                    )
+                )
+            )
+        self.assertEqual(target.tenant_id, "tenant-b")
+        self.assertIsNotNone(target.revoked_at)
+        self.assertEqual(len(revoke_events), 1)
+
     def test_revoke_device_and_card_projection_are_safe(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

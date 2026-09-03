@@ -638,6 +638,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertTrue(instance._closed)
         self.assertEqual(instance.root.destroy_calls, 1)
 
+    def test_observer_close_error_does_not_block_shutdown_cleanup(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        cleanup = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        instance._paste_observer.close.side_effect = [
+            RuntimeError("unexpected observer failure"),
+            None,
+        ]
+
+        instance.close()
+        shutdown_thread = instance._shutdown_cleanup_thread
+
+        self.assertIsNotNone(shutdown_thread)
+        shutdown_thread.join(timeout=1)
+        instance._drain_events()
+
+        cleanup.assert_called_once_with()
+        self.assertEqual(instance._paste_observer.close.call_count, 2)
+        self.assertTrue(instance._closed)
+        self.assertEqual(instance.root.destroy_calls, 1)
+
     def test_close_cleanup_event_does_not_reschedule_destroyed_root(self) -> None:
         class DestroySensitiveRoot(RootStub):
             def after(self, delay, callback, *args):

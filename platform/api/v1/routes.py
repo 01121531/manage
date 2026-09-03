@@ -6058,7 +6058,8 @@ def admin_revoke_device(
     )
     if candidate is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    participant_ids = sorted({principal.user_id, candidate.user_id})
+    target_user_id = candidate.user_id
+    participant_ids = sorted({principal.user_id, target_user_id})
     if db.get_bind().dialect.name == "sqlite":
         db.execute(
             update(User)
@@ -6083,7 +6084,7 @@ def admin_revoke_device(
         )
     }
     actor = participants.get(principal.user_id)
-    owner = participants.get(candidate.user_id)
+    owner = participants.get(target_user_id)
     actor_device = _lock_device(
         db,
         tenant_id=principal.tenant_id,
@@ -6102,7 +6103,7 @@ def admin_revoke_device(
     device = _lock_device(
         db,
         tenant_id=principal.tenant_id,
-        user_id=candidate.user_id,
+        user_id=target_user_id,
         device_id=device_id,
     )
     if owner is None or device is None:
@@ -6138,7 +6139,14 @@ def admin_revoke_device(
         principal,
         allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
     )
-    db.refresh(device, with_for_update=True)
+    device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=target_user_id,
+        device_id=device_id,
+    )
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
     return AdminDeviceResponse.model_validate(device, from_attributes=True)
 
 

@@ -4966,7 +4966,10 @@ class PlatformDesktopApp:
         self.check_update_button.configure(state="disabled")
         self._set_workflow_stage("stopped")
         if intent == "close":
-            self._paste_observer.close()
+            try:
+                self._paste_observer.close()
+            except Exception:
+                pass
         self._set_status(
             "正在关闭平台任务并撤销登录会话；确认成功前不会完成退出。",
             ACCENT,
@@ -5120,10 +5123,10 @@ class PlatformDesktopApp:
             )
             return
         self._destroy_pending = False
-        self._paste_observer.close()
         self._clipboard_clear_generation += 1
         self._closed = True
         try:
+            self._paste_observer.close()
             if self._login_dialog is not None and self._login_dialog.exists():
                 self._login_dialog.close()
             self.root.destroy()
