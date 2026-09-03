@@ -3510,6 +3510,18 @@ def replace_card_allocation(
         ),
     )
     db.commit()
+    db.scalar(
+        select(Task)
+        .where(
+            Task.id == task.id,
+            Task.tenant_id == principal.tenant_id,
+            Task.user_id == principal.user_id,
+            Task.device_id == principal.device_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    db.refresh(replacement, with_for_update=True)
     return _card_allocation_response(replacement, replacement_card)
 
 

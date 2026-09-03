@@ -742,6 +742,96 @@ class ResourceCreationRaceTests(unittest.TestCase):
                 1,
             )
 
+    def test_replacement_card_returns_status_after_concurrent_task_close(
+        self,
+    ) -> None:
+        task_id = self.create_task("card-replace-close")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.headers,
+        )
+        self.assertEqual(original.status_code, 201, original.text)
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-resource-race",
+                    provider_ref="resource-race-replacement-card",
+                    brand="VISA",
+                    last4="2222",
+                    secret_ref="vault://cards/resource-race-replacement",
+                )
+            )
+            db.commit()
+
+        entered = Event()
+        release = Event()
+        replacement_recorded = Event()
+        original_commit = Session.commit
+        original_record_card_event = routes.record_card_event
+        blocked = False
+
+        def mark_replacement_event(*args, **kwargs):
+            result = original_record_card_event(*args, **kwargs)
+            if (
+                kwargs.get("action") == "allocation.allocated"
+                and kwargs.get("reason_code") == "replacement"
+            ):
+                replacement_recorded.set()
+            return result
+
+        def block_after_replacement_commit(session: Session) -> None:
+            nonlocal blocked
+            should_block = not blocked and replacement_recorded.is_set()
+            original_commit(session)
+            if should_block:
+                blocked = True
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("card replacement release timed out")
+
+        with patch.object(Session, "commit", new=block_after_replacement_commit), patch(
+            "platform.api.v1.routes.record_card_event",
+            side_effect=mark_replacement_event,
+        ):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/tasks/{task_id}/card-allocations/"
+                    f"{original.json()['id']}/replace",
+                    headers=self.headers,
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                with self.app.state.session_factory() as db:
+                    replacement_id = db.scalar(
+                        select(CardAllocation.id).where(
+                            CardAllocation.task_id == task_id,
+                            CardAllocation.id != original.json()["id"],
+                        )
+                    )
+                self.assertIsNotNone(replacement_id)
+                closed = self.close_task(task_id)
+                self.assertEqual(closed.status_code, 200, closed.text)
+                release.set()
+                replacement = future.result(timeout=10)
+
+        self.assertEqual(replacement.status_code, 201, replacement.text)
+        self.assertEqual(replacement.json()["status"], "released")
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                db.get(CardAllocation, replacement_id).status,
+                "released",
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(CardAllocation).where(
+                        CardAllocation.task_id == task_id
+                    )
+                ),
+                2,
+            )
+
     def test_close_during_mail_watermark_cannot_create_session_afterward(self) -> None:
         task_id = self.create_task("mail-close-wins")
 
