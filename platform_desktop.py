@@ -1668,6 +1668,13 @@ class PlatformDesktopApp:
                     ),
                 )
             )
+            self._events.put(
+                (
+                    action.task_generation,
+                    "active_task_recovery_finished",
+                    (action, transition, thread),
+                )
+            )
 
     def close_active_task(self) -> None:
         recovery = self._active_task_recovery
@@ -2713,7 +2720,9 @@ class PlatformDesktopApp:
                     self._task_transition_thread = None
                 if self._active_task_recovery_action is action:
                     self._active_task_recovery_action = None
-                if self._task_transition is transition and transition.cancelled:
+                    if self._task_transition is transition:
+                        self._task_transition = None
+                elif self._task_transition is transition and transition.cancelled:
                     self._task_transition = None
                 continue
             if kind == "task_create_finished":

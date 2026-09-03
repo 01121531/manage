@@ -3748,6 +3748,48 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         instance._client.begin_task_transition.assert_not_called()
 
+    def test_stale_takeover_start_failure_clears_action_thread_and_transition(self) -> None:
+        class Transition:
+            cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+                return None
+
+            @staticmethod
+            def worker_finished():
+                return None
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        instance = self._event_app()
+        recovery = self._recovery_snapshot()
+        transition = Transition()
+        instance._active_task_recovery = recovery
+        instance._task_id = recovery.task.id
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.begin_task_transition.return_value = transition
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.take_over_active_task()
+
+        self.assertIsNotNone(instance._active_task_recovery_action)
+        self.assertIs(instance._task_transition, transition)
+        self.assertIsNotNone(instance._task_transition_thread)
+        instance._task_generation += 1
+        instance._drain_events()
+
+        self.assertIsNone(instance._active_task_recovery_action)
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_transition_thread)
+        self.assertFalse(transition.cancelled)
+
     def test_active_task_discovery_thread_start_failure_exposes_retry(self) -> None:
         instance = self._event_app()
         instance._task_id = None

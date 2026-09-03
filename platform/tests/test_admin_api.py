@@ -3459,6 +3459,62 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(upload.status, "cancelled")
         self.assertEqual(recycle_audit_count, 1)
 
+    def test_card_recycle_in_progress_rechecks_actor_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id
+        )
+        operator_token = self.login(
+            "tenant-a",
+            "operator@example.test",
+            "operator-account-password",
+            self.operator.device_id,
+        )
+        card_id, _task_id, allocation_id, upload_id = self.create_card_upload_fixture(
+            admin_token=admin_token,
+            operator_token=operator_token,
+            suffix="in-progress-recycle-admin",
+        )
+        original_commit = Session.commit
+        role_changed = False
+
+        def commit_then_change_role(session: Session) -> None:
+            nonlocal role_changed
+            recycle_requested = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.card_allocation_recycle_requested"
+                for item in session.new
+            )
+            original_commit(session)
+            if not recycle_requested or role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(admin)
+                admin.role = "operator"
+                original_commit(other)
+
+        with mock.patch.object(
+            routes,
+            "_compensate_card_allocation",
+            return_value=False,
+        ), mock.patch.object(Session, "commit", new=commit_then_change_role):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card_id}/allocations/{allocation_id}/recycle",
+                headers=self.headers(admin_token),
+                json={"reason_code": "manual_reassignment"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("card_recycle_in_progress", response.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocation_id)
+            upload = db.get(UploadJob, upload_id)
+        self.assertEqual(allocation.status, "recycle_pending")
+        self.assertIsNone(allocation.released_at)
+        self.assertEqual(upload.status, "queued")
+
     def test_card_timeline_rechecks_actor_after_authentication(self) -> None:
         card = provision_card(
             self.app.state.session_factory,

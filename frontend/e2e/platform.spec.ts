@@ -3814,7 +3814,7 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
         ? { ...upload, status: 'unknown' }
         : upload)
       waitForCancelRefresh = true
-      return fulfill({ ...uploads[0], id: 'wrong-upload-binding', status: 'cancelled' })
+      return fulfill({ ...uploads[0], id: jobId, status: 'succeeded' })
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -3970,7 +3970,7 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
     await expect(confirmCancel).toHaveClass(/ant-btn-loading/)
     await expect(page.getByText(/原因：平台未能确认上传取消结果。影响：.*下一步：/)).toBeVisible()
     await expect(page.getByText('上传任务已取消，正在刷新状态。', { exact: true })).toHaveCount(0)
-    await expect(page.locator('body')).not.toContainText('wrong-upload-binding')
+    await expect(page.getByText('停止请求已提交；任务可能仍为 cancel_pending，正在刷新状态，请核对最终结果。', { exact: true })).toHaveCount(0)
     await confirmCancel.dispatchEvent('click')
     expect(cancelRequests).toEqual([runningVisibleId ?? ''])
   } finally {

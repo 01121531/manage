@@ -7712,21 +7712,23 @@ def admin_recycle_card_allocation(
         queued_error_code="card_recycled",
         admin_event_type="admin.card_allocation_recycled",
     )
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     db.expire_all()
     current = db.scalar(
-        select(CardAllocation).where(
+        select(CardAllocation)
+        .where(
             CardAllocation.id == allocation_id,
             CardAllocation.card_id == card_id,
             CardAllocation.tenant_id == principal.tenant_id,
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if current is not None and current.released_at is not None:
-        _lock_admin_write_principal(
-            db,
-            principal,
-            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
-        )
-        db.refresh(current, with_for_update=True)
         current_card = db.scalar(
             select(Card).where(
                 Card.id == current.card_id,
