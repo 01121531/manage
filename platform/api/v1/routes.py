@@ -8236,6 +8236,11 @@ def _register_operational_policy(
     principal: AuthPrincipal,
     db: Session,
 ) -> MailPolicyVersionResponse | CardPolicyVersionResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     values: dict[str, Any] = {
         "tenant_id": principal.tenant_id,
         "domain": domain,
@@ -8296,6 +8301,11 @@ def _approve_operational_policy(
     principal: AuthPrincipal,
     db: Session,
 ) -> MailPolicyVersionResponse | CardPolicyVersionResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     policy = db.scalar(
         select(OperationalPolicyVersion).where(
             OperationalPolicyVersion.id == policy_id,
@@ -8339,6 +8349,11 @@ def _deploy_operational_policy(
     principal: AuthPrincipal,
     db: Session,
 ) -> OperationalPolicyDeploymentResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     policy = db.scalar(
         select(OperationalPolicyVersion).where(
             OperationalPolicyVersion.id == policy_id,
@@ -8431,6 +8446,11 @@ def _rollback_operational_policy(
     principal: AuthPrincipal,
     db: Session,
 ) -> OperationalPolicyDeploymentResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     deployment = db.scalar(
         select(OperationalPolicyDeployment).where(
             OperationalPolicyDeployment.tenant_id == principal.tenant_id,
