@@ -1883,10 +1883,15 @@ class PlatformDesktopApp:
     @classmethod
     def _validate_provisioned_resources(
         cls,
+        task_trace_id: str,
         session: MailSessionSnapshot,
         allocation: CardAllocationSnapshot,
     ) -> None:
         now = datetime.now().astimezone()
+        if session.trace_id != task_trace_id:
+            raise PlatformProtocolError("新建邮箱会话归属不匹配")
+        if allocation.trace_id != task_trace_id:
+            raise PlatformProtocolError("新建卡租约归属不匹配")
         if session.status not in {"initializing", "waiting", "code_ready"}:
             raise PlatformProtocolError("新建邮箱会话状态不可用")
         if allocation.status != "active":
@@ -2050,7 +2055,11 @@ class PlatformDesktopApp:
                 if transition.cancelled:
                     return
                 allocation = self._client.allocate_card(task_id)
-                self._validate_provisioned_resources(session, allocation)
+                self._validate_provisioned_resources(
+                    task_trace_id,
+                    session,
+                    allocation,
+                )
             except BaseException as error:
                 cleanup = transition.cancel()
                 if cleanup is not None:

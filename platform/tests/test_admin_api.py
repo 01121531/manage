@@ -2604,6 +2604,50 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(persisted.quarantine_reason_code, "suspected_compromise")
         self.assertEqual(release_audits, [])
 
+    def test_release_non_quarantined_card_rechecks_actor_before_idempotent_return(
+        self,
+    ) -> None:
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="stale-release-disabled-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/stale-release-disabled",
+        )
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+            persisted.is_active = False
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/cards/{card.card_id}/release-quarantine",
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+
     def test_card_quarantine_is_distinct_idempotent_and_requires_explicit_release(self) -> None:
         admin_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

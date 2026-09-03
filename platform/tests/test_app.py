@@ -10,6 +10,7 @@ import httpx
 from sqlalchemy import select
 
 from platform.app import create_app
+from platform.auth import AuthPrincipal, get_current_principal
 from platform.bootstrap import create_oidc_user_with_device, create_user_with_device
 from platform.config import Settings
 from platform.lifecycle import LifecycleSweepResult
@@ -381,6 +382,76 @@ class PlatformAppTests(unittest.TestCase):
         serialized_keys = json.dumps(tenant_summary.json(), sort_keys=True)
         for forbidden_key in ('"last4"', '"card_masked"', '"provider_ref"', '"secret_ref"'):
             self.assertNotIn(forbidden_key, serialized_keys)
+
+    def test_dashboard_summary_uses_current_role_after_authentication(self) -> None:
+        admin = create_user_with_device(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            email="stale-dashboard-admin@example.test",
+            password="stale-dashboard-admin-password",
+            device_name="stale-dashboard-admin-device",
+            role="platform_admin",
+        )
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            db.add_all(
+                [
+                    Task(
+                        tenant_id="tenant-a",
+                        user_id=admin.user_id,
+                        device_id=admin.device_id,
+                        task_type="mail_code",
+                        idempotency_key="stale-dashboard-own",
+                        trace_id="trace-dashboard-own",
+                        status="created",
+                        expires_at=now + timedelta(minutes=15),
+                    ),
+                    Task(
+                        tenant_id="tenant-a",
+                        user_id=self.identity.user_id,
+                        device_id=self.identity.device_id,
+                        task_type="mail_code",
+                        idempotency_key="stale-dashboard-other",
+                        trace_id="trace-dashboard-other",
+                        status="created",
+                        expires_at=now + timedelta(minutes=15),
+                    ),
+                ]
+            )
+            current_admin = db.get(User, admin.user_id)
+            current_admin.role = "operator"
+            db.commit()
+
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=admin.user_id,
+            tenant_id="tenant-a",
+            device_id=admin.device_id,
+            email="stale-dashboard-admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request("GET", "/api/v1/dashboard/summary")
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["scope"], "own")
+        self.assertEqual(body["today_tasks"], 1)
+        self.assertEqual(body["active_tasks"], 1)
+        self.assertEqual(
+            [task["trace_id"] for task in body["recent_tasks"]],
+            ["trace-dashboard-own"],
+        )
 
     def test_dashboard_chapter_nine_metrics_match_device_and_allocator(self) -> None:
         admin = create_user_with_device(

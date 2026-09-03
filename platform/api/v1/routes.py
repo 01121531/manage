@@ -496,7 +496,7 @@ def _lock_admin_write_principal(
     principal: AuthPrincipal,
     *,
     allowed_roles: tuple[str, ...],
-) -> None:
+) -> User:
     if db.get_bind().dialect.name == "sqlite":
         db.execute(
             update(User)
@@ -527,6 +527,7 @@ def _lock_admin_write_principal(
         raise unauthorized()
     if user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Insufficient role")
+    return user
 
 
 def _lock_task_creation_principal(
@@ -811,9 +812,14 @@ def dashboard_summary(
 ) -> DashboardSummaryResponse:
     """Return safe aggregate platform status for the current operator scope."""
 
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=tuple(INTERACTIVE_ROLES),
+    )
     now = _utc_now()
     today_started_at = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    scope = "tenant" if principal.role in _TENANT_DASHBOARD_ROLES else "own"
+    scope = "tenant" if current_user.role in _TENANT_DASHBOARD_ROLES else "own"
     task_filters: list[Any] = [Task.tenant_id == principal.tenant_id]
     mail_filters: list[Any] = [MailSession.tenant_id == principal.tenant_id]
     card_filters: list[Any] = [CardAllocation.tenant_id == principal.tenant_id]
@@ -7743,6 +7749,11 @@ def admin_release_card_quarantine(
     principal: AuthPrincipal = Depends(require_roles(ROLE_PLATFORM_ADMIN)),
     db: Session = Depends(get_db),
 ) -> AdminCardResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     card = db.scalar(
         select(Card).where(
             Card.id == card_id,

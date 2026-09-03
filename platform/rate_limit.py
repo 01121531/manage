@@ -85,19 +85,14 @@ def _fingerprint(value: str) -> str:
 
 
 def _clean_ip(request: Request) -> str:
-    """Return only a normalized IP literal; discard arbitrary header text."""
+    """Return the normalized ASGI peer IP without trusting request headers."""
 
-    candidates = [
-        request.headers.get("X-Real-IP"),
-        request.client.host if request.client is not None else None,
-    ]
-    for candidate in candidates:
-        if not candidate:
-            continue
+    candidate = request.client.host if request.client is not None else None
+    if candidate:
         try:
             return ipaddress.ip_address(candidate.strip()).compressed
         except ValueError:
-            continue
+            pass
     return "unknown"
 
 

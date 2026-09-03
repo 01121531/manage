@@ -1093,6 +1093,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             email_masked="m***@example.test",
             status="waiting",
             expires_at=future,
+            trace_id="trace-created",
             session_token="s" * 32,
         )
         valid_allocation = CardAllocationSnapshot(
@@ -1103,6 +1104,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             expiry_year=2030,
             status="active",
             expires_at=future,
+            trace_id="trace-created",
         )
         cases = {
             "terminal mail session": (
@@ -1217,6 +1219,74 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
                 self.assertNotIn(session.id, status)
                 self.assertNotIn(allocation.id, status)
 
+    def test_task_provisioning_rejects_resources_from_another_trace(self) -> None:
+        future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        for mismatched_resource in ("mail", "card"):
+            with self.subTest(mismatched_resource=mismatched_resource):
+                cleanup = mock.Mock()
+                transition = mock.Mock(cancelled=False)
+                transition.attach.return_value = None
+                transition.cancel.return_value = cleanup
+                transition.worker_finished.return_value = None
+                client = mock.Mock(is_authenticated=True)
+                client.begin_task_transition.return_value = transition
+                client.create_task.return_value = task_snapshot(
+                    "task-created", "trace-created"
+                )
+                client.create_mail_session.return_value = MailSessionSnapshot(
+                    id="mail-safe",
+                    email_masked="m***@example.test",
+                    status="waiting",
+                    expires_at=future,
+                    trace_id=(
+                        "trace-other"
+                        if mismatched_resource == "mail"
+                        else "trace-created"
+                    ),
+                    session_token="s" * 32,
+                )
+                client.allocate_card.return_value = CardAllocationSnapshot(
+                    id="allocation-safe",
+                    card_masked="411111******1111",
+                    brand="visa",
+                    expiry_month=12,
+                    expiry_year=2030,
+                    status="active",
+                    expires_at=future,
+                    trace_id=(
+                        "trace-other"
+                        if mismatched_resource == "card"
+                        else "trace-created"
+                    ),
+                )
+                instance = self._event_app()
+                instance._task_id = None
+                instance._mail_session_id = None
+                instance._mail_session_token = None
+                instance._card_allocation_id = None
+                instance._client = client
+                instance._start_polling = mock.Mock()
+
+                with mock.patch("platform_desktop.threading.Thread", InlineThread):
+                    instance.create_mail_task()
+                instance._drain_events()
+
+                cleanup.assert_called_once_with()
+                transition.commit.assert_not_called()
+                self.assertIsNone(instance._task_id)
+                self.assertIsNone(instance._mail_session_id)
+                self.assertIsNone(instance._mail_session_token)
+                self.assertIsNone(instance._card_allocation_id)
+                instance._start_polling.assert_not_called()
+
     def test_task_provisioning_accepts_live_resources(self) -> None:
         future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
         session = MailSessionSnapshot(
@@ -1224,6 +1294,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             email_masked="m***@example.test",
             status="waiting",
             expires_at=future,
+            trace_id="trace-created",
             session_token="s" * 32,
         )
         allocation = CardAllocationSnapshot(
@@ -1234,6 +1305,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             expiry_year=2030,
             status="active",
             expires_at=future,
+            trace_id="trace-created",
         )
         transition = mock.Mock(cancelled=False)
         transition.attach.return_value = None

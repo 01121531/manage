@@ -168,6 +168,24 @@ class RateLimitTests(unittest.TestCase):
         ):
             self.assertNotIn(raw_value, combined_keys)
 
+    def test_login_limit_does_not_trust_client_supplied_real_ip(self) -> None:
+        backend = FakeRateLimitBackend()
+        app = self.make_app(backend=backend)
+
+        responses = [
+            self.request(
+                app,
+                "POST",
+                "/api/v1/auth/login",
+                headers={"X-Real-IP": f"203.0.113.{index}"},
+                json={},
+            )
+            for index in range(1, 4)
+        ]
+
+        self.assertEqual([response.status_code for response in responses], [422, 422, 429])
+        self.assertEqual(len(set(backend.keys)), 1)
+
     def test_fixed_window_key_isolated_after_window_boundary(self) -> None:
         backend = FakeRateLimitBackend()
         clock_value = [59.9]
