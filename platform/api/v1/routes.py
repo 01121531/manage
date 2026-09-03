@@ -7819,8 +7819,13 @@ def admin_update_card_state(
             ),
             recovery_hint="刷新卡状态后重试隔离；隔离屏障不会回退",
         )
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
         db.expire(card)
-        db.refresh(card)
+        db.refresh(card, with_for_update=True)
         return _admin_card_response(card)
 
     if payload.is_active:
@@ -7870,8 +7875,13 @@ def admin_update_card_state(
                 db.commit()
             else:
                 db.rollback()
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
         db.expire(card)
-        db.refresh(card)
+        db.refresh(card, with_for_update=True)
         return _admin_card_response(card)
 
     disabled = db.execute(
@@ -7925,8 +7935,13 @@ def admin_update_card_state(
         db.rollback()
 
     _compensate_unavailable_card(db, card_id=card_id, principal=principal)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     db.expire(card)
-    db.refresh(card)
+    db.refresh(card, with_for_update=True)
     return _admin_card_response(card)
 
 

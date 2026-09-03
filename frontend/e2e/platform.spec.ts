@@ -5541,9 +5541,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
       }))
       if (cardImportBodies.length === 1) {
         cards = [...cards, ...imported]
-        return fulfill({
-          error: { code: 'service_unavailable', message: 'must-never-render-card-import-provider-detail' },
-        }, 503)
+        return route.abort('failed')
       }
       if (cardImportBodies.length === 2) {
         return fulfill({
@@ -5683,7 +5681,7 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await expect(cardRecovery).toContainText(cardSubmissionKey)
   const cardUnknownMessage = page.locator('.ant-message-notice').filter({ hasText: '本批可能已原子导入' })
   await expect(cardUnknownMessage).toContainText('同一批次核验')
-  await expect(page.getByText('must-never-render-card-import-provider-detail')).toHaveCount(0)
+  await expect(page.getByText(/Failed to fetch|NetworkError|ERR_FAILED/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: '导入信用卡池安全包 JSON' })).toBeDisabled()
   await expect(page.locator('body')).not.toContainText('epir1.card-receipt.signature')
   await cardRecovery.getByRole('button', { name: '使用同一批次核验信用卡池导入' }).click()

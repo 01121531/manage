@@ -2993,6 +2993,39 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(order, ["poll-waited", "task-cleanup"])
         self.assertIsNone(instance._upload_poll_thread)
 
+    def test_terminal_cleanup_waits_for_card_reveal_worker(self) -> None:
+        instance = self._event_app()
+        order = []
+        reveal_alive = True
+        reveal_thread = mock.Mock()
+        reveal_thread.is_alive.side_effect = lambda: reveal_alive
+
+        def join_reveal(timeout):
+            nonlocal reveal_alive
+            self.assertEqual(timeout, 10)
+            order.append("reveal-waited")
+            reveal_alive = False
+
+        reveal_thread.join.side_effect = join_reveal
+        instance._card_reveal_thread = reveal_thread
+        transition = mock.Mock()
+        transition.close.return_value = lambda: order.append("task-cleanup")
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.begin_task_transition.return_value = transition
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch("platform_desktop.threading.Thread", InlineThread):
+            instance._begin_terminal_task_cleanup("completed")
+
+        reveal_thread.join.assert_called_once_with(10)
+        self.assertEqual(order, ["reveal-waited", "task-cleanup"])
+
     def test_succeeded_upload_blocks_until_same_captured_cleanup_retries(self) -> None:
         instance = self._event_app()
         release_first_attempt = threading.Event()

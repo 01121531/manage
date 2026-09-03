@@ -4281,6 +4281,7 @@ class PlatformDesktopApp:
         self.business_entry.configure(state="disabled")
         self.upload_button.configure(state="disabled")
         task_id = self._task_id
+        card_reveal_thread = self._card_reveal_thread
         upload_poll_thread = self._upload_poll_thread
         try:
             transition = self._client.begin_task_transition(task_id)
@@ -4301,15 +4302,26 @@ class PlatformDesktopApp:
         if self._upload_poll_thread is upload_poll_thread:
             self._upload_poll_thread = None
 
-        task_cleanup = cleanup
+        if (
+            card_reveal_thread is not None
+            or mail_poll_threads
+            or upload_poll_thread is not None
+        ):
+            task_cleanup = cleanup
 
-        def cleanup() -> None:
-            for mail_poll_thread in mail_poll_threads:
-                if mail_poll_thread.is_alive():
-                    mail_poll_thread.join()
-            if upload_poll_thread is not None and upload_poll_thread.is_alive():
-                upload_poll_thread.join()
-            task_cleanup()
+            def cleanup() -> None:
+                if card_reveal_thread is not None and card_reveal_thread.is_alive():
+                    card_reveal_thread.join(CARD_REVEAL_SHUTDOWN_WAIT_SECONDS)
+                    if card_reveal_thread.is_alive():
+                        raise PlatformTimeoutError(
+                            "card reveal did not stop before task cleanup"
+                        )
+                for mail_poll_thread in mail_poll_threads:
+                    if mail_poll_thread.is_alive():
+                        mail_poll_thread.join()
+                if upload_poll_thread is not None and upload_poll_thread.is_alive():
+                    upload_poll_thread.join()
+                task_cleanup()
 
         self._upload_generation += 1
         self._terminal_task_cleanup_generation += 1
