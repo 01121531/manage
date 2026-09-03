@@ -607,6 +607,7 @@ test('administrator API download failure exposes a safe recovery action', async 
 
 test('dashboard presents chapter nine metrics recent tasks and fixed safe risks', async ({ page }) => {
   const accessValue = 'dashboard-chapter-nine-access'
+  let dashboardRequests = 0
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -629,6 +630,12 @@ test('dashboard presents chapter nine metrics recent tasks and fixed safe risks'
       })
     }
     if (path === '/api/v1/dashboard/summary') {
+      dashboardRequests += 1
+      if (dashboardRequests <= 2) {
+        return fulfill({
+          error: { code: 'service_unavailable', message: 'must-never-render-dashboard-error' },
+        }, 503)
+      }
       return fulfill({
         scope: 'tenant',
         generated_at: '2026-08-25T12:00:00Z',
@@ -672,6 +679,15 @@ test('dashboard presents chapter nine metrics recent tasks and fixed safe risks'
   await page.getByLabel('平台密码').fill('development-password')
   await page.getByLabel('设备标识').fill('dashboard-device')
   await page.getByRole('button', { name: '安全登录' }).click()
+
+  const unavailable = page.getByRole('alert').filter({ hasText: '工作台暂不可用' })
+  await expect(unavailable).toContainText('原因：')
+  await expect(unavailable).toContainText('影响：')
+  await expect(unavailable).toContainText('下一步：')
+  await expect(page.getByText('must-never-render-dashboard-error')).toHaveCount(0)
+  await unavailable.getByRole('button', { name: '重新加载工作台' }).click()
+  await expect.poll(() => dashboardRequests).toBe(3)
+  await expect(unavailable).toBeHidden()
 
   const metrics = page.getByRole('region', { name: '工作台关键指标' })
   await expect(metrics).toContainText('今日任务')

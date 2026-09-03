@@ -4926,8 +4926,14 @@ def admin_request_user_role_change(
         user_id=user_id,
         tenant_id=principal.tenant_id,
     )
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    db.refresh(user, with_for_update=True)
     if user.role == ROLE_WORKER_SERVICE:
         raise HTTPException(status_code=409, detail="Cannot change a service identity role")
     if not user.is_active:

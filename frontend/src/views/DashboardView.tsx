@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Card, Col, Descriptions, Empty, Row, Space, Spin, Statistic, Table } from 'antd'
+import { Alert, Button, Card, Col, Descriptions, Empty, Row, Space, Spin, Statistic, Table } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { getDashboardSummary } from '../admin-api'
 import type { DashboardSummary, Principal } from '../types'
@@ -9,9 +9,11 @@ export default function Dashboard({ principal }: { principal: Principal }) {
   const [summary, setSummary] = useState<DashboardSummary>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const [refreshGeneration, setRefreshGeneration] = useState(0)
   useEffect(() => {
     let alive = true
     setLoading(true)
+    setError(undefined)
     getDashboardSummary().then((value) => {
       if (alive) {
         setSummary(value)
@@ -21,14 +23,20 @@ export default function Dashboard({ principal }: { principal: Principal }) {
       if (alive) setError('运行摘要暂不可用，请稍后刷新。')
     }).finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [])
+  }, [refreshGeneration])
   const statusColumns: TableColumnsType<{ status: string; count: number }> = [
     { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
     { title: '分配原因', dataIndex: 'allocation_reason_code', render: (value: string) => cardAllocationReasonNames[value] ?? '其他受控原因' },
     { title: '数量', dataIndex: 'count', align: 'right' },
   ]
   if (loading) return <div className="centered"><Spin /></div>
-  if (error || !summary) return <Alert type="warning" showIcon message="工作台暂不可用" description={error ?? '未读取到运行摘要'} />
+  if (error || !summary) return <Alert
+    type="warning"
+    showIcon
+    message="工作台暂不可用"
+    description="原因：平台暂未返回运行摘要。影响：当前指标和风险提示不会使用过期数据。下一步：检查网络后从此处重新加载。"
+    action={<Button onClick={() => setRefreshGeneration((value) => value + 1)}>重新加载工作台</Button>}
+  />
   const todayTasks = summary.today_tasks ?? 0
   const pendingExceptions = summary.pending_exceptions ?? summary.unknown_uploads
   const todaySucceededUploads = summary.today_succeeded_uploads ?? 0

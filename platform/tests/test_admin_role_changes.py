@@ -284,6 +284,33 @@ class AdminRoleChangeApprovalTests(unittest.TestCase):
                 0,
             )
 
+    def test_request_rechecks_requester_after_target_claim_rollback(self) -> None:
+        def restart_claim(db, *, user_id, tenant_id):
+            db.rollback()
+            with self.app.state.session_factory() as other:
+                requester = other.get(User, self.requester.user_id)
+                self.assertIsNotNone(requester)
+                requester.role = "security_auditor"
+                other.commit()
+            return db.scalar(
+                select(User).where(User.id == user_id, User.tenant_id == tenant_id)
+            )
+
+        with mock.patch.object(
+            routes, "_claim_admin_role_change_target", side_effect=restart_claim
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/admin/users/{self.target.user_id}/role-change-requests",
+                headers=self.bearer(self.requester_token),
+                json={"role": "security_auditor"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(self.user_role(self.target.user_id), "operator")
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count(AdminRoleChangeRequest.id))), 0)
+
     def test_target_claim_restarts_once_after_an_inconsistent_empty_read(self) -> None:
         db = mock.Mock()
         target = mock.Mock(spec=User)
