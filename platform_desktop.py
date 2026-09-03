@@ -1096,6 +1096,14 @@ class PlatformDesktopApp:
 
     def _on_login_success(self, profile: dict[str, Any], expires_in: int) -> None:
         self._session_restore_action = None
+        self.stop_polling()
+        self._cancel_card_reveal()
+        self._task_generation += 1
+        self._upload_generation += 1
+        self._active_task_discovery_action = None
+        self._active_task_discovery_thread = None
+        self._active_task_recovery_action = None
+        self._active_task_recovery = None
         email = profile.get("email")
         device_id = profile.get("device_id")
         summary = str(email) if isinstance(email, str) else "平台账号"

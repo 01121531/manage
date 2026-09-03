@@ -2182,6 +2182,41 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertNotIn("246810", str(instance.code_label.values))
         self.assertNotIn("4111111111111111", str(instance.card_reveal_label.values))
 
+    def test_relogin_drops_queued_code_from_previous_identity(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        old_poll_generation = instance._poll_generation
+        instance._events.put(
+            (
+                old_poll_generation,
+                "code",
+                MailCodeSnapshot("code_ready", "246810"),
+            )
+        )
+        instance.stop_polling.side_effect = lambda: setattr(
+            instance, "_poll_generation", instance._poll_generation + 1
+        )
+        instance._discover_active_task = mock.Mock()
+
+        instance._on_login_success(
+            {
+                "id": "user-B",
+                "tenant_id": "tenant-B",
+                "device_id": "device-B",
+                "email": "operator-b@example.test",
+            },
+            300,
+        )
+        instance._drain_events()
+
+        self.assertEqual(
+            instance._profile_identity,
+            ("tenant-B", "user-B", "device-B"),
+        )
+        self.assertIsNone(instance._current_code)
+        instance._write_clipboard.assert_not_called()
+        self.assertNotIn("246810", str(instance.code_label.values))
+
     def test_non_transient_poll_errors_stop_without_retry(self) -> None:
         for error in (
             PlatformProtocolError("bad response"),
