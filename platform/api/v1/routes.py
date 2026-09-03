@@ -1794,6 +1794,31 @@ def get_task_timeline(
     )
 
 
+def _lock_task_write_response(
+    db: Session,
+    *,
+    task_id: str,
+    principal: AuthPrincipal,
+) -> Task:
+    current_user = _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPERATOR, ROLE_OPS_ADMIN),
+    )
+    task = db.scalar(
+        select(Task)
+        .where(
+            Task.id == task_id,
+            *_task_scope_filters(principal, role=current_user.role),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
 @router.post("/tasks/{task_id}/close", response_model=TaskResponse, tags=["tasks"])
 def close_task(
     task_id: str,
@@ -1836,8 +1861,11 @@ def close_task(
             upload_error_code="task_expired",
         )
         db.commit()
-        db.refresh(task)
-        return task
+        return _lock_task_write_response(
+            db,
+            task_id=task.id,
+            principal=principal,
+        )
     if task.status not in _TERMINAL_TASK_STATUSES:
         unknown_upload_id = db.scalar(
             select(UploadJob.id)
@@ -1883,7 +1911,6 @@ def close_task(
             upload_error_code=None,
         )
         db.commit()
-        db.refresh(task)
     else:
         # A replay can arrive after the terminal Task commit but before the
         # original request's resource phase.  Release the Task lock, then use
@@ -1902,8 +1929,11 @@ def close_task(
             actor_device_id=principal.device_id,
         )
         db.commit()
-        db.refresh(task)
-    return task
+    return _lock_task_write_response(
+        db,
+        task_id=task.id,
+        principal=principal,
+    )
 
 
 @router.post(

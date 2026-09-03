@@ -5039,6 +5039,50 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertFalse(created[0].daemon)
         self.assertEqual(instance._update_check_threads, created)
 
+    def test_update_check_retries_after_old_lock_generation_finishes(self) -> None:
+        first_started = threading.Event()
+        release_first = threading.Event()
+        second_finished = threading.Event()
+        calls = []
+
+        class UpdateClientStub:
+            @staticmethod
+            def check():
+                calls.append("check")
+                if len(calls) == 1:
+                    first_started.set()
+                    release_first.wait(timeout=2)
+                else:
+                    second_finished.set()
+                return None
+
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._update_client = UpdateClientStub()
+        instance.check_for_updates(silent=True)
+        old_thread = instance._update_check_threads[0]
+        self.assertTrue(first_started.wait(timeout=1))
+
+        try:
+            instance.lock()
+            instance._locked = False
+            instance.check_for_updates()
+
+            self.assertEqual(calls, ["check"])
+            retry = next(
+                callback
+                for delay, callback, _ in instance.root.scheduled
+                if delay == 250
+            )
+        finally:
+            release_first.set()
+            old_thread.join(timeout=1)
+
+        retry()
+        self.assertTrue(second_finished.wait(timeout=1))
+
+        self.assertEqual(calls, ["check", "check"])
+
     def test_update_check_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
 

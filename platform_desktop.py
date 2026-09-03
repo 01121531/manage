@@ -3470,8 +3470,17 @@ class PlatformDesktopApp:
             self._update_check_threads = [
                 thread for thread in self._update_check_threads if thread.is_alive()
             ]
-            if self._update_check_threads:
-                return
+            check_in_progress = bool(self._update_check_threads)
+        if check_in_progress:
+            retry_generation = self._update_generation
+            self.check_update_button.configure(state="disabled")
+
+            def retry_if_current() -> None:
+                if retry_generation == self._update_generation:
+                    self.check_for_updates(silent=silent)
+
+            self.root.after(250, retry_if_current)
+            return
         self._update_generation += 1
         generation = self._update_generation
         self.check_update_button.configure(state="disabled")

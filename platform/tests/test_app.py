@@ -2308,6 +2308,65 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(len(replay_events), 4)
         self.assertEqual(len(task_events), 1)
 
+    def test_close_task_rechecks_operator_after_final_commit(self) -> None:
+        token = self.login()
+        created = self.request(
+            "POST",
+            "/api/v1/tasks",
+            headers=self.bearer(token),
+            json={
+                "type": "mail_code",
+                "idempotency_key": "task-close-commit-boundary",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["id"]
+        original_commit = Session.commit
+        close_started = False
+        close_commit_count = 0
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal close_started, close_commit_count
+            if any(
+                isinstance(item, AuditEvent) and item.event_type == "task.closed"
+                for item in session.new
+            ):
+                close_started = True
+            original_commit(session)
+            if not close_started:
+                return
+            close_commit_count += 1
+            if close_commit_count != 2:
+                return
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/close",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(created.json()["trace_id"], response.text)
+        self.assertNotIn('\"status\":\"closed\"', response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Task, task_id)
+            close_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "task.closed",
+                        AuditEvent.entity_id == task_id,
+                    )
+                )
+            )
+        self.assertEqual(persisted.status, "closed")
+        self.assertEqual(len(close_events), 1)
+
     def test_login_validation_does_not_reflect_password_input(self) -> None:
         rejected_secret = "super-secret-value-" + "x" * 1024
         response = self.request(
