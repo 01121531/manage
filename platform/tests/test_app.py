@@ -1815,6 +1815,76 @@ class PlatformAppTests(unittest.TestCase):
         self.assertIsNotNone(device.revoked_at)
         self.assertEqual(len(revoke_events), 1)
 
+    def test_owner_device_revoke_rechecks_token_expiry_after_final_commit(
+        self,
+    ) -> None:
+        observed_at = utc_now()
+        principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-a",
+            device_id=self.identity.device_id,
+            email="first@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=observed_at,
+            acr=None,
+            amr=(),
+            access_token_hash="e" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=1),
+            access_token_revoked=False,
+        )
+        original_commit = Session.commit
+        revocation_started = False
+        revocation_commit_count = 0
+
+        def commit_then_advance_time(session: Session) -> None:
+            nonlocal revocation_started, revocation_commit_count
+            if any(
+                isinstance(item, AuditEvent) and item.event_type == "device.revoked"
+                for item in session.new
+            ):
+                revocation_started = True
+            original_commit(session)
+            if revocation_started:
+                revocation_commit_count += 1
+
+        def current_time() -> datetime:
+            if revocation_commit_count >= 2:
+                return observed_at + timedelta(minutes=2)
+            return observed_at
+
+        self.app.dependency_overrides[get_current_principal] = lambda: principal
+        try:
+            with mock.patch.object(
+                Session,
+                "commit",
+                new=commit_then_advance_time,
+            ), mock.patch(
+                "platform.api.v1.routes._utc_now",
+                side_effect=current_time,
+            ):
+                response = self.request(
+                    "POST",
+                    f"/api/v1/devices/{self.identity.device_id}/revoke",
+                )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("revoked_at", response.text)
+        with self.app.state.session_factory() as db:
+            device = db.get(Device, self.identity.device_id)
+            revoke_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event_type == "device.revoked",
+                        AuditEvent.entity_id == self.identity.device_id,
+                    )
+                )
+            )
+        self.assertIsNotNone(device.revoked_at)
+        self.assertEqual(len(revoke_events), 1)
+
     def test_revoked_actor_device_cannot_revoke_another_owned_device(self) -> None:
         observed_at = utc_now()
         with self.app.state.session_factory() as db:

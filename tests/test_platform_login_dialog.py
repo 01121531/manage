@@ -819,6 +819,54 @@ class PlatformLoginDialogTests(unittest.TestCase):
         self.assertEqual(client.cleanup_calls, 2)
         self.assertIsNone(controller._cancel_cleanup_action)
 
+    def test_partial_login_cleanup_prepare_error_retains_lazy_retry(self):
+        class PrepareFailureClient(_IdentityFailureClient):
+            def prepare_logout_cleanup(self, task_id):
+                self.cleanup_preparations += 1
+                self.is_authenticated = False
+                if task_id is not None:
+                    raise AssertionError("partial login cleanup must be device scoped")
+                if self.cleanup_preparations == 1:
+                    raise RuntimeError("unexpected prepare failure")
+
+                def cleanup():
+                    self.cleanup_calls += 1
+
+                return cleanup
+
+        client = PrepareFailureClient()
+        errors = []
+        controller = PlatformLoginController(
+            client,
+            schedule=lambda callback: callback(),
+            thread_factory=_ImmediateThread,
+        )
+
+        self.assertTrue(
+            controller.submit(
+                "tenant",
+                "user@example.test",
+                "platform-secret",
+                "device-1",
+                on_success=self.fail,
+                on_error=errors.append,
+            )
+        )
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("清理未确认", format_login_error(errors[0]))
+        self.assertFalse(
+            controller.submit_authorization_code(
+                on_authorization_url=lambda _url: None,
+                on_success=self.fail,
+                on_error=self.fail,
+            )
+        )
+        self.assertTrue(controller.cancel())
+        self.assertEqual(client.cleanup_preparations, 2)
+        self.assertEqual(client.cleanup_calls, 1)
+        self.assertIsNone(controller._cancel_cleanup_action)
+
     def test_cancel_during_oidc_identity_lookup_cleans_original_session_once(self):
         client = _IdentityFailureClient()
         errors = []

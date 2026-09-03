@@ -259,6 +259,15 @@ class PlatformLoginController:
         try:
             cleanup = self.client.prepare_logout_cleanup(None)
         except Exception:
+            captured_cleanup: Callable[[], None] | None = None
+
+            def cleanup() -> None:
+                nonlocal captured_cleanup
+                if captured_cleanup is None:
+                    captured_cleanup = self.client.prepare_logout_cleanup(None)
+                captured_cleanup()
+
+            self._cancel_cleanup_action = cleanup
             return _PartialLoginCleanupError(error)
         self._cancel_cleanup_action = cleanup
         try:

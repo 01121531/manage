@@ -221,7 +221,8 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         async () => {
           const request = await createRoleChangeRequest(row.id, role)
           if (
-            request.target_user_id !== row.id
+            request.tenant_id !== principal.tenant_id
+            || request.target_user_id !== row.id
             || request.expected_old_role !== row.role
             || request.new_role !== role
             || request.status !== 'pending'
