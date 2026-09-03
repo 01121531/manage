@@ -2050,7 +2050,7 @@ class PlatformDesktopApp:
                         CLIPBOARD_CLEAR_RETRY_MS,
                         lambda: clear_if_owned(retries_remaining - 1),
                     )
-                except tk.TclError:
+                except Exception:
                     self._remember_clipboard_cleanup_failure(owner)
                     self._set_status(
                         "原因：系统剪贴板持续被占用；"
