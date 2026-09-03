@@ -1975,6 +1975,37 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn("不得按失败推断", instance.status_label.values["text"])
         self.assertNotIn("Different Store", instance.status_label.values["text"])
 
+    def test_upload_poll_thread_start_failure_retries_same_job(self) -> None:
+        instance = self._event_app()
+        instance._upload_job_id = "upload-1"
+        instance._client = mock.Mock()
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._poll_upload()
+            instance._drain_events()
+
+        instance._client.get_upload_job.assert_not_called()
+        self.assertEqual(instance._upload_job_id, "upload-1")
+        self.assertEqual(instance._task_id, "task-1")
+        self.assertEqual(instance._upload_business_name, "Example Store")
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        retries = [
+            entry
+            for entry in instance.root.scheduled
+            if entry[0] == 3_000 and entry[1] == instance._poll_upload
+        ]
+        self.assertEqual(len(retries), 1)
+        self.assertIn("继续查询", instance.status_label.values["text"])
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     def test_upload_poll_rejects_each_mismatched_binding_before_enqueue(self) -> None:
         class InlineThread:
             def __init__(self, *, target, **_):

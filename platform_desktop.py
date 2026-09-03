@@ -3770,7 +3770,19 @@ class PlatformDesktopApp:
                 return
             self._events.put((generation, "upload", job))
 
-        threading.Thread(target=worker, daemon=True, name="platform-upload-poll").start()
+        thread = threading.Thread(
+            target=worker, daemon=True, name="platform-upload-poll"
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "upload_poll_error",
+                    PlatformTransportError("upload status worker unavailable"),
+                )
+            )
 
     def _begin_terminal_task_cleanup(self, outcome: str) -> None:
         if (
