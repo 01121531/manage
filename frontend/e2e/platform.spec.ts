@@ -443,6 +443,40 @@ test('authentication startup failure hides raw runtime details', async ({ page }
   await expect(page.getByRole('button', { name: '安全登录' })).toHaveCount(0)
 })
 
+test('local login response loss hides raw runtime details and explains ambiguity', async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rawUrl = typeof input === 'string'
+        ? input
+        : input instanceof URL ? input.href : input.url
+      if (new URL(rawUrl, window.location.href).pathname === '/api/v1/auth/login') {
+        throw new Error('must-never-render-login-runtime-detail')
+      }
+      return originalFetch(input, init)
+    }) as typeof window.fetch
+  })
+  await page.route('**/api/v1/auth/config', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ mode: 'local', issuer: null, client_id: null, desktop_client_id: null, audience: null }),
+  }))
+
+  await page.goto('/')
+  await page.getByLabel('租户').fill('tenant-1')
+  await page.getByLabel('平台账号').fill('operator@example.invalid')
+  await page.getByLabel('平台密码').fill('development-password')
+  await page.getByLabel('设备标识').fill('device-login-response-lost')
+  await page.getByRole('button', { name: '安全登录' }).click()
+
+  const failure = page.getByRole('alert').filter({ hasText: '登录未完成' })
+  await expect(failure).toContainText('原因：平台未能确认登录请求结果。')
+  await expect(failure).toContainText('服务端设备会话可能已经建立')
+  await expect(failure).toContainText('请使用相同设备标识重试')
+  await expect(page.getByText('must-never-render-login-runtime-detail')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '安全登录' })).toBeEnabled()
+})
+
 test('OIDC runtime loads only after auth config selects OIDC mode', async ({ browser }) => {
   for (const mode of ['local', 'oidc'] as const) {
     const context = await browser.newContext()

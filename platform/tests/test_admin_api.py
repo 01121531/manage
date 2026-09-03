@@ -5162,6 +5162,81 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(policies, [])
         self.assertEqual(audits, [])
 
+    def test_upload_policy_register_rechecks_actor_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        registration_recorded = False
+        creator_demoted = False
+
+        def mark_registration(*args, **kwargs):
+            nonlocal registration_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "upload_policy.registered":
+                registration_recorded = True
+            return result
+
+        def demote_after_registration_commit(session: Session) -> None:
+            nonlocal creator_demoted
+            original_commit(session)
+            if registration_recorded and not creator_demoted:
+                creator_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    creator = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(creator)
+                    creator.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_registration,
+        ), mock.patch.object(Session, "commit", new=demote_after_registration_commit):
+            registered = self.request(
+                "POST",
+                "/api/v1/admin/policies/upload/versions",
+                headers=self.headers(creator_token),
+                json={
+                    "version": "upload-register-recheck-v1",
+                    "change_note": "verify registration response authorization",
+                },
+            )
+
+        self.assertEqual(registered.status_code, 403, registered.text)
+        self.assertNotIn("upload-register-recheck-v1", registered.text)
+        versions = self.request(
+            "GET",
+            "/api/v1/admin/policies/upload/versions",
+            headers=self.headers(approver_token),
+        )
+        self.assertEqual(versions.status_code, 200, versions.text)
+        persisted = next(
+            policy
+            for policy in versions.json()
+            if policy["version"] == "upload-register-recheck-v1"
+        )
+        self.assertEqual(persisted["status"], "draft")
+        self.assertEqual(persisted["created_by"], self.admin.user_id)
+        with self.app.state.session_factory() as db:
+            registered_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "upload_policy.registered",
+                    AuditEvent.entity_id == persisted["id"],
+                )
+            )
+        self.assertEqual(registered_audits, 1)
+
     def test_upload_policy_approve_rechecks_actor_after_commit(self) -> None:
         creator_token = self.login(
             "tenant-a",

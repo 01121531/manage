@@ -287,6 +287,7 @@ class PlatformDesktopApp:
         self._mail_session_token: str | None = None
         self._mail_poll_interval_seconds = POLL_SECONDS
         self._mail_poll_thread: threading.Thread | None = None
+        self._mail_poll_threads: list[threading.Thread] = []
         self._current_code: str | None = None
         self._current_card_clipboard: str | None = None
         self._current_trace_clipboard: str | None = None
@@ -2335,12 +2336,19 @@ class PlatformDesktopApp:
 
         self._schedule_next_poll = schedule_next
         thread = threading.Thread(
-            target=worker, daemon=True, name="platform-code-poll"
+            target=worker, daemon=False, name="platform-code-poll"
         )
+        self._mail_poll_threads = [
+            poll_thread
+            for poll_thread in self._mail_poll_threads
+            if poll_thread.is_alive()
+        ]
+        self._mail_poll_threads.append(thread)
         self._mail_poll_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._mail_poll_threads.remove(thread)
             if self._mail_poll_thread is thread:
                 self._mail_poll_thread = None
             self._poll_retry_attempt += 1
@@ -3593,7 +3601,12 @@ class PlatformDesktopApp:
         if unlock_action is not None:
             unlock_action.cancel.set()
         card_reveal_thread = getattr(self, "_card_reveal_thread", None)
+        mail_poll_threads = tuple(getattr(self, "_mail_poll_threads", ()))
         mail_poll_thread = getattr(self, "_mail_poll_thread", None)
+        if mail_poll_thread is not None and mail_poll_thread not in mail_poll_threads:
+            mail_poll_threads += (mail_poll_thread,)
+        self._mail_poll_threads = []
+        self._mail_poll_thread = None
         upload_submission_thread = getattr(
             self, "_upload_submission_thread", None
         )
@@ -3712,8 +3725,9 @@ class PlatformDesktopApp:
                     raise PlatformTimeoutError(
                         "card reveal did not stop before session cleanup"
                     )
-            if mail_poll_thread is not None and mail_poll_thread.is_alive():
-                mail_poll_thread.join()
+            for mail_poll_thread in mail_poll_threads:
+                if mail_poll_thread.is_alive():
+                    mail_poll_thread.join()
             if (
                 upload_submission_thread is not None
                 and upload_submission_thread.is_alive()
@@ -4253,12 +4267,21 @@ class PlatformDesktopApp:
         if cleanup is None:
             self._set_status("平台未能准备任务资源关闭，请重新登录后处理。", ERROR)
             return
+        mail_poll_threads = tuple(getattr(self, "_mail_poll_threads", ()))
+        mail_poll_thread = getattr(self, "_mail_poll_thread", None)
+        if mail_poll_thread is not None and mail_poll_thread not in mail_poll_threads:
+            mail_poll_threads += (mail_poll_thread,)
+        self._mail_poll_threads = []
+        self._mail_poll_thread = None
         if self._upload_poll_thread is upload_poll_thread:
             self._upload_poll_thread = None
 
         task_cleanup = cleanup
 
         def cleanup() -> None:
+            for mail_poll_thread in mail_poll_threads:
+                if mail_poll_thread.is_alive():
+                    mail_poll_thread.join()
             if upload_poll_thread is not None and upload_poll_thread.is_alive():
                 upload_poll_thread.join()
             task_cleanup()

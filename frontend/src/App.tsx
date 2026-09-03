@@ -76,7 +76,13 @@ function LoginScreen({ authConfig, oidcManager, onReady, sessionNotice }: {
     } catch (error) {
       if (!bearerIssued) {
         const detail = error instanceof ApiError && error.traceId ? `（追踪号：${error.traceId}）` : ''
-        setLoginError(`${error instanceof Error ? error.message : '登录失败'}${detail}`)
+        const explicitlyRejected = error instanceof ApiError
+          && error.status >= 400
+          && error.status < 500
+          && error.status !== 408
+        setLoginError((explicitlyRejected
+          ? '原因：平台明确拒绝了登录请求。影响：未建立可用登录会话。下一步：核对租户、账号、密码和设备标识后重试。'
+          : '原因：平台未能确认登录请求结果。影响：浏览器未收到可用令牌，但服务端设备会话可能已经建立。下一步：请使用相同设备标识重试；持续失败请联系管理员核对设备会话。') + detail)
       } else {
         let cleanupConfirmed = false
         try {
