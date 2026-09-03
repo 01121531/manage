@@ -338,6 +338,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
   }
 
   const columns: TableColumnsType<MailboxSummary> = [
+    { title: '邮箱资源 ID', dataIndex: 'id', render: (value: string) => <Text code copyable={{ text: value }}>{value}</Text> },
     { title: '邮箱', dataIndex: 'email_masked' },
     { title: '连接器', dataIndex: 'connector_type' },
     { title: '服务端路由键', dataIndex: 'task_type' },
@@ -451,7 +452,7 @@ export default function MailboxesPage({ canManage }: { canManage: boolean }) {
         />
         <Text type="secondary" role="status" aria-live="polite">第 {mailboxCursorHistory.length + 1} 页，显示 {rows.length} / 匹配 {mailboxTotalCount} 个邮箱</Text>
       </Space>
-      <Table pagination={false} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的邮箱连接器" /> }} scroll={{ x: 1220 }} />
+      <Table pagination={false} columns={columns} dataSource={rows} rowKey="id" locale={{ emptyText: <Empty description="没有符合条件的邮箱连接器" /> }} scroll={{ x: 1380 }} />
       <Space>
         <Button disabled={loading || mailboxCursorHistory.length === 0} onClick={showPreviousMailboxPage}>上一页</Button>
         <Button disabled={loading || !mailboxHasMore || !mailboxNextCursor} onClick={showNextMailboxPage}>下一页</Button>

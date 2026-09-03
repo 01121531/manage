@@ -106,6 +106,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._poll_generation = 1
         instance._poll_retry_attempt = 0
         instance._poll_cancel = None
+        instance._mail_poll_thread = None
         instance._sensitive_focus = threading.Event()
         instance._sensitive_focus.set()
         instance._upload_generation = 1
@@ -5481,6 +5482,43 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._drain_events()
 
         self.assertEqual(order, ["upload-created", "logout-cleanup"])
+
+    def test_logout_waits_for_inflight_mail_poll_before_cleanup(self) -> None:
+        poll_started = threading.Event()
+        release_poll = threading.Event()
+        order = []
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def get_mail_code(_session_id, _session_token):
+                poll_started.set()
+                release_poll.wait(timeout=2)
+                order.append("code-consumed")
+                return MailCodeSnapshot(status="code_ready", code="246810")
+
+            @staticmethod
+            def prepare_logout_cleanup(_task_id):
+                return lambda: order.append("logout-cleanup")
+
+        instance = self._event_app()
+        instance._client = Client()
+
+        instance._start_polling()
+        poll_thread = instance._mail_poll_thread
+        self.assertTrue(poll_started.wait(timeout=1))
+        instance.logout()
+        self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+        self.assertEqual(order, [])
+
+        release_poll.set()
+        poll_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(order, ["code-consumed", "logout-cleanup"])
+        self.assertIsNone(instance._current_code)
 
     def test_card_reveal_close_waits_for_inflight_reveal_before_cleanup(self) -> None:
         reveal_entered = threading.Event()

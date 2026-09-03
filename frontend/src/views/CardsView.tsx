@@ -396,8 +396,12 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         try {
           await releaseCardQuarantine(row.id)
           message.success('隔离已解除；卡资源仍处于停用状态。')
-        } catch (error) {
-          message.error(error instanceof Error ? error.message : '解除隔离失败')
+        } catch {
+          message.error(
+            '原因：平台未能确认解除隔离结果。'
+            + '影响：解除可能已经生效；页面不会按失败响应推断最终状态。'
+            + '下一步：已刷新卡资源真实状态；仅当该卡仍为已隔离时，才从同一入口重试。',
+          )
         } finally {
           refreshCardsFromServer()
           releaseCardAction(action)

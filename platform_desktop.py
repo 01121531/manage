@@ -283,6 +283,7 @@ class PlatformDesktopApp:
         self._mail_session_id: str | None = None
         self._mail_session_token: str | None = None
         self._mail_poll_interval_seconds = POLL_SECONDS
+        self._mail_poll_thread: threading.Thread | None = None
         self._current_code: str | None = None
         self._current_card_clipboard: str | None = None
         self._current_trace_clipboard: str | None = None
@@ -2306,9 +2307,12 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=True, name="platform-code-poll"
         )
+        self._mail_poll_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            if self._mail_poll_thread is thread:
+                self._mail_poll_thread = None
             self._poll_retry_attempt += 1
             self._set_status(
                 "验证码查询线程暂不可用；请求尚未发送，将按当前间隔自动重试。",
@@ -3498,6 +3502,7 @@ class PlatformDesktopApp:
         if unlock_action is not None:
             unlock_action.cancel.set()
         card_reveal_thread = getattr(self, "_card_reveal_thread", None)
+        mail_poll_thread = getattr(self, "_mail_poll_thread", None)
         upload_submission_thread = getattr(
             self, "_upload_submission_thread", None
         )
@@ -3569,6 +3574,8 @@ class PlatformDesktopApp:
                     raise PlatformTimeoutError(
                         "card reveal did not stop before session cleanup"
                     )
+            if mail_poll_thread is not None and mail_poll_thread.is_alive():
+                mail_poll_thread.join()
             if (
                 upload_submission_thread is not None
                 and upload_submission_thread.is_alive()

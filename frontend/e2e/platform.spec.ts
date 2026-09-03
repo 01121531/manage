@@ -737,6 +737,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   const quarantineGate = new Promise<void>((resolve) => { releaseQuarantine = resolve })
   let cardListRequests = 0
   let enableAttempts = 0
+  let releaseAttempts = 0
   let releaseLateEnable = () => undefined
   const lateEnableGate = new Promise<void>((resolve) => { releaseLateEnable = resolve })
 
@@ -789,6 +790,12 @@ test('platform admin quarantines and explicitly releases a card before enabling 
       return fulfill(card)
     }
     if (path === '/api/v1/admin/cards/card-quarantine/release-quarantine' && request.method() === 'POST') {
+      releaseAttempts += 1
+      if (releaseAttempts === 1) {
+        return fulfill({
+          error: { code: 'service_unavailable', message: 'must-never-render-release-secret' },
+        }, 503)
+      }
       card = {
         ...card,
         status: 'disabled',
@@ -846,7 +853,18 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await row.getByRole('button', { name: /解除隔离卡 provider-quarantine/ }).click()
   await page.getByRole('dialog', { name: '确认解除卡 provider-quarantine 的隔离？' })
     .getByRole('button', { name: '解除隔离', exact: true }).click()
+  await expect.poll(() => releaseAttempts).toBe(1)
+  await expect(row.getByText('已隔离')).toBeVisible()
+  await expect(row.getByRole('button', { name: /解除隔离卡 provider-quarantine/ })).toBeEnabled()
+  const releaseError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认解除隔离结果' })
+  for (const marker of ['原因：', '影响：', '下一步：']) await expect(releaseError).toContainText(marker)
+  await expect(page.getByText('must-never-render-release-secret')).toHaveCount(0)
+
+  await row.getByRole('button', { name: /解除隔离卡 provider-quarantine/ }).click()
+  await page.getByRole('dialog', { name: '确认解除卡 provider-quarantine 的隔离？' })
+    .getByRole('button', { name: '解除隔离', exact: true }).click()
   await expect(row.getByText('已停用')).toBeVisible()
+  expect(releaseAttempts).toBe(2)
   const enableCard = row.getByRole('button', {
     name: '启用卡 provider-quarantine（•••• 4242，card-quarantine）', exact: true,
   })
@@ -4691,6 +4709,10 @@ test('mailbox UI retires direct registration and secret rotation', async ({ page
 
   const mailboxRow = page.getByRole('row').filter({ hasText: 'r***@example.invalid' })
   await expect(mailboxRow).toBeVisible()
+  await expect(mailboxRow.getByText('mailbox-refresh', { exact: true })).toBeVisible()
+  await expect(mailboxRow.locator('.ant-typography-copy')).toHaveCount(1)
+  await mailboxRow.locator('.ant-typography-copy').focus()
+  await expect(mailboxRow.locator('.ant-typography-copy')).toBeFocused()
   await expect(mailboxRow.getByRole('button', {
     name: /轮换邮箱密钥引用/,
   })).toHaveCount(0)
