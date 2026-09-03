@@ -143,6 +143,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._task_id = "task-1"
         instance._task_transition = None
         instance._task_transition_thread = None
+        instance._task_transition_threads = []
         instance._terminal_task_cleanup_action = None
         instance._terminal_task_cleanup_thread = None
         instance._terminal_task_cleanup_in_progress = False
@@ -1088,6 +1089,27 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             transition,
         )
         self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+
+    def test_lock_cannot_replace_inflight_task_transition_worker(self) -> None:
+        instance, release = self._provisioning_race_app()
+        worker = instance._task_transition_thread
+        transition = instance._task_transition
+
+        try:
+            instance.lock()
+            instance._locked = False
+            instance.create_mail_task()
+
+            self.assertIs(instance._task_transition_thread, worker)
+            self.assertIs(instance._task_transition, transition)
+            self.assertEqual(instance._task_transition_threads, [worker])
+            self.assertIn("仍在安全收尾", instance.status_label.values["text"])
+        finally:
+            release.set()
+            worker.join(timeout=1)
+            current = instance._task_transition_thread
+            if current is not worker:
+                current.join(timeout=1)
 
     def test_logout_race_handoffs_late_failed_close_to_shutdown_retry(self) -> None:
         instance, release = self._provisioning_race_app()

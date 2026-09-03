@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from platform.app import create_app
@@ -1579,6 +1579,51 @@ class PlatformAppTests(unittest.TestCase):
             self.assertIsNone(session.code_expires_at)
             self.assertIsNone(session.start_watermark)
             self.assertIsNone(session.last_message_hash)
+
+    def test_owner_device_revoke_rechecks_role_after_final_commit(self) -> None:
+        token = self.login()
+        original_commit = Session.commit
+        revocation_started = False
+        revocation_commit_count = 0
+
+        def commit_then_demote(session: Session) -> None:
+            nonlocal revocation_started, revocation_commit_count
+            if any(
+                isinstance(item, AuditEvent) and item.event_type == "device.revoked"
+                for item in session.new
+            ):
+                revocation_started = True
+            original_commit(session)
+            if not revocation_started:
+                return
+            revocation_commit_count += 1
+            if revocation_commit_count != 2:
+                return
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "worker_service"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "POST",
+                f"/api/v1/devices/{self.identity.device_id}/revoke",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("revoked_at", response.text)
+        with self.app.state.session_factory() as db:
+            self.assertIsNotNone(db.get(Device, self.identity.device_id).revoked_at)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count())
+                    .select_from(AuditEvent)
+                    .where(AuditEvent.event_type == "device.revoked")
+                ),
+                1,
+            )
 
     def test_revoked_actor_device_cannot_revoke_another_owned_device(self) -> None:
         observed_at = utc_now()

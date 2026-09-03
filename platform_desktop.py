@@ -274,6 +274,7 @@ class PlatformDesktopApp:
         self._task_id: str | None = None
         self._task_transition: TaskTransitionCleanup | None = None
         self._task_transition_thread: threading.Thread | None = None
+        self._task_transition_threads: list[threading.Thread] = []
         self._terminal_task_cleanup_action: Callable[[], None] | None = None
         self._terminal_task_cleanup_thread: threading.Thread | None = None
         self._terminal_task_cleanup_in_progress = False
@@ -1589,10 +1590,17 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=False, name="platform-active-task-recovery"
         )
+        self._task_transition_threads = [
+            existing
+            for existing in self._task_transition_threads
+            if existing.is_alive()
+        ]
+        self._task_transition_threads.append(thread)
         self._task_transition_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._task_transition_threads.remove(thread)
             transition.worker_finished()
             self._events.put(
                 (
@@ -2132,6 +2140,12 @@ class PlatformDesktopApp:
         if self._locked:
             self._set_status("客户端已锁定，请先解锁。", WARNING)
             return
+        self._task_transition_threads = [
+            thread for thread in self._task_transition_threads if thread.is_alive()
+        ]
+        if self._task_transition_threads:
+            self._set_status("上一任务操作仍在安全收尾，请稍后再试。", WARNING)
+            return
         if (
             self._active_task_discovery_action is not None
             or self._active_task_discovery_required
@@ -2270,10 +2284,12 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=False, name="platform-task-create"
         )
+        self._task_transition_threads.append(thread)
         self._task_transition_thread = thread
         try:
             thread.start()
         except RuntimeError:
+            self._task_transition_threads.remove(thread)
             self._task_transition_thread = None
             cleanup = transition.cancel()
             worker_cleanup = transition.worker_finished()
@@ -3585,7 +3601,11 @@ class PlatformDesktopApp:
         if transition is not None:
             transition_cleanup = transition.cancel()
             self._task_transition = None
+        transition_threads = tuple(getattr(self, "_task_transition_threads", ()))
         transition_thread = getattr(self, "_task_transition_thread", None)
+        if transition_thread is not None and transition_thread not in transition_threads:
+            transition_threads += (transition_thread,)
+        self._task_transition_threads = []
         compensation = self._take_task_compensation()
         compensation_cleanup = (
             compensation.cleanup if compensation is not None else None
@@ -3704,8 +3724,9 @@ class PlatformDesktopApp:
                     transition_cleanup()
                 except Exception as error:
                     first_error = error
-            if transition_thread is not None and transition_thread.is_alive():
-                transition_thread.join()
+            for transition_thread in transition_threads:
+                if transition_thread.is_alive():
+                    transition_thread.join()
             if transition is not None and late_compensation is None:
                 late_compensation = self._take_task_compensation(
                     transition=transition

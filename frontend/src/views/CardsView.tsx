@@ -350,7 +350,8 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     if (cardActionRef.current !== action || action.pending) return
     action.pending = true
     try {
-      await updateCardState(row.id, isActive)
+      const updated = await updateCardState(row.id, isActive)
+      if (updated.id !== row.id || updated.is_active !== isActive) throw new Error('card state response binding mismatch')
       message.success(isActive ? '卡资源已启用。' : '卡资源已停用，活动租约已释放。')
     } catch {
       message.error(

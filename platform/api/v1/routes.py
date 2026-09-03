@@ -530,6 +530,46 @@ def _lock_admin_write_principal(
     return user
 
 
+def _lock_owned_device_revoke_response_principal(
+    db: Session,
+    principal: AuthPrincipal,
+    *,
+    revoked_device_id: str,
+) -> None:
+    """Revalidate an owner before returning committed device governance state."""
+
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(
+            update(User)
+            .where(
+                User.id == principal.user_id,
+                User.tenant_id == principal.tenant_id,
+            )
+            .values(role=User.role)
+            .execution_options(synchronize_session=False)
+        )
+    user = _lock_user(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+    )
+    actor_device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+    )
+    if user is None or not user.is_active or actor_device is None:
+        raise unauthorized()
+    if user.role not in INTERACTIVE_ROLES:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    if (
+        actor_device.revoked_at is not None
+        and actor_device.id != revoked_device_id
+    ):
+        raise unauthorized()
+
+
 def _lock_task_creation_principal(
     db: Session,
     principal: AuthPrincipal,
@@ -1271,7 +1311,12 @@ def revoke_owned_device(
         release_reason="owner_device_revoked",
     )
     db.commit()
-    db.refresh(device)
+    _lock_owned_device_revoke_response_principal(
+        db,
+        principal,
+        revoked_device_id=device.id,
+    )
+    db.refresh(device, with_for_update=True)
     return AdminDeviceResponse.model_validate(device, from_attributes=True)
 
 

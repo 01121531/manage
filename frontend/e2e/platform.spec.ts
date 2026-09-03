@@ -4975,9 +4975,7 @@ test('card true-state refresh fails closed before privileged actions recover', a
       expect(request.postDataJSON()).toEqual({ is_active: false })
       cards = cards.map((card) => ({ ...card, is_active: false, status: 'disabled' }))
       failNextCardList = true
-      return fulfill({
-        error: { code: 'service_unavailable', message: 'sensitive card mutation detail' },
-      }, 503)
+      return fulfill({ ...cards[0], id: 'wrong-card-binding' })
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -4998,13 +4996,15 @@ test('card true-state refresh fails closed before privileged actions recover', a
   await disableDialog.getByRole('button', { name: /停\s*用并释\s*放/ }).click()
 
   const listError = page.getByRole('alert').filter({ hasText: '卡资源列表暂不可用' })
+  await expect(page.getByText(/原因：平台未能确认卡资源状态变更结果。影响：.*下一步：/)).toBeVisible()
+  await expect(page.getByText('卡资源已停用，活动租约已释放。', { exact: true })).toHaveCount(0)
   await expect(listError).toContainText('原因：平台未能读取卡资源真实状态。')
   await expect(listError).toContainText('影响：旧卡记录和启用、停用操作已隐藏')
   await expect(listError).toContainText('下一步：请重新获取真实状态')
   await expect(page.getByText('provider-refresh')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /[启停]用卡 provider-refresh/ })).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('sensitive card inventory detail')
-  await expect(page.locator('body')).not.toContainText('sensitive card mutation detail')
+  await expect(page.locator('body')).not.toContainText('wrong-card-binding')
 
   const retry = listError.getByRole('button', { name: '重新获取卡资源真实状态' })
   await retry.click()
