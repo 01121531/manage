@@ -3489,6 +3489,68 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(cross_tenant_audit.status_code, 200, cross_tenant_audit.text)
         self.assertEqual(cross_tenant_audit.json(), [])
 
+    def test_admin_mailbox_import_rechecks_actor_after_authentication(self) -> None:
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=self.admin.user_id,
+            tenant_id="tenant-a",
+            device_id=self.admin.device_id,
+            email="admin@example.test",
+            role="platform_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            admin = db.get(User, self.admin.user_id)
+            admin.role = "security_auditor"
+            db.commit()
+
+        payload = [
+            {
+                "email_masked": "s***@example.test",
+                "connector_type": "http",
+                "task_type": "mail_code",
+            }
+        ]
+        import_key = self.pool_import_key("tenant-a", "mailbox", payload)
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                "/api/v1/admin/mailboxes/imports",
+                headers={
+                    **self.headers("stale-token"),
+                    "Idempotency-Key": import_key,
+                },
+                json=payload,
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            mailbox_count = db.scalar(
+                select(func.count()).select_from(Mailbox).where(
+                    Mailbox.email_masked == "s***@example.test"
+                )
+            )
+            receipt_count = db.scalar(select(func.count()).select_from(PoolImportReceipt))
+            audit_count = db.scalar(
+                select(func.count()).select_from(AuditEvent).where(
+                    AuditEvent.event_type.in_(
+                        ("admin.mailbox_imported", "admin.mailboxes_imported")
+                    )
+                )
+            )
+        self.assertEqual(mailbox_count, 0)
+        self.assertEqual(receipt_count, 0)
+        self.assertEqual(audit_count, 0)
+
     def test_admin_mailbox_batch_import_is_atomic_safe_and_aggregated(self) -> None:
         admin_token = self.login(
             "tenant-a",

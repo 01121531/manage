@@ -490,6 +490,44 @@ def _lock_device(
     )
 
 
+def _lock_admin_write_principal(
+    db: Session,
+    principal: AuthPrincipal,
+    *,
+    allowed_roles: tuple[str, ...],
+) -> None:
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(
+            update(User)
+            .where(
+                User.id == principal.user_id,
+                User.tenant_id == principal.tenant_id,
+            )
+            .values(role=User.role)
+            .execution_options(synchronize_session=False)
+        )
+    user = _lock_user(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+    )
+    device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+    )
+    if (
+        user is None
+        or not user.is_active
+        or device is None
+        or device.revoked_at is not None
+    ):
+        raise unauthorized()
+    if user.role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+
+
 def _lock_task_creation_principal(
     db: Session,
     principal: AuthPrincipal,
@@ -6678,6 +6716,11 @@ def admin_import_cards(
             detail="Card input contains duplicate provider references",
         )
     request_digest = pool_import_digest("card", payload)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     replay = _replay_pool_import_receipt(
         db,
         principal=principal,
@@ -7737,6 +7780,11 @@ def admin_import_mailboxes(
     db: Session = Depends(get_db),
 ) -> PoolImportReceiptResponse:
     request_digest = pool_import_digest("mailbox", payload)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     replay = _replay_pool_import_receipt(
         db,
         principal=principal,
