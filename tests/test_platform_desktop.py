@@ -972,6 +972,24 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
         self.assertEqual(instance.root.clipboard, "")
 
+    def test_session_shutdown_retry_ignores_ui_errors(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._shutdown_cleanup_action = cleanup
+        instance._shutdown_cleanup_in_progress = False
+        instance.login_button.configure = mock.Mock(
+            side_effect=RuntimeError("login button unavailable")
+        )
+        instance.status_label.configure = mock.Mock(
+            side_effect=RuntimeError("status widget unavailable")
+        )
+        instance._start_session_shutdown_attempt = mock.Mock()
+
+        instance._retry_session_shutdown()
+
+        instance._start_session_shutdown_attempt.assert_called_once_with()
+        self.assertIs(instance._shutdown_cleanup_action, cleanup)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

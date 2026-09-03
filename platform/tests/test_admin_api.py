@@ -7440,6 +7440,87 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(approved_audits, 1)
 
+    def test_operational_policy_approve_rechecks_tenant_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+        registered = self.request(
+            "POST",
+            "/api/v1/admin/policies/mail/versions",
+            headers=self.headers(creator_token),
+            json={
+                "version": "mail-approve-tenant-recheck-v1",
+                "change_note": "verify approval tenant binding",
+                "session_ttl_seconds": 600,
+                "code_ttl_seconds": 90,
+                "poll_interval_seconds": 7,
+            },
+        )
+        self.assertEqual(registered.status_code, 201, registered.text)
+        policy_id = registered.json()["id"]
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        approval_recorded = False
+        policy_moved = False
+
+        def mark_approval(*args, **kwargs):
+            nonlocal approval_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "mail_policy.approved":
+                approval_recorded = True
+            return result
+
+        def move_policy_after_approval_commit(session: Session) -> None:
+            nonlocal policy_moved
+            original_commit(session)
+            if not approval_recorded or policy_moved:
+                return
+            policy_moved = True
+            with self.app.state.session_factory() as other_db:
+                policy = other_db.get(OperationalPolicyVersion, policy_id)
+                self.assertIsNotNone(policy)
+                policy.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_approval,
+        ), mock.patch.object(
+            Session,
+            "commit",
+            new=move_policy_after_approval_commit,
+        ):
+            approved = self.request(
+                "POST",
+                f"/api/v1/admin/policies/mail/versions/{policy_id}/approve",
+                headers=self.headers(approver_token),
+            )
+
+        self.assertEqual(approved.status_code, 404, approved.text)
+        self.assertNotIn("approved_by", approved.text)
+        with self.app.state.session_factory() as db:
+            policy = db.get(OperationalPolicyVersion, policy_id)
+            approved_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "mail_policy.approved",
+                    AuditEvent.entity_id == policy_id,
+                )
+            )
+        self.assertEqual(policy.tenant_id, "tenant-b")
+        self.assertEqual(policy.status, "approved")
+        self.assertEqual(policy.approved_by, self.approver.user_id)
+        self.assertEqual(approved_audits, 1)
+
     def test_operational_policy_deploy_rechecks_actor_after_commit(self) -> None:
         creator_token = self.login(
             "tenant-a",

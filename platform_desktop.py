@@ -5049,11 +5049,17 @@ class PlatformDesktopApp:
     def _retry_session_shutdown(self) -> None:
         if self._shutdown_cleanup_action is None or self._shutdown_cleanup_in_progress:
             return
-        self.login_button.configure(state="disabled")
-        self._set_status(
-            "正在重试平台任务与登录会话清理；成功前不会完成退出。",
-            ACCENT,
-        )
+        try:
+            self.login_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self._set_status(
+                "正在重试平台任务与登录会话清理；成功前不会完成退出。",
+                ACCENT,
+            )
+        except Exception:
+            pass
         self._start_session_shutdown_attempt()
 
     def _retry_shutdown_clipboard_cleanup(self) -> None:
