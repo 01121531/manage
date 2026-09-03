@@ -2065,7 +2065,35 @@ class PlatformDesktopApp:
             target=worker, daemon=False, name="platform-task-create"
         )
         self._task_transition_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._task_transition_thread = None
+            cleanup = transition.cancel()
+            worker_cleanup = transition.worker_finished()
+            cleanup = cleanup or worker_cleanup
+            if cleanup is not None:
+                self._events.put(
+                    (
+                        generation,
+                        "task_compensation_error",
+                        _TaskProvisioningCompensation(
+                            generation=generation,
+                            transition=transition,
+                            cleanup=cleanup,
+                        ),
+                    )
+                )
+            else:
+                self._events.put(
+                    (
+                        generation,
+                        "error",
+                        PlatformTransportError(
+                            "task creation worker unavailable"
+                        ),
+                    )
+                )
 
     def _start_polling(self) -> None:
         if (

@@ -1269,6 +1269,41 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._card_allocation_id, "allocation-safe")
         instance._start_polling.assert_called_once_with()
 
+    def test_task_creation_thread_start_failure_exposes_safe_recovery(self) -> None:
+        cleanup = mock.Mock()
+        transition = mock.Mock(cancelled=False)
+        transition.cancel.return_value = cleanup
+        transition.worker_finished.return_value = None
+        client = mock.Mock(is_authenticated=True)
+        client.begin_task_transition.return_value = transition
+        instance = self._event_app()
+        instance._client = client
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.create_mail_task()
+            instance._drain_events()
+
+        client.create_task.assert_not_called()
+        cleanup.assert_not_called()
+        transition.cancel.assert_called_once_with()
+        transition.worker_finished.assert_called_once_with()
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_transition_thread)
+        self.assertIsNotNone(instance._task_compensation)
+        self.assertIs(instance._task_compensation.transition, transition)
+        self.assertIs(instance._task_compensation.cleanup, cleanup)
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     @staticmethod
     def _provisioning_compensation_failure_app(cleanup):
         transition = mock.Mock(cancelled=False)
