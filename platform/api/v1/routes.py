@@ -1347,6 +1347,9 @@ def create_task(
                 status_code=409,
                 detail="Idempotency key was already used with different task data",
             )
+        db.commit()
+        db.refresh(existing, with_for_update=True)
+        _lock_task_creation_principal(db, principal)
         response.status_code = 200
         return existing
 
@@ -1388,6 +1391,8 @@ def create_task(
         db.rollback()
         existing = _find_idempotent_task(db, principal, payload.idempotency_key)
         if existing is not None and _same_task_payload(existing, payload):
+            db.refresh(existing, with_for_update=True)
+            _lock_task_creation_principal(db, principal)
             response.status_code = 200
             return existing
         raise HTTPException(

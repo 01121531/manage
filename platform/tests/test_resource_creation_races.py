@@ -193,6 +193,67 @@ class ResourceCreationRaceTests(unittest.TestCase):
                 1,
             )
 
+    def test_task_idempotent_replay_returns_status_after_concurrent_close(
+        self,
+    ) -> None:
+        task_id = self.create_task("task-replay-close")
+        entered = Event()
+        release = Event()
+        original_find = routes._find_idempotent_task
+        blocked = False
+
+        def block_after_stale_task_read(db, principal, idempotency_key):
+            nonlocal blocked
+            task = original_find(db, principal, idempotency_key)
+            if not blocked and task is not None and task.id == task_id:
+                blocked = True
+                db.commit()
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("task replay release timed out")
+            return task
+
+        with patch(
+            "platform.api.v1.routes._find_idempotent_task",
+            side_effect=block_after_stale_task_read,
+        ):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    "/api/v1/tasks",
+                    headers=self.headers,
+                    json={
+                        "type": "card_checkout",
+                        "idempotency_key": "task-replay-close",
+                    },
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                closed = self.close_task(task_id)
+                self.assertEqual(closed.status_code, 200, closed.text)
+                release.set()
+                replay = future.result(timeout=10)
+
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["status"], "closed")
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.get(Task, task_id).status, "closed")
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(Task).where(Task.id == task_id)
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(AuditEvent).where(
+                        AuditEvent.entity_id == task_id,
+                        AuditEvent.event_type == "task.created",
+                    )
+                ),
+                1,
+            )
+
     def test_active_task_blocks_a_fresh_key_until_it_is_terminal_or_expired(self) -> None:
         first = self.request(
             "POST",
