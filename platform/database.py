@@ -630,10 +630,9 @@ def database_schema_is_current(engine: Engine) -> bool:
             )
             if not expected_heads or not current_heads:
                 return False
-            if current_heads == expected_heads:
-                return True
             if len(expected_heads) != 1 or len(current_heads) != 1:
                 return False
+            exact_head = current_heads == expected_heads
             current_revision = next(iter(current_heads))
             try:
                 known_current_revision = script.get_revision(current_revision)
@@ -642,7 +641,7 @@ def database_schema_is_current(engine: Engine) -> bool:
                 # older release's migration graph. Its compatibility floor is
                 # the only safe signal available to that release.
                 known_current_revision = None
-            if known_current_revision is not None:
+            if known_current_revision is not None and not exact_head:
                 # A non-head revision already known to this release is behind
                 # (or otherwise not the expected single head), never ahead.
                 return False

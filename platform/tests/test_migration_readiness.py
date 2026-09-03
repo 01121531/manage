@@ -45,8 +45,15 @@ class MigrationReadinessTests(unittest.TestCase):
         self.addCleanup(engine.dispose)
         return engine
 
-    def test_exact_repository_head_is_ready(self) -> None:
-        self.assertTrue(database_schema_is_current(self.engine_with_heads(CURRENT)))
+    def test_exact_repository_head_without_compatibility_marker_is_not_ready(self) -> None:
+        self.assertFalse(database_schema_is_current(self.engine_with_heads(CURRENT)))
+
+    def test_exact_repository_head_with_compatibility_marker_is_ready(self) -> None:
+        engine = self.engine_with_heads(
+            CURRENT,
+            minimum_app_revision=CURRENT,
+        )
+        self.assertTrue(database_schema_is_current(engine))
 
     def test_release_n_remains_ready_on_a_future_expand_head(self) -> None:
         engine = self.engine_with_heads(
