@@ -276,6 +276,42 @@ class DeviceLimitApiTests(unittest.TestCase):
         self.assertEqual(self.harness.device_rows(self.target.user_id), [])
         self.assertEqual(self.harness.audit_count("admin.device_registered"), 0)
 
+    def test_revocation_rechecks_admin_after_authentication(self) -> None:
+        created = self.harness.register(
+            self.admin_token,
+            user_id=self.target.user_id,
+            name="target-device-to-revoke",
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        original_resolve = auth._resolve_principal
+        demoted = False
+
+        def demote_after_authentication(*args, **kwargs):
+            nonlocal demoted
+            principal = original_resolve(*args, **kwargs)
+            if not demoted:
+                with self.harness.app.state.session_factory() as db:
+                    admin = db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "security_auditor"
+                    db.commit()
+                demoted = True
+            return principal
+
+        with mock.patch.object(
+            auth, "_resolve_principal", side_effect=demote_after_authentication
+        ):
+            response = self.harness.revoke(
+                self.admin_token,
+                created.json()["id"],
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        rows = self.harness.device_rows(self.target.user_id)
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].revoked_at)
+        self.assertEqual(self.harness.audit_count("admin.device_revoked"), 0)
+
     def test_revoked_name_is_a_tombstone_and_cannot_be_reactivated(self) -> None:
         created = self.harness.register(
             self.admin_token,
