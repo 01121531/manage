@@ -1625,6 +1625,7 @@ class PlatformDesktopApp:
                 return
             finished = True
             self._clipboard_cleanup_pending -= 1
+            self._finish_update_cleanup_if_ready()
             self._finish_session_shutdown_if_ready()
             if (
                 self._clipboard_cleanup_pending == 0
@@ -2425,26 +2426,10 @@ class PlatformDesktopApp:
                     or value != self._pending_update_install
                 ):
                     continue
-                manifest, package = value
                 self._update_cleanup_in_progress = False
-                self._update_cleanup_completed = True
                 self._update_cleanup_action = None
-                self._pending_update_install = None
                 self._task_id = None
-                self._update_generation += 1
-                try:
-                    launch_update_helper(package, manifest.sha256)
-                except UpdateError:
-                    self.check_update_button.configure(
-                        text="检查更新",
-                        command=self.check_for_updates,
-                        state="normal",
-                    )
-                    self.login_button.configure(state="normal")
-                    self._set_status("更新包已校验，但无法启动安全替换程序。", ERROR)
-                else:
-                    self._set_status("更新已校验，正在退出并替换程序…", SUCCESS)
-                    self.root.after(200, self.close)
+                self._finish_update_cleanup_if_ready()
             elif kind == "update_cleanup_error":
                 if (
                     not self._update_cleanup_in_progress
@@ -3267,6 +3252,70 @@ class PlatformDesktopApp:
             ACCENT,
         )
         self._start_update_cleanup_attempt()
+
+    def _retry_update_clipboard_cleanup(self) -> None:
+        failed = self._clipboard_cleanup_failed
+        if failed is None or self._clipboard_cleanup_pending:
+            return
+        self._clipboard_cleanup_failed = None
+        self._clipboard_owner = failed
+        self.check_update_button.configure(state="disabled")
+        self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
+        self._clear_owned_clipboard(failed[0])
+
+    def _retry_update_helper(self) -> None:
+        self.check_update_button.configure(state="disabled")
+        self._finish_update_cleanup_if_ready()
+
+    def _finish_update_cleanup_if_ready(self) -> None:
+        pending = self._pending_update_install
+        if (
+            pending is None
+            or self._update_cleanup_completed
+            or self._update_cleanup_action is not None
+            or self._update_cleanup_in_progress
+        ):
+            return
+        if self._clipboard_cleanup_pending:
+            self.check_update_button.configure(state="disabled")
+            self._set_status(
+                "平台会话已撤销，正在确认清除客户端写入的临时剪贴板内容…",
+                ACCENT,
+            )
+            return
+        if self._clipboard_cleanup_failed is not None:
+            self.check_update_button.configure(
+                text="重试清除剪贴板",
+                command=self._retry_update_clipboard_cleanup,
+                state="normal",
+            )
+            self._set_status(
+                "原因：系统剪贴板持续被占用；"
+                "影响：不会启动更新替换程序；"
+                "下一步：关闭占用剪贴板的程序后点击“重试清除剪贴板”。",
+                ERROR,
+            )
+            return
+        manifest, package = pending
+        try:
+            launch_update_helper(package, manifest.sha256)
+        except UpdateError:
+            self.check_update_button.configure(
+                text="重试启动更新",
+                command=self._retry_update_helper,
+                state="normal",
+            )
+            self._set_status(
+                "更新包已校验且安全清理已完成，但无法启动替换程序；"
+                "请点击“重试启动更新”。",
+                ERROR,
+            )
+            return
+        self._update_cleanup_completed = True
+        self._pending_update_install = None
+        self._update_generation += 1
+        self._set_status("更新已校验，正在退出并替换程序…", SUCCESS)
+        self.root.after(200, self.close)
 
     @staticmethod
     def _format_card_details(snapshot: CardRevealSnapshot) -> str:

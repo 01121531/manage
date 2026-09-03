@@ -37,6 +37,7 @@ from platform_desktop import (
     format_operation_error,
     format_workflow_progress,
 )
+from update_client import UpdateError
 
 
 class RecordingWidget:
@@ -3384,6 +3385,146 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             self.assertTrue(instance._closed)
             self.assertEqual(instance.root.destroy_calls, 1)
             instance._client.prepare_logout_cleanup.assert_called_once_with("task-1")
+
+    def test_update_waits_for_owned_clipboard_cleanup_before_helper(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        clipboard_get = instance.root.clipboard_get
+        attempts = 0
+
+        def busy_once():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise tk.TclError("clipboard busy")
+            return clipboard_get()
+
+        instance.root.clipboard_get = busy_once
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = lambda: None
+        manifest = mock.Mock(sha256="d" * 64)
+        package = Path("verified-update.exe")
+        pending = (manifest, package)
+
+        with mock.patch("platform_desktop.launch_update_helper") as launch_helper:
+            instance._events.put(
+                (instance._update_generation, "update_downloaded", pending)
+            )
+            instance._drain_events()
+            instance._update_cleanup_thread.join(timeout=1)
+            instance._drain_events()
+
+            launch_helper.assert_not_called()
+            self.assertEqual(instance._pending_update_install, pending)
+            self.assertFalse(instance._update_cleanup_completed)
+            self.assertEqual(instance.check_update_button.values["state"], "disabled")
+
+            retry_index = next(
+                index
+                for index, scheduled in enumerate(instance.root.scheduled)
+                if scheduled[0] == 50
+            )
+            _, retry, args = instance.root.scheduled.pop(retry_index)
+            retry(*args)
+
+            launch_helper.assert_called_once_with(package, manifest.sha256)
+            self.assertEqual(instance.root.clipboard, "")
+            self.assertIsNone(instance._pending_update_install)
+            self.assertTrue(instance._update_cleanup_completed)
+
+    def test_update_clipboard_failure_retries_before_helper_and_close(self) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._current_code = secret
+        instance.root.clipboard = secret
+        instance.root.clipboard_get = mock.Mock(
+            side_effect=tk.TclError("clipboard remains busy")
+        )
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = lambda: None
+        manifest = mock.Mock(sha256="e" * 64)
+        package = Path("verified-update.exe")
+        pending = (manifest, package)
+
+        with mock.patch("platform_desktop.launch_update_helper") as launch_helper:
+            instance._events.put(
+                (instance._update_generation, "update_downloaded", pending)
+            )
+            instance._drain_events()
+            instance._update_cleanup_thread.join(timeout=1)
+            instance._drain_events()
+            for _ in range(3):
+                retry_index = next(
+                    index
+                    for index, scheduled in enumerate(instance.root.scheduled)
+                    if scheduled[0] == 50
+                )
+                _, retry, args = instance.root.scheduled.pop(retry_index)
+                retry(*args)
+
+            launch_helper.assert_not_called()
+            self.assertEqual(instance._pending_update_install, pending)
+            self.assertFalse(instance._update_cleanup_completed)
+            self.assertEqual(
+                instance.check_update_button.values["text"],
+                "重试清除剪贴板",
+            )
+            self.assertEqual(instance.root.destroy_calls, 0)
+
+            instance.root.clipboard_get = lambda: instance.root.clipboard
+            instance.check_update_button.values["command"]()
+
+            launch_helper.assert_called_once_with(package, manifest.sha256)
+            self.assertEqual(instance.root.clipboard, "")
+            close_callback = next(
+                callback
+                for delay, callback, _args in instance.root.scheduled
+                if delay == 200 and callback == instance.close
+            )
+            close_callback()
+            self.assertTrue(instance._closed)
+            self.assertEqual(instance.root.destroy_calls, 1)
+
+    def test_update_helper_failure_retries_exact_verified_package(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._client = mock.Mock()
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        manifest = mock.Mock(sha256="f" * 64)
+        package = Path("verified-update.exe")
+        pending = (manifest, package)
+
+        with mock.patch(
+            "platform_desktop.launch_update_helper",
+            side_effect=(UpdateError("helper failed"), None),
+        ) as launch_helper:
+            instance._events.put(
+                (instance._update_generation, "update_downloaded", pending)
+            )
+            instance._drain_events()
+            instance._update_cleanup_thread.join(timeout=1)
+            instance._drain_events()
+
+            self.assertEqual(instance._pending_update_install, pending)
+            self.assertFalse(instance._update_cleanup_completed)
+            self.assertEqual(
+                instance.check_update_button.values["text"],
+                "重试启动更新",
+            )
+            instance.check_update_button.values["command"]()
+
+            self.assertEqual(
+                launch_helper.call_args_list,
+                [
+                    mock.call(package, manifest.sha256),
+                    mock.call(package, manifest.sha256),
+                ],
+            )
+            cleanup.assert_called_once_with()
+            self.assertIsNone(instance._pending_update_install)
+            self.assertTrue(instance._update_cleanup_completed)
 
     def test_failed_update_cleanup_retries_same_captured_action_before_install(self) -> None:
         instance = self._event_app()
