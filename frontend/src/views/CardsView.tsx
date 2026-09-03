@@ -515,12 +515,13 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.success('活动租约已回收；关联排队上传已取消。')
       setRecycleTarget(null)
       setRecycleReason(undefined)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : '平台未能确认租约回收状态。'
+    } catch {
+      setRecycleTarget(null)
+      setRecycleReason(undefined)
       message.error(
-        `原因：${reason} `
-        + '影响：回收屏障可能已经生效，页面不会按失败响应推断最终状态。 '
-        + '下一步：已重新获取卡片历史；若租约仍为活动状态，可从同一记录重试。',
+        '原因：平台未能确认活动租约回收结果。'
+        + '影响：回收屏障与关联排队上传取消可能已经生效，页面不会按失败响应推断最终状态。'
+        + '下一步：已关闭本次确认并重新获取卡片历史；仅当该租约仍为活动状态时，才从同一记录重新发起。',
       )
     } finally {
       setRecycleSaving(false)

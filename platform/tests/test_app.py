@@ -8,6 +8,7 @@ from unittest import mock
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from platform.app import create_app
 from platform.auth import AuthPrincipal, get_current_principal
@@ -940,6 +941,41 @@ class PlatformAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["id"], self.identity.user_id)
         self.assertEqual(response.json()["device_id"], self.identity.device_id)
+
+    def test_login_rechecks_device_after_issue_commit(self) -> None:
+        original_commit = Session.commit
+        revoked = False
+
+        def commit_then_revoke(session: Session) -> None:
+            nonlocal revoked
+            issuing_login = any(
+                isinstance(item, AuditEvent) and item.event_type == "auth.login"
+                for item in session.new
+            )
+            original_commit(session)
+            if not issuing_login or revoked:
+                return
+            revoked = True
+            with self.app.state.session_factory() as other:
+                device = other.get(Device, self.identity.device_id)
+                self.assertIsNotNone(device)
+                device.revoked_at = utc_now()
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_revoke):
+            response = self.request(
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "tenant_id": "tenant-a",
+                    "email": "first@example.test",
+                    "password": self.account_password,
+                    "device_id": self.identity.device_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertNotIn("access_token", response.text)
 
     def test_task_endpoints_use_current_role_after_authentication(self) -> None:
         admin = create_user_with_device(

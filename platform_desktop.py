@@ -315,6 +315,7 @@ class PlatformDesktopApp:
         self._clipboard_cleanup_failed: list[tuple[str, int | None]] | None = None
         self._destroy_pending = False
         self._history_generation = 0
+        self._history_threads: list[threading.Thread] = []
         self._session_generation = 0
         self._session_restore_action: object | None = None
         self._session_restore_compensation: _SessionRestoreCompensation | None = None
@@ -809,9 +810,14 @@ class PlatformDesktopApp:
         thread = threading.Thread(
             target=worker, daemon=True, name="platform-task-history"
         )
+        self._history_threads = [
+            existing for existing in self._history_threads if existing.is_alive()
+        ]
+        self._history_threads.append(thread)
         try:
             thread.start()
         except RuntimeError:
+            self._history_threads.remove(thread)
             self._events.put(
                 (
                     generation,
@@ -3508,6 +3514,7 @@ class PlatformDesktopApp:
         active_task_discovery_thread = getattr(
             self, "_active_task_discovery_thread", None
         )
+        history_threads = tuple(getattr(self, "_history_threads", ()))
         unlock_action = getattr(self, "_unlock_action", None)
         unlock_thread = getattr(self, "_unlock_thread", None)
         if unlock_action is not None:
@@ -3579,6 +3586,9 @@ class PlatformDesktopApp:
                 and active_task_discovery_thread.is_alive()
             ):
                 active_task_discovery_thread.join()
+            for history_thread in history_threads:
+                if history_thread.is_alive():
+                    history_thread.join()
             if unlock_thread is not None and unlock_thread.is_alive():
                 unlock_thread.join(CARD_REVEAL_SHUTDOWN_WAIT_SECONDS)
                 if unlock_thread.is_alive():

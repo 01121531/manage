@@ -711,6 +711,25 @@ def login(
         details={"method": "local_account"},
     )
     db.commit()
+    current_user = _lock_user(
+        db,
+        tenant_id=payload.tenant_id,
+        user_id=user.id,
+    )
+    current_device = _lock_device(
+        db,
+        tenant_id=payload.tenant_id,
+        user_id=user.id,
+        device_id=device.id,
+    )
+    if (
+        current_user is None
+        or not current_user.is_active
+        or current_user.role not in INTERACTIVE_ROLES
+        or current_device is None
+        or current_device.revoked_at is not None
+    ):
+        raise unauthorized()
     return TokenResponse(
         access_token=access_token,
         expires_in=settings.access_token_ttl_seconds,

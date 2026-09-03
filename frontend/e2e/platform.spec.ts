@@ -1000,7 +1000,12 @@ test('ops admin reads masked card history and recycles one exact allocation', as
         released_at: '2026-08-24T00:05:00Z',
         release_reason_code: 'manual_reassignment',
       }
-      return fulfill(allocation)
+      return fulfill({
+        error: {
+          code: 'service_unavailable',
+          message: 'must-never-render-recycle-provider-detail',
+        },
+      }, 503)
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -1036,8 +1041,13 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   await confirmRecycle.click()
 
   await expect.poll(() => recycleBodies).toEqual([{ reason_code: 'manual_reassignment' }])
+  await expect(dialog).toBeHidden()
+  const recycleError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认活动租约回收结果' })
+  for (const marker of ['原因：', '影响：', '下一步：']) await expect(recycleError).toContainText(marker)
+  await expect(page.getByText('must-never-render-recycle-provider-detail')).toHaveCount(0)
   await expect(history.getByText('人工重新分配', { exact: true })).toBeVisible()
   await expect(history.getByRole('button', { name: /回收活动租约/ })).toHaveCount(0)
+  expect(recycleBodies).toEqual([{ reason_code: 'manual_reassignment' }])
 })
 
 test('OIDC callback compensates and requires local cleanup before recovery when identity lookup fails', async ({ page }) => {

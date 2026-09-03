@@ -163,6 +163,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._clipboard_cleanup_failed = None
         instance._destroy_pending = False
         instance._history_generation = 0
+        instance._history_threads = []
         instance._paste_sequence = SecurePasteSequence()
         instance._paste_observer = mock.Mock()
         instance._upload_idempotency_key = "attempt-1"
@@ -4429,6 +4430,52 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertNotIn(
             "raw thread failure", instance._history_status.values["text"]
         )
+        self.assertEqual(instance._history_threads, [])
+
+    def test_logout_waits_for_task_history_before_cleanup(self) -> None:
+        history_started = threading.Event()
+        release_history = threading.Event()
+        order = []
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def list_tasks(*, limit):
+                self.assertEqual(limit, 50)
+                history_started.set()
+                release_history.wait(timeout=2)
+                order.append("history-finished")
+                return []
+
+            @staticmethod
+            def prepare_logout_cleanup(_task_id):
+                return lambda: order.append("logout-cleanup")
+
+        instance = self._event_app()
+        instance._client = Client()
+        instance._history_window = mock.Mock()
+        instance._history_window.winfo_exists.return_value = True
+        instance._history_tree = mock.Mock()
+        instance._history_tree.get_children.return_value = []
+        instance._history_status = RecordingWidget()
+        instance._history_refresh_button = RecordingWidget()
+
+        instance._load_task_history()
+        history_thread = instance._history_threads[-1]
+        self.assertTrue(history_started.wait(timeout=1))
+
+        instance.logout()
+        self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+        self.assertEqual(order, [])
+
+        release_history.set()
+        history_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(order, ["history-finished", "logout-cleanup"])
+        self.assertIsNone(instance._active_task_recovery)
 
     def test_task_history_authentication_error_clears_sensitive_state(self) -> None:
         instance = self._event_app()
@@ -4478,6 +4525,10 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
             def start(self):
                 workers.append(self.target)
+
+            @staticmethod
+            def is_alive():
+                return True
 
         with mock.patch("platform_desktop.threading.Thread", DeferredThread):
             instance._load_task_history()
