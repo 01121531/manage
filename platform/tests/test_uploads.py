@@ -2347,6 +2347,95 @@ class UploadJobTests(unittest.TestCase):
         self.assertEqual(len(unknown_events), 1)
         self.assertEqual(unknown_events[0].actor_id, "worker-sub2")
 
+    def test_cancellation_replay_returns_concurrent_worker_unknown_state(
+        self,
+    ) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(
+            token, task_key="upload-cancel-replay-worker-task"
+        )
+        queued = self.create_upload(
+            token, task_id, "upload-cancel-replay-worker"
+        )
+        job_id = queued.json()["id"]
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            job.status = "running"
+            db.commit()
+        first = self.request(
+            "POST",
+            f"/api/v1/upload-jobs/{job_id}/cancel",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["status"], "cancel_pending")
+
+        entered = Event()
+        release = Event()
+        original_scalar = Session.scalar
+        blocked = False
+
+        def block_after_stale_cancel_read(session, statement, *args, **kwargs):
+            nonlocal blocked
+            result = original_scalar(session, statement, *args, **kwargs)
+            if (
+                not blocked
+                and isinstance(result, UploadJob)
+                and result.id == job_id
+                and result.status == "cancel_pending"
+            ):
+                blocked = True
+                session.commit()
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("cancel replay release timed out")
+            return result
+
+        with mock.patch.object(Session, "scalar", new=block_after_stale_cancel_read):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.request,
+                    "POST",
+                    f"/api/v1/upload-jobs/{job_id}/cancel",
+                    headers=self.bearer(token),
+                )
+                self.assertTrue(entered.wait(timeout=5))
+                process_upload_job(
+                    self.app.state.session_factory,
+                    job_id,
+                    adapter=self.adapter,
+                    policy=self.app.state.sub2_policy,
+                )
+                with self.app.state.session_factory() as db:
+                    worker_result = db.get(UploadJob, job_id)
+                    self.assertEqual(worker_result.status, "unknown")
+                    self.assertEqual(worker_result.error_code, "external_unknown")
+                release.set()
+                replay = future.result(timeout=10)
+
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["status"], "unknown")
+        self.assertEqual(replay.json()["error_code"], "external_unknown")
+        with self.app.state.session_factory() as db:
+            cancel_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == job_id,
+                        AuditEvent.event_type == "upload.cancel_requested",
+                    )
+                )
+            )
+            unknown_events = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == job_id,
+                        AuditEvent.event_type == "upload.unknown",
+                    )
+                )
+            )
+        self.assertEqual(len(cancel_events), 1)
+        self.assertEqual(len(unknown_events), 1)
+
     def test_terminal_uploads_return_stable_cancel_conflict_without_audit(self) -> None:
         token = self.login()
         task_id, _ = self.create_task_with_card(

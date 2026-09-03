@@ -4324,6 +4324,7 @@ def cancel_upload_job(
         raise HTTPException(status_code=404, detail="Upload job not found")
     if not cancellation_won:
         if job.status in {"cancelled", "cancel_pending"}:
+            db.refresh(job, with_for_update=True)
             return _upload_job_response(job)
         raise BusinessHTTPException(
             status_code=409,
@@ -4344,7 +4345,7 @@ def cancel_upload_job(
         details={"status": job.status},
     )
     db.commit()
-    db.refresh(job)
+    db.refresh(job, with_for_update=True)
     return _upload_job_response(job)
 
 
