@@ -1631,7 +1631,7 @@ test('operator login keeps bearer in memory and exposes task trace', async ({ pa
 })
 
 test('current-device revoke handles confirmed, rejected, uncertain HTTP, and transport outcomes without logout', async ({ browser }) => {
-  for (const outcome of ['confirmed', 'rejected', 'request-timeout', 'server-error', 'ambiguous'] as const) {
+  for (const outcome of ['confirmed', 'rejected', 'request-timeout', 'server-error', 'ambiguous', 'mismatched'] as const) {
     const context = await browser.newContext()
     const page = await context.newPage()
     const revokeRequests: string[] = []
@@ -1701,7 +1701,8 @@ test('current-device revoke handles confirmed, rejected, uncertain HTTP, and tra
           }, 403)
         }
         return fulfill({
-          id: `device-${outcome}`, tenant_id: 'tenant-1', user_id: `user-${outcome}`,
+          id: outcome === 'mismatched' ? 'wrong-device-receipt' : `device-${outcome}`,
+          tenant_id: 'tenant-1', user_id: `user-${outcome}`,
           name: `device-${outcome}`, last_seen_at: '2026-08-20T00:00:00Z',
           revoked_at: '2026-08-20T00:01:00Z', created_at: '2026-08-19T00:00:00Z',
         })
@@ -1756,6 +1757,7 @@ test('current-device revoke handles confirmed, rejected, uncertain HTTP, and tra
     }
     await expect(page.locator('body')).not.toContainText('raw internal route detail')
     await expect(page.locator('body')).not.toContainText('raw internal recovery detail')
+    await expect(page.locator('body')).not.toContainText('wrong-device-receipt')
     expect(logoutRequests).toBe(0)
     expect(revokeRequests).toHaveLength(1)
     await context.close()

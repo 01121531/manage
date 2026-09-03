@@ -3098,6 +3098,45 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
+    def test_stale_terminal_cleanup_finished_exposes_same_cleanup_retry(self) -> None:
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+        calls = []
+
+        def cleanup() -> None:
+            calls.append("cleanup")
+            if len(calls) == 1:
+                cleanup_started.set()
+                release_cleanup.wait(timeout=2)
+
+        instance = self._event_app()
+        instance._terminal_task_cleanup_action = cleanup
+        instance._terminal_task_cleanup_task_id = "task-1"
+        instance._terminal_task_cleanup_outcome = "completed"
+
+        instance._start_terminal_task_cleanup_attempt()
+        first_thread = instance._terminal_task_cleanup_thread
+        self.assertTrue(cleanup_started.wait(timeout=1))
+
+        instance._terminal_task_cleanup_generation += 1
+        release_cleanup.set()
+        first_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIs(instance._terminal_task_cleanup_action, cleanup)
+        self.assertIsNone(instance._terminal_task_cleanup_thread)
+        self.assertFalse(instance._terminal_task_cleanup_in_progress)
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+
+        instance._retry_terminal_task_cleanup()
+        retry_thread = instance._terminal_task_cleanup_thread
+        retry_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(calls, ["cleanup", "cleanup"])
+        self.assertIsNone(instance._terminal_task_cleanup_action)
+
     def test_terminal_cleanup_invalidates_upload_polling_and_late_results(self) -> None:
         instance = self._event_app()
         cleanup = mock.Mock()

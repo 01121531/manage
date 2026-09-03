@@ -451,7 +451,10 @@ export default function App() {
     setLogoutError(undefined)
     setSessionNotice(undefined)
     try {
-      await revokeCurrentDevice(deviceId)
+      const revoked = await revokeCurrentDevice(deviceId)
+      if (revoked.id !== deviceId || revoked.revoked_at === null) {
+        throw new Error('current device revoke response binding mismatch')
+      }
       terminalOutcome = 'confirmed'
     } catch (error) {
       const explicitlyRejected = error instanceof ApiError

@@ -2733,6 +2733,26 @@ class PlatformDesktopApp:
                 if self._active_task_discovery_action is action:
                     self._active_task_discovery_action = None
                 continue
+            if kind == "terminal_task_cleanup_finished":
+                cleanup, worker_thread = value
+                if (
+                    self._terminal_task_cleanup_action is cleanup
+                    and self._terminal_task_cleanup_thread is worker_thread
+                ):
+                    self._terminal_task_cleanup_thread = None
+                    self._terminal_task_cleanup_in_progress = False
+                    self.new_task_button.configure(
+                        text="重试资源关闭",
+                        command=self._retry_terminal_task_cleanup,
+                        state="normal",
+                    )
+                    self._set_status(
+                        "原因：任务资源关闭结果已失效；"
+                        "影响：任务、卡和邮箱资源不会标记为已安全释放；"
+                        "下一步：点击“重试资源关闭”重新确认。",
+                        ERROR,
+                    )
+                continue
             if (
                 kind in {"upload_submitted", "upload_submit_error"}
                 and generation != self._upload_generation
@@ -4652,8 +4672,22 @@ class PlatformDesktopApp:
                     )
                 )
 
+        thread: threading.Thread
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                self._events.put(
+                    (
+                        generation,
+                        "terminal_task_cleanup_finished",
+                        (cleanup, thread),
+                    )
+                )
+
         thread = threading.Thread(
-            target=worker, daemon=False, name="platform-terminal-task-cleanup"
+            target=run_worker, daemon=False, name="platform-terminal-task-cleanup"
         )
         self._terminal_task_cleanup_in_progress = True
         self._terminal_task_cleanup_thread = thread

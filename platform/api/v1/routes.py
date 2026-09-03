@@ -2441,6 +2441,8 @@ def get_mail_code(
                 db.commit()
                 return MailCodeResponse(status=session.status)
             db.commit()
+            _lock_task_creation_principal(db, principal)
+            db.refresh(session, with_for_update=True)
             return MailCodeResponse(status="consumed")
         record_audit(
             db,

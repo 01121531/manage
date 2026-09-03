@@ -18,7 +18,7 @@ from threading import (
 from unittest.mock import patch
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
@@ -1221,6 +1221,82 @@ class MailSessionTests(unittest.TestCase):
                     self.assertEqual(len(consumed_events), 1)
             finally:
                 app.state.engine.dispose()
+
+    def test_lost_code_claim_rechecks_operator_after_commit(self) -> None:
+        self.app.state.settings.mail_poll_mode = "worker"
+        token = self.login()
+        task_id = self.create_task(token, "mail-lost-claim-commit-boundary")
+        session = self.create_session(token, task_id)
+        self.assertEqual(session.status_code, 201, session.text)
+        session_id = session.json()["id"]
+        delivered_code = "814275"
+        delivered_message_id_hash = hashlib.sha256(
+            MESSAGE_ID_HASH_DOMAIN + b"lost-claim-message"
+        ).hexdigest()
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+            self.assertIsNotNone(persisted)
+            persisted.status = "code_ready"
+            persisted.delivered_code = delivered_code
+            persisted.delivered_at = utc_now()
+            persisted.delivered_message_id_hash = delivered_message_id_hash
+            persisted.code_expires_at = utc_now() + timedelta(minutes=1)
+            db.commit()
+
+        original_commit = Session.commit
+        claim_lost = False
+        demoted = False
+
+        def lose_claim(db: Session, **_kwargs) -> bool:
+            nonlocal claim_lost
+            claim_lost = True
+            db.execute(
+                update(MailSession)
+                .where(MailSession.id == session_id)
+                .values(
+                    status="consumed",
+                    consumed_at=utc_now(),
+                    delivered_code=None,
+                    delivered_message_id_hash=None,
+                    delivered_at=None,
+                    code_expires_at=None,
+                    start_watermark=None,
+                    last_message_hash=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            return False
+
+        def commit_then_demote(session_db: Session) -> None:
+            nonlocal demoted
+            original_commit(session_db)
+            if not claim_lost or demoted:
+                return
+            demoted = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(
+            routes,
+            "claim_delivered_code",
+            side_effect=lose_claim,
+        ), patch.object(Session, "commit", new=commit_then_demote):
+            response = self.request(
+                "GET",
+                f"/api/v1/mail-sessions/{session_id}/code",
+                headers=self.mail_headers(token, session_id),
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("consumed", response.text)
+        self.assertNotIn(delivered_code, response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(MailSession, session_id)
+        self.assertEqual(persisted.status, "consumed")
+        self.assertIsNone(persisted.delivered_code)
 
     def test_deployed_mail_policy_is_frozen_on_session_and_used_by_worker(self) -> None:
         with self.app.state.session_factory() as db:
