@@ -3733,6 +3733,7 @@ test('platform admin governs upload policies without browser execution details',
     approved_at: '2026-08-20T00:00:20Z', created_at: '2026-08-19T23:59:00Z',
   }]
   let policyListRequests = 0
+  let cardPolicyStatusRequests = 0
   const approveRequests: string[] = []
   const deployRequests: Array<{ policyId: string; rollout: number }> = []
   let rollbackRequests = 0
@@ -3783,9 +3784,21 @@ test('platform admin governs upload policies without browser execution details',
       policyListRequests += 1
       return fulfill(policyStatus)
     }
-    if ((path === '/api/v1/admin/policies/mail' || path === '/api/v1/admin/policies/card') && request.method() === 'GET') {
+    if (path === '/api/v1/admin/policies/card' && request.method() === 'GET') {
+      cardPolicyStatusRequests += 1
+      if (cardPolicyStatusRequests <= 2) {
+        return fulfill({
+          error: { code: 'service_unavailable', message: 'must-never-render-card-policy-error' },
+        }, 503)
+      }
       return fulfill({
-        domain: path.endsWith('/mail') ? 'mail' : 'card',
+        domain: 'card', governance_configured: false, active_version: null,
+        previous_version: null, rollout_percent: null,
+      })
+    }
+    if (path === '/api/v1/admin/policies/mail' && request.method() === 'GET') {
+      return fulfill({
+        domain: 'mail',
         governance_configured: false,
         active_version: null,
         previous_version: null,
@@ -3858,12 +3871,20 @@ test('platform admin governs upload policies without browser execution details',
   await page.getByRole('button', { name: '安全登录' }).click()
   await page.getByRole('menuitem', { name: /策略配置/ }).click()
 
+  const cardPolicyError = page.getByRole('alert').filter({ hasText: '卡分配策略暂不可用' })
+  await expect(cardPolicyError).toContainText('原因：')
+  await expect(cardPolicyError).toContainText('影响：')
+  await expect(cardPolicyError).toContainText('下一步：')
+  await expect(page.getByText('must-never-render-card-policy-error')).toHaveCount(0)
+  await cardPolicyError.getByRole('button', { name: '重新加载卡分配策略' }).click()
+  await expect.poll(() => cardPolicyStatusRequests).toBe(3)
+  await expect(cardPolicyError).toBeHidden()
   await expect(page.getByText(/独立审批/).first()).toBeVisible()
   await expect(page.getByText('邮箱策略', { exact: true })).toBeVisible()
   await expect(page.getByText('卡分配策略', { exact: true })).toBeVisible()
   await expect(page.getByText('sub2-2026.08.1')).toBeVisible()
   await expect(page.locator('.content .ant-btn-primary:visible')).toHaveCount(3)
-  await expect(policySummary.locator('.ant-descriptions-item-content .ant-tag .anticon')).toHaveCount(6)
+  await expect(policySummary.locator('.ant-descriptions-item-content .ant-tag .anticon')).toHaveCount(7)
   const approveDraft = page.getByRole('button', {
     name: '审批策略 sub2-2026.08.1（policy-draft-1，状态 draft，目标比例不变）', exact: true,
   })

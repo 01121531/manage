@@ -45,6 +45,7 @@ function OperationalPolicyPanel({ domain, principal }: {
   useEffect(() => {
     let alive = true
     setLoading(true)
+    setError(undefined)
     const statusRequest = domain === 'mail' ? getMailPolicyStatus() : getCardPolicyStatus()
     const versionsRequest = domain === 'mail' ? listMailPolicyVersions() : listCardPolicyVersions()
     Promise.all([statusRequest, versionsRequest]).then(([nextStatus, nextVersions]) => {
@@ -116,7 +117,14 @@ function OperationalPolicyPanel({ domain, principal }: {
   })
 
   if (loading) return <Card className="section-card" title={title}><Spin /></Card>
-  if (error || !status) return <Alert className="section-card" type="warning" showIcon message={`${title}暂不可用`} description={error} />
+  if (error || !status) return <Alert
+    className="section-card"
+    type="warning"
+    showIcon
+    message={`${title}暂不可用`}
+    description={`原因：平台暂未返回${title}状态。影响：当前不展示过期版本或发布操作。下一步：检查网络后从此处重新加载。`}
+    action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载{title}</Button>}
+  />
   const columns: TableColumnsType<GovernedPolicyVersion> = [
     { title: '版本', dataIndex: 'version' },
     { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },

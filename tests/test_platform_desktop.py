@@ -139,6 +139,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._terminal_task_cleanup_task_id = None
         instance._terminal_task_cleanup_outcome = None
         instance._terminal_task_cleanup_generation = 0
+        instance._task_compensation_lock = threading.Lock()
         instance._task_compensation = None
         instance._mail_session_id = "mail-1"
         instance._mail_session_token = "opaque-session-token"
@@ -1049,6 +1050,40 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             transition,
         )
         self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+
+    def test_logout_race_handoffs_late_failed_close_to_shutdown_retry(self) -> None:
+        instance, release = self._provisioning_race_app()
+        attempts = []
+
+        def fail_close(task_id, access_token):
+            attempts.append((task_id, access_token))
+            raise PlatformTransportError("raw close failure")
+
+        instance._client._close_task_with_access_token = fail_close
+        instance.logout()
+        release.set()
+        instance._task_transition_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._task_compensation)
+        self.assertIsNotNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.login_button.values["text"], "重试安全清理")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        self.assertNotIn("raw close failure", instance.status_label.values["text"])
+
+        def close_on_retry(task_id, access_token):
+            attempts.append((task_id, access_token))
+            return {"status": "closed"}
+
+        instance._client._close_task_with_access_token = close_on_retry
+        instance.login_button.values["command"]()
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.login_button.values["text"], "登录平台")
+        self.assertEqual(attempts[-1], ("task-created-in-flight", "captured-access"))
 
     def test_logout_during_task_switch_closes_previous_and_new_task_once(self) -> None:
         instance, release = self._provisioning_race_app("task-previous")

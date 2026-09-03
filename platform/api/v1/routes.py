@@ -1929,6 +1929,9 @@ def create_mail_session(
         except IntegrityError:
             db.rollback()
             raise _mail_session_token_conflict() from None
+        _lock_owned_open_task(
+            db, task_id, request=request, principal=principal
+        )
         db.refresh(existing, with_for_update=True)
         response.status_code = 200
         return MailSessionCreateResponse(

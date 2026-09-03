@@ -278,6 +278,7 @@ class PlatformDesktopApp:
         self._terminal_task_cleanup_task_id: str | None = None
         self._terminal_task_cleanup_outcome: str | None = None
         self._terminal_task_cleanup_generation = 0
+        self._task_compensation_lock = threading.Lock()
         self._task_compensation: _TaskProvisioningCompensation | None = None
         self._mail_session_id: str | None = None
         self._mail_session_token: str | None = None
@@ -1457,6 +1458,7 @@ class PlatformDesktopApp:
                                 transition=transition,
                                 cleanup=cleanup,
                             )
+                            self._publish_task_compensation(barrier)
                             self._events.put(
                                 (action.task_generation, "task_compensation_error", barrier)
                             )
@@ -2138,6 +2140,7 @@ class PlatformDesktopApp:
                             transition=transition,
                             cleanup=cleanup,
                         )
+                        self._publish_task_compensation(barrier)
                         self._events.put(
                             (generation, "task_compensation_error", barrier)
                         )
@@ -2172,15 +2175,17 @@ class PlatformDesktopApp:
             worker_cleanup = transition.worker_finished()
             cleanup = cleanup or worker_cleanup
             if cleanup is not None:
+                barrier = _TaskProvisioningCompensation(
+                    generation=generation,
+                    transition=transition,
+                    cleanup=cleanup,
+                )
+                self._publish_task_compensation(barrier)
                 self._events.put(
                     (
                         generation,
                         "task_compensation_error",
-                        _TaskProvisioningCompensation(
-                            generation=generation,
-                            transition=transition,
-                            cleanup=cleanup,
-                        ),
+                        barrier,
                     )
                 )
             else:
@@ -2312,6 +2317,30 @@ class PlatformDesktopApp:
             ERROR,
         )
 
+    def _publish_task_compensation(
+        self,
+        barrier: _TaskProvisioningCompensation,
+    ) -> bool:
+        with self._task_compensation_lock:
+            if self._task_compensation is None:
+                self._task_compensation = barrier
+                return True
+            return self._task_compensation is barrier
+
+    def _take_task_compensation(
+        self,
+        *,
+        transition: TaskTransitionCleanup | None = None,
+    ) -> _TaskProvisioningCompensation | None:
+        with self._task_compensation_lock:
+            barrier = self._task_compensation
+            if barrier is None or (
+                transition is not None and barrier.transition is not transition
+            ):
+                return None
+            self._task_compensation = None
+            return barrier
+
     def _retry_task_compensation(self) -> None:
         barrier = self._task_compensation
         if barrier is None or barrier.in_progress:
@@ -2357,7 +2386,7 @@ class PlatformDesktopApp:
             cleanup=cleanup,
         )
         barrier.in_progress = True
-        self._task_compensation = barrier
+        self._publish_task_compensation(barrier)
         self._task_transition = None
 
         def worker() -> None:
@@ -2759,12 +2788,13 @@ class PlatformDesktopApp:
                 barrier = value
                 if generation != barrier.generation:
                     continue
-                if self._task_compensation is None:
-                    if barrier.transition is not self._task_transition:
-                        continue
-                    self._task_compensation = barrier
-                    self._task_transition = None
-                elif self._task_compensation is not barrier:
+                if self._task_compensation is not barrier:
+                    continue
+                self._task_transition = None
+                if (
+                    self._shutdown_cleanup_action is not None
+                    or self._pending_update_install is not None
+                ):
                     continue
                 self._present_task_compensation_failure(barrier)
             elif kind == "task_compensation_succeeded":
@@ -3393,14 +3423,13 @@ class PlatformDesktopApp:
             transition_cleanup = transition.cancel()
             self._task_transition = None
         transition_thread = getattr(self, "_task_transition_thread", None)
-        compensation = self._task_compensation
+        compensation = self._take_task_compensation()
         compensation_cleanup = (
             compensation.cleanup if compensation is not None else None
         )
         compensation_thread = (
             compensation.thread if compensation is not None else None
         )
-        self._task_compensation = None
         restore_compensation = self._session_restore_compensation
         restore_compensation_cleanup = (
             restore_compensation.cleanup
@@ -3431,7 +3460,10 @@ class PlatformDesktopApp:
             def logout_cleanup() -> None:
                 raise PlatformClientError("session cleanup preparation failed")
 
+        late_compensation: _TaskProvisioningCompensation | None = None
+
         def cleanup_action() -> None:
+            nonlocal late_compensation
             first_error: Exception | None = None
             if transition_cleanup is not None:
                 try:
@@ -3440,6 +3472,16 @@ class PlatformDesktopApp:
                     first_error = error
             if transition_thread is not None and transition_thread.is_alive():
                 transition_thread.join()
+            if transition is not None and late_compensation is None:
+                late_compensation = self._take_task_compensation(
+                    transition=transition
+                )
+            if late_compensation is not None:
+                try:
+                    late_compensation.cleanup()
+                except Exception as error:
+                    if first_error is None:
+                        first_error = error
             if compensation_thread is not None and compensation_thread.is_alive():
                 compensation_thread.join()
             if compensation_cleanup is not None:

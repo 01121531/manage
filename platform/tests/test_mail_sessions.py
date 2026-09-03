@@ -2316,6 +2316,42 @@ class MailSessionTests(unittest.TestCase):
             )
         self.assertEqual(denied_events, [])
 
+    def test_rotated_session_token_rechecks_device_after_commit(self) -> None:
+        access_token = self.login()
+        task_id = self.create_task(access_token, "mail-token-commit-boundary")
+        created = self.create_session(access_token, task_id)
+        self.assertEqual(created.status_code, 201, created.text)
+        original_commit = Session.commit
+        revoked = False
+
+        def commit_then_revoke(session: Session) -> None:
+            nonlocal revoked
+            rotating = any(isinstance(item, MailSession) for item in session.dirty)
+            original_commit(session)
+            if not rotating or revoked:
+                return
+            revoked = True
+            with self.app.state.session_factory() as other:
+                device = other.get(Device, self.identity.device_id)
+                self.assertIsNotNone(device)
+                device.revoked_at = utc_now()
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_revoke):
+            rotated = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/mail-sessions",
+                headers=self.bearer(access_token),
+            )
+
+        self.assertEqual(rotated.status_code, 401, rotated.text)
+        self.assertNotIn("session_token", rotated.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(
+                len(list(db.scalars(select(MailSession).where(MailSession.task_id == task_id)))),
+                1,
+            )
+
     def test_session_token_is_required_rotated_and_never_exposed_in_audit(self) -> None:
         access_token = self.login()
         task_id = self.create_task(access_token, "mail-token-binding")
