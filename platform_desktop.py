@@ -309,7 +309,7 @@ class PlatformDesktopApp:
         self._clipboard_clear_generation = 0
         self._clipboard_cleanup_pending = 0
         self._clipboard_owner: tuple[str, int | None] | None = None
-        self._clipboard_cleanup_failed: tuple[str, int | None] | None = None
+        self._clipboard_cleanup_failed: list[tuple[str, int | None]] | None = None
         self._destroy_pending = False
         self._history_generation = 0
         self._session_generation = 0
@@ -1609,6 +1609,24 @@ class PlatformDesktopApp:
         self._clear_card_details()
         self._clear_trace_id()
 
+    def _remember_clipboard_cleanup_failure(
+        self, owner: tuple[str, int | None]
+    ) -> None:
+        if self._clipboard_cleanup_failed is None:
+            self._clipboard_cleanup_failed = []
+        if owner not in self._clipboard_cleanup_failed:
+            self._clipboard_cleanup_failed.append(owner)
+
+    def _forget_clipboard_cleanup_failure(
+        self, owner: tuple[str, int | None]
+    ) -> None:
+        failures = self._clipboard_cleanup_failed
+        if failures is None:
+            return
+        self._clipboard_cleanup_failed = [item for item in failures if item != owner]
+        if not self._clipboard_cleanup_failed:
+            self._clipboard_cleanup_failed = None
+
     def _clear_owned_clipboard(self, text: str | None) -> None:
         if not text:
             return
@@ -1641,23 +1659,21 @@ class PlatformDesktopApp:
             if owner[1] is not None and get_clipboard_sequence_number() != owner[1]:
                 if self._clipboard_owner == owner:
                     self._clipboard_owner = None
-                if self._clipboard_cleanup_failed == owner:
-                    self._clipboard_cleanup_failed = None
+                self._forget_clipboard_cleanup_failure(owner)
                 finish()
                 return
             try:
                 if self.root.clipboard_get() != text:
                     if self._clipboard_owner == owner:
                         self._clipboard_owner = None
-                    if self._clipboard_cleanup_failed == owner:
-                        self._clipboard_cleanup_failed = None
+                    self._forget_clipboard_cleanup_failure(owner)
                     finish()
                     return
                 self.root.clipboard_clear()
                 self.root.update_idletasks()
             except tk.TclError:
                 if retries_remaining <= 0:
-                    self._clipboard_cleanup_failed = owner
+                    self._remember_clipboard_cleanup_failure(owner)
                     self._set_status(
                         "原因：系统剪贴板持续被占用；"
                         "影响：客户端无法确认已清除自己写入的临时内容，窗口不会退出；"
@@ -1677,8 +1693,7 @@ class PlatformDesktopApp:
             else:
                 if self._clipboard_owner == owner:
                     self._clipboard_owner = None
-                if self._clipboard_cleanup_failed == owner:
-                    self._clipboard_cleanup_failed = None
+                self._forget_clipboard_cleanup_failure(owner)
                 finish()
 
         clear_if_owned(CLIPBOARD_CLEAR_RETRY_LIMIT)
@@ -3254,14 +3269,14 @@ class PlatformDesktopApp:
         self._start_update_cleanup_attempt()
 
     def _retry_update_clipboard_cleanup(self) -> None:
-        failed = self._clipboard_cleanup_failed
-        if failed is None or self._clipboard_cleanup_pending:
+        failed = tuple(self._clipboard_cleanup_failed or ())
+        if not failed or self._clipboard_cleanup_pending:
             return
-        self._clipboard_cleanup_failed = None
-        self._clipboard_owner = failed
         self.check_update_button.configure(state="disabled")
         self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
-        self._clear_owned_clipboard(failed[0])
+        for owner in failed:
+            self._clipboard_owner = owner
+            self._clear_owned_clipboard(owner[0])
 
     def _retry_update_helper(self) -> None:
         self.check_update_button.configure(state="disabled")
@@ -3845,14 +3860,14 @@ class PlatformDesktopApp:
         self._start_session_shutdown_attempt()
 
     def _retry_shutdown_clipboard_cleanup(self) -> None:
-        failed = self._clipboard_cleanup_failed
-        if failed is None or self._clipboard_cleanup_pending:
+        failed = tuple(self._clipboard_cleanup_failed or ())
+        if not failed or self._clipboard_cleanup_pending:
             return
-        self._clipboard_cleanup_failed = None
-        self._clipboard_owner = failed
         self.login_button.configure(state="disabled")
         self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
-        self._clear_owned_clipboard(failed[0])
+        for owner in failed:
+            self._clipboard_owner = owner
+            self._clear_owned_clipboard(owner[0])
 
     def _finish_session_shutdown_if_ready(self) -> None:
         intent = self._shutdown_intent
@@ -3959,11 +3974,10 @@ class PlatformDesktopApp:
         if self._closed:
             return
         if self._clipboard_cleanup_failed is not None:
-            failed = self._clipboard_cleanup_failed
-            self._clipboard_cleanup_failed = None
-            self._clipboard_owner = failed
             self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
-            self._clear_owned_clipboard(failed[0])
+            for owner in tuple(self._clipboard_cleanup_failed):
+                self._clipboard_owner = owner
+                self._clear_owned_clipboard(owner[0])
             return
         if self._pending_update_install is not None and not self._update_cleanup_completed:
             self._set_status(
