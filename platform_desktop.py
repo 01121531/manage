@@ -3167,9 +3167,13 @@ class PlatformDesktopApp:
                         (generation, "update_available", (manifest, silent))
                     )
 
-        threading.Thread(
+        thread = threading.Thread(
             target=worker, daemon=True, name="platform-update-check"
-        ).start()
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put((generation, "update_error", silent))
 
     def _download_update(self, manifest: UpdateManifest) -> None:
         if self._update_client is None:

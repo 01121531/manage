@@ -3780,6 +3780,29 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIn("launch_update_helper", drain_source)
         self.assertIn("SHA-256", drain_source)
 
+    def test_update_check_thread_start_failure_restores_retry(self) -> None:
+        instance = self._event_app()
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.check_for_updates()
+            instance._drain_events()
+
+        instance._update_client.check.assert_not_called()
+        self.assertEqual(instance.check_update_button.states, ["disabled", "normal"])
+        self.assertEqual(
+            instance.status_label.values["text"],
+            "检查更新失败，请稍后重试。",
+        )
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     def test_update_waits_for_referenced_non_daemon_cleanup_before_helper(self) -> None:
         instance = self._event_app()
         cleanup_started = threading.Event()
