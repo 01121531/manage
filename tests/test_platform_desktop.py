@@ -891,6 +891,45 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.destroy_calls, 1)
         self.assertTrue(instance._closed)
 
+    def test_clipboard_error_status_failure_does_not_skip_code_cleanup(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        secret = "246810"
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._write_clipboard = PlatformDesktopApp._write_clipboard.__get__(
+            instance
+        )
+        instance._schedule_code_cleanup = (
+            PlatformDesktopApp._schedule_code_cleanup.__get__(instance)
+        )
+        original_clipboard_clear = instance.root.clipboard_clear
+        instance.root.clipboard_clear = mock.Mock(
+            side_effect=RuntimeError("clipboard unavailable")
+        )
+        instance.status_label.configure = mock.Mock(
+            side_effect=RuntimeError("status widget unavailable")
+        )
+
+        instance._events.put(
+            (1, "code", MailCodeSnapshot(status="consumed", code=secret))
+        )
+        instance._drain_events()
+
+        self.assertEqual(instance._current_code, secret)
+        cleanup = next(
+            callback
+            for _delay, callback, _args in instance.root.scheduled
+            if getattr(callback, "__name__", "") == "clear_if_current"
+        )
+        instance.root.clipboard_clear = original_clipboard_clear
+        cleanup()
+
+        self.assertIsNone(instance._current_code)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertEqual(instance.copy_button.values["state"], "disabled")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

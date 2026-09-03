@@ -4636,7 +4636,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       }
       pendingRoleRequests = [roleRequest]
       return fulfill(roleBodies.length === 2
-        ? { ...roleRequest, tenant_id: 'wrong-role-tenant' }
+        ? { ...roleRequest, request_trace_id: '' }
         : roleRequest)
     }
     if (path === '/api/v1/admin/users/operator-1/disable' && request.method() === 'POST') {
@@ -4792,7 +4792,6 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   ])
   await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()).toBeVisible()
   await expect(page.getByText('角色变更申请已创建，等待另一位平台管理员完成 fresh MFA 后审批。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-role-tenant')
   await expect(firstRow).toContainText('操作员')
   await expect(roleSelect).toBeDisabled()
   const pendingRoleCard = page.locator('.ant-card').filter({

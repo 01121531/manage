@@ -227,6 +227,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
             || request.new_role !== role
             || request.status !== 'pending'
             || request.requested_by !== principal.id
+            || request.request_trace_id.trim().length === 0
           ) throw new Error('role change request response binding mismatch')
         },
         '角色变更申请已创建，等待另一位平台管理员完成 fresh MFA 后审批。',

@@ -4912,7 +4912,10 @@ class PlatformDesktopApp:
                 self._clipboard_owner = (text, clipboard_sequence_number())
                 self._clipboard_cleanup_failed = None
                 self._clear_owned_clipboard(text)
-            self._set_status(CLIPBOARD_WRITE_ERROR_MESSAGE, ERROR)
+            try:
+                self._set_status(CLIPBOARD_WRITE_ERROR_MESSAGE, ERROR)
+            except Exception:
+                pass
             return False
         else:
             self._clipboard_clear_generation += 1
