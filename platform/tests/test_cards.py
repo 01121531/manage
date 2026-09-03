@@ -2319,6 +2319,55 @@ class CardAllocationTests(unittest.TestCase):
 
         self.assertEqual(self.card_secret_resolver.secret_refs, [])
 
+    def test_card_allocation_read_rechecks_device_after_authentication(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-read-revoked-device")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        allocation_id = allocated.json()["id"]
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+            email="card-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            db.get(Device, self.identity.device_id).revoked_at = now
+            db.commit()
+
+        self.app.dependency_overrides[get_operator_principal] = (
+            lambda: captured_principal
+        )
+        try:
+            response = self.request(
+                "GET",
+                f"/api/v1/card-allocations/{allocation_id}",
+                params={"task_id": task_id},
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_operator_principal, None)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        for sensitive in (
+            allocated.json()["card_masked"],
+            str(allocated.json()["expiry_year"]),
+            allocated.json()["trace_id"],
+        ):
+            self.assertNotIn(sensitive, response.text)
+
     def test_reveal_rejects_missing_or_insufficient_step_up(self) -> None:
         token = self.login()
         headers = self.bearer(token)

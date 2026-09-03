@@ -3791,6 +3791,7 @@ class PlatformDesktopApp:
             or self._client is None
             or self._upload_job_id is None
             or self._closed
+            or self._terminal_task_cleanup_action is not None
         ):
             return
         job_id = self._upload_job_id
@@ -3871,6 +3872,7 @@ class PlatformDesktopApp:
             self._set_status("平台未能准备任务资源关闭，请重新登录后处理。", ERROR)
             return
 
+        self._upload_generation += 1
         self._terminal_task_cleanup_generation += 1
         self._terminal_task_cleanup_action = cleanup
         self._terminal_task_cleanup_task_id = task_id

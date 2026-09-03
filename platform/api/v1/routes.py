@@ -3617,6 +3617,7 @@ def get_card_allocation(
     principal: AuthPrincipal = Depends(get_operator_principal),
     db: Session = Depends(get_db),
 ) -> CardAllocationResponse:
+    _lock_task_creation_principal(db, principal)
     result = _owned_card_allocation(
         db,
         allocation_id,
@@ -4152,6 +4153,7 @@ def create_upload_job(
     principal: AuthPrincipal = Depends(get_operator_principal),
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:
+    _lock_task_creation_principal(db, principal)
     existing = db.scalar(
         select(UploadJob).where(
             UploadJob.tenant_id == principal.tenant_id,
@@ -4384,6 +4386,7 @@ def get_upload_job(
     principal: AuthPrincipal = Depends(get_operator_principal),
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:
+    _lock_task_creation_principal(db, principal)
     job = db.scalar(
         select(UploadJob).where(
             UploadJob.id == job_id,
@@ -4410,7 +4413,9 @@ def cancel_upload_job(
     ),
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:
-    if principal.role != ROLE_OPERATOR:
+    if principal.role == ROLE_OPERATOR:
+        _lock_task_creation_principal(db, principal)
+    else:
         _lock_admin_write_principal(
             db,
             principal,

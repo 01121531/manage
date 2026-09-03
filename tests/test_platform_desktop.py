@@ -2633,6 +2633,51 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
+    def test_terminal_cleanup_invalidates_upload_polling_and_late_results(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        transition = mock.Mock()
+        transition.close.return_value = cleanup
+        client = mock.Mock(is_authenticated=True)
+        client.begin_task_transition.return_value = transition
+        instance._client = client
+        instance.upload_label.configure(text="closing")
+        old_generation = instance._upload_generation
+
+        class DeferredThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                pass
+
+        with mock.patch("platform_desktop.threading.Thread", DeferredThread):
+            instance._begin_terminal_task_cleanup("completed")
+
+        self.assertGreater(instance._upload_generation, old_generation)
+        label_after_cleanup_started = instance.upload_label.values["text"]
+        running = UploadJobSnapshot(
+            id="upload-1",
+            task_id="task-1",
+            status="running",
+            business_name="Example Store",
+            policy_version="v1",
+            external_ref=None,
+            error_code=None,
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:01Z",
+        )
+        instance._events.put((old_generation, "upload", running))
+        instance._drain_events()
+
+        self.assertEqual(instance.upload_label.values["text"], label_after_cleanup_started)
+        self.assertNotIn(
+            instance._poll_upload,
+            [callback for _, callback, _ in instance.root.scheduled],
+        )
+        instance._poll_upload()
+        client.get_upload_job.assert_not_called()
+
     def test_succeeded_upload_blocks_until_same_captured_cleanup_retries(self) -> None:
         instance = self._event_app()
         release_first_attempt = threading.Event()
