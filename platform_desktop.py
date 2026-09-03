@@ -980,7 +980,20 @@ class PlatformDesktopApp:
 
         thread = threading.Thread(target=worker, daemon=False, name="platform-unlock")
         self._unlock_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "unlock_error",
+                    (
+                        action,
+                        PlatformTransportError("unlock worker unavailable"),
+                    ),
+                )
+            )
+            self._events.put((generation, "unlock_finished", action))
 
     def _finish_unlock(self, profile: dict[str, Any]) -> None:
         identity = self._identity_from_profile(profile)

@@ -1588,6 +1588,31 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertTrue(instance._locked)
         self.assertIn("仍保持锁定", instance.status_label.values["text"])
 
+    def test_unlock_thread_start_failure_restores_retry(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance.lock()
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.unlock()
+            instance._drain_events()
+
+        instance._client.reauthenticate_for_unlock.assert_not_called()
+        self.assertIsNone(instance._unlock_action)
+        self.assertIsNone(instance._unlock_thread)
+        self.assertTrue(instance._locked)
+        self.assertEqual(instance.lock_button.values["text"], "解锁")
+        self.assertEqual(instance.lock_button.values["state"], "normal")
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     def test_close_waits_for_current_unlock_before_logout_cleanup(self) -> None:
         instance = self._event_app()
         unlock_entered = threading.Event()
