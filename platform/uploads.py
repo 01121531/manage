@@ -1538,7 +1538,19 @@ def reconcile_unknown_upload_job(
             policy_version=job.policy_version,
         )
         db.commit()
-        return job
+        if task_id is not None:
+            db.scalar(
+                select(Task)
+                .where(Task.id == task_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        return db.scalar(
+            select(UploadJob)
+            .where(UploadJob.id == job_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
 
 
 def process_queued_uploads(

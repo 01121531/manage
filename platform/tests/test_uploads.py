@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, current_thread
 from unittest import mock
 
 import httpx
@@ -3012,6 +3012,70 @@ class UploadJobTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error_code, "manual_winner")
         self.assertIsNone(result.external_ref)
+
+    def test_lookup_response_refreshes_after_concurrent_reconciliation(self) -> None:
+        token = self.login()
+        _task_id, _allocation_id, job_id = self.create_unknown_upload(
+            token,
+            task_key="lookup-response-race-task",
+            upload_key="lookup-response-race-upload",
+        )
+        session_factory = self.app.state.session_factory
+        lookup_observed = Event()
+        commit_entered = Event()
+        release_commit = Event()
+
+        class ProcessingAdapter:
+            def query(self, _command):
+                lookup_observed.set()
+                return Sub2LookupResult(state=Sub2LookupState.PROCESSING)
+
+        original_commit = Session.commit
+
+        def pause_after_stale_commit(session):
+            if (
+                current_thread().name.startswith("lookup-stale")
+                and lookup_observed.is_set()
+                and not commit_entered.is_set()
+            ):
+                original_commit(session)
+                commit_entered.set()
+                self.assertTrue(release_commit.wait(timeout=5))
+                return None
+            return original_commit(session)
+
+        try:
+            with mock.patch.object(Session, "commit", pause_after_stale_commit):
+                with ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="lookup-stale"
+                ) as executor:
+                    stale = executor.submit(
+                        reconcile_unknown_upload_job,
+                        session_factory,
+                        job_id,
+                        adapter=ProcessingAdapter(),
+                        policy=self.app.state.sub2_policy,
+                    )
+                    self.assertTrue(commit_entered.wait(timeout=5))
+                    winner = reconcile_unknown_upload_job(
+                        session_factory,
+                        job_id,
+                        adapter=FakeSub2ReconciliationAdapter(
+                            Sub2LookupResult(
+                                state=Sub2LookupState.SUCCEEDED,
+                                external_ref="reconciled-winner",
+                            )
+                        ),
+                        policy=self.app.state.sub2_policy,
+                    )
+                    self.assertEqual(winner.status, "succeeded")
+                    release_commit.set()
+                    stale_result = stale.result(timeout=5)
+        finally:
+            release_commit.set()
+
+        self.assertEqual(stale_result.status, "succeeded")
+        self.assertEqual(stale_result.external_ref, "reconciled-winner")
 
     def test_unknown_upload_requires_privileged_reconciliation(self) -> None:
         token = self.login()
