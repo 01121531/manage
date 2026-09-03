@@ -4872,13 +4872,38 @@ def admin_approve_role_change_request(
     )
     if role_change is None:
         raise HTTPException(status_code=404, detail="Role-change request not found")
-    if role_change.status == "applied":
-        target = db.scalar(
-            select(User).where(
-                User.id == role_change.target_user_id,
+    participant_ids = sorted({principal.user_id, role_change.target_user_id})
+    participants = {
+        user.id: user
+        for user in db.scalars(
+            select(User)
+            .where(
                 User.tenant_id == principal.tenant_id,
+                User.id.in_(participant_ids),
             )
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
+    }
+    actor = participants.get(principal.user_id)
+    actor_device = _lock_device(
+        db,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        device_id=principal.device_id,
+    )
+    if (
+        actor is None
+        or not actor.is_active
+        or actor_device is None
+        or actor_device.revoked_at is not None
+    ):
+        raise unauthorized()
+    if actor.role != ROLE_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    target = participants.get(role_change.target_user_id)
+    if role_change.status == "applied":
         if (
             target is not None
             and target.role == role_change.new_role
@@ -4958,15 +4983,7 @@ def admin_approve_role_change_request(
             detail="Required MFA authentication level is missing",
         )
 
-    user = db.scalar(
-        select(User)
-        .where(
-            User.id == role_change.target_user_id,
-            User.tenant_id == principal.tenant_id,
-        )
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    user = target
     if user is None:
         _deny_role_change_approval(
             db,
