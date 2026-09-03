@@ -7425,6 +7425,11 @@ def admin_update_card_state(
     ),
     db: Session = Depends(get_db),
 ) -> AdminCardResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
     card = db.scalar(
         select(Card).where(
             Card.id == card_id, Card.tenant_id == principal.tenant_id
@@ -7463,6 +7468,11 @@ def admin_update_card_state(
             db.rollback()
             _compensate_unavailable_card(
                 db, card_id=card_id, principal=principal
+            )
+            _lock_admin_write_principal(
+                db,
+                principal,
+                allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
             )
             enabled = db.execute(
                 update(Card)
