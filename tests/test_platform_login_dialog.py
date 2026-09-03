@@ -218,12 +218,35 @@ class PlatformLoginDialogTests(unittest.TestCase):
         dialog.cancel_device_button = _FakeWidget()
         dialog.device_challenge_panel = _FakeWidget()
         dialog.status_label = _FakeWidget()
+        dialog.login_button = _FakeWidget()
         dialog.window = _FakeWindow()
         dialog._controller = _FakeController()
         dialog._set_busy = mock.Mock()
         dialog._on_success = mock.Mock()
         dialog._on_close = mock.Mock()
         return dialog
+
+    def test_auth_config_thread_start_failure_restores_safe_error(self):
+        dialog = self.headless_dialog()
+        client = mock.Mock()
+        raw_error = "raw auth config thread failure"
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start():
+                raise RuntimeError(raw_error)
+
+        with mock.patch("platform_login_dialog.threading.Thread", FailingThread):
+            dialog._load_auth_config(client)
+
+        client.get_auth_config.assert_not_called()
+        self.assertEqual(dialog._auth_mode, "error")
+        self.assertEqual(dialog.login_button.options["state"], "disabled")
+        self.assertIn("无法连接平台", dialog.status_label.options["text"])
+        self.assertNotIn(raw_error, dialog.status_label.options["text"])
 
     def test_device_challenge_keeps_base_uri_and_code_visible_and_copyable(self):
         dialog = self.headless_dialog()

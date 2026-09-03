@@ -1503,6 +1503,8 @@ def create_task(
         },
     )
     db.commit()
+    db.refresh(task, with_for_update=True)
+    _lock_task_creation_principal(db, principal)
     return task
 
 

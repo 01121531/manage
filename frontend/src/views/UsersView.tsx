@@ -93,13 +93,12 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
       if (!isCurrent()) return false
       message.success(success)
       return true
-    } catch (error) {
+    } catch {
       if (!isCurrent()) return false
-      const reason = error instanceof Error ? error.message : '平台未能确认用户变更结果。'
       message.error(
-        `原因：${reason} `
-        + '影响：用户、角色申请或停用状态可能已在服务端发生变化，页面不会按失败响应推断结果。 '
-        + '下一步：正在重新读取用户、待审批申请和设备真实状态；读取成功后请核对，再从同一入口重试。',
+        '原因：平台未能确认用户治理操作结果。'
+        + '影响：用户状态、角色申请或审批可能已经变更，相关会话与活动资源也可能已回收；页面不会按失败响应推断最终状态。'
+        + '下一步：正在重新读取用户、待审批申请和设备真实状态；仅当目标动作仍可用时，才从同一对象入口重试。',
       )
       return false
     } finally {

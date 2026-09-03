@@ -910,7 +910,13 @@ class PlatformLoginDialog:
             else:
                 self._schedule(lambda: self._apply_auth_mode(str(config["mode"])))
 
-        threading.Thread(target=worker, daemon=True).start()
+        thread = threading.Thread(target=worker, daemon=True)
+        try:
+            thread.start()
+        except RuntimeError:
+            self._handle_auth_config_error(
+                PlatformTransportError("authentication config worker unavailable")
+            )
 
     def _apply_auth_mode(self, mode: str) -> None:
         if self._closed:

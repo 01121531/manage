@@ -4213,7 +4213,12 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       singleDisableIds.push('operator-1')
       await singleDisableGate
       users = users.map((user) => user.id === 'operator-1' ? { ...user, is_active: false } : user)
-      return fulfill(users.find((user) => user.id === 'operator-1'))
+      return fulfill({
+        error: {
+          code: 'service_unavailable',
+          message: 'must-never-render-user-disable-provider-detail',
+        },
+      }, 503)
     }
     if (path === '/api/v1/admin/users/batch-disable' && request.method() === 'POST') {
       const body = request.postDataJSON() as { user_ids: string[] }
@@ -4385,7 +4390,15 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   } finally {
     releaseSingleDisable()
   }
+  await expect(singleDisableDialog).toBeHidden()
+  const userActionError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' })
+  for (const marker of ['原因：', '影响：', '下一步：']) await expect(userActionError).toContainText(marker)
+  await expect(userActionError).toContainText('相关会话与活动资源也可能已回收')
+  await expect(userActionError).toContainText('仅当目标动作仍可用时')
+  await expect(page.getByText('must-never-render-user-disable-provider-detail')).toHaveCount(0)
   await expect(firstRow.getByText('disabled')).toBeVisible()
+  await expect(firstDisableButton).toBeDisabled()
+  expect(singleDisableIds).toEqual(['operator-1'])
 
   await secondCheckbox.check()
   await thirdCheckbox.check()

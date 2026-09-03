@@ -194,6 +194,51 @@ class ResourceCreationRaceTests(unittest.TestCase):
                 1,
             )
 
+    def test_initial_task_response_rechecks_role_after_commit(self) -> None:
+        key = "initial-task-role-commit-boundary"
+        original_commit = Session.commit
+        role_changed = False
+
+        def commit_then_change_role(session: Session) -> None:
+            nonlocal role_changed
+            creating_task = any(
+                isinstance(item, AuditEvent) and item.event_type == "task.created"
+                for item in session.new
+            )
+            original_commit(session)
+            if not creating_task or role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                user = other.get(User, self.identity.user_id)
+                self.assertIsNotNone(user)
+                user.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_change_role):
+            response = self.request(
+                "POST",
+                "/api/v1/tasks",
+                headers=self.headers,
+                json={"type": "card_checkout", "idempotency_key": key},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn(key, response.text)
+        self.assertNotIn('"status":"created"', response.text)
+        with self.app.state.session_factory() as db:
+            task = db.scalar(select(Task).where(Task.idempotency_key == key))
+            self.assertIsNotNone(task)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(AuditEvent).where(
+                        AuditEvent.entity_id == task.id,
+                        AuditEvent.event_type == "task.created",
+                    )
+                ),
+                1,
+            )
+
     def test_task_idempotent_replay_returns_status_after_concurrent_close(
         self,
     ) -> None:
