@@ -4457,6 +4457,15 @@ def reconcile_upload_job(
     ),
     db: Session = Depends(get_db),
 ) -> UploadJobResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(
+            ROLE_OPS_ADMIN,
+            ROLE_SECURITY_AUDITOR,
+            ROLE_PLATFORM_ADMIN,
+        ),
+    )
     job_task_id = db.scalar(
         select(UploadJob.task_id).where(
             UploadJob.id == job_id,

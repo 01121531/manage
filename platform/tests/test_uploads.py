@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from platform.app import create_app
+from platform.auth import AuthPrincipal, get_current_principal
 from platform.bootstrap import create_user_with_device
 from platform.config import Settings
 from platform.lifecycle import LifecycleSweepResult, transition_task_to_terminal
@@ -2606,6 +2607,63 @@ class UploadJobTests(unittest.TestCase):
                 self.password = original_password
                 self.mailbox_id = original_mailbox_id
                 race_app.state.engine.dispose()
+
+    def test_reconcile_rechecks_admin_after_authentication(self) -> None:
+        token = self.login()
+        task_id, _allocation_id = self.create_task_with_card(token)
+        queued = self.create_upload(token, task_id, "stale-admin-reconcile")
+        job_id = queued.json()["id"]
+        process_upload_job(
+            self.app.state.session_factory,
+            job_id,
+            adapter=FakeSub2Adapter(unknown=True),
+            policy=self.app.state.sub2_policy,
+        )
+        actor, _actor_token = self.create_role_session("ops_admin")
+        observed_at = datetime.now(timezone.utc)
+        stale_principal = AuthPrincipal(
+            user_id=actor.user_id,
+            tenant_id="tenant-upload",
+            device_id=actor.device_id,
+            email="upload-tenant-upload-ops_admin@example.test",
+            role="ops_admin",
+            identity_kind="local",
+            auth_time=None,
+            acr=None,
+            amr=(),
+            access_token_hash="a" * 64,
+            access_token_expires_at=observed_at + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            current_actor = db.get(User, actor.user_id)
+            current_actor.role = "operator"
+            db.commit()
+
+        self.app.dependency_overrides[get_current_principal] = lambda: stale_principal
+        try:
+            response = self.request(
+                "POST",
+                f"/api/v1/upload-jobs/{job_id}/reconcile",
+                json={"status": "failed", "error_code": "not_created"},
+            )
+        finally:
+            self.app.dependency_overrides.pop(get_current_principal, None)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            reconciled_audits = list(
+                db.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.entity_id == job_id,
+                        AuditEvent.event_type == "upload.reconciled",
+                    )
+                )
+            )
+        self.assertEqual(job.status, "unknown")
+        self.assertEqual(job.error_code, "external_unknown")
+        self.assertEqual(reconciled_audits, [])
 
     def test_security_auditor_can_reconcile_unknown_upload(self) -> None:
         token = self.login()
