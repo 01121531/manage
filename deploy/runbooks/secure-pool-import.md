@@ -87,7 +87,21 @@ rejected before the first Vault or API mutation.
    or replace `card` with `mailbox`. This command uses the same record parser,
    file-permission boundary and 1-to-100 item limit as the importer. It makes no
    network request, writes no file and prints only the pool type and item count;
-   it never prints PAN, mailbox credentials or source records.
+   it never prints PAN, mailbox credentials or source records. Run
+   `python scripts/validate_secure_pool_input.py card --describe-format` or the
+   matching `mailbox` command to inspect the following value-free contract:
+
+   - Card required fields: `provider_ref`, `brand`, `pan`. Optional fields:
+     `pool_key`, `region`, and the paired `expiry_month` plus `expiry_year`.
+     Provider references must be unique; CVV/CVC and equivalent security-code
+     fields are forbidden.
+   - Mailbox required fields: `email_masked`, `connector_type`, and a non-empty
+     `secret` object. `task_type` is optional and defaults to `mail_code`.
+     The `secret` object's internal keys come only from the approved production
+     mailbox adapter contract; do not infer them from repository examples.
+
+   A record-level failure reports only `record_index=<1-based position>` and a
+   fixed schema reason so the source can be corrected without echoing its value.
    This does not replace the approved workstation cleanup procedure or prove
    secure erasure after the process exits. Run `scripts/secure_pool_import.py`
    `card` or `mailbox` with the exact

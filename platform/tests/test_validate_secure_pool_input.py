@@ -14,6 +14,20 @@ from scripts.secure_pool_import import ImportFailure
 
 
 class ValidateSecurePoolInputTests(unittest.TestCase):
+    def test_card_format_description_contains_constraints_without_values(self) -> None:
+        description = validate_secure_pool_input.describe_format("card")
+
+        self.assertIn("required fields: provider_ref", description)
+        self.assertIn("forbidden fields: cvv", description)
+        self.assertNotIn("4111111111111111", description)
+
+    def test_mailbox_format_description_defers_secret_shape_to_adapter(self) -> None:
+        description = validate_secure_pool_input.describe_format("mailbox")
+
+        self.assertIn("required fields: email_masked", description)
+        self.assertIn("approved mailbox adapter contract", description)
+        self.assertNotIn("private-password", description)
+
     def test_accepts_card_records_without_exposing_secrets(self) -> None:
         count = validate_secure_pool_input.validate_records("card", [{
             "provider_ref": "provider-card-1",
@@ -56,6 +70,35 @@ class ValidateSecurePoolInputTests(unittest.TestCase):
             }])
 
         self.assertNotIn("987", str(raised.exception))
+
+    def test_bad_second_record_reports_index_without_echoing_source(self) -> None:
+        records = [
+            {
+                "email_masked": "m***@example.invalid",
+                "connector_type": "http",
+                "secret": {"credential": "first-private-value"},
+            },
+            {
+                "email_masked": "private-address@example.invalid",
+                "connector_type": "http",
+                "secret": {"credential": "second-private-value"},
+            },
+        ]
+
+        with self.assertRaisesRegex(ImportFailure, "record_index=2") as raised:
+            validate_secure_pool_input.validate_records("mailbox", records)
+
+        message = str(raised.exception)
+        self.assertNotIn("private-address", message)
+        self.assertNotIn("second-private-value", message)
+
+    def test_describe_format_does_not_require_input_file(self) -> None:
+        arguments = validate_secure_pool_input.build_parser().parse_args([
+            "mailbox", "--describe-format",
+        ])
+
+        self.assertTrue(arguments.describe_format)
+        self.assertIsNone(arguments.input_file)
 
 
 if __name__ == "__main__":
