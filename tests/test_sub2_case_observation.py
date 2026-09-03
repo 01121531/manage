@@ -38,6 +38,7 @@ class Sub2CaseObservationTests(unittest.TestCase):
             set(operations),
             {
                 "account_list",
+                "account_get_by_id",
                 "openai_generate_auth_url",
                 "openai_exchange_code",
                 "account_create",
@@ -48,6 +49,10 @@ class Sub2CaseObservationTests(unittest.TestCase):
         self.assertEqual(
             operations["account_create"]["path"],
             "/api/v1/admin/accounts",
+        )
+        self.assertIn(
+            "cannot_reconcile_creation_without_a_returned_account_id",
+            operations["account_get_by_id"]["limitations"],
         )
         self.assertEqual(
             operations["account_create"]["request"]["header_fields"],

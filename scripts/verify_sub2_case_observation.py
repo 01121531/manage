@@ -81,6 +81,11 @@ _EXPECTED_ASSETS = (
 _EXPECTED_OPERATIONS = (
     ("account_list", "GET", "/api/v1/admin/accounts"),
     (
+        "account_get_by_id",
+        "GET",
+        "/api/v1/admin/accounts/{account_id}",
+    ),
+    (
         "openai_generate_auth_url",
         "POST",
         "/api/v1/admin/openai/generate-auth-url",
@@ -253,7 +258,7 @@ def main() -> int:
         print("; ".join(errors), file=sys.stderr)
         return 1
     print(
-        "sub2-case-observation-ok operations=6 source=public-frontend-and-request-shapes "
+        "sub2-case-observation-ok operations=7 source=public-frontend-and-request-shapes "
         "production_acceptance=false"
     )
     return 0

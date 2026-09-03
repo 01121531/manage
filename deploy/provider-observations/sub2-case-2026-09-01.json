@@ -58,6 +58,24 @@
       "limitations": ["authenticated_response_shape_not_observed", "not_a_creation_status_query"]
     },
     {
+      "operation_id": "account_get_by_id",
+      "evidence": ["public_frontend_asset"],
+      "method": "GET",
+      "path": "/api/v1/admin/accounts/{account_id}",
+      "request": {
+        "path_fields": ["account_id"],
+        "query_fields": [],
+        "header_fields": [],
+        "body_fields": []
+      },
+      "response": {
+        "header_fields": [],
+        "body_fields": [],
+        "derived_fields": []
+      },
+      "limitations": ["authenticated_response_shape_not_observed", "requires_known_account_id", "cannot_reconcile_creation_without_a_returned_account_id"]
+    },
+    {
       "operation_id": "openai_generate_auth_url",
       "evidence": ["user_supplied_request_shape", "public_frontend_asset"],
       "method": "POST",

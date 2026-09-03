@@ -152,10 +152,16 @@ class HttpSub2AdapterTests(unittest.TestCase):
             self.assertEqual(opener.requests, [])
 
     def test_observed_ai1_control_plane_paths_cannot_receive_generic_uploads(self) -> None:
-        concrete_paths = (
-            AI1_OBSERVED_CONTROL_PLANE_PATHS
-            - {"/api/v1/admin/accounts/{account_id}/duplicate"}
-        ) | {"/api/v1/admin/accounts/42/duplicate"}
+        concrete_paths = {
+            path
+            for path in AI1_OBSERVED_CONTROL_PLANE_PATHS
+            if "{" not in path
+        } | {
+            "/api/v1/admin/accounts/42",
+            "/api/v1/admin/accounts/42/duplicate",
+            "/api/v1/admin/accounts/42/test",
+            "/api/v1/admin/openai/create-from-codex-pat",
+        }
         for path in sorted(concrete_paths):
             resolver = RecordingResolver()
             opener = RecordingOpener(FakeResponse({"external_ref": "unexpected"}))
@@ -203,6 +209,7 @@ class HttpSub2AdapterTests(unittest.TestCase):
             "",
             "http://sub2-upload.example/api/upload",
             "https://ai1.aisb.shop/api/v1/admin/accounts",
+            "https://ai1.aisb.shop/api/v1/admin/accounts/42/test",
             "https://ai1.aisb.shop/api/v1/admin/accounts/42/duplicate",
         ):
             with self.subTest(value=value):

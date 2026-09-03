@@ -376,6 +376,7 @@ _SUB2_IDEMPOTENCY_LOOKUP_SUPPORTED = False
 AI1_OBSERVED_CONTROL_PLANE_PATHS = frozenset(
     {
         "/api/v1/admin/accounts",
+        "/api/v1/admin/accounts/{account_id}",
         "/api/v1/admin/openai/generate-auth-url",
         "/api/v1/admin/openai/exchange-code",
         "/api/v1/admin/accounts/today-stats/batch",
@@ -489,15 +490,13 @@ def _is_ai1_observed_control_plane_url(value: str) -> bool:
     if _origin_key(value, allow_path=True) != ("https", "ai1.aisb.shop", 443):
         return False
     path = urllib.parse.unquote(urllib.parse.urlsplit(value).path).rstrip("/")
-    duplicate_template = "/api/v1/admin/accounts/{account_id}/duplicate"
-    if path in AI1_OBSERVED_CONTROL_PLANE_PATHS - {duplicate_template}:
+    if path == "/api/v1/admin/accounts" or path.startswith(
+        "/api/v1/admin/accounts/"
+    ):
         return True
-    prefix = "/api/v1/admin/accounts/"
-    suffix = "/duplicate"
-    account_id = path[len(prefix):-len(suffix)] if (
-        path.startswith(prefix) and path.endswith(suffix)
-    ) else ""
-    return bool(account_id) and "/" not in account_id
+    if path.startswith("/api/v1/admin/openai/"):
+        return True
+    return path in AI1_OBSERVED_CONTROL_PLANE_PATHS
 
 
 def normalize_generic_sub2_upload_url(value: str) -> str:
