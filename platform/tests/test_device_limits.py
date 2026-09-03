@@ -5,11 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Barrier
+from unittest import mock
 
 import httpx
 from sqlalchemy import func, select
 from pydantic import ValidationError
 
+from platform import auth
 from platform.app import create_app
 from platform.auth import hash_password
 from platform.bootstrap import create_oidc_user_with_device, create_user_with_device
@@ -244,6 +246,35 @@ class DeviceLimitApiTests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_registration_rechecks_admin_after_authentication(self) -> None:
+        original_resolve = auth._resolve_principal
+        demoted = False
+
+        def demote_after_authentication(*args, **kwargs):
+            nonlocal demoted
+            principal = original_resolve(*args, **kwargs)
+            if not demoted:
+                with self.harness.app.state.session_factory() as db:
+                    admin = db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(admin)
+                    admin.role = "security_auditor"
+                    db.commit()
+                demoted = True
+            return principal
+
+        with mock.patch.object(
+            auth, "_resolve_principal", side_effect=demote_after_authentication
+        ):
+            response = self.harness.register(
+                self.admin_token,
+                user_id=self.target.user_id,
+                name="late-provisioned-device",
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(self.harness.device_rows(self.target.user_id), [])
+        self.assertEqual(self.harness.audit_count("admin.device_registered"), 0)
 
     def test_revoked_name_is_a_tombstone_and_cannot_be_reactivated(self) -> None:
         created = self.harness.register(
