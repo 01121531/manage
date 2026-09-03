@@ -222,6 +222,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
   const [refresh, setRefresh] = useState(0)
   const [pendingPolicyAction, setPendingPolicyAction] = useState<string | null>(null)
   const policyActionRef = useRef<{ key: string; pending: boolean } | null>(null)
+  const policyActionRefreshRef = useRef<{ key: string; pending: boolean } | null>(null)
   const isPlatformAdmin = principal.role === 'platform_admin'
   useEffect(() => {
     let alive = true
@@ -234,7 +235,16 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
       }
     }).catch(() => {
       if (alive) setError('策略状态暂不可用，请稍后刷新。')
-    }).finally(() => { if (alive) setLoading(false) })
+    }).finally(() => {
+      if (!alive) return
+      setLoading(false)
+      const action = policyActionRefreshRef.current
+      if (action !== null) {
+        policyActionRefreshRef.current = null
+        if (policyActionRef.current === action) policyActionRef.current = null
+        setPendingPolicyAction((current) => current === action.key ? null : current)
+      }
+    })
     return () => { alive = false }
   }, [refresh])
 
@@ -253,9 +263,10 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
         + '下一步：正在刷新策略真实状态；请以刷新后的版本、状态和比例为准，仅当原目标未达成且原动作仍可用时重试。',
       )
     } finally {
-      setRefresh((value) => value + 1)
-      if (policyActionRef.current === action) policyActionRef.current = null
-      setPendingPolicyAction((current) => current === key ? null : current)
+      if (policyActionRef.current === action) {
+        policyActionRefreshRef.current = action
+        setRefresh((value) => value + 1)
+      }
     }
   }
 

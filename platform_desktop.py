@@ -3397,6 +3397,13 @@ class PlatformDesktopApp:
     def check_for_updates(self, *, silent: bool = False) -> None:
         """Check the pinned official GitHub Release manifest in the background."""
 
+        if (
+            self._closed
+            or self._shutdown_cleanup_action is not None
+            or self._update_cleanup_action is not None
+            or self._pending_update_install is not None
+        ):
+            return
         if self._locked:
             if not silent:
                 self._set_status("客户端已锁定，请先解锁。", WARNING)

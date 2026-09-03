@@ -5245,6 +5245,101 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(deployed_audits, 1)
 
+    def test_upload_policy_rollback_rechecks_actor_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        approver_token = self.login(
+            "tenant-a",
+            "approver@example.test",
+            "approver-account-password",
+            self.approver.device_id,
+        )
+
+        def register_approve_deploy(version: str, rollout_percent: int) -> dict[str, object]:
+            registered = self.request(
+                "POST",
+                "/api/v1/admin/policies/upload/versions",
+                headers=self.headers(creator_token),
+                json={"version": version, "change_note": f"review {version}"},
+            )
+            self.assertEqual(registered.status_code, 201, registered.text)
+            approved = self.request(
+                "POST",
+                f"/api/v1/admin/policies/upload/versions/{registered.json()['id']}/approve",
+                headers=self.headers(approver_token),
+            )
+            self.assertEqual(approved.status_code, 200, approved.text)
+            deployed = self.request(
+                "POST",
+                f"/api/v1/admin/policies/upload/versions/{registered.json()['id']}/deploy",
+                headers=self.headers(creator_token),
+                json={"rollout_percent": rollout_percent},
+            )
+            self.assertEqual(deployed.status_code, 200, deployed.text)
+            return registered.json()
+
+        first = register_approve_deploy("upload-rollback-recheck-v1", 100)
+        second = register_approve_deploy("upload-rollback-recheck-v2", 25)
+
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        rollback_recorded = False
+        creator_demoted = False
+
+        def mark_rollback(*args, **kwargs):
+            nonlocal rollback_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "upload_policy.rolled_back":
+                rollback_recorded = True
+            return result
+
+        def demote_after_rollback_commit(session: Session) -> None:
+            nonlocal creator_demoted
+            original_commit(session)
+            if rollback_recorded and not creator_demoted:
+                creator_demoted = True
+                with self.app.state.session_factory() as other_db:
+                    creator = other_db.get(User, self.admin.user_id)
+                    self.assertIsNotNone(creator)
+                    creator.role = "security_auditor"
+                    original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_rollback,
+        ), mock.patch.object(Session, "commit", new=demote_after_rollback_commit):
+            rolled_back = self.request(
+                "POST",
+                "/api/v1/admin/policies/upload/rollback",
+                headers=self.headers(creator_token),
+            )
+
+        self.assertEqual(rolled_back.status_code, 403, rolled_back.text)
+        self.assertNotIn("active_version", rolled_back.text)
+        status = self.request(
+            "GET",
+            "/api/v1/admin/policies/upload",
+            headers=self.headers(approver_token),
+        )
+        self.assertEqual(status.status_code, 200, status.text)
+        self.assertEqual(status.json()["active_version"], "upload-rollback-recheck-v1")
+        with self.app.state.session_factory() as db:
+            rolled_back_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "upload_policy.rolled_back",
+                    AuditEvent.entity_id == first["id"],
+                )
+            )
+            second_policy = db.get(UploadPolicyVersion, second["id"])
+            self.assertIsNotNone(second_policy)
+            self.assertEqual(second_policy.status, "retired")
+        self.assertEqual(rolled_back_audits, 1)
+
     def test_upload_policy_requires_four_eye_approval_and_supports_rollback(self) -> None:
         creator_token = self.login(
             "tenant-a", "admin@example.test", "admin-account-password", self.admin.device_id

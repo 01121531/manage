@@ -9393,5 +9393,10 @@ def admin_rollback_upload_policy(
         details={"version": previous.version, "replaced_version": current.version},
     )
     db.commit()
-    db.refresh(deployment)
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_PLATFORM_ADMIN,),
+    )
+    db.refresh(deployment, with_for_update=True)
     return _upload_policy_deployment_response(db, deployment)

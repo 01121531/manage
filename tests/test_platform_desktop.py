@@ -4842,6 +4842,21 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
+    def test_delayed_update_check_cannot_start_during_session_shutdown(self) -> None:
+        for barrier_name in ("_shutdown_cleanup_action", "_update_cleanup_action"):
+            with self.subTest(barrier=barrier_name):
+                instance = self._event_app()
+                setattr(instance, barrier_name, lambda: None)
+                generation = instance._update_generation
+
+                with mock.patch("platform_desktop.threading.Thread") as thread_factory:
+                    instance.check_for_updates(silent=True)
+
+                thread_factory.assert_not_called()
+                instance._update_client.check.assert_not_called()
+                self.assertEqual(instance._update_generation, generation)
+                self.assertNotIn("disabled", instance.check_update_button.states)
+
     def test_update_download_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
         manifest = mock.Mock(version="9.9.9")

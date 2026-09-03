@@ -3966,6 +3966,10 @@ test('platform admin governs upload policies without browser execution details',
   let rollbackFailures = 1
   let releaseDeploy = () => undefined
   const deployGate = new Promise<void>((resolve) => { releaseDeploy = resolve })
+  let uploadPolicyVersionListRequests = 0
+  let blockRollbackRefresh = false
+  let releaseRollbackRefresh = () => undefined
+  const rollbackRefreshGate = new Promise<void>((resolve) => { releaseRollbackRefresh = resolve })
   let policyStatus = {
     policy_version: 'sub2-2026.07.1', status: 'ready', server_managed: true,
     upload_endpoint_configured: true, upload_secret_configured: true,
@@ -4013,6 +4017,7 @@ test('platform admin governs upload policies without browser execution details',
           error: { code: 'service_unavailable', message: 'must-never-render-upload-policy-error' },
         }, 503)
       }
+      if (blockRollbackRefresh) await rollbackRefreshGate
       return fulfill(policyStatus)
     }
     if (path === '/api/v1/admin/policies/card' && request.method() === 'GET') {
@@ -4040,6 +4045,8 @@ test('platform admin governs upload policies without browser execution details',
       return fulfill([])
     }
     if (path === '/api/v1/admin/policies/upload/versions' && request.method() === 'GET') {
+      uploadPolicyVersionListRequests += 1
+      if (blockRollbackRefresh) await rollbackRefreshGate
       return fulfill(versions)
     }
     if (path === '/api/v1/admin/policies/upload/versions' && request.method() === 'POST') {
@@ -4087,6 +4094,7 @@ test('platform admin governs upload policies without browser execution details',
       }
       if (rollbackFailures > 0) {
         rollbackFailures -= 1
+        blockRollbackRefresh = true
         return fulfill({ error: { code: 'temporarily_unavailable', message: 'must-never-render-policy-rollback-provider-detail' } }, 503)
       }
       return fulfill({ policy_version: 'sub2-2026.07.1', rollout_percent: 100 })
@@ -4246,12 +4254,22 @@ test('platform admin governs upload policies without browser execution details',
 
   await rollback.click()
   rollbackDialog = page.getByRole('dialog', { name: '确认回滚上传策略？' })
+  const policyListsBeforeRollback = policyListRequests
+  const versionListsBeforeRollback = uploadPolicyVersionListRequests
   await rollbackDialog.getByRole('button', { name: '确认回滚' }).click()
   const rollbackError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' })
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(rollbackError).toContainText(marker)
   await expect(rollbackError).toContainText('回滚可能已经生效')
   await expect(rollbackError).toContainText('仅当原目标未达成且原动作仍可用时重试')
   await expect(page.getByText('must-never-render-policy-rollback-provider-detail')).toHaveCount(0)
+  try {
+    await expect.poll(() => policyListRequests).toBeGreaterThan(policyListsBeforeRollback)
+    await expect.poll(() => uploadPolicyVersionListRequests).toBeGreaterThan(versionListsBeforeRollback)
+    await expect(page.locator('.ant-spin')).toBeVisible()
+    expect(rollbackRequests).toBe(1)
+  } finally {
+    releaseRollbackRefresh()
+  }
   await expect(policySummary.getByText('当前生效', { exact: true }).locator('..')).toContainText('sub2-2026.07.1')
   await expect(page.getByRole('button', {
     name: '回滚上传策略（当前 sub2-2026.07.1，目标 sub2-2026.08.0，当前比例 100%）', exact: true,
