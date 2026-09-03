@@ -738,6 +738,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   let cardListRequests = 0
   let enableAttempts = 0
   let disableAttempts = 0
+  let abortNextEnable = false
   let releaseAttempts = 0
   let releaseLateEnable = () => undefined
   const lateEnableGate = new Promise<void>((resolve) => { releaseLateEnable = resolve })
@@ -826,6 +827,10 @@ test('platform admin quarantines and explicitly releases a card before enabling 
         }, 503)
       }
       expect(body).toEqual({ is_active: true })
+      if (abortNextEnable) {
+        abortNextEnable = false
+        return route.abort('failed')
+      }
       enableAttempts += 1
       if (enableAttempts === 1) {
         await lateEnableGate
@@ -931,7 +936,8 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await disableDialog.getByRole('button', { name: '停用并释放' }).click()
   try {
     await expect.poll(() => disableAttempts).toBe(1)
-    const disableError = page.locator('.ant-message-notice').filter({ hasText: '正在重新获取卡资源真实状态' })
+    const disableError = page.locator('.ant-message-notice')
+      .filter({ hasText: '正在重新获取卡资源真实状态' }).last()
     await expect(disableError).toContainText('重新获取完成前不要重复操作')
     await expect(page.getByText('must-never-render-card-disable-provider-detail')).toHaveCount(0)
     await expect(page.getByText('已刷新卡资源真实状态')).toHaveCount(0)
@@ -942,6 +948,19 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await expect(row.getByText('已停用')).toBeVisible()
   await expect(row.getByRole('button', { name: /启用卡 provider-quarantine/ })).toBeEnabled()
   expect(disableAttempts).toBe(1)
+
+  abortNextEnable = true
+  await enableCard.click()
+  const clientFailure = page.locator('.ant-message-notice').filter({
+    hasText: '平台未能确认卡资源状态变更结果',
+  }).last()
+  for (const marker of ['原因：', '影响：', '下一步：']) {
+    await expect(clientFailure).toContainText(marker)
+  }
+  await expect(page.getByText(/Failed to fetch|NetworkError|ERR_FAILED/)).toHaveCount(0)
+  await expect(row.getByText('已停用')).toBeVisible()
+  await expect(enableCard).toBeEnabled()
+  expect(enableAttempts).toBe(2)
 })
 
 test('ops admin reads masked card history and recycles one exact allocation', async ({ page }) => {

@@ -537,6 +537,7 @@ class PlatformClient:
         self._state_lock = threading.RLock()
         self._refresh_lock = threading.Lock()
         self._auth_generation = 0
+        self._pending_access_logouts: list[str] = []
         self._pending_refresh_revocations: dict[int, list[str]] = {}
         self._oidc_session_active = False
         self.last_trace_id: str | None = None
@@ -1257,6 +1258,16 @@ class PlatformClient:
                 "平台登录响应缺少 access_token",
                 trace_id=self.last_trace_id,
             )
+        normalized_access_token = access_token.strip()
+        if (
+            not normalized_access_token
+            or "\r" in normalized_access_token
+            or "\n" in normalized_access_token
+        ):
+            raise PlatformProtocolError(
+                "平台登录响应中的 access_token 无效",
+                trace_id=self.last_trace_id,
+            )
         if (
             not isinstance(expires_in, int)
             or isinstance(expires_in, bool)
@@ -1267,18 +1278,13 @@ class PlatformClient:
                 trace_id=self.last_trace_id,
             )
         with self._state_lock:
-            if generation != self._auth_generation:
-                raise PlatformDeviceAuthorizationError(
-                    "平台登录已取消", code="cancelled"
-                )
-            try:
-                self.set_access_token(access_token)
-            except ValueError as error:
-                raise PlatformProtocolError(
-                    "平台登录响应中的 access_token 无效",
-                    trace_id=self.last_trace_id,
-                ) from error
-        return expires_in
+            if generation == self._auth_generation:
+                self._access_token = normalized_access_token
+                return expires_in
+        self._logout_cancelled_access_token(normalized_access_token)
+        raise PlatformDeviceAuthorizationError(
+            "平台登录已取消", code="cancelled"
+        )
 
     def me(self) -> dict[str, Any]:
         response = self._request_json("GET", "/me")
@@ -1411,30 +1417,39 @@ class PlatformClient:
                     "无法清除已保存的平台会话"
                 )
                 session_error.__cause__ = error
+        remaining_access_tokens = [access_token] if access_token is not None else []
         remaining_refresh_tokens = [refresh_token] if refresh_token is not None else []
 
         def cleanup() -> None:
             first_error: PlatformClientError | None = None
             with self._refresh_lock:
                 with self._state_lock:
+                    late_access_tokens = self._pending_access_logouts
+                    self._pending_access_logouts = []
                     late_tokens = [
                         token
                         for tokens in self._pending_refresh_revocations.values()
                         for token in tokens
                     ]
                     self._pending_refresh_revocations.clear()
+                for late_access_token in late_access_tokens:
+                    if late_access_token not in remaining_access_tokens:
+                        remaining_access_tokens.append(late_access_token)
                 for late_token in late_tokens:
                     if late_token not in remaining_refresh_tokens:
                         remaining_refresh_tokens.append(late_token)
-            if access_token is not None:
+            failed_access_tokens: list[str] = []
+            for captured_access_token in remaining_access_tokens:
                 try:
                     self._request_json(
                         "POST",
                         "/auth/logout",
-                        _access_token_override=access_token,
+                        _access_token_override=captured_access_token,
                     )
                 except PlatformClientError as error:
+                    failed_access_tokens.append(captured_access_token)
                     first_error = error
+            remaining_access_tokens[:] = failed_access_tokens
             failed_refresh_tokens: list[str] = []
             for captured_refresh_token in remaining_refresh_tokens:
                 try:
@@ -1450,6 +1465,16 @@ class PlatformClient:
                 raise first_error
 
         return cleanup
+
+    def _logout_cancelled_access_token(self, access_token: str) -> None:
+        try:
+            self._request_json(
+                "POST", "/auth/logout", _access_token_override=access_token
+            )
+        except PlatformClientError:
+            with self._state_lock:
+                if access_token not in self._pending_access_logouts:
+                    self._pending_access_logouts.append(access_token)
 
     def _revoke_cancelled_oidc_refresh_token(
         self, token_payload: dict[str, Any]

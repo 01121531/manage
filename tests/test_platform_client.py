@@ -1458,6 +1458,44 @@ class PlatformClientTests(unittest.TestCase):
             client.login("tenant-1", "user@example.com", "password", "device-1")
         self.assertFalse(client.is_authenticated)
 
+    def test_cancelled_local_login_logs_out_late_access_token(self):
+        class CancellingLoginOpener(SequenceOpener):
+            client = None
+
+            def __call__(self, request, *, timeout):
+                response = super().__call__(request, timeout=timeout)
+                if request.full_url.endswith("/auth/login"):
+                    self.client.cancel_authentication()
+                return response
+
+        opener = CancellingLoginOpener([
+            FakeResponse({
+                "access_token": "late-local-access",
+                "expires_in": 300,
+                "token_type": "bearer",
+            }),
+            FakeResponse({"status": "logged_out"}),
+        ])
+        client = PlatformClient("https://platform.example", opener=opener)
+        opener.client = client
+
+        with self.assertRaises(PlatformDeviceAuthorizationError) as raised:
+            client.login(
+                "tenant-1",
+                "operator@example.test",
+                "development-password",
+                "device-1",
+            )
+
+        self.assertEqual(raised.exception.code, "cancelled")
+        self.assertFalse(client.is_authenticated)
+        self.assertEqual(len(opener.requests), 2)
+        logout_request = opener.requests[1][0]
+        self.assertTrue(logout_request.full_url.endswith("/auth/logout"))
+        self.assertEqual(
+            logout_request.headers["Authorization"], "Bearer late-local-access"
+        )
+
     def test_requires_an_in_memory_access_token(self):
         client = PlatformClient("https://platform.example")
         with self.assertRaises(PlatformAuthenticationRequiredError):

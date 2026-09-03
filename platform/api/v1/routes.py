@@ -6632,6 +6632,43 @@ def _pool_import_receipt_response(
     )
 
 
+def _committed_pool_import_receipt_response(
+    db: Session,
+    *,
+    principal: AuthPrincipal,
+    receipt_id: str,
+    pool_type: Literal["card", "mailbox"],
+) -> PoolImportReceiptResponse:
+    _lock_admin_write_principal(
+        db,
+        principal,
+        allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+    )
+    receipt = db.scalar(
+        select(PoolImportReceipt)
+        .where(
+            PoolImportReceipt.id == receipt_id,
+            PoolImportReceipt.tenant_id == principal.tenant_id,
+            PoolImportReceipt.pool_type == pool_type,
+            PoolImportReceipt.created_by == principal.user_id,
+            PoolImportReceipt.device_id == principal.device_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="Pool import receipt not found")
+    consumption = db.scalar(
+        select(SecurePoolImportConsumption)
+        .where(SecurePoolImportConsumption.pool_import_receipt_id == receipt.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if consumption is None:
+        raise HTTPException(status_code=500, detail="Pool import consumption not found")
+    return _pool_import_receipt_response(receipt, consumption)
+
+
 def _replay_pool_import_receipt(
     db: Session,
     *,
@@ -7170,9 +7207,12 @@ def admin_import_cards(
         },
     )
     db.commit()
-    db.refresh(receipt)
-    db.refresh(consumption)
-    return _pool_import_receipt_response(receipt, consumption)
+    return _committed_pool_import_receipt_response(
+        db,
+        principal=principal,
+        receipt_id=receipt.id,
+        pool_type="card",
+    )
 
 
 def _compensate_card_allocation(
@@ -8267,9 +8307,12 @@ def admin_import_mailboxes(
         },
     )
     db.commit()
-    db.refresh(receipt)
-    db.refresh(consumption)
-    return _pool_import_receipt_response(receipt, consumption)
+    return _committed_pool_import_receipt_response(
+        db,
+        principal=principal,
+        receipt_id=receipt.id,
+        pool_type="mailbox",
+    )
 
 
 @router.patch(

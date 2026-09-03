@@ -314,11 +314,10 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     try {
       await updateCardState(row.id, isActive)
       message.success(isActive ? '卡资源已启用。' : '卡资源已停用，活动租约已释放。')
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : '平台未能确认卡资源状态。'
+    } catch {
       message.error(
-        `原因：${reason} `
-        + '影响：平台可能已完成卡状态切换和关联资源回收，页面不会按失败响应推断结果。 '
+        '原因：平台未能确认卡资源状态变更结果。'
+        + '影响：状态切换与关联资源回收可能已经生效，页面不会按失败响应推断最终状态。'
         + '下一步：正在重新获取卡资源真实状态；重新获取完成前不要重复操作，仅当目标状态仍未生效时才从同一行重试。',
       )
     } finally {

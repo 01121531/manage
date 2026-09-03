@@ -1088,6 +1088,59 @@ class SecurePoolImportApiTests(unittest.TestCase):
             self.assertIn(first_receipt["ordered_manifest_digest"], audit_json)
             self.assertIn(first_receipt["secure_receipt_fingerprint"], audit_json)
 
+    def test_card_import_rechecks_admin_after_commit(self) -> None:
+        payload = [{
+            "provider_ref": "provider-postcommit-role",
+            "pool_key": "checkout-cn",
+            "region": "cn-east",
+            "brand": "Visa",
+            "last4": "4242",
+        }]
+        _, import_headers = self.import_headers("card", payload)
+        original_commit = Session.commit
+        role_changed = False
+
+        def commit_then_change_role(session: Session) -> None:
+            nonlocal role_changed
+            committing_import = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "admin.cards_imported"
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_import or role_changed:
+                return
+            role_changed = True
+            with self.app.state.session_factory() as other:
+                admin = other.get(User, self.admin.user_id)
+                self.assertIsNotNone(admin)
+                admin.role = "security_auditor"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_change_role):
+            response = self.request(
+                "POST",
+                "/api/v1/admin/cards/imports",
+                headers=import_headers,
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("ordered_manifest_digest", response.text)
+        with self.app.state.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(Card)), 1)
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(PoolImportReceipt)), 1
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(AuditEvent).where(
+                        AuditEvent.event_type == "admin.cards_imported"
+                    )
+                ),
+                1,
+            )
+
     def test_card_import_revalidates_admin_after_conflict_rollback(self) -> None:
         payload = [{
             "provider_ref": "provider-card-race",
