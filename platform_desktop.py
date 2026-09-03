@@ -1176,7 +1176,21 @@ class PlatformDesktopApp:
             target=worker, daemon=True, name="platform-active-task-discovery"
         )
         self._active_task_discovery_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    action.session_generation,
+                    "active_task_discovery_error",
+                    (
+                        action,
+                        PlatformTransportError(
+                            "active task discovery worker unavailable"
+                        ),
+                    ),
+                )
+            )
 
     @staticmethod
     def _recovery_active_upload(
@@ -2164,7 +2178,10 @@ class PlatformDesktopApp:
             name="platform-task-compensation-retry",
         )
         barrier.thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._present_task_compensation_failure(barrier)
 
     def _cancel_task_transition(self) -> None:
         transition = getattr(self, "_task_transition", None)

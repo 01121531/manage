@@ -1346,6 +1346,32 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "创建邮箱任务")
         self.assertEqual(instance.new_task_button.values["state"], "normal")
 
+    def test_provisioning_cleanup_retry_thread_start_failure_keeps_retry(self) -> None:
+        cleanup = mock.Mock(
+            side_effect=PlatformTransportError("raw cleanup failure")
+        )
+        instance, _transition, _client = self._provisioning_compensation_failure_app(
+            cleanup
+        )
+        barrier = instance._task_compensation
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("thread unavailable")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._retry_task_compensation()
+
+        self.assertIs(instance._task_compensation, barrier)
+        self.assertFalse(barrier.in_progress)
+        self.assertIsNone(barrier.thread)
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+
     def test_provisioning_cleanup_retry_is_single_flight(self) -> None:
         retry_started = threading.Event()
         release_retry = threading.Event()
@@ -2555,6 +2581,33 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "创建邮箱任务")
         self.assertEqual(instance.new_task_button.values["state"], "normal")
         self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
+
+    def test_active_task_discovery_thread_start_failure_exposes_retry(self) -> None:
+        instance = self._event_app()
+        instance._task_id = None
+        client = mock.Mock(is_authenticated=True)
+        instance._client = client
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance._discover_active_task()
+            instance._drain_events()
+
+        client.list_tasks.assert_not_called()
+        self.assertIsNone(instance._active_task_discovery_action)
+        self.assertIsNone(instance._active_task_discovery_thread)
+        self.assertTrue(instance._active_task_discovery_required)
+        self.assertEqual(instance.new_task_button.values["text"], "重试检查活动任务")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+        self.assertEqual(instance.close_active_task_button.values["state"], "disabled")
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
 
     def test_active_task_discovery_requires_explicit_takeover(self) -> None:
         instance = self._event_app()
