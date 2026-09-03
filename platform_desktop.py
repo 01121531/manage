@@ -3647,7 +3647,21 @@ class PlatformDesktopApp:
             target=worker, daemon=True, name="platform-upload-create"
         )
         self._upload_submission_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            self._events.put(
+                (
+                    generation,
+                    "upload_submit_error",
+                    (
+                        action,
+                        PlatformClientError(
+                            "upload submission worker unavailable"
+                        ),
+                    ),
+                )
+            )
 
     def _poll_upload(self) -> None:
         if (

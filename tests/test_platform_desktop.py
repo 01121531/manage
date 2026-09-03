@@ -1737,6 +1737,38 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         confirmed_retry = app_instance._upload_attempt_key("Another Store")
         self.assertNotEqual(confirmed_retry, changed_payload)
 
+    def test_upload_submission_thread_start_failure_restores_safe_retry(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._verified_task_id = "task-1"
+        instance.business_entry = mock.Mock()
+        instance.business_entry.get.return_value = "Example Store"
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.submit_upload()
+            instance._drain_events()
+
+        instance._client.create_upload_job.assert_not_called()
+        self.assertIsNone(instance._upload_submission_action)
+        self.assertIsNone(instance._upload_submission_thread)
+        self.assertEqual(
+            instance.business_entry.configure.call_args.kwargs["state"], "normal"
+        )
+        self.assertEqual(instance.upload_button.values["text"], "提交上传")
+        self.assertEqual(instance.upload_button.values["state"], "normal")
+        status = instance.status_label.values["text"]
+        for marker in ("原因：", "影响：", "下一步："):
+            self.assertIn(marker, status)
+        self.assertNotIn("raw thread failure", status)
+
     def test_ambiguous_upload_submission_freezes_and_recovers_same_request(self) -> None:
         first_started = threading.Event()
         release_first = threading.Event()
