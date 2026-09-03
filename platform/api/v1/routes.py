@@ -9151,6 +9151,7 @@ def _register_operational_policy(
         raise HTTPException(
             status_code=409, detail="Policy version already exists for this tenant and domain"
         ) from None
+    policy_id = policy.id
     record_audit(
         db,
         tenant_id=principal.tenant_id,
@@ -9168,7 +9169,18 @@ def _register_operational_policy(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(policy, with_for_update=True)
+    policy = db.scalar(
+        select(OperationalPolicyVersion)
+        .where(
+            OperationalPolicyVersion.id == policy_id,
+            OperationalPolicyVersion.tenant_id == principal.tenant_id,
+            OperationalPolicyVersion.domain == domain,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Policy version not found")
     return _operational_policy_record_response(policy)
 
 

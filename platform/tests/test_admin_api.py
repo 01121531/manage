@@ -7287,6 +7287,76 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(registered_audits, 1)
 
+    def test_operational_policy_register_rechecks_tenant_after_commit(self) -> None:
+        creator_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        registration_recorded = False
+        policy_moved = False
+        policy_id: str | None = None
+
+        def mark_registration(*args, **kwargs):
+            nonlocal registration_recorded, policy_id
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "mail_policy.registered":
+                registration_recorded = True
+                policy_id = kwargs["entity_id"]
+            return result
+
+        def move_policy_after_registration_commit(session: Session) -> None:
+            nonlocal policy_moved
+            original_commit(session)
+            if not registration_recorded or policy_moved:
+                return
+            policy_moved = True
+            self.assertIsNotNone(policy_id)
+            with self.app.state.session_factory() as other_db:
+                policy = other_db.get(OperationalPolicyVersion, policy_id)
+                self.assertIsNotNone(policy)
+                policy.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_registration,
+        ), mock.patch.object(
+            Session,
+            "commit",
+            new=move_policy_after_registration_commit,
+        ):
+            registered = self.request(
+                "POST",
+                "/api/v1/admin/policies/mail/versions",
+                headers=self.headers(creator_token),
+                json={
+                    "version": "mail-register-tenant-recheck-v1",
+                    "change_note": "verify registration tenant binding",
+                    "session_ttl_seconds": 600,
+                    "code_ttl_seconds": 90,
+                    "poll_interval_seconds": 7,
+                },
+            )
+
+        self.assertEqual(registered.status_code, 404, registered.text)
+        self.assertNotIn("mail-register-tenant-recheck-v1", registered.text)
+        with self.app.state.session_factory() as db:
+            policy = db.get(OperationalPolicyVersion, policy_id)
+            registered_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "mail_policy.registered",
+                    AuditEvent.entity_id == policy_id,
+                )
+            )
+        self.assertEqual(policy.tenant_id, "tenant-b")
+        self.assertEqual(policy.status, "draft")
+        self.assertEqual(registered_audits, 1)
+
     def test_operational_policy_approve_rechecks_actor_after_commit(self) -> None:
         creator_token = self.login(
             "tenant-a",

@@ -5060,8 +5060,16 @@ class PlatformDesktopApp:
         failed = tuple(self._clipboard_cleanup_failed or ())
         if not failed or self._clipboard_cleanup_pending:
             return
-        self.login_button.configure(state="disabled")
-        self._set_status("正在重试清除客户端写入的临时剪贴板内容…", ACCENT)
+        try:
+            self.login_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self._set_status(
+                "正在重试清除客户端写入的临时剪贴板内容…", ACCENT
+            )
+        except Exception:
+            pass
         for owner in failed:
             self._clipboard_owner = owner
             self._clear_owned_clipboard(owner[0])
