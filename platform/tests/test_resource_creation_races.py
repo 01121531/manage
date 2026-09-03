@@ -688,6 +688,88 @@ class ResourceCreationRaceTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "succeeded")
         self.assertEqual(response.json()["external_ref"], "sub2-race-winner")
 
+    def test_initial_upload_rejects_active_job_after_task_terminal_commit(self) -> None:
+        task_id = self.create_task("upload-create-terminal-task")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.headers,
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            mailbox_id = db.scalar(select(Mailbox.id).limit(1))
+            db.add(
+                MailSession(
+                    tenant_id=task.tenant_id,
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    device_id=task.device_id,
+                    mailbox_id=mailbox_id,
+                    trace_id=task.trace_id,
+                    status="consumed",
+                    consumed_at=now,
+                    expires_at=now + timedelta(minutes=5),
+                )
+            )
+            db.commit()
+
+        key = "upload-create-terminal-boundary"
+        original_commit = Session.commit
+        task_closed = False
+
+        def commit_then_close_task(session: Session) -> None:
+            nonlocal task_closed
+            creating_upload = any(
+                isinstance(item, AuditEvent) and item.event_type == "upload.queued"
+                for item in session.new
+            )
+            original_commit(session)
+            if not creating_upload or task_closed:
+                return
+            task_closed = True
+            with self.app.state.session_factory() as other:
+                current_task = other.get(Task, task_id)
+                self.assertIsNotNone(current_task)
+                current_task.status = "closed"
+                current_task.closed_at = utc_now()
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_close_task):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/uploads",
+                headers=self.headers,
+                json={
+                    "business_name": "Terminal Boundary Store",
+                    "idempotency_key": key,
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertNotIn('"status":"queued"', response.text)
+        with self.app.state.session_factory() as db:
+            job = db.scalar(select(UploadJob).where(UploadJob.idempotency_key == key))
+            self.assertIsNotNone(job)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == job.id
+                    )
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(AuditEvent).where(
+                        AuditEvent.entity_id == job.id,
+                        AuditEvent.event_type == "upload.queued",
+                    )
+                ),
+                1,
+            )
+
     def test_mail_session_replay_returns_status_after_concurrent_task_close(
         self,
     ) -> None:

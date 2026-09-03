@@ -3926,14 +3926,14 @@ test('platform admin governs upload policies without browser execution details',
     }
     if (path === '/api/v1/admin/policies/upload/rollback') {
       rollbackRequests += 1
-      if (rollbackFailures > 0) {
-        rollbackFailures -= 1
-        return fulfill({ error: { code: 'temporarily_unavailable', message: 'retry later' } }, 503)
-      }
       policyStatus = {
         ...policyStatus,
         active_version: 'sub2-2026.07.1',
         previous_version: 'sub2-2026.08.0',
+      }
+      if (rollbackFailures > 0) {
+        rollbackFailures -= 1
+        return fulfill({ error: { code: 'temporarily_unavailable', message: 'must-never-render-policy-rollback-provider-detail' } }, 503)
       }
       return fulfill({ policy_version: 'sub2-2026.07.1', rollout_percent: 100 })
     }
@@ -4093,15 +4093,16 @@ test('platform admin governs upload policies without browser execution details',
   await rollback.click()
   rollbackDialog = page.getByRole('dialog', { name: '确认回滚上传策略？' })
   await rollbackDialog.getByRole('button', { name: '确认回滚' }).click()
-  await expect(page.getByText('操作未完成，当前生效策略未确认变更；正在刷新真实状态，刷新后可重试。')).toBeVisible()
-  await expect(page.getByText('retry later')).toHaveCount(0)
-  await expect(rollback).toBeEnabled()
-  expect(rollbackRequests).toBe(1)
-  await rollback.click()
-  rollbackDialog = page.getByRole('dialog', { name: '确认回滚上传策略？' })
-  await rollbackDialog.getByRole('button', { name: '确认回滚' }).click()
+  const rollbackError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' })
+  for (const marker of ['原因：', '影响：', '下一步：']) await expect(rollbackError).toContainText(marker)
+  await expect(rollbackError).toContainText('回滚可能已经生效')
+  await expect(rollbackError).toContainText('仅当原目标未达成且原动作仍可用时重试')
+  await expect(page.getByText('must-never-render-policy-rollback-provider-detail')).toHaveCount(0)
   await expect(policySummary.getByText('当前生效', { exact: true }).locator('..')).toContainText('sub2-2026.07.1')
-  expect(rollbackRequests).toBe(2)
+  await expect(page.getByRole('button', {
+    name: '回滚上传策略（当前 sub2-2026.07.1，目标 sub2-2026.08.0，当前比例 100%）', exact: true,
+  })).toBeEnabled()
+  expect(rollbackRequests).toBe(1)
 
   const browserStorage = await page.evaluate(() => ({
     local: Object.values(localStorage),

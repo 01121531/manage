@@ -3364,7 +3364,8 @@ class PlatformDesktopApp:
                 self._set_status(
                     f"{format_operation_error(error)} 客户端仍保持锁定。", ERROR
                 )
-        self.root.after(100, self._drain_events)
+        if not self._closed:
+            self.root.after(100, self._drain_events)
 
     def check_for_updates(self, *, silent: bool = False) -> None:
         """Check the pinned official GitHub Release manifest in the background."""

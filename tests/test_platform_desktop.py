@@ -595,6 +595,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.destroy_calls, 1)
         self.assertTrue(instance._closed)
 
+    def test_close_cleanup_event_does_not_reschedule_destroyed_root(self) -> None:
+        class DestroySensitiveRoot(RootStub):
+            def after(self, delay, callback, *args):
+                if self.destroy_calls:
+                    raise tk.TclError("root already destroyed")
+                super().after(delay, callback, *args)
+
+        instance = self._event_app()
+        instance.root = DestroySensitiveRoot()
+        instance._shutdown_generation = 1
+        instance._shutdown_cleanup_in_progress = True
+        instance._shutdown_cleanup_action = mock.Mock()
+        instance._shutdown_intent = "close"
+        instance._shutdown_message = "已安全退出平台。"
+        instance._events.put((1, "shutdown_cleanup_succeeded", "close"))
+
+        instance._drain_events()
+
+        self.assertTrue(instance._closed)
+        self.assertEqual(instance.root.destroy_calls, 1)
+        self.assertEqual(instance.root.scheduled, [])
+
     def test_destroy_remains_blocked_after_bounded_clipboard_retry_budget(self) -> None:
         instance = self._event_app()
         instance._current_code = "246810"

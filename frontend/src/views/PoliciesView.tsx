@@ -247,7 +247,11 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
       await operation()
       message.success(success)
     } catch {
-      message.error('操作未完成，当前生效策略未确认变更；正在刷新真实状态，刷新后可重试。')
+      message.error(
+        '原因：平台未能确认策略操作结果。'
+        + '影响：登记、审批、灰度或全量发布、回滚可能已经生效；页面不会按失败响应推断最终状态。'
+        + '下一步：正在刷新策略真实状态；请以刷新后的版本、状态和比例为准，仅当原目标未达成且原动作仍可用时重试。',
+      )
     } finally {
       setRefresh((value) => value + 1)
       if (policyActionRef.current === action) policyActionRef.current = null

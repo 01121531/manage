@@ -4483,6 +4483,32 @@ def create_upload_job(
     )
     db.commit()
     db.refresh(job, with_for_update=True)
+    current_task = db.scalar(
+        select(Task)
+        .where(
+            Task.id == task.id,
+            Task.tenant_id == principal.tenant_id,
+            Task.user_id == principal.user_id,
+            Task.device_id == principal.device_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if current_task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _lock_task_creation_principal(db, principal)
+    if current_task.status in _TERMINAL_TASK_STATUSES and job.status in {
+        "queued",
+        "running",
+        "cancel_pending",
+        "unknown",
+    }:
+        raise BusinessHTTPException(
+            status_code=409,
+            code="task_cleanup_pending",
+            message="Task is closed while upload cleanup is pending",
+            recovery_hint="刷新任务和上传状态；资源清理完成前不要重复提交",
+        )
     return _upload_job_response(job)
 
 
