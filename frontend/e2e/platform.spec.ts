@@ -2900,6 +2900,8 @@ test('task details never mix a filtered task with a stale or late timeline', asy
 
 test('audit table isolates stale loads and recovers from the current error', async ({ page }) => {
   const auditActors: string[] = []
+  let emptyRequests = 0
+  let allowEmptySuccess = false
   let releaseLateRequest = () => undefined
   let lateRequestCompleted = false
   const lateRequestGate = new Promise<void>((resolve) => { releaseLateRequest = resolve })
@@ -2939,6 +2941,8 @@ test('audit table isolates stale loads and recovers from the current error', asy
       const actor = url.searchParams.get('actor_id') ?? ''
       auditActors.push(actor)
       if (!actor) {
+        emptyRequests += 1
+        if (allowEmptySuccess) return fulfill([])
         return fulfill({
           error: { code: 'service_unavailable', message: 'audit temporarily unavailable' },
         }, 503)
@@ -2984,6 +2988,12 @@ test('audit table isolates stale loads and recovers from the current error', asy
 
   await expect(page.getByText('数据暂不可用')).toBeVisible()
   await expect(page.getByRole('alert')).toContainText('平台依赖暂不可用，请稍后重试。')
+  allowEmptySuccess = true
+  const failedEmptyRequests = emptyRequests
+  await page.getByRole('button', { name: '重新加载数据' }).click()
+  await expect.poll(() => emptyRequests).toBeGreaterThan(failedEmptyRequests)
+  await expect(page.getByText('数据暂不可用')).toHaveCount(0)
+  await expect(page.getByText('暂无审计事件')).toBeVisible()
   await page.getByLabel('操作者').fill('actor-late')
   await page.getByRole('button', { name: /检\s*索/ }).click()
   try {

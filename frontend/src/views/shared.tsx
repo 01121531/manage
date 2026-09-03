@@ -6,7 +6,7 @@ import {
   LoadingOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { Alert, Card, Empty, Spin, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import type { CardSummary, MailboxSummary, ManagedUserRole } from '../types'
 
@@ -195,6 +195,7 @@ export function RemoteTable<T extends object>({ loader, columns, empty }: {
   const [rows, setRows] = useState<T[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const [retryGeneration, setRetryGeneration] = useState(0)
   useEffect(() => {
     let alive = true
     setLoading(true)
@@ -203,8 +204,14 @@ export function RemoteTable<T extends object>({ loader, columns, empty }: {
       if (alive) setError(reason instanceof Error ? reason.message : '读取失败')
     }).finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [loader])
+  }, [loader, retryGeneration])
   if (loading) return <div className="centered"><Spin /></div>
-  if (error) return <Alert type="warning" showIcon message="数据暂不可用" description={error} />
+  if (error) return <Alert
+    type="warning"
+    showIcon
+    message="数据暂不可用"
+    description={`原因：${error}；影响：当前列表未加载；下一步：检查网络后重新加载数据。`}
+    action={<Button onClick={() => setRetryGeneration((value) => value + 1)}>重新加载数据</Button>}
+  />
   return <Table columns={columns} dataSource={rows} rowKey={(row) => String((row as { id: string }).id)} locale={{ emptyText: <Empty description={empty} /> }} scroll={{ x: 760 }} />
 }

@@ -906,7 +906,7 @@ class PlatformDesktopApp:
             return
         self._locked = True
         self._cancel_card_reveal()
-        self._cancel_task_transition()
+        self._cancel_task_transition(retain_failure=True)
         self.stop_polling()
         self._paste_sequence.stop()
         self._close_task_history()
@@ -2303,12 +2303,49 @@ class PlatformDesktopApp:
         except RuntimeError:
             self._present_task_compensation_failure(barrier)
 
-    def _cancel_task_transition(self) -> None:
+    def _cancel_task_transition(self, *, retain_failure: bool = False) -> None:
         transition = getattr(self, "_task_transition", None)
         if transition is None:
             return
         cleanup = transition.cancel()
-        self._start_task_cleanup(cleanup)
+        if cleanup is None or not retain_failure:
+            self._start_task_cleanup(cleanup)
+            return
+        barrier = _TaskProvisioningCompensation(
+            generation=self._task_generation,
+            transition=transition,
+            cleanup=cleanup,
+        )
+        barrier.in_progress = True
+        self._task_compensation = barrier
+        self._task_transition = None
+
+        def worker() -> None:
+            try:
+                cleanup()
+            except PlatformClientError:
+                kind = "task_compensation_error"
+            else:
+                kind = "task_compensation_succeeded"
+            self._events.put((barrier.generation, kind, barrier))
+
+        thread = threading.Thread(
+            target=worker,
+            daemon=False,
+            name="platform-task-cancel-compensation",
+        )
+        barrier.thread = thread
+        try:
+            thread.start()
+        except RuntimeError:
+            barrier.thread = None
+            try:
+                cleanup()
+            except PlatformClientError:
+                self._present_task_compensation_failure(barrier)
+            else:
+                barrier.in_progress = False
+                self._task_compensation = None
 
     def _drain_events(self) -> None:
         if self._closed:

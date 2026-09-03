@@ -1651,6 +1651,32 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         ):
             self.assertEqual(widget.values["state"], "disabled")
 
+    def test_lock_retains_failed_transition_cleanup_for_retry(self) -> None:
+        failed = threading.Event()
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def _close_task_with_access_token(_task_id, _access_token):
+                failed.set()
+                raise PlatformTransportError("close failed")
+
+        instance = self._event_app()
+        instance._client = Client()
+        transition = TaskTransitionCleanup(instance._client, "captured-access")
+        transition.attach("task-1")
+        instance._task_transition = transition
+
+        instance.lock()
+        self.assertTrue(failed.wait(timeout=1))
+        instance._drain_events()
+
+        self.assertIsNotNone(instance._task_compensation)
+        self.assertIs(instance._task_compensation.transition, transition)
+        self.assertEqual(instance.new_task_button.values["text"], "重试资源关闭")
+        self.assertEqual(instance.new_task_button.values["state"], "disabled")
+
     def test_task_switch_preparation_failure_clears_sensitive_values_but_keeps_owner(self) -> None:
         code = "246810"
         card = "4111111111111111\t12/30"
