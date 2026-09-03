@@ -1829,6 +1829,21 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             message="会话已过期，已停止任务并清除临时数据。"
         )
 
+    def test_stale_session_countdown_cannot_refresh_logged_out_client(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(
+            is_authenticated=False,
+            can_refresh_oidc_session=True,
+        )
+        instance._session_deadline = time.monotonic() + 30
+        instance._refresh_session_async = mock.Mock()
+        scheduled_before = len(instance.root.scheduled)
+
+        instance._update_session_countdown(instance._session_generation)
+
+        instance._refresh_session_async.assert_not_called()
+        self.assertEqual(len(instance.root.scheduled), scheduled_before)
+
     def test_refresh_thread_start_failure_enters_session_failure_path(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(can_refresh_oidc_session=True)

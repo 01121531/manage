@@ -1487,6 +1487,10 @@ class PlatformDesktopApp:
     def _update_session_countdown(self, generation: int) -> None:
         if self._closed or generation != self._session_generation:
             return
+        if not self._locked and (
+            self._client is None or not self._client.is_authenticated
+        ):
+            return
         remaining = max(0, int(self._session_deadline - time.monotonic()))
         minutes, seconds = divmod(remaining, 60)
         if self._locked:

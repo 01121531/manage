@@ -927,6 +927,58 @@ class CardAllocationTests(unittest.TestCase):
         ):
             self.assertNotIn(sensitive, replay.text)
 
+    def test_card_mutations_recheck_operator_before_tenant_compensation(self) -> None:
+        token = self.login()
+        replacement_task_id = self.create_task(token, "card-preflight-replacement")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{replacement_task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(original.status_code, 201, original.text)
+        now = utc_now()
+        captured_principal = AuthPrincipal(
+            user_id=self.identity.user_id,
+            tenant_id="tenant-card",
+            device_id=self.identity.device_id,
+            email="card-owner@example.test",
+            role="operator",
+            identity_kind="local",
+            auth_time=now,
+            acr=None,
+            amr=(),
+            access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            access_token_expires_at=now + timedelta(minutes=15),
+            access_token_revoked=False,
+        )
+        with self.app.state.session_factory() as db:
+            db.get(User, self.identity.user_id).role = "security_auditor"
+            db.commit()
+
+        self.app.dependency_overrides[get_operator_principal] = (
+            lambda: captured_principal
+        )
+        try:
+            with mock.patch.object(
+                routes,
+                "_compensate_expired_card_leases",
+            ) as compensate:
+                allocation = self.request(
+                    "POST",
+                    f"/api/v1/tasks/{replacement_task_id}/card-allocations",
+                )
+                replacement = self.request(
+                    "POST",
+                    f"/api/v1/tasks/{replacement_task_id}/card-allocations/"
+                    f"{original.json()['id']}/replace",
+                )
+        finally:
+            self.app.dependency_overrides.pop(get_operator_principal, None)
+
+        self.assertEqual(allocation.status_code, 403, allocation.text)
+        self.assertEqual(replacement.status_code, 403, replacement.text)
+        compensate.assert_not_called()
+
     def test_replacement_reuses_original_frozen_selection_rule(self) -> None:
         legacy_rule = {
             "task_type": "card_checkout",

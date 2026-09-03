@@ -3093,6 +3093,8 @@ def allocate_card(
     principal: AuthPrincipal = Depends(get_operator_principal),
     db: Session = Depends(get_db),
 ) -> CardAllocationResponse:
+    _lock_task_creation_principal(db, principal)
+    db.rollback()
     compensation_now = _utc_now()
     _compensate_expired_card_leases(
         db,
@@ -3312,6 +3314,8 @@ def replace_card_allocation(
     principal: AuthPrincipal = Depends(get_operator_principal),
     db: Session = Depends(get_db),
 ) -> CardAllocationResponse:
+    _lock_task_creation_principal(db, principal)
+    db.rollback()
     _compensate_expired_card_leases(
         db,
         tenant_id=principal.tenant_id,
