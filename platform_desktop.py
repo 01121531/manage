@@ -1415,7 +1415,22 @@ class PlatformDesktopApp:
             target=worker, daemon=False, name="platform-active-task-recovery"
         )
         self._task_transition_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            transition.worker_finished()
+            self._events.put(
+                (
+                    action.task_generation,
+                    "active_task_recovery_error",
+                    (
+                        action,
+                        PlatformTransportError(
+                            "active task recovery worker unavailable"
+                        ),
+                    ),
+                )
+            )
 
     def close_active_task(self) -> None:
         recovery = self._active_task_recovery

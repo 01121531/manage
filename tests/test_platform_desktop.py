@@ -2888,6 +2888,41 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.new_task_button.values["text"], "重试接管活动任务")
         self.assertNotIn("raw offline failure", instance.status_label.values["text"])
 
+    def test_takeover_thread_start_failure_exposes_retry(self) -> None:
+        instance = self._event_app()
+        recovery = self._recovery_snapshot()
+        instance._task_id = recovery.task.id
+        instance._active_task_recovery = recovery
+        transition = mock.Mock(cancelled=False)
+        client = mock.Mock(is_authenticated=True)
+        client.begin_task_transition.return_value = transition
+        instance._client = client
+
+        class FailingThread:
+            def __init__(self, **_):
+                pass
+
+            @staticmethod
+            def start() -> None:
+                raise RuntimeError("raw thread failure")
+
+        with mock.patch("platform_desktop.threading.Thread", FailingThread):
+            instance.take_over_active_task()
+            instance._drain_events()
+
+        client.get_task_timeline.assert_not_called()
+        transition.worker_finished.assert_called_once_with()
+        transition.cancel.assert_not_called()
+        self.assertIsNone(instance._active_task_recovery_action)
+        self.assertIsNone(instance._task_transition)
+        self.assertIsNone(instance._task_transition_thread)
+        self.assertEqual(instance._task_id, recovery.task.id)
+        self.assertIs(instance._active_task_recovery, recovery)
+        self.assertEqual(instance.new_task_button.values["text"], "重试接管活动任务")
+        self.assertEqual(instance.new_task_button.values["state"], "normal")
+        self.assertEqual(instance.close_active_task_button.values["state"], "normal")
+        self.assertNotIn("raw thread failure", instance.status_label.values["text"])
+
     def test_discovery_failure_blocks_direct_task_creation_until_retry(self) -> None:
         instance = self._event_app()
         instance._task_id = None
