@@ -281,6 +281,7 @@ class PlatformDesktopApp:
         self._terminal_task_cleanup_generation = 0
         self._task_compensation_lock = threading.Lock()
         self._task_compensation: _TaskProvisioningCompensation | None = None
+        self._detached_task_cleanup_threads: list[threading.Thread] = []
         self._mail_session_id: str | None = None
         self._mail_session_token: str | None = None
         self._mail_poll_interval_seconds = POLL_SECONDS
@@ -2352,9 +2353,16 @@ class PlatformDesktopApp:
             daemon=False,
             name="platform-task-compensation",
         )
+        self._detached_task_cleanup_threads = [
+            existing
+            for existing in self._detached_task_cleanup_threads
+            if existing.is_alive()
+        ]
+        self._detached_task_cleanup_threads.append(thread)
         try:
             thread.start()
         except RuntimeError:
+            self._detached_task_cleanup_threads.remove(thread)
             self._run_task_cleanup(cleanup)
 
     def _present_task_compensation_failure(
@@ -3516,6 +3524,9 @@ class PlatformDesktopApp:
             self, "_active_task_discovery_thread", None
         )
         history_threads = tuple(getattr(self, "_history_threads", ()))
+        detached_task_cleanup_threads = tuple(
+            getattr(self, "_detached_task_cleanup_threads", ())
+        )
         unlock_action = getattr(self, "_unlock_action", None)
         unlock_thread = getattr(self, "_unlock_thread", None)
         if unlock_action is not None:
@@ -3590,6 +3601,9 @@ class PlatformDesktopApp:
             for history_thread in history_threads:
                 if history_thread.is_alive():
                     history_thread.join()
+            for cleanup_thread in detached_task_cleanup_threads:
+                if cleanup_thread.is_alive():
+                    cleanup_thread.join()
             if unlock_thread is not None and unlock_thread.is_alive():
                 unlock_thread.join(CARD_REVEAL_SHUTDOWN_WAIT_SECONDS)
                 if unlock_thread.is_alive():

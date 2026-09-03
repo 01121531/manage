@@ -4616,6 +4616,14 @@ def cancel_upload_job(
     )
     db.commit()
     db.refresh(job, with_for_update=True)
+    if principal.role == ROLE_OPERATOR:
+        _lock_task_creation_principal(db, principal)
+    else:
+        _lock_admin_write_principal(
+            db,
+            principal,
+            allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
+        )
     return _upload_job_response(job)
 
 

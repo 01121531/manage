@@ -144,6 +144,7 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         instance._terminal_task_cleanup_generation = 0
         instance._task_compensation_lock = threading.Lock()
         instance._task_compensation = None
+        instance._detached_task_cleanup_threads = []
         instance._mail_session_id = "mail-1"
         instance._mail_session_token = "opaque-session-token"
         instance._card_allocation_id = "allocation-1"
@@ -1177,6 +1178,41 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         transition.cancel.assert_called_once_with()
         instance._start_task_cleanup.assert_called_once_with(cleanup)
         cleanup.assert_not_called()
+
+    def test_logout_waits_for_detached_task_cleanup_before_device_cleanup(self) -> None:
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+        order = []
+
+        def cleanup():
+            cleanup_started.set()
+            release_cleanup.wait(timeout=2)
+            order.append("task-cleanup-finished")
+            raise PlatformTransportError("detached cleanup not confirmed")
+
+        class Client:
+            is_authenticated = True
+
+            @staticmethod
+            def prepare_logout_cleanup(_task_id):
+                return lambda: order.append("logout-cleanup")
+
+        instance = self._event_app()
+        instance._client = Client()
+        instance._start_task_cleanup(cleanup)
+        cleanup_thread = instance._detached_task_cleanup_threads[-1]
+        self.assertTrue(cleanup_started.wait(timeout=1))
+
+        instance.logout()
+        self.assertTrue(instance._shutdown_cleanup_thread.is_alive())
+        self.assertEqual(order, [])
+
+        release_cleanup.set()
+        cleanup_thread.join(timeout=1)
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertEqual(order, ["task-cleanup-finished", "logout-cleanup"])
 
     def test_task_provisioning_rejects_unusable_resource_snapshots(self) -> None:
         future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()

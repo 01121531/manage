@@ -737,9 +737,13 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   const quarantineGate = new Promise<void>((resolve) => { releaseQuarantine = resolve })
   let cardListRequests = 0
   let enableAttempts = 0
+  let disableAttempts = 0
   let releaseAttempts = 0
   let releaseLateEnable = () => undefined
   const lateEnableGate = new Promise<void>((resolve) => { releaseLateEnable = resolve })
+  let blockNextCardList = false
+  let releaseCardList = () => undefined
+  const cardListGate = new Promise<void>((resolve) => { releaseCardList = resolve })
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -772,6 +776,10 @@ test('platform admin quarantines and explicitly releases a card before enabling 
     }
     if (path === '/api/v1/admin/cards' && request.method() === 'GET') {
       cardListRequests += 1
+      if (blockNextCardList) {
+        blockNextCardList = false
+        await cardListGate
+      }
       return fulfill(poolPage([card]))
     }
     if (path === '/api/v1/admin/cards/card-quarantine/quarantine' && request.method() === 'POST') {
@@ -808,7 +816,16 @@ test('platform admin quarantines and explicitly releases a card before enabling 
       return fulfill(card)
     }
     if (path === '/api/v1/admin/cards/card-quarantine' && request.method() === 'PATCH') {
-      expect(request.postDataJSON()).toEqual({ is_active: true })
+      const body = request.postDataJSON() as { is_active: boolean }
+      if (!body.is_active) {
+        disableAttempts += 1
+        card = { ...card, status: 'disabled', is_active: false }
+        blockNextCardList = true
+        return fulfill({
+          error: { code: 'service_unavailable', message: 'must-never-render-card-disable-provider-detail' },
+        }, 503)
+      }
+      expect(body).toEqual({ is_active: true })
       enableAttempts += 1
       if (enableAttempts === 1) {
         await lateEnableGate
@@ -905,6 +922,26 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await enableCard.click()
   await expect(row.getByText('可用')).toBeVisible()
   expect(enableAttempts).toBe(2)
+
+  const disableCard = row.getByRole('button', {
+    name: '停用卡 provider-quarantine（•••• 4242，card-quarantine）', exact: true,
+  })
+  await disableCard.click()
+  const disableDialog = page.getByRole('dialog', { name: '确认停用卡 provider-quarantine？' })
+  await disableDialog.getByRole('button', { name: '停用并释放' }).click()
+  try {
+    await expect.poll(() => disableAttempts).toBe(1)
+    const disableError = page.locator('.ant-message-notice').filter({ hasText: '正在重新获取卡资源真实状态' })
+    await expect(disableError).toContainText('重新获取完成前不要重复操作')
+    await expect(page.getByText('must-never-render-card-disable-provider-detail')).toHaveCount(0)
+    await expect(page.getByText('已刷新卡资源真实状态')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /卡 provider-quarantine/ })).toHaveCount(0)
+  } finally {
+    releaseCardList()
+  }
+  await expect(row.getByText('已停用')).toBeVisible()
+  await expect(row.getByRole('button', { name: /启用卡 provider-quarantine/ })).toBeEnabled()
+  expect(disableAttempts).toBe(1)
 })
 
 test('ops admin reads masked card history and recycles one exact allocation', async ({ page }) => {

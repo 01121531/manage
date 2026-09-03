@@ -50,6 +50,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   const [lastCardImportReceipt, setLastCardImportReceipt] = useState<PoolImportReceipt>()
   const [cardActionId, setCardActionId] = useState<string | null>(null)
   const cardActionRef = useRef<{ cardId: string; pending: boolean } | null>(null)
+  const cardActionRefreshRef = useRef<{ cardId: string; pending: boolean } | null>(null)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [cardTimeline, setCardTimeline] = useState<CardTimeline | null>(null)
   const [timelineLoading, setTimelineLoading] = useState(false)
@@ -120,7 +121,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
         }
       })
       .finally(() => {
-        if (cardListGenerationRef.current === generation) setLoading(false)
+        if (cardListGenerationRef.current === generation) {
+          setLoading(false)
+          const action = cardActionRefreshRef.current
+          if (action !== null) {
+            cardActionRefreshRef.current = null
+            releaseCardAction(action)
+          }
+        }
       })
     return () => {
       controller.abort()
@@ -311,11 +319,11 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.error(
         `原因：${reason} `
         + '影响：平台可能已完成卡状态切换和关联资源回收，页面不会按失败响应推断结果。 '
-        + '下一步：已刷新卡资源真实状态；若目标状态未生效，可从同一入口重试。',
+        + '下一步：正在重新获取卡资源真实状态；重新获取完成前不要重复操作，仅当目标状态仍未生效时才从同一行重试。',
       )
     } finally {
+      cardActionRefreshRef.current = action
       refreshCardsFromServer()
-      releaseCardAction(action)
     }
   }
 
