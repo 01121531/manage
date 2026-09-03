@@ -307,6 +307,11 @@ class RollbackReleaseTests(unittest.TestCase):
         )
         self.vault_sink_validator = vault_sinks.start()
         self.addCleanup(vault_sinks.stop)
+        sub2_egress = mock.patch(
+            "scripts.rollback_release.validate_sub2_egress_policy"
+        )
+        self.sub2_egress_validator = sub2_egress.start()
+        self.addCleanup(sub2_egress.stop)
 
     def test_rollback_runbook_is_executable_and_has_no_legacy_path(self) -> None:
         text = (ROOT / "deploy" / "runbooks" / "rollback.md").read_text(

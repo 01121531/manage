@@ -326,6 +326,11 @@ class DeployReleaseTests(unittest.TestCase):
         )
         self.vault_sink_validator = self.vault_sink_patch.start()
         self.addCleanup(self.vault_sink_patch.stop)
+        self.sub2_egress_patch = mock.patch(
+            "scripts.deploy_release.validate_sub2_egress_policy"
+        )
+        self.sub2_egress_validator = self.sub2_egress_patch.start()
+        self.addCleanup(self.sub2_egress_patch.stop)
         self.intake_patch = mock.patch(
             "scripts.deploy_release.load_phase_checkpoint"
         )

@@ -60,6 +60,10 @@ from scripts.deploy_release_evidence import (
 from scripts.release_control_lock import ReleaseControlLocked, release_control_lock
 from scripts.validate_edge_tls import EdgeTlsError, validate_edge_tls
 from scripts.vault_token_sinks import VaultTokenSinkError, validate_vault_token_sinks
+from scripts.sub2_egress_preflight import (
+    Sub2EgressPreflightError,
+    validate_sub2_egress_policy,
+)
 from scripts.tls_runtime_identity import (
     TlsRuntimeIdentityError,
     expected_internal_fingerprints,
@@ -392,6 +396,13 @@ def execute_deployment(
                 "production Vault token sink preflight failed"
             ) from None
         evidence.check("vault_sink_checks_passed", 1)
+
+        try:
+            validate_sub2_egress_policy(PRODUCTION_ENV_FILE)
+        except Sub2EgressPreflightError:
+            raise DeploymentError(
+                "production Sub2 egress preflight failed"
+            ) from None
 
         try:
             environment = plan.compose_environment()

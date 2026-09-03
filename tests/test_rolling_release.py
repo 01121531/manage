@@ -209,6 +209,7 @@ class RollingReleaseTests(unittest.TestCase):
                 return_value=TLS_FINGERPRINTS,
             ),
             mock.patch("scripts.rolling_release.validate_vault_token_sinks"),
+            mock.patch("scripts.rolling_release.validate_sub2_egress_policy"),
             mock.patch("scripts.rolling_release._assert_release_checkout"),
             mock.patch("scripts.rolling_release._verify_supply_chain"),
             mock.patch("scripts.rolling_release._pull_images"),

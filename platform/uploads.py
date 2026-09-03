@@ -510,6 +510,21 @@ def normalize_generic_sub2_upload_url(value: str) -> str:
     return normalized
 
 
+def validate_generic_sub2_upload_endpoint(
+    value: str,
+    allowed_origins: Sequence[str],
+) -> str:
+    normalized = normalize_generic_sub2_upload_url(value)
+    origin_keys = tuple(
+        _origin_key(origin, allow_path=False) for origin in allowed_origins
+    )
+    if not origin_keys or len(set(origin_keys)) != len(origin_keys):
+        raise ValueError("Sub2 allowed origins policy is invalid")
+    if _origin_key(normalized, allow_path=True) not in origin_keys:
+        raise ValueError("Sub2 upload origin is not allowed")
+    return normalized
+
+
 def sub2_upload_endpoint_configured(value: str | None) -> bool:
     if not value:
         return False
@@ -569,15 +584,12 @@ class HttpSub2Adapter:
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
-        self.upload_url = normalize_generic_sub2_upload_url(upload_url)
-        origin_keys = tuple(
+        self.upload_url = validate_generic_sub2_upload_endpoint(
+            upload_url, allowed_origins
+        )
+        self.allowed_origins = frozenset(
             _origin_key(origin, allow_path=False) for origin in allowed_origins
         )
-        if not origin_keys or len(set(origin_keys)) != len(origin_keys):
-            raise ValueError("Sub2 allowed origins policy is invalid")
-        if _origin_key(self.upload_url, allow_path=True) not in origin_keys:
-            raise ValueError("Sub2 upload origin is not allowed")
-        self.allowed_origins = frozenset(origin_keys)
         self.secret_resolver = secret_resolver
         self.timeout = timeout
         self._opener = opener

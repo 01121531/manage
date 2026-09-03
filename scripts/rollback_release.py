@@ -40,6 +40,10 @@ from scripts.tls_runtime_identity import (
 )
 from scripts.validate_edge_tls import EdgeTlsError, validate_edge_tls
 from scripts.vault_token_sinks import VaultTokenSinkError, validate_vault_token_sinks
+from scripts.sub2_egress_preflight import (
+    Sub2EgressPreflightError,
+    validate_sub2_egress_policy,
+)
 from scripts.external_yaml import load_unique_yaml_with_text
 from scripts.release_control_lock import ReleaseControlLocked, release_control_lock
 from scripts.rollback_release_evidence import (
@@ -897,6 +901,12 @@ def execute_rollback(
                 "production Vault token sink preflight failed"
             ) from None
         evidence.check("vault_sink_checks_passed", 1)
+        try:
+            validate_sub2_egress_policy(PRODUCTION_ENV_FILE)
+        except Sub2EgressPreflightError:
+            raise RollbackError(
+                "production Sub2 egress preflight failed"
+            ) from None
         environment = plan.compose_environment()
         command_runner = runner or SubprocessRunner()
 

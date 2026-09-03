@@ -55,6 +55,10 @@ from scripts.tls_runtime_identity import (
 )
 from scripts.validate_edge_tls import EdgeTlsError, validate_edge_tls
 from scripts.vault_token_sinks import VaultTokenSinkError, validate_vault_token_sinks
+from scripts.sub2_egress_preflight import (
+    Sub2EgressPreflightError,
+    validate_sub2_egress_policy,
+)
 
 
 ROLLING_COMPOSE = ROOT / "docker-compose.rolling.yml"
@@ -662,12 +666,14 @@ def _execute_locked(
             now=datetime.now(timezone.utc),
         )
         validate_vault_token_sinks(PRODUCTION_ENV_FILE, PRODUCTION_COMPOSE)
+        validate_sub2_egress_policy(PRODUCTION_ENV_FILE)
         environment = plan.compose_environment()
     except (
         RollbackError,
         EdgeTlsError,
         VaultTokenSinkError,
         ComposeEnvironmentError,
+        Sub2EgressPreflightError,
         TlsRuntimeIdentityError,
     ) as error:
         raise RollingReleaseError("rolling release preflight failed") from error
