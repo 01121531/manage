@@ -3159,6 +3159,75 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(persisted.is_active)
         self.assertEqual(enabled_audits, 1)
 
+    def test_quarantined_card_disable_rechecks_target_binding_after_compensation(
+        self,
+    ) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        card = provision_card(
+            self.app.state.session_factory,
+            tenant_id="tenant-a",
+            provider_ref="post-compensation-moved-quarantined-state-card",
+            brand="Visa",
+            last4="4242",
+            secret_ref="vault://secret/cards/post-compensation-moved-quarantined-state",
+        )
+        quarantined = self.request(
+            "POST",
+            f"/api/v1/admin/cards/{card.card_id}/quarantine",
+            headers=self.headers(admin_token),
+            json={"reason_code": "suspected_compromise"},
+        )
+        self.assertEqual(quarantined.status_code, 200, quarantined.text)
+
+        original_compensate = routes._compensate_unavailable_card
+        original_commit = Session.commit
+        card_moved = False
+
+        def compensate_then_move(*args, **kwargs):
+            nonlocal card_moved
+            result = original_compensate(*args, **kwargs)
+            if card_moved:
+                return result
+            card_moved = True
+            with self.app.state.session_factory() as other:
+                current_card = other.get(Card, card.card_id)
+                self.assertIsNotNone(current_card)
+                current_card.tenant_id = "tenant-b"
+                original_commit(other)
+            return result
+
+        with mock.patch.object(
+            routes,
+            "_compensate_unavailable_card",
+            new=compensate_then_move,
+        ):
+            response = self.request(
+                "PATCH",
+                f"/api/v1/admin/cards/{card.card_id}",
+                headers=self.headers(admin_token),
+                json={"is_active": False},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("4242", response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(Card, card.card_id)
+            quarantine_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.card_quarantined",
+                    AuditEvent.entity_id == card.card_id,
+                )
+            )
+        self.assertEqual(persisted.tenant_id, "tenant-b")
+        self.assertFalse(persisted.is_active)
+        self.assertIsNotNone(persisted.quarantined_at)
+        self.assertEqual(quarantine_audits, 1)
+
     def test_card_state_rechecks_access_token_revocation_after_commit(self) -> None:
         admin_token = self.login(
             "tenant-a",

@@ -3351,8 +3351,16 @@ class PlatformDesktopApp:
                 if snapshot.code:
                     self._mark_current_task_verified()
                     self._current_code = snapshot.code
-                    self.code_label.configure(text=snapshot.code, foreground=ACCENT)
-                    self.copy_button.configure(state="normal")
+                    try:
+                        self.code_label.configure(
+                            text=snapshot.code, foreground=ACCENT
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        self.copy_button.configure(state="normal")
+                    except Exception:
+                        pass
                     paste_action = self._paste_sequence.start(
                         snapshot.code, self._current_card_clipboard
                     )

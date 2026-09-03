@@ -469,7 +469,12 @@ export default function TasksPage({ principal }: { principal: Principal }) {
         setClosingTaskId(action.taskId)
         try {
           const closed = await closeTask(action.taskId)
-          if (closed.id !== action.taskId || closed.status !== 'closed' || closed.closed_at === null) {
+          if (
+            closed.id !== action.taskId
+            || closed.tenant_id !== row.tenant_id
+            || closed.status !== 'closed'
+            || closed.closed_at === null
+          ) {
             throw new Error('task close response binding mismatch')
           }
           message.success('任务已关闭，相关卡租约、邮箱会话和上传资源已回收。')

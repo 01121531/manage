@@ -8149,8 +8149,17 @@ def admin_update_card_state(
             principal,
             allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
         )
-        db.expire(card)
-        db.refresh(card, with_for_update=True)
+        card = db.scalar(
+            select(Card)
+            .where(
+                Card.id == card_id,
+                Card.tenant_id == principal.tenant_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if card is None:
+            raise HTTPException(status_code=404, detail="Card not found")
         return _admin_card_response(card)
 
     if payload.is_active:
