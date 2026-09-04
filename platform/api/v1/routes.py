@@ -3751,9 +3751,50 @@ def replace_card_allocation(
     replay = _card_replacement_for(db, original, principal)
     if replay is not None:
         replacement, replacement_card = replay
+        replacement_id = replacement.id
+        replacement_card_id = replacement_card.id
         response.status_code = 200
         db.rollback()
-        _lock_task_creation_principal(db, principal)
+        current_task = _lock_owned_open_task(
+            db,
+            task_id,
+            request=request,
+            principal=principal,
+        )
+        replacement = db.scalar(
+            select(CardAllocation)
+            .join(
+                CardAllocationReplacement,
+                CardAllocationReplacement.replacement_allocation_id
+                == CardAllocation.id,
+            )
+            .where(
+                CardAllocationReplacement.original_allocation_id == allocation_id,
+                CardAllocationReplacement.tenant_id == principal.tenant_id,
+                CardAllocationReplacement.task_id == current_task.id,
+                CardAllocation.id == replacement_id,
+                CardAllocation.tenant_id == principal.tenant_id,
+                CardAllocation.task_id == current_task.id,
+                CardAllocation.user_id == principal.user_id,
+                CardAllocation.device_id == principal.device_id,
+                CardAllocation.card_id == replacement_card_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if replacement is None:
+            raise HTTPException(status_code=404, detail="Card allocation not found")
+        replacement_card = db.scalar(
+            select(Card)
+            .where(
+                Card.id == replacement_card_id,
+                Card.tenant_id == principal.tenant_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if replacement_card is None:
+            raise HTTPException(status_code=404, detail="Card not found")
         return _card_allocation_response(replacement, replacement_card)
 
     now = _utc_now()

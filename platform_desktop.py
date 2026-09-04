@@ -965,10 +965,16 @@ class PlatformDesktopApp:
         ):
             return
         self._locked = True
-        self._cancel_card_reveal()
-        self._cancel_task_transition(retain_failure=True)
-        self.stop_polling()
-        self._paste_sequence.stop()
+        for stop_activity in (
+            self._cancel_card_reveal,
+            lambda: self._cancel_task_transition(retain_failure=True),
+            self.stop_polling,
+            self._paste_sequence.stop,
+        ):
+            try:
+                stop_activity()
+            except Exception:
+                pass
         try:
             self._close_task_history()
         except Exception:

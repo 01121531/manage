@@ -4645,7 +4645,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
         : device)
       const updated = devices.find((device) => device.id === deviceId)
       return fulfill(deviceId === 'device-success'
-        ? { ...updated, name: 'wrong-device-name' }
+        ? { ...updated, created_at: '1999-01-01T00:00:00Z' }
         : updated)
     }
     if (path === '/api/v1/admin/users/operator-1/role-change-requests' && request.method() === 'POST') {
@@ -4932,7 +4932,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   }
   await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认设备撤销结果' })).toBeVisible()
   await expect(page.getByText('设备已撤销，相关会话与活动资源已回收。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-device-name')
+  await expect(page.locator('body')).not.toContainText('1999')
   await expect(successDeviceRow.getByText('revoked')).toBeVisible()
   await expect(successDeviceRow.getByRole('button', { name: '撤销设备' })).toBeDisabled()
   await expect.poll(() => deviceListRequests).toBeGreaterThanOrEqual(2)

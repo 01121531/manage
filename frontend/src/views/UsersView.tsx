@@ -324,6 +324,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
             || updated.tenant_id !== principal.tenant_id
             || updated.user_id !== row.user_id
             || updated.name !== row.name
+            || updated.created_at !== row.created_at
             || updated.revoked_at === null
           ) {
             throw new Error('device revoke response binding mismatch')

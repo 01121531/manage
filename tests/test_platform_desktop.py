@@ -1856,6 +1856,30 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.copy_card_button.values["state"], "disabled")
         self.assertEqual(instance.auth_label.values["text"], "已锁定")
 
+    def test_transition_cancel_error_cannot_skip_lock_sensitive_cleanup(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance._cancel_task_transition = mock.Mock(
+            side_effect=RuntimeError("transition cancellation unavailable")
+        )
+
+        instance.lock()
+
+        instance._cancel_task_transition.assert_called_once_with(retain_failure=True)
+        self.assertTrue(instance._locked)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+        self.assertEqual(instance.auth_label.values["text"], "已锁定")
+
     def test_lock_preserves_user_owned_clipboard_and_blocks_stale_events(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)
