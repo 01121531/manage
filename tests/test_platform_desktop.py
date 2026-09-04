@@ -1079,6 +1079,23 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.root.clipboard, "")
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
 
+    def test_card_discard_ui_error_preserves_reveal_retry(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._card_allocation_id = "allocation-1"
+        instance._current_card_clipboard = details
+        instance._paste_sequence.start("246810", details)
+        instance.card_reveal_label.configure = mock.Mock(
+            side_effect=RuntimeError("card display unavailable")
+        )
+
+        instance._discard_card_after_clipboard_failure()
+
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertEqual(instance._paste_sequence.stage, PasteStage.STOPPED)
+        self.assertEqual(instance.copy_card_button.values["state"], "normal")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

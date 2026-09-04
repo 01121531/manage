@@ -202,6 +202,7 @@ function OperationalPolicyPanel({ domain, principal }: {
             rolledBack.domain !== domain
             || rolledBack.active_version !== status.previous_version
             || rolledBack.previous_version !== status.active_version
+            || rolledBack.rollout_percent !== 100
           ) throw new Error('operational policy rollback response binding mismatch')
         }, `${title}已回滚。`),
       })}

@@ -4900,9 +4900,12 @@ class PlatformDesktopApp:
         self._card_clear_generation += 1
         self._paste_sequence.stop()
         if not self._closed:
-            self.card_reveal_label.configure(
-                text=CARD_DETAILS_PLACEHOLDER, foreground=TEXT
-            )
+            try:
+                self.card_reveal_label.configure(
+                    text=CARD_DETAILS_PLACEHOLDER, foreground=TEXT
+                )
+            except Exception:
+                pass
         if (
             not self._locked
             and self._card_allocation_id is not None

@@ -4201,8 +4201,8 @@ test('platform admin governs upload policies without browser execution details',
       }
       blockCardPolicyRefresh = true
       return fulfill({
-        domain: 'card', active_version: 'wrong-card-rollback-version', previous_version: 'card-2026.08.1',
-        rollout_percent: 100, updated_at: '2026-08-20T00:01:00Z',
+        domain: 'card', active_version: 'card-2026.07.1', previous_version: 'card-2026.08.1',
+        rollout_percent: 10, updated_at: '2026-08-20T00:01:00Z',
       })
     }
     if (path === '/api/v1/admin/policies/upload/versions' && request.method() === 'GET') {
@@ -4333,7 +4333,6 @@ test('platform admin governs upload policies without browser execution details',
   const cardVersionsBeforeRollback = cardPolicyVersionListRequests
   await cardPolicyRollbackDialog.getByRole('button', { name: '确认回滚' }).click()
   await expect(page.getByText('卡分配策略已回滚。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-card-rollback-version')
   try {
     await expect.poll(() => cardPolicyStatusRequests).toBeGreaterThan(cardStatusBeforeRollback)
     await expect.poll(() => cardPolicyVersionListRequests).toBeGreaterThan(cardVersionsBeforeRollback)

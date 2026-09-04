@@ -9948,6 +9948,7 @@ def admin_rollback_upload_policy(
     deployment.updated_at = _utc_now()
     current.status = "retired"
     previous.status = "active"
+    deployment_id = deployment.id
     record_audit(
         db,
         tenant_id=principal.tenant_id,
@@ -9965,5 +9966,15 @@ def admin_rollback_upload_policy(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(deployment, with_for_update=True)
+    deployment = db.scalar(
+        select(UploadPolicyDeployment)
+        .where(
+            UploadPolicyDeployment.id == deployment_id,
+            UploadPolicyDeployment.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Upload policy deployment not found")
     return _upload_policy_deployment_response(db, deployment)
