@@ -1254,6 +1254,35 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
         self.assertEqual(instance.auth_label.values["text"], "未登录")
 
+    def test_verification_reset_ui_error_cannot_skip_logged_out_ui(self) -> None:
+        instance = self._event_app()
+        instance._verified_task_id = "task-1"
+        instance.copy_card_button.configure(state="normal")
+        instance.copy_button.configure(state="normal")
+        instance.auth_label.configure(text="已登录")
+        original_configure = instance.upload_button.configure
+        attempts = 0
+
+        def fail_once(**values):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("upload button unavailable")
+            original_configure(**values)
+
+        instance.upload_button.configure = fail_once
+
+        instance._set_authenticated(False)
+
+        self.assertIsNone(instance._verified_task_id)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+        self.assertEqual(instance.copy_button.values["state"], "disabled")
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+        workflow_text, _ = format_workflow_progress("logged_out")
+        self.assertEqual(instance.workflow_label.values["text"], workflow_text)
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

@@ -2450,6 +2450,62 @@ class UploadJobTests(unittest.TestCase):
         ):
             self.assertNotIn(sensitive, replay.text)
 
+    def test_upload_conflict_rechecks_owner_after_rollback(self) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(token)
+        created = self.create_upload(token, task_id, "upload-rollback-owner")
+        job_id = created.json()["id"]
+        original_scalar = Session.scalar
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        upload_lookups = 0
+        job_moved = False
+
+        def scalar(session, statement, *args, **kwargs):
+            nonlocal job_moved, upload_lookups
+            entity = statement.column_descriptions[0].get("entity")
+            if entity is not UploadJob:
+                return original_scalar(session, statement, *args, **kwargs)
+            upload_lookups += 1
+            result = original_scalar(session, statement, *args, **kwargs)
+            if upload_lookups == 1:
+                return None
+            if upload_lookups != 2 or job_moved or result is None:
+                return result
+            job_moved = True
+            original_rollback(session)
+            with self.app.state.session_factory() as other:
+                job = other.get(UploadJob, job_id)
+                self.assertIsNotNone(job)
+                job.tenant_id = "tenant-other"
+                original_commit(other)
+            return result
+
+        with mock.patch.object(Session, "scalar", new=scalar):
+            replay = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/uploads",
+                headers=self.bearer(token),
+                json={
+                    "business_name": "Example Store",
+                    "idempotency_key": "upload-rollback-owner",
+                },
+            )
+
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn(job_id, replay.text)
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            queued_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.entity_id == job_id,
+                    AuditEvent.event_type == "upload.queued",
+                )
+            )
+        self.assertEqual(job.tenant_id, "tenant-other")
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(queued_audits, 1)
+
     def test_admin_roles_cancel_tenant_uploads_with_actor_subject_audit(self) -> None:
         owner_token = self.login()
         with self.app.state.session_factory() as db:

@@ -614,7 +614,10 @@ class PlatformDesktopApp:
                     cleanup()
                 except Exception:
                     pass
-            self._reset_task_verification()
+            try:
+                self._reset_task_verification()
+            except Exception:
+                pass
             self.copy_card_button.configure(state="disabled")
             self.copy_button.configure(state="disabled")
             self.upload_button.configure(state="disabled")
