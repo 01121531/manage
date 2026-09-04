@@ -1247,6 +1247,88 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(replacement.status, "active")
         self.assertEqual(replacement_events, 1)
 
+    def test_replacement_rechecks_card_state_after_commit(self) -> None:
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-card",
+                    provider_ref="provider-card-replacement-quarantine-boundary",
+                    brand="MASTERCARD",
+                    last4="2222",
+                    expiry_month=11,
+                    expiry_year=2031,
+                    secret_ref="vault://cards/replacement-quarantine-boundary",
+                )
+            )
+            db.commit()
+
+        token = self.login()
+        task_id = self.create_task(token, "card-replacement-quarantine-boundary")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(original.status_code, 201, original.text)
+        original_commit = Session.commit
+        replacement_card_id: str | None = None
+
+        def commit_then_quarantine_card(session: Session) -> None:
+            nonlocal replacement_card_id
+            replacement_event = next(
+                (
+                    item
+                    for item in session.new
+                    if isinstance(item, AuditEvent)
+                    and item.event_type == "card.allocated"
+                    and item.entity_id != original.json()["id"]
+                ),
+                None,
+            )
+            replacement_id = (
+                replacement_event.entity_id
+                if replacement_event is not None
+                else None
+            )
+            original_commit(session)
+            if replacement_id is None or replacement_card_id is not None:
+                return
+            with self.app.state.session_factory() as other:
+                replacement = other.get(CardAllocation, replacement_id)
+                self.assertIsNotNone(replacement)
+                replacement_card_id = replacement.card_id
+                card = other.get(Card, replacement.card_id)
+                self.assertIsNotNone(card)
+                card.quarantined_at = utc_now()
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_quarantine_card,
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations/"
+                f"{original.json()['id']}/replace",
+                headers=self.bearer(token),
+            )
+
+        self.assertIsNotNone(replacement_card_id)
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("MASTERCARD", response.text)
+        self.assertNotIn("2222", response.text)
+        with self.app.state.session_factory() as db:
+            card = db.get(Card, replacement_card_id)
+            replacement = db.scalar(
+                select(CardAllocation).where(
+                    CardAllocation.task_id == task_id,
+                    CardAllocation.id != original.json()["id"],
+                )
+            )
+        self.assertIsNotNone(card.quarantined_at)
+        self.assertEqual(replacement.status, "active")
+
     def test_replacement_replay_rechecks_operator_after_rollback(self) -> None:
         with self.app.state.session_factory() as db:
             db.add(

@@ -4145,6 +4145,7 @@ def replace_card_allocation(
     if current_task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     _lock_task_creation_principal(db, principal)
+    response_now = _utc_now()
     replacement = db.scalar(
         select(CardAllocation)
         .join(
@@ -4162,6 +4163,9 @@ def replace_card_allocation(
             CardAllocation.user_id == principal.user_id,
             CardAllocation.device_id == principal.device_id,
             CardAllocation.card_id == replacement_card_id,
+            CardAllocation.status == "active",
+            CardAllocation.released_at.is_(None),
+            CardAllocation.expires_at > response_now,
         )
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -4173,6 +4177,8 @@ def replace_card_allocation(
         .where(
             Card.id == replacement_card_id,
             Card.tenant_id == principal.tenant_id,
+            Card.is_active.is_(True),
+            Card.quarantined_at.is_(None),
         )
         .with_for_update()
         .execution_options(populate_existing=True)

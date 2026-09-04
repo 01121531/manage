@@ -1044,8 +1044,14 @@ class PlatformDesktopApp:
         action = _UnlockAction(generation)
         self._unlock_action = action
         expected_tenant_id, expected_user_id, expected_device_id = self._profile_identity
-        self.lock_button.configure(state="disabled")
-        self._set_status("正在启动强制身份验证…", ACCENT)
+        try:
+            self.lock_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self._set_status("正在启动强制身份验证…", ACCENT)
+        except Exception:
+            pass
 
         def worker() -> None:
             try:

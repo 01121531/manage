@@ -3015,6 +3015,51 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertTrue(instance._locked)
         self.assertIn("仍保持锁定", instance.status_label.values["text"])
 
+    def test_unlock_ui_error_cannot_strand_action_before_worker_start(self) -> None:
+        instance = self._event_app()
+        profile = {
+            "id": "user-1",
+            "tenant_id": "tenant-1",
+            "email": "operator@example.test",
+            "device_id": "device-1",
+            "role": "operator",
+        }
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.reauthenticate_for_unlock.return_value = profile
+        instance._start_polling = mock.Mock()
+        instance._poll_upload = mock.Mock()
+        instance.lock()
+        original_configure = instance.lock_button.configure
+        attempts = 0
+
+        def fail_once(**values):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("lock button unavailable")
+            original_configure(**values)
+
+        instance.lock_button.configure = fail_once
+
+        class InlineThread:
+            def __init__(self, *, target, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with (
+            mock.patch("platform_desktop.webbrowser.open", return_value=True),
+            mock.patch("platform_desktop.threading.Thread", InlineThread),
+        ):
+            instance.unlock()
+        instance._drain_events()
+
+        self.assertGreaterEqual(attempts, 2)
+        self.assertIsNone(instance._unlock_action)
+        self.assertFalse(instance._locked)
+        instance._client.reauthenticate_for_unlock.assert_called_once()
+
     def test_unlock_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)
