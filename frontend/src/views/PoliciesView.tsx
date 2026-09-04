@@ -348,7 +348,11 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
 
   const deployBoundUploadPolicy = async (row: UploadPolicyVersion, rolloutPercent: number) => {
     const deployed = await deployUploadPolicyVersion(row.id, rolloutPercent)
-    if (deployed.active_version !== row.version || deployed.rollout_percent !== rolloutPercent) {
+    if (
+      deployed.active_version !== row.version
+      || deployed.previous_version !== (policy?.active_version ?? null)
+      || deployed.rollout_percent !== rolloutPercent
+    ) {
       throw new Error('upload policy deployment response binding mismatch')
     }
   }

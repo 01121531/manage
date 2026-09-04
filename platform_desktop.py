@@ -3527,12 +3527,16 @@ class PlatformDesktopApp:
                         ERROR,
                     )
             elif kind == "card_reveal_error":
-                if self._card_allocation_id is not None and self._client is not None and self._client.is_authenticated:
-                    self.copy_card_button.configure(state="normal")
                 if isinstance(value, PlatformAuthenticationError):
                     if self._client is not None:
                         self._client.clear_access_token()
                     self._set_authenticated(False)
+                elif (
+                    self._card_allocation_id is not None
+                    and self._client is not None
+                    and self._client.is_authenticated
+                ):
+                    self.copy_card_button.configure(state="normal")
                 if isinstance(value, PlatformProtocolError):
                     self._set_status(
                         "原因：平台返回的卡揭示结果与当前卡租约不一致或无法安全验证；"

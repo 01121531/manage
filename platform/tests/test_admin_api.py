@@ -1478,6 +1478,70 @@ class AdminApiTests(unittest.TestCase):
             )
         self.assertEqual(registered_audits, 1)
 
+    def test_admin_device_registration_rechecks_target_after_commit(self) -> None:
+        admin_token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        original_record_audit = routes.record_audit
+        original_commit = Session.commit
+        registration_recorded = False
+        device_moved = False
+        device_id: str | None = None
+
+        def mark_registration(*args, **kwargs):
+            nonlocal device_id, registration_recorded
+            result = original_record_audit(*args, **kwargs)
+            if kwargs.get("event_type") == "admin.device_registered":
+                registration_recorded = True
+                device_id = kwargs["entity_id"]
+            return result
+
+        def move_device_after_registration_commit(session: Session) -> None:
+            nonlocal device_moved
+            original_commit(session)
+            if not registration_recorded or device_moved:
+                return
+            device_moved = True
+            self.assertIsNotNone(device_id)
+            with self.app.state.session_factory() as other_db:
+                device = other_db.get(Device, device_id)
+                self.assertIsNotNone(device)
+                device.tenant_id = "tenant-b"
+                original_commit(other_db)
+
+        with mock.patch.object(
+            routes,
+            "record_audit",
+            side_effect=mark_registration,
+        ), mock.patch.object(
+            Session,
+            "commit",
+            new=move_device_after_registration_commit,
+        ):
+            registered = self.request(
+                "POST",
+                f"/api/v1/admin/users/{self.operator.user_id}/devices",
+                headers=self.headers(admin_token),
+                json={"name": "post-commit-target-device"},
+            )
+
+        self.assertEqual(registered.status_code, 404, registered.text)
+        self.assertNotIn("post-commit-target-device", registered.text)
+        with self.app.state.session_factory() as db:
+            device = db.get(Device, device_id)
+            registered_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "admin.device_registered",
+                    AuditEvent.entity_id == device_id,
+                )
+            )
+        self.assertEqual(device.tenant_id, "tenant-b")
+        self.assertEqual(device.user_id, self.operator.user_id)
+        self.assertEqual(registered_audits, 1)
+
     def test_admin_device_revoke_rechecks_actor_after_final_commit(self) -> None:
         admin_token = self.login(
             "tenant-a",

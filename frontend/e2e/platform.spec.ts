@@ -4238,6 +4238,13 @@ test('platform admin governs upload policies without browser execution details',
     if (deployMatch && request.method() === 'POST') {
       const body = request.postDataJSON() as { rollout_percent: number }
       deployRequests.push({ policyId: deployMatch[1], rollout: body.rollout_percent })
+      if (deployMatch[1] === 'policy-approved-other') {
+        expect(body).toEqual({ rollout_percent: 100 })
+        return fulfill({
+          active_version: 'sub2-2026.07.9', previous_version: 'wrong-upload-deploy-previous-version',
+          rollout_percent: 100, updated_at: '2026-08-20T00:02:30Z',
+        })
+      }
       expect(deployMatch[1]).toBe('policy-approved-1')
       expect(body).toEqual({ rollout_percent: 100 })
       await deployGate
@@ -4423,6 +4430,14 @@ test('platform admin governs upload policies without browser execution details',
   await deployDialog.getByRole('button', { name: /取\s*消/ }).click()
   expect(deployRequests).toEqual([])
 
+  await otherFullDeploy.click()
+  const otherDeployDialog = page.getByRole('dialog', { name: '确认全量启用该策略？' })
+  await otherDeployDialog.getByRole('button', { name: '全量启用策略' }).click()
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' }).last()).toBeVisible()
+  await expect(page.getByText('策略已全量启用。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-upload-deploy-previous-version')
+  await expect(otherFullDeploy).toHaveCount(1)
+
   await fullDeploy.click()
   deployDialog = page.getByRole('dialog', { name: '确认全量启用该策略？' })
   const confirmDeploy = deployDialog.getByRole('button', { name: '全量启用策略' })
@@ -4432,8 +4447,8 @@ test('platform admin governs upload policies without browser execution details',
   let policyListsBeforeLateDeploy = 0
   await confirmDeploy.click()
   await confirmDeploy.dispatchEvent('click')
-  await expect.poll(() => deployRequests).toHaveLength(1)
-  expect(deployRequests[0]).toEqual({ policyId: visibleDeployId, rollout: 100 })
+  await expect.poll(() => deployRequests).toHaveLength(2)
+  expect(deployRequests[1]).toEqual({ policyId: visibleDeployId, rollout: 100 })
   await expect(fullDeploy).toBeDisabled()
   await expect(tenPercentDeploy).toBeDisabled()
   await expect(approveOtherDraft).toBeDisabled()

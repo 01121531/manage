@@ -1155,6 +1155,31 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.copy_card_button.values["state"], "normal")
         self.assertEqual(instance.root.scheduled, [])
 
+    def test_card_auth_error_revokes_session_before_button_restore(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        original_configure = instance.copy_card_button.configure
+
+        def reject_enable(**values):
+            if values.get("state") == "normal":
+                raise RuntimeError("stale reveal capability must not be enabled")
+            original_configure(**values)
+
+        instance.copy_card_button.configure = reject_enable
+        error = PlatformAuthenticationError(
+            "expired",
+            code="unauthorized",
+            status=401,
+            recovery_hint="重新登录后再试",
+        )
+
+        instance._events.put((1, "card_reveal_error", error))
+        instance._drain_events()
+
+        instance._client.clear_access_token.assert_called_once_with()
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

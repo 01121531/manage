@@ -6047,15 +6047,27 @@ def admin_register_device(
         )
     else:
         response.status_code = 200
+    registered_device_id = registration.device.id
     db.commit()
     _lock_admin_write_principal(
         db,
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(registration.device, with_for_update=True)
+    registered_device = db.scalar(
+        select(Device)
+        .where(
+            Device.id == registered_device_id,
+            Device.tenant_id == principal.tenant_id,
+            Device.user_id == user_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if registered_device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
     return AdminDeviceResponse.model_validate(
-        registration.device, from_attributes=True
+        registered_device, from_attributes=True
     )
 
 
