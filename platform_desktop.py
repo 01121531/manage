@@ -622,10 +622,13 @@ class PlatformDesktopApp:
             self.copy_button.configure(state="disabled")
             self.upload_button.configure(state="disabled")
             self._set_workflow_stage("logged_out")
-        self.auth_label.configure(
-            text="已登录" if authenticated else "未登录",
-            fg=SUCCESS if authenticated else WARNING,
-        )
+        try:
+            self.auth_label.configure(
+                text="已登录" if authenticated else "未登录",
+                fg=SUCCESS if authenticated else WARNING,
+            )
+        except Exception:
+            pass
         self.new_task_button.configure(state="normal" if available else "disabled")
         self.close_active_task_button.configure(state="disabled")
         self.history_button.configure(state="normal" if available else "disabled")

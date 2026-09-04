@@ -1150,6 +1150,48 @@ class UploadJobTests(unittest.TestCase):
                     )
         self.assertEqual(self.adapter.commands, [])
 
+    def test_upload_replay_rechecks_owner_before_response(self) -> None:
+        token = self.login()
+        task_id, _ = self.create_task_with_card(token)
+        created = self.create_upload(token, task_id, "upload-replay-owner")
+        self.assertEqual(created.status_code, 201, created.text)
+        job_id = created.json()["id"]
+        original_scalar = Session.scalar
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        job_moved = False
+
+        def scalar(session, statement, *args, **kwargs):
+            nonlocal job_moved
+            result = original_scalar(session, statement, *args, **kwargs)
+            if job_moved or not isinstance(result, UploadJob) or result.id != job_id:
+                return result
+            job_moved = True
+            original_rollback(session)
+            with self.app.state.session_factory() as other:
+                job = other.get(UploadJob, job_id)
+                self.assertIsNotNone(job)
+                job.tenant_id = "tenant-other"
+                original_commit(other)
+            return result
+
+        with mock.patch.object(Session, "scalar", new=scalar):
+            replay = self.create_upload(token, task_id, "upload-replay-owner")
+
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn(job_id, replay.text)
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            queued_audits = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.entity_id == job_id,
+                    AuditEvent.event_type == "upload.queued",
+                )
+            )
+        self.assertEqual(job.tenant_id, "tenant-other")
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(queued_audits, 1)
+
     def test_worker_cancels_expired_task_before_external_call(self) -> None:
         token = self.login()
         task_id, allocation_id = self.create_task_with_card(token)

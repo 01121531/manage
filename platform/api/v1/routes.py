@@ -4543,7 +4543,23 @@ def create_upload_job(
                 status_code=409,
                 detail="Idempotency key was already used with different upload data",
             )
-        db.refresh(existing, with_for_update=True)
+        existing_id = existing.id
+        existing = db.scalar(
+            select(UploadJob)
+            .where(
+                UploadJob.id == existing_id,
+                UploadJob.tenant_id == principal.tenant_id,
+                UploadJob.task_id == task_id,
+                UploadJob.user_id == principal.user_id,
+                UploadJob.device_id == principal.device_id,
+                UploadJob.idempotency_key == payload.idempotency_key,
+                UploadJob.business_name == payload.business_name,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Upload job not found")
         response.status_code = 200
         return _upload_job_response(existing)
 

@@ -1222,14 +1222,36 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
             side_effect=RuntimeError("auth widget unavailable")
         )
 
-        with self.assertRaises(RuntimeError):
-            instance._set_authenticated(False)
+        instance._set_authenticated(False)
 
         self.assertIsNone(instance._current_card_clipboard)
         self.assertIsNone(instance._clipboard_owner)
         self.assertEqual(instance.root.clipboard, "")
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
         self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+
+    def test_auth_label_error_cannot_skip_capability_revocation(self) -> None:
+        instance = self._event_app()
+        for button in (
+            instance.new_task_button,
+            instance.history_button,
+            instance.logout_button,
+            instance.lock_button,
+        ):
+            button.configure(state="normal")
+        instance.business_entry.configure(state="normal")
+        instance.auth_label.configure = mock.Mock(
+            side_effect=RuntimeError("auth widget unavailable")
+        )
+
+        instance._set_authenticated(False)
+
+        self.assertEqual(instance.new_task_button.values["state"], "disabled")
+        self.assertEqual(instance.history_button.values["state"], "disabled")
+        self.assertEqual(instance.logout_button.values["state"], "disabled")
+        self.assertEqual(instance.lock_button.values["state"], "disabled")
+        self.assertEqual(instance.business_entry.values["state"], "disabled")
+        self.assertEqual(instance.login_button.values["state"], "normal")
 
     def test_auth_cleanup_error_cannot_skip_later_card_cleanup(self) -> None:
         instance = self._event_app()
