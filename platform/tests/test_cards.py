@@ -3375,6 +3375,75 @@ class CardAllocationTests(unittest.TestCase):
         self.assertIsNotNone(challenge.consumed_at)
         self.assertEqual(len(reveal_events), 1)
 
+    def test_reveal_rechecks_reveal_ttl_after_consumption_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-reveal-ttl-commit-boundary")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        allocation_id = allocation.json()["id"]
+        _challenge, grant = self.grant_with_step_up(token, allocation_id)
+        self.assertEqual(grant.status_code, 200, grant.text)
+        original_commit = Session.commit
+        reveal_expired = False
+
+        def commit_then_expire_reveal(session: Session) -> None:
+            nonlocal reveal_expired
+            committing_reveal = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "card.revealed"
+                and item.entity_id == allocation_id
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_reveal or reveal_expired:
+                return
+            reveal_expired = True
+            with self.app.state.session_factory() as other:
+                stored = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(stored)
+                stored.reveal_expires_at = utc_now() - timedelta(seconds=1)
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_expire_reveal,
+        ):
+            revealed = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/reveal",
+                headers=self.bearer(token),
+                json={
+                    "reveal_grant": grant.json()["reveal_grant"],
+                    "fields": ["pan"],
+                },
+            )
+
+        self.assertTrue(reveal_expired)
+        self.assertEqual(revealed.status_code, 409, revealed.text)
+        self.assertEqual(
+            revealed.json()["error"]["code"],
+            "card_reveal_unavailable",
+        )
+        self.assertNotIn("4111111111111111", revealed.text)
+        self.assertNotIn('"pan"', revealed.text)
+        with self.app.state.session_factory() as db:
+            stored = db.get(CardAllocation, allocation_id)
+            challenge = db.scalar(
+                select(CardRevealChallenge).where(
+                    CardRevealChallenge.allocation_id == allocation_id
+                )
+            )
+        self.assertLess(
+            stored.reveal_expires_at,
+            utc_now().replace(tzinfo=None),
+        )
+        self.assertIsNotNone(challenge.consumed_at)
+
     def test_card_allocation_read_rechecks_device_after_authentication(self) -> None:
         token = self.login()
         task_id = self.create_task(token, "card-read-revoked-device")

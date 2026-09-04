@@ -4742,6 +4742,7 @@ def reveal_card_allocation(
     task = _lock_owned_open_task(
         db, task.id, request=request, principal=principal
     )
+    response_now = _utc_now()
     allocation = db.scalar(
         select(CardAllocation)
         .where(
@@ -4753,8 +4754,10 @@ def reveal_card_allocation(
             CardAllocation.device_id == principal.device_id,
             CardAllocation.status == "active",
             CardAllocation.released_at.is_(None),
-            CardAllocation.expires_at > _utc_now(),
+            CardAllocation.expires_at > response_now,
             CardAllocation.revealed_at.is_not(None),
+            CardAllocation.reveal_expires_at.is_not(None),
+            CardAllocation.reveal_expires_at > response_now,
         )
         .with_for_update()
         .execution_options(populate_existing=True)

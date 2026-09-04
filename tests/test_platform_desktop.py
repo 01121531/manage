@@ -3082,6 +3082,41 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertIsNone(instance._unlock_thread)
         self.assertIn("仍保持锁定", instance.status_label.values["text"])
 
+    def test_unlock_success_restore_error_relocks_before_finished_cleanup(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        profile = {
+            "id": "user-1",
+            "tenant_id": "tenant-1",
+            "email": "operator@example.test",
+            "device_id": "device-1",
+            "role": "operator",
+        }
+        instance._client = mock.Mock(is_authenticated=True)
+        instance.lock()
+        action = object()
+        worker_thread = object()
+        instance._unlock_action = action
+        instance._unlock_thread = worker_thread
+        instance._start_polling = mock.Mock(
+            side_effect=RuntimeError("mail polling unavailable")
+        )
+        instance._poll_upload = mock.Mock()
+        generation = instance._session_generation
+        instance._events.put((generation, "unlock_success", (action, profile)))
+        instance._events.put((generation, "unlock_finished", action))
+
+        instance._drain_events()
+
+        instance._start_polling.assert_called_once_with()
+        self.assertTrue(instance._locked)
+        self.assertIsNone(instance._unlock_action)
+        self.assertIsNone(instance._unlock_thread)
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertIn("仍保持锁定", instance.status_label.values["text"])
+
     def test_unlock_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

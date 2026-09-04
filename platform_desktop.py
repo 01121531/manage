@@ -3838,7 +3838,18 @@ class PlatformDesktopApp:
                 action, profile = value
                 if self._unlock_action is not action:
                     continue
-                self._finish_unlock(profile)
+                try:
+                    self._finish_unlock(profile)
+                except Exception:
+                    self._locked = False
+                    self.lock()
+                    try:
+                        self._set_status(
+                            "解锁后的本地状态未能安全恢复；客户端仍保持锁定，请重试。",
+                            ERROR,
+                        )
+                    except Exception:
+                        pass
             elif kind == "unlock_error":
                 action, error = value
                 if self._unlock_action is not action:

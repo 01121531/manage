@@ -288,6 +288,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
             || approved.expected_old_role !== request.expected_old_role
             || approved.new_role !== request.new_role
             || approved.status !== 'applied'
+            || approved.requested_by !== request.requested_by
             || approved.approved_by !== principal.id
             || approved.request_trace_id !== request.request_trace_id
             || approved.applied_at === null
