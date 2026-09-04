@@ -592,6 +592,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       if (
         updated.id !== allocation.id
         || updated.card_id !== allocation.card_id
+        || updated.card_masked !== allocation.card_masked
         || updated.task_id !== allocation.task_id
         || updated.user_id !== allocation.user_id
         || updated.status !== 'released'

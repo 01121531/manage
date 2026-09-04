@@ -601,13 +601,19 @@ class PlatformDesktopApp:
     def _set_authenticated(self, authenticated: bool) -> None:
         available = authenticated and not self._locked
         if not authenticated:
-            self.stop_polling()
-            self._cancel_card_reveal()
             self._poll_retry_attempt = 0
-            self._paste_sequence.stop()
-            self._clear_sensitive_code()
-            self._clear_card_details()
-            self._clear_trace_id()
+            for cleanup in (
+                self.stop_polling,
+                self._cancel_card_reveal,
+                self._paste_sequence.stop,
+                self._clear_sensitive_code,
+                self._clear_card_details,
+                self._clear_trace_id,
+            ):
+                try:
+                    cleanup()
+                except Exception:
+                    pass
             self._reset_task_verification()
             self.copy_card_button.configure(state="disabled")
             self.copy_button.configure(state="disabled")

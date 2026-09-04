@@ -1231,6 +1231,29 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._clipboard_cleanup_pending, 0)
         self.assertEqual(instance.copy_card_button.values["state"], "disabled")
 
+    def test_auth_cleanup_error_cannot_skip_later_card_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance.stop_polling = mock.Mock(
+            side_effect=RuntimeError("poll cancellation unavailable")
+        )
+        instance._cancel_card_reveal = mock.Mock(
+            side_effect=RuntimeError("reveal cancellation unavailable")
+        )
+
+        instance._set_authenticated(False)
+
+        instance.stop_polling.assert_called_once_with()
+        instance._cancel_card_reveal.assert_called_once_with()
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

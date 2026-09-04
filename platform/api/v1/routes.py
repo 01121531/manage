@@ -4739,8 +4739,8 @@ def create_upload_job(
         policy_version=job.policy_version,
         aggregate_sequence=job.phase_sequence,
     )
+    job_id = job.id
     db.commit()
-    db.refresh(job, with_for_update=True)
     current_task = db.scalar(
         select(Task)
         .where(
@@ -4755,6 +4755,20 @@ def create_upload_job(
     if current_task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     _lock_task_creation_principal(db, principal)
+    job = db.scalar(
+        select(UploadJob)
+        .where(
+            UploadJob.id == job_id,
+            UploadJob.tenant_id == principal.tenant_id,
+            UploadJob.task_id == current_task.id,
+            UploadJob.user_id == principal.user_id,
+            UploadJob.device_id == principal.device_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Upload job not found")
     if current_task.status in _TERMINAL_TASK_STATUSES and job.status in {
         "queued",
         "running",

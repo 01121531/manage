@@ -1170,7 +1170,7 @@ test('ops admin reads masked card history and recycles one exact allocation', as
         release_reason_code: 'manual_reassignment',
       }
       blockRecycleRefresh = true
-      return fulfill({ ...allocation, user_id: 'wrong-allocation-user' })
+      return fulfill({ ...allocation, card_masked: '**** **** **** 9999' })
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -1216,7 +1216,7 @@ test('ops admin reads masked card history and recycles one exact allocation', as
   const recycleError = page.locator('.ant-message-notice').filter({ hasText: '平台未能确认活动租约回收结果' })
   for (const marker of ['原因：', '影响：', '下一步：']) await expect(recycleError).toContainText(marker)
   await expect(page.getByText('活动租约已回收；关联排队上传已取消。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-allocation-user')
+  await expect(page.locator('body')).not.toContainText('9999')
   await expect.poll(() => cardListRequests).toBeGreaterThan(cardListsBeforeRecycle)
   await expect.poll(() => timelineRequests).toBeGreaterThan(timelinesBeforeRecycle)
   const importCards = page.getByRole('button', { name: '导入信用卡池安全包 JSON' })

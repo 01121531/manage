@@ -688,6 +688,84 @@ class ResourceCreationRaceTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "succeeded")
         self.assertEqual(response.json()["external_ref"], "sub2-race-winner")
 
+    def test_initial_upload_rechecks_job_owner_after_commit(self) -> None:
+        task_id = self.create_task("upload-create-owner-task")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.headers,
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        now = utc_now()
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            mailbox_id = db.scalar(select(Mailbox.id).limit(1))
+            db.add(
+                MailSession(
+                    tenant_id=task.tenant_id,
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    device_id=task.device_id,
+                    mailbox_id=mailbox_id,
+                    trace_id=task.trace_id,
+                    status="consumed",
+                    consumed_at=now,
+                    expires_at=now + timedelta(minutes=5),
+                )
+            )
+            db.commit()
+
+        key = "upload-create-owner-boundary"
+        original_commit = Session.commit
+        job_moved = False
+
+        def commit_then_move_job(session: Session) -> None:
+            nonlocal job_moved
+            queued = next(
+                (
+                    item
+                    for item in session.new
+                    if isinstance(item, AuditEvent)
+                    and item.event_type == "upload.queued"
+                ),
+                None,
+            )
+            queued_job_id = queued.entity_id if queued is not None else None
+            original_commit(session)
+            if queued_job_id is None or job_moved:
+                return
+            job_moved = True
+            with self.app.state.session_factory() as other:
+                job = other.get(UploadJob, queued_job_id)
+                self.assertIsNotNone(job)
+                job.tenant_id = "tenant-other"
+                original_commit(other)
+
+        with patch.object(Session, "commit", new=commit_then_move_job):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/uploads",
+                headers=self.headers,
+                json={
+                    "business_name": "Owner Boundary Store",
+                    "idempotency_key": key,
+                },
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn('"status":"queued"', response.text)
+        with self.app.state.session_factory() as db:
+            job = db.scalar(select(UploadJob).where(UploadJob.idempotency_key == key))
+            queued_audits = db.scalar(
+                select(func.count()).select_from(AuditEvent).where(
+                    AuditEvent.entity_id == job.id,
+                    AuditEvent.event_type == "upload.queued",
+                )
+            )
+        self.assertEqual(job.tenant_id, "tenant-other")
+        self.assertEqual(job.task_id, task_id)
+        self.assertEqual(queued_audits, 1)
+
     def test_initial_upload_rejects_active_job_after_task_terminal_commit(self) -> None:
         task_id = self.create_task("upload-create-terminal-task")
         allocated = self.request(
