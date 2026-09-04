@@ -11,6 +11,7 @@ from unittest import mock
 
 import httpx
 from sqlalchemy import event, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from platform.api.v1 import routes
@@ -1401,6 +1402,135 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(replacement.tenant_id, "tenant-other")
         self.assertEqual(replacement.status, "active")
         self.assertEqual(replacement_events, 1)
+
+    def test_replacement_conflict_rechecks_target_after_rollback(self) -> None:
+        with self.app.state.session_factory() as db:
+            replacement_card = Card(
+                tenant_id="tenant-card",
+                provider_ref="provider-card-conflict-target",
+                brand="MASTERCARD",
+                last4="2222",
+                expiry_month=11,
+                expiry_year=2031,
+                secret_ref="vault://cards/conflict-target",
+            )
+            db.add(replacement_card)
+            db.commit()
+            replacement_card_id = replacement_card.id
+
+        token = self.login()
+        task_id = self.create_task(token, "card-replacement-conflict-target")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(original.status_code, 201, original.text)
+        original_id = original.json()["id"]
+        original_flush = Session.flush
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        original_lookup = routes._card_replacement_for
+        conflict_injected = False
+        winner_id: str | None = None
+        winner_moved = False
+
+        def fail_replacement_flush(session, objects=None):
+            nonlocal conflict_injected
+            if not conflict_injected and any(
+                isinstance(item, CardAllocation)
+                and item.allocation_reason_code == "replacement"
+                for item in session.new
+            ):
+                conflict_injected = True
+                raise IntegrityError(
+                    "forced replacement race",
+                    {},
+                    RuntimeError("forced replacement race"),
+                )
+            return original_flush(session, objects)
+
+        def install_winner_after_rollback(session):
+            nonlocal winner_id
+            original_rollback(session)
+            if not conflict_injected or winner_id is not None:
+                return
+            with self.app.state.session_factory() as other:
+                original_row = other.get(CardAllocation, original_id)
+                self.assertIsNotNone(original_row)
+                now = utc_now()
+                original_row.status = "released"
+                original_row.released_at = now
+                original_row.release_reason_code = "replacement"
+                winner = CardAllocation(
+                    tenant_id="tenant-card",
+                    task_id=task_id,
+                    user_id=self.identity.user_id,
+                    device_id=self.identity.device_id,
+                    card_id=replacement_card_id,
+                    trace_id=original_row.trace_id,
+                    status="active",
+                    allocation_reason_code="replacement",
+                    policy_version=original_row.policy_version,
+                    reveal_ttl_seconds=original_row.reveal_ttl_seconds,
+                    selection_rule_json=original_row.selection_rule_json,
+                    expires_at=now + timedelta(minutes=10),
+                )
+                other.add(winner)
+                original_flush(other)
+                winner_id = winner.id
+                other.add(
+                    CardAllocationReplacement(
+                        original_allocation_id=original_id,
+                        replacement_allocation_id=winner.id,
+                        tenant_id="tenant-card",
+                        task_id=task_id,
+                    )
+                )
+                original_commit(other)
+
+        def move_winner_after_lookup(db, allocation, principal):
+            nonlocal winner_moved
+            replay = original_lookup(db, allocation, principal)
+            if replay is not None and conflict_injected and not winner_moved:
+                self.assertEqual(replay[0].id, winner_id)
+                winner_moved = True
+                original_rollback(db)
+                with self.app.state.session_factory() as other:
+                    winner = other.get(CardAllocation, winner_id)
+                    self.assertIsNotNone(winner)
+                    winner.tenant_id = "tenant-other"
+                    original_commit(other)
+            return replay
+
+        with (
+            mock.patch.object(Session, "flush", new=fail_replacement_flush),
+            mock.patch.object(
+                Session,
+                "rollback",
+                new=install_winner_after_rollback,
+            ),
+            mock.patch.object(
+                routes,
+                "_card_replacement_for",
+                side_effect=move_winner_after_lookup,
+            ),
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations/{original_id}/replace",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(conflict_injected)
+        self.assertTrue(winner_moved)
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("MASTERCARD", response.text)
+        self.assertNotIn("2222", response.text)
+        with self.app.state.session_factory() as db:
+            winner = db.get(CardAllocation, winner_id)
+        self.assertEqual(winner.tenant_id, "tenant-other")
+        self.assertEqual(winner.status, "active")
 
     def test_card_mutations_recheck_operator_before_tenant_compensation(self) -> None:
         token = self.login()

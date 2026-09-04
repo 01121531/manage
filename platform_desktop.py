@@ -1004,7 +1004,10 @@ class PlatformDesktopApp:
             self.check_update_button,
             self.business_entry,
         ):
-            widget.configure(state="disabled")
+            try:
+                widget.configure(state="disabled")
+            except Exception:
+                pass
         self.login_button.configure(state="disabled")
         self.lock_button.configure(text="解锁", command=self.unlock, state="normal")
         self.logout_button.configure(state="normal")

@@ -1880,6 +1880,31 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.copy_card_button.values["state"], "disabled")
         self.assertEqual(instance.auth_label.values["text"], "已锁定")
 
+    def test_lock_capability_ui_error_cannot_skip_remaining_lock_state(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance.new_task_button.configure = mock.Mock(
+            side_effect=RuntimeError("new task button unavailable")
+        )
+
+        instance.lock()
+
+        self.assertTrue(instance._locked)
+        for widget in (
+            instance.close_active_task_button,
+            instance.copy_button,
+            instance.copy_card_button,
+            instance.upload_button,
+            instance.history_button,
+            instance.check_update_button,
+            instance.business_entry,
+        ):
+            self.assertEqual(widget.values["state"], "disabled")
+        self.assertEqual(instance.login_button.values["state"], "disabled")
+        self.assertEqual(instance.lock_button.values["text"], "解锁")
+        self.assertEqual(instance.lock_button.values["state"], "normal")
+        self.assertEqual(instance.auth_label.values["text"], "已锁定")
+
     def test_lock_preserves_user_owned_clipboard_and_blocks_stale_events(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

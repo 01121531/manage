@@ -4666,7 +4666,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       }
       pendingRoleRequests = [roleRequest]
       return fulfill(roleBodies.length === 2
-        ? { ...roleRequest, request_trace_id: '' }
+        ? { ...roleRequest, id: '' }
         : roleRequest)
     }
     if (path === '/api/v1/admin/users/operator-1/disable' && request.method() === 'POST') {
