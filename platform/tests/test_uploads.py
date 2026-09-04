@@ -2219,6 +2219,59 @@ class UploadJobTests(unittest.TestCase):
                 1,
             )
 
+    def test_admin_cancel_rechecks_target_after_commit(self) -> None:
+        owner_token = self.login()
+        task_id, _ = self.create_task_with_card(
+            owner_token, task_key="upload-admin-cancel-target-task"
+        )
+        queued = self.create_upload(
+            owner_token,
+            task_id,
+            "upload-admin-cancel-target",
+        )
+        job_id = queued.json()["id"]
+        admin, admin_token = self.create_role_session("ops_admin")
+        original_commit = Session.commit
+        target_moved = False
+
+        def commit_then_move_target(session: Session) -> None:
+            nonlocal target_moved
+            cancelling = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "upload.cancel_requested"
+                for item in session.new
+            )
+            original_commit(session)
+            if not cancelling or target_moved:
+                return
+            target_moved = True
+            with self.app.state.session_factory() as other:
+                job = other.get(UploadJob, job_id)
+                self.assertIsNotNone(job)
+                job.tenant_id = "tenant-other"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_move_target):
+            response = self.request(
+                "POST",
+                f"/api/v1/upload-jobs/{job_id}/cancel",
+                headers=self.bearer(admin_token),
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn('"status":"cancelled"', response.text)
+        with self.app.state.session_factory() as db:
+            job = db.get(UploadJob, job_id)
+            cancel_event = db.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.entity_id == job_id,
+                    AuditEvent.event_type == "upload.cancel_requested",
+                )
+            )
+        self.assertEqual(job.tenant_id, "tenant-other")
+        self.assertEqual(job.status, "cancelled")
+        self.assertEqual(cancel_event.actor_id, admin.user_id)
+
     def test_admin_cancel_rechecks_actor_after_authentication(self) -> None:
         owner_token = self.login()
         task_id, _ = self.create_task_with_card(owner_token)

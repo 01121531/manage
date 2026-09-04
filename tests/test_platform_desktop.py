@@ -1212,6 +1212,25 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertEqual(instance.copy_card_button.values["state"], "normal")
 
+    def test_auth_ui_error_cannot_skip_local_card_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance.auth_label.configure = mock.Mock(
+            side_effect=RuntimeError("auth widget unavailable")
+        )
+
+        with self.assertRaises(RuntimeError):
+            instance._set_authenticated(False)
+
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

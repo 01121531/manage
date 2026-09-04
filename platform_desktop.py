@@ -600,6 +600,19 @@ class PlatformDesktopApp:
 
     def _set_authenticated(self, authenticated: bool) -> None:
         available = authenticated and not self._locked
+        if not authenticated:
+            self.stop_polling()
+            self._cancel_card_reveal()
+            self._poll_retry_attempt = 0
+            self._paste_sequence.stop()
+            self._clear_sensitive_code()
+            self._clear_card_details()
+            self._clear_trace_id()
+            self._reset_task_verification()
+            self.copy_card_button.configure(state="disabled")
+            self.copy_button.configure(state="disabled")
+            self.upload_button.configure(state="disabled")
+            self._set_workflow_stage("logged_out")
         self.auth_label.configure(
             text="已登录" if authenticated else "未登录",
             fg=SUCCESS if authenticated else WARNING,
@@ -626,19 +639,6 @@ class PlatformDesktopApp:
         self.business_entry.configure(
             state="normal" if upload_input_available else "disabled"
         )
-        if not authenticated:
-            self.stop_polling()
-            self._cancel_card_reveal()
-            self._poll_retry_attempt = 0
-            self._paste_sequence.stop()
-            self._clear_sensitive_code()
-            self._clear_card_details()
-            self._clear_trace_id()
-            self._reset_task_verification()
-            self.copy_card_button.configure(state="disabled")
-            self.copy_button.configure(state="disabled")
-            self.upload_button.configure(state="disabled")
-            self._set_workflow_stage("logged_out")
 
     def _set_workflow_stage(self, stage: str) -> None:
         text, color = format_workflow_progress(stage)

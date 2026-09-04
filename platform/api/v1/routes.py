@@ -4872,8 +4872,8 @@ def cancel_upload_job(
         trace_id=job.trace_id,
         details={"status": job.status},
     )
+    job_task_id = job.task_id
     db.commit()
-    db.refresh(job, with_for_update=True)
     if principal.role == ROLE_OPERATOR:
         _lock_task_creation_principal(db, principal)
     else:
@@ -4882,6 +4882,14 @@ def cancel_upload_job(
             principal,
             allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
         )
+    job = db.scalar(
+        select(UploadJob)
+        .where(*ownership, UploadJob.task_id == job_task_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Upload job not found")
     return _upload_job_response(job)
 
 

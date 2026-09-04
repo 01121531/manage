@@ -915,7 +915,7 @@ test('platform admin quarantines and explicitly releases a card before enabling 
         return fulfill({ error: { code: 'service_unavailable', message: 'late card enable detail' } }, 503)
       }
       card = { ...card, status: 'available', is_active: true }
-      return fulfill(card)
+      return fulfill({ ...card, provider_ref: 'wrong-enable-provider' })
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -1017,6 +1017,11 @@ test('platform admin quarantines and explicitly releases a card before enabling 
   await page.getByRole('menuitem', { name: /卡池管理/ }).click()
   await expect(enableCard).toBeEnabled()
   await enableCard.click()
+  await expect(page.locator('.ant-message-notice').filter({
+    hasText: '平台未能确认卡资源状态变更结果',
+  }).last()).toBeVisible()
+  await expect(page.getByText('卡资源已启用。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-enable-provider')
   await expect(row.getByText('可用')).toBeVisible()
   expect(enableAttempts).toBe(2)
 
