@@ -3983,11 +3983,13 @@ def replace_card_allocation(
             replacement_card, status="allocated", allocation_status="active"
         ),
     )
+    replacement_id = replacement.id
+    replacement_card_id = replacement_card.id
     db.commit()
-    db.scalar(
+    current_task = db.scalar(
         select(Task)
         .where(
-            Task.id == task.id,
+            Task.id == task_id,
             Task.tenant_id == principal.tenant_id,
             Task.user_id == principal.user_id,
             Task.device_id == principal.device_id,
@@ -3995,8 +3997,43 @@ def replace_card_allocation(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    if current_task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
     _lock_task_creation_principal(db, principal)
-    db.refresh(replacement, with_for_update=True)
+    replacement = db.scalar(
+        select(CardAllocation)
+        .join(
+            CardAllocationReplacement,
+            CardAllocationReplacement.replacement_allocation_id
+            == CardAllocation.id,
+        )
+        .where(
+            CardAllocationReplacement.original_allocation_id == allocation_id,
+            CardAllocationReplacement.tenant_id == principal.tenant_id,
+            CardAllocationReplacement.task_id == current_task.id,
+            CardAllocation.id == replacement_id,
+            CardAllocation.tenant_id == principal.tenant_id,
+            CardAllocation.task_id == current_task.id,
+            CardAllocation.user_id == principal.user_id,
+            CardAllocation.device_id == principal.device_id,
+            CardAllocation.card_id == replacement_card_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if replacement is None:
+        raise HTTPException(status_code=404, detail="Card allocation not found")
+    replacement_card = db.scalar(
+        select(Card)
+        .where(
+            Card.id == replacement_card_id,
+            Card.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if replacement_card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
     return _card_allocation_response(replacement, replacement_card)
 
 

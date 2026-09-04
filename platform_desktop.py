@@ -969,7 +969,10 @@ class PlatformDesktopApp:
         self._cancel_task_transition(retain_failure=True)
         self.stop_polling()
         self._paste_sequence.stop()
-        self._close_task_history()
+        try:
+            self._close_task_history()
+        except Exception:
+            pass
         self._clear_sensitive_code()
         self._clear_card_details()
         self._clear_trace_id()

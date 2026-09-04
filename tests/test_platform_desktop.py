@@ -1834,6 +1834,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.lock_button.values["text"], "解锁")
         self.assertEqual(instance.auth_label.values["text"], "已锁定")
 
+    def test_history_close_error_cannot_skip_lock_sensitive_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance._close_task_history = mock.Mock(
+            side_effect=RuntimeError("history window unavailable")
+        )
+
+        instance.lock()
+
+        instance._close_task_history.assert_called_once_with()
+        self.assertTrue(instance._locked)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+        self.assertEqual(instance.auth_label.values["text"], "已锁定")
+
     def test_lock_preserves_user_owned_clipboard_and_blocks_stale_events(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

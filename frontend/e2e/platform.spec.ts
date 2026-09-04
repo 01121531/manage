@@ -2659,7 +2659,7 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
         if (retryAttempts === 1) {
           tasks[taskId].status = 'closed'
           tasks[taskId].closed_at = '2026-08-20T00:10:00Z'
-          return fulfill({ ...tasks[taskId], tenant_id: 'wrong-task-tenant' })
+          return fulfill({ ...tasks[taskId], trace_id: 'wrong-task-close-trace' })
         }
       }
       tasks[taskId].status = 'closed'
@@ -2754,7 +2754,7 @@ test('ops admin safely closes tasks with single-flight recovery', async ({ page 
   await expect(failureNotice).toContainText('正在重新获取任务 task-retry 的真实状态')
   await expect(failureNotice).toContainText('完成前不要重复关闭')
   await expect(page.getByText('任务已关闭，相关卡租约、邮箱会话和上传资源已回收。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-task-tenant')
+  await expect(page.locator('body')).not.toContainText('wrong-task-close-trace')
   await expect(closeDialog).toBeHidden()
   await expect(retryCloseButton).toBeDisabled()
   await retryCloseButton.dispatchEvent('click')

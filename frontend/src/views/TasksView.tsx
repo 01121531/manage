@@ -472,6 +472,7 @@ export default function TasksPage({ principal }: { principal: Principal }) {
           if (
             closed.id !== action.taskId
             || closed.tenant_id !== row.tenant_id
+            || closed.trace_id !== row.trace_id
             || closed.status !== 'closed'
             || closed.closed_at === null
           ) {

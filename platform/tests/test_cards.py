@@ -1165,6 +1165,87 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(replacements[0].status, "active")
         self.assertEqual(len(replacement_events), 1)
 
+    def test_replacement_rechecks_target_after_commit(self) -> None:
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-card",
+                    provider_ref="provider-card-replacement-target-boundary",
+                    brand="MASTERCARD",
+                    last4="2222",
+                    expiry_month=11,
+                    expiry_year=2031,
+                    secret_ref="vault://cards/replacement-target-boundary",
+                )
+            )
+            db.commit()
+
+        token = self.login()
+        task_id = self.create_task(token, "card-replacement-target-boundary")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(original.status_code, 201, original.text)
+        original_commit = Session.commit
+        replacement_moved = False
+
+        def commit_then_move_replacement(session: Session) -> None:
+            nonlocal replacement_moved
+            replacement_event = next(
+                (
+                    item
+                    for item in session.new
+                    if isinstance(item, AuditEvent)
+                    and item.event_type == "card.allocated"
+                    and item.entity_id != original.json()["id"]
+                ),
+                None,
+            )
+            replacement_id = (
+                replacement_event.entity_id
+                if replacement_event is not None
+                else None
+            )
+            original_commit(session)
+            if replacement_id is None or replacement_moved:
+                return
+            replacement_moved = True
+            with self.app.state.session_factory() as other:
+                replacement = other.get(CardAllocation, replacement_id)
+                self.assertIsNotNone(replacement)
+                replacement.tenant_id = "tenant-other"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_move_replacement):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations/"
+                f"{original.json()['id']}/replace",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("MASTERCARD", response.text)
+        self.assertNotIn("2222", response.text)
+        with self.app.state.session_factory() as db:
+            replacement = db.scalar(
+                select(CardAllocation).where(
+                    CardAllocation.task_id == task_id,
+                    CardAllocation.id != original.json()["id"],
+                )
+            )
+            replacement_events = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "card.allocated",
+                    AuditEvent.entity_id == replacement.id,
+                )
+            )
+        self.assertEqual(replacement.tenant_id, "tenant-other")
+        self.assertEqual(replacement.status, "active")
+        self.assertEqual(replacement_events, 1)
+
     def test_replacement_replay_rechecks_operator_after_rollback(self) -> None:
         with self.app.state.session_factory() as db:
             db.add(
