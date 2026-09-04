@@ -1180,6 +1180,38 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.auth_label.values["text"], "未登录")
         self.assertEqual(instance.copy_card_button.values["state"], "disabled")
 
+    def test_card_protocol_error_retries_button_restore_after_ui_error(
+        self,
+    ) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        original_configure = instance.copy_card_button.configure
+        attempts = 0
+
+        def fail_once(**values):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("copy button unavailable")
+            original_configure(**values)
+
+        instance.copy_card_button.configure = fail_once
+        error = PlatformProtocolError("card reveal response invalid")
+
+        instance._events.put((1, "card_reveal_error", error))
+        instance._drain_events()
+
+        retry = next(
+            callback
+            for delay, callback, _args in instance.root.scheduled
+            if delay == 0
+        )
+        self.assertIn("原因：", instance.status_label.values["text"])
+        retry()
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(instance.copy_card_button.values["state"], "normal")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

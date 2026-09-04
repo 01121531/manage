@@ -569,6 +569,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
               if (
                 rolledBack.active_version !== targetVersion
                 || rolledBack.previous_version !== currentVersion
+                || rolledBack.rollout_percent !== 100
               ) throw new Error('upload policy rollback response binding mismatch')
             }, '策略已回滚。'),
           })

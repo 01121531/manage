@@ -3531,12 +3531,11 @@ class PlatformDesktopApp:
                     if self._client is not None:
                         self._client.clear_access_token()
                     self._set_authenticated(False)
-                elif (
-                    self._card_allocation_id is not None
-                    and self._client is not None
-                    and self._client.is_authenticated
-                ):
-                    self.copy_card_button.configure(state="normal")
+                else:
+                    self._restore_card_reveal_retry(
+                        self._task_generation,
+                        self._card_allocation_id,
+                    )
                 if isinstance(value, PlatformProtocolError):
                     self._set_status(
                         "原因：平台返回的卡揭示结果与当前卡租约不一致或无法安全验证；"
@@ -4899,6 +4898,39 @@ class PlatformDesktopApp:
         )
         self._start_terminal_task_cleanup_attempt()
 
+    def _restore_card_reveal_retry(
+        self,
+        generation: int,
+        allocation_id: str | None,
+        retries_remaining: int = 2,
+    ) -> None:
+        try:
+            if (
+                self._closed
+                or self._locked
+                or generation != self._task_generation
+                or allocation_id is None
+                or allocation_id != self._card_allocation_id
+                or self._client is None
+                or not self._client.is_authenticated
+            ):
+                return
+            self.copy_card_button.configure(state="normal")
+        except Exception:
+            if retries_remaining <= 0:
+                return
+            try:
+                self.root.after(
+                    0,
+                    lambda: self._restore_card_reveal_retry(
+                        generation,
+                        allocation_id,
+                        retries_remaining - 1,
+                    ),
+                )
+            except Exception:
+                pass
+
     def _discard_card_after_clipboard_failure(self) -> None:
         generation = self._task_generation
         allocation_id = self._card_allocation_id
@@ -4912,32 +4944,7 @@ class PlatformDesktopApp:
                 )
             except Exception:
                 pass
-
-        def restore_reveal_retry(retries_remaining: int) -> None:
-            try:
-                if (
-                    self._closed
-                    or self._locked
-                    or generation != self._task_generation
-                    or allocation_id is None
-                    or allocation_id != self._card_allocation_id
-                    or self._client is None
-                    or not self._client.is_authenticated
-                ):
-                    return
-                self.copy_card_button.configure(state="normal")
-            except Exception:
-                if retries_remaining <= 0:
-                    return
-                try:
-                    self.root.after(
-                        0,
-                        lambda: restore_reveal_retry(retries_remaining - 1),
-                    )
-                except Exception:
-                    pass
-
-        restore_reveal_retry(2)
+        self._restore_card_reveal_retry(generation, allocation_id)
 
     def _write_clipboard(self, text: str) -> bool:
         def clipboard_sequence_number() -> int | None:

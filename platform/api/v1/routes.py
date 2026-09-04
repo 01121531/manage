@@ -5053,7 +5053,18 @@ def reconcile_upload_job(
             ROLE_PLATFORM_ADMIN,
         ),
     )
-    db.refresh(job, with_for_update=True)
+    job = db.scalar(
+        select(UploadJob)
+        .where(
+            UploadJob.id == job_id,
+            UploadJob.tenant_id == principal.tenant_id,
+            UploadJob.task_id == job_task_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Upload job not found")
     return _upload_job_response(job)
 
 
