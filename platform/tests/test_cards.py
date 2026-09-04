@@ -333,6 +333,60 @@ class CardAllocationTests(unittest.TestCase):
         )
         self.assertNotIn("vault://cards/card-1", events[0].details_json)
 
+    def test_allocation_replay_rechecks_owner_before_response(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-allocation-replay-owner")
+        first = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        allocation_id = first.json()["id"]
+        original_card_for = routes._card_for_allocation
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        allocation_moved = False
+
+        def move_allocation_after_card_lookup(db, allocation, *, tenant_id):
+            nonlocal allocation_moved
+            card = original_card_for(db, allocation, tenant_id=tenant_id)
+            if not allocation_moved and allocation.id == allocation_id:
+                allocation_moved = True
+                original_rollback(db)
+                with self.app.state.session_factory() as other:
+                    persisted = other.get(CardAllocation, allocation_id)
+                    self.assertIsNotNone(persisted)
+                    persisted.tenant_id = "tenant-other"
+                    original_commit(other)
+            return card
+
+        with mock.patch.object(
+            routes,
+            "_card_for_allocation",
+            side_effect=move_allocation_after_card_lookup,
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn("VISA", replay.text)
+        self.assertNotIn("1111", replay.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocation_id)
+            allocation_events = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "card.allocated",
+                    AuditEvent.entity_id == allocation_id,
+                )
+            )
+        self.assertEqual(allocation.tenant_id, "tenant-other")
+        self.assertEqual(allocation.status, "active")
+        self.assertEqual(allocation_events, 1)
+
     def test_allocation_read_never_dereferences_card_after_tenant_relation_changes(
         self,
     ) -> None:

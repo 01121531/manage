@@ -1275,6 +1275,26 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.business_entry.values["state"], "disabled")
         self.assertEqual(instance.login_button.values["state"], "normal")
 
+    def test_copy_card_ui_error_cannot_skip_remaining_logged_out_state(self) -> None:
+        instance = self._event_app()
+        instance.copy_card_button.configure(state="normal")
+        instance.copy_button.configure(state="normal")
+        instance.upload_button.configure(state="normal")
+        instance.logout_button.configure(state="normal")
+        instance.copy_card_button.configure = mock.Mock(
+            side_effect=RuntimeError("copy card button unavailable")
+        )
+
+        instance._set_authenticated(False)
+
+        self.assertEqual(instance.copy_button.values["state"], "disabled")
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+        self.assertEqual(instance.logout_button.values["state"], "disabled")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+        workflow_text, _ = format_workflow_progress("logged_out")
+        self.assertEqual(instance.workflow_label.values["text"], workflow_text)
+
     def test_auth_cleanup_error_cannot_skip_later_card_cleanup(self) -> None:
         instance = self._event_app()
         details = "4111111111111111\t12/30"

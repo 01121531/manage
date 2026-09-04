@@ -62,6 +62,7 @@ export default function UploadsPage({ principal }: { principal: Principal }) {
       if (
         updated.id !== row.id
         || updated.task_id !== row.task_id
+        || updated.trace_id !== row.trace_id
         || updated.status !== expectedStatus
       ) {
         throw new Error('upload cancel response binding mismatch')
