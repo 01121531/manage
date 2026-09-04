@@ -1253,6 +1253,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.business_entry.values["state"], "disabled")
         self.assertEqual(instance.login_button.values["state"], "normal")
 
+    def test_new_task_ui_error_cannot_skip_other_capability_revocation(self) -> None:
+        instance = self._event_app()
+        for button in (
+            instance.history_button,
+            instance.logout_button,
+            instance.lock_button,
+        ):
+            button.configure(state="normal")
+        instance.business_entry.configure(state="normal")
+        instance.login_button.configure(state="disabled")
+        instance.new_task_button.configure = mock.Mock(
+            side_effect=RuntimeError("new task button unavailable")
+        )
+
+        instance._set_authenticated(False)
+
+        self.assertEqual(instance.history_button.values["state"], "disabled")
+        self.assertEqual(instance.logout_button.values["state"], "disabled")
+        self.assertEqual(instance.lock_button.values["state"], "disabled")
+        self.assertEqual(instance.business_entry.values["state"], "disabled")
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
     def test_auth_cleanup_error_cannot_skip_later_card_cleanup(self) -> None:
         instance = self._event_app()
         details = "4111111111111111\t12/30"

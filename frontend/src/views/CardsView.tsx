@@ -479,6 +479,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
             updated.id !== row.id
             || updated.tenant_id !== row.tenant_id
             || updated.provider_ref !== row.provider_ref
+            || updated.last4 !== row.last4
             || updated.status !== 'disabled'
             || updated.is_active
             || updated.quarantine_reason_code !== null

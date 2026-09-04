@@ -600,6 +600,13 @@ class PlatformDesktopApp:
 
     def _set_authenticated(self, authenticated: bool) -> None:
         available = authenticated and not self._locked
+
+        def configure_capability(widget: Any, **values: Any) -> None:
+            try:
+                widget.configure(**values)
+            except Exception:
+                pass
+
         if not authenticated:
             self._poll_retry_attempt = 0
             for cleanup in (
@@ -629,12 +636,25 @@ class PlatformDesktopApp:
             )
         except Exception:
             pass
-        self.new_task_button.configure(state="normal" if available else "disabled")
-        self.close_active_task_button.configure(state="disabled")
-        self.history_button.configure(state="normal" if available else "disabled")
-        self.logout_button.configure(state="normal" if authenticated else "disabled")
-        self.login_button.configure(state="disabled" if authenticated else "normal")
-        self.lock_button.configure(
+        configure_capability(
+            self.new_task_button,
+            state="normal" if available else "disabled",
+        )
+        configure_capability(self.close_active_task_button, state="disabled")
+        configure_capability(
+            self.history_button,
+            state="normal" if available else "disabled",
+        )
+        configure_capability(
+            self.logout_button,
+            state="normal" if authenticated else "disabled",
+        )
+        configure_capability(
+            self.login_button,
+            state="disabled" if authenticated else "normal",
+        )
+        configure_capability(
+            self.lock_button,
             text="锁定",
             command=self.lock,
             state=(
@@ -648,7 +668,8 @@ class PlatformDesktopApp:
             and self._upload_job_id is None
             and self._upload_submission_action is None
         )
-        self.business_entry.configure(
+        configure_capability(
+            self.business_entry,
             state="normal" if upload_input_available else "disabled"
         )
 

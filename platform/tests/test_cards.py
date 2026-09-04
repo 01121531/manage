@@ -10,7 +10,7 @@ from threading import Barrier, Event, Lock
 from unittest import mock
 
 import httpx
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from platform.api.v1 import routes
@@ -778,6 +778,60 @@ class CardAllocationTests(unittest.TestCase):
             )
         self.assertEqual(allocations[0].status, "active")
         self.assertEqual(len(allocation_events), 1)
+
+    def test_card_allocation_rechecks_target_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-allocation-target-boundary")
+        original_commit = Session.commit
+        allocation_moved = False
+
+        def commit_then_move_allocation(session: Session) -> None:
+            nonlocal allocation_moved
+            allocation_event = next(
+                (
+                    item
+                    for item in session.new
+                    if isinstance(item, AuditEvent)
+                    and item.event_type == "card.allocated"
+                ),
+                None,
+            )
+            allocation_id = (
+                allocation_event.entity_id if allocation_event is not None else None
+            )
+            original_commit(session)
+            if allocation_id is None or allocation_moved:
+                return
+            allocation_moved = True
+            with self.app.state.session_factory() as other:
+                allocation = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(allocation)
+                allocation.tenant_id = "tenant-other"
+                original_commit(other)
+
+        with mock.patch.object(Session, "commit", new=commit_then_move_allocation):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("VISA", response.text)
+        self.assertNotIn("1111", response.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.scalar(
+                select(CardAllocation).where(CardAllocation.task_id == task_id)
+            )
+            allocation_events = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "card.allocated",
+                    AuditEvent.entity_id == allocation.id,
+                )
+            )
+        self.assertEqual(allocation.tenant_id, "tenant-other")
+        self.assertEqual(allocation.status, "active")
+        self.assertEqual(allocation_events, 1)
 
     def test_replace_card_is_transactional_masked_and_idempotent(self) -> None:
         with self.app.state.session_factory() as db:
