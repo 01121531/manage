@@ -4908,7 +4908,8 @@ class PlatformDesktopApp:
                 )
             except Exception:
                 pass
-        def restore_reveal_retry() -> bool:
+
+        def restore_reveal_retry(retries_remaining: int) -> None:
             try:
                 if (
                     self._closed
@@ -4919,17 +4920,20 @@ class PlatformDesktopApp:
                     or self._client is None
                     or not self._client.is_authenticated
                 ):
-                    return True
+                    return
                 self.copy_card_button.configure(state="normal")
             except Exception:
-                return False
-            return True
+                if retries_remaining <= 0:
+                    return
+                try:
+                    self.root.after(
+                        0,
+                        lambda: restore_reveal_retry(retries_remaining - 1),
+                    )
+                except Exception:
+                    pass
 
-        if not restore_reveal_retry():
-            try:
-                self.root.after(0, restore_reveal_retry)
-            except Exception:
-                pass
+        restore_reveal_retry(2)
 
     def _write_clipboard(self, text: str) -> bool:
         def clipboard_sequence_number() -> int | None:

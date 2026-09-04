@@ -9720,6 +9720,7 @@ def admin_register_upload_policy_version(
         raise HTTPException(
             status_code=409, detail="Policy version already exists for this tenant"
         ) from None
+    policy_id = policy.id
     record_audit(
         db,
         tenant_id=principal.tenant_id,
@@ -9737,7 +9738,17 @@ def admin_register_upload_policy_version(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(policy, with_for_update=True)
+    policy = db.scalar(
+        select(UploadPolicyVersion)
+        .where(
+            UploadPolicyVersion.id == policy_id,
+            UploadPolicyVersion.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Policy version not found")
     return _upload_policy_version_response(policy)
 
 

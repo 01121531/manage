@@ -514,6 +514,8 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
               || created.change_note !== values.change_note
               || created.status !== 'draft'
               || created.created_by !== principal.id
+              || created.approved_by !== null
+              || created.approved_at !== null
             ) throw new Error('upload policy registration response binding mismatch')
             form.resetFields()
           },

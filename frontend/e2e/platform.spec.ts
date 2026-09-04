@@ -4220,7 +4220,11 @@ test('platform admin governs upload policies without browser execution details',
         approved_at: null, created_at: '2026-08-20T00:01:00Z',
       }
       versions = [created, ...versions]
-      return fulfill({ ...created, version: 'wrong-policy-version' }, 201)
+      return fulfill({
+        ...created,
+        approved_by: 'wrong-upload-premature-approver',
+        approved_at: '2026-08-20T00:01:30Z',
+      }, 201)
     }
     const approveMatch = path.match(/^\/api\/v1\/admin\/policies\/upload\/versions\/([^/]+)\/approve$/)
     if (approveMatch && request.method() === 'POST') {
@@ -4399,7 +4403,7 @@ test('platform admin governs upload policies without browser execution details',
   await uploadPolicyForm.getByRole('button', { name: '登记快照' }).click()
   await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' }).last()).toBeVisible()
   await expect(page.getByText('策略快照已登记，等待另一位管理员审批。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-policy-version')
+  await expect(page.locator('body')).not.toContainText('wrong-upload-premature-approver')
   await expect(page.getByText('sub2-2026.09.1')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('vault://')
 
