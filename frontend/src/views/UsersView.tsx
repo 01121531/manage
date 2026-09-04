@@ -228,6 +228,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
             || request.new_role !== role
             || request.status !== 'pending'
             || request.requested_by !== principal.id
+            || request.approved_by !== null
             || request.request_trace_id.trim().length === 0
           ) throw new Error('role change request response binding mismatch')
         },

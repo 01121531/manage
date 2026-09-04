@@ -3761,6 +3761,23 @@ def replace_card_allocation(
             request=request,
             principal=principal,
         )
+        original = db.scalar(
+            select(CardAllocation)
+            .where(
+                CardAllocation.id == allocation_id,
+                CardAllocation.task_id == current_task.id,
+                CardAllocation.tenant_id == principal.tenant_id,
+                CardAllocation.user_id == principal.user_id,
+                CardAllocation.device_id == principal.device_id,
+                CardAllocation.status == "released",
+                CardAllocation.released_at.is_not(None),
+                CardAllocation.release_reason_code == "replacement",
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if original is None:
+            raise HTTPException(status_code=404, detail="Card allocation not found")
         replacement = db.scalar(
             select(CardAllocation)
             .join(

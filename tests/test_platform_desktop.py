@@ -1905,6 +1905,23 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.lock_button.values["state"], "normal")
         self.assertEqual(instance.auth_label.values["text"], "已锁定")
 
+    def test_lock_login_ui_error_cannot_skip_remaining_lock_ui(self) -> None:
+        instance = self._event_app()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance.login_button.configure = mock.Mock(
+            side_effect=RuntimeError("login button unavailable")
+        )
+
+        instance.lock()
+
+        self.assertTrue(instance._locked)
+        self.assertEqual(instance.lock_button.values["text"], "解锁")
+        self.assertEqual(instance.lock_button.values["state"], "normal")
+        self.assertEqual(instance.logout_button.values["state"], "normal")
+        self.assertEqual(instance.auth_label.values["text"], "已锁定")
+        self.assertIn("已锁定", instance.profile_label.values["text"])
+        self.assertIn("已锁定", instance.status_label.values["text"])
+
     def test_lock_preserves_user_owned_clipboard_and_blocks_stale_events(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

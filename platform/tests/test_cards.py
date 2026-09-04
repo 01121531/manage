@@ -1403,6 +1403,73 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(replacement.status, "active")
         self.assertEqual(replacement_events, 1)
 
+    def test_replacement_replay_rechecks_original_after_rollback(self) -> None:
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-card",
+                    provider_ref="provider-card-replay-original",
+                    brand="MASTERCARD",
+                    last4="2222",
+                    expiry_month=11,
+                    expiry_year=2031,
+                    secret_ref="vault://cards/replay-original",
+                )
+            )
+            db.commit()
+
+        token = self.login()
+        task_id = self.create_task(token, "card-replacement-replay-original")
+        original = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        replaced = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations/{original.json()['id']}/replace",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(replaced.status_code, 201, replaced.text)
+        original_id = original.json()["id"]
+        original_lookup = routes._card_replacement_for
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        original_moved = False
+
+        def move_original_after_lookup(db, allocation, principal):
+            nonlocal original_moved
+            replay = original_lookup(db, allocation, principal)
+            if replay is not None and not original_moved:
+                original_moved = True
+                original_rollback(db)
+                with self.app.state.session_factory() as other:
+                    original_row = other.get(CardAllocation, original_id)
+                    self.assertIsNotNone(original_row)
+                    original_row.tenant_id = "tenant-other"
+                    original_commit(other)
+            return replay
+
+        with mock.patch.object(
+            routes,
+            "_card_replacement_for",
+            side_effect=move_original_after_lookup,
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations/{original_id}/replace",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(original_moved)
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn(replaced.json()["card_masked"], replay.text)
+        self.assertNotIn(replaced.json()["trace_id"], replay.text)
+        with self.app.state.session_factory() as db:
+            original_row = db.get(CardAllocation, original_id)
+        self.assertEqual(original_row.tenant_id, "tenant-other")
+        self.assertEqual(original_row.status, "released")
+
     def test_replacement_conflict_rechecks_target_after_rollback(self) -> None:
         with self.app.state.session_factory() as db:
             replacement_card = Card(

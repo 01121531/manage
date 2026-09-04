@@ -1008,13 +1008,25 @@ class PlatformDesktopApp:
                 widget.configure(state="disabled")
             except Exception:
                 pass
-        self.login_button.configure(state="disabled")
-        self.lock_button.configure(text="解锁", command=self.unlock, state="normal")
-        self.logout_button.configure(state="normal")
-        self.auth_label.configure(text="已锁定", fg=WARNING)
-        self.profile_label.configure(text=f"{self._profile_summary} · 已锁定")
-        self._set_status("客户端已锁定；重新验证当前账号后才能继续。", WARNING)
-        self._update_session_countdown(self._session_generation)
+        for update_lock_ui in (
+            lambda: self.login_button.configure(state="disabled"),
+            lambda: self.lock_button.configure(
+                text="解锁", command=self.unlock, state="normal"
+            ),
+            lambda: self.logout_button.configure(state="normal"),
+            lambda: self.auth_label.configure(text="已锁定", fg=WARNING),
+            lambda: self.profile_label.configure(
+                text=f"{self._profile_summary} · 已锁定"
+            ),
+            lambda: self._set_status(
+                "客户端已锁定；重新验证当前账号后才能继续。", WARNING
+            ),
+            lambda: self._update_session_countdown(self._session_generation),
+        ):
+            try:
+                update_lock_ui()
+            except Exception:
+                pass
 
     def unlock(self) -> None:
         """Start forced, isolated PKCE reauthentication for the locked principal."""
