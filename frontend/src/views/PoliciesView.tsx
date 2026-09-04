@@ -392,6 +392,7 @@ export default function PoliciesPage({ principal }: { principal: Principal }) {
                 approved.id !== row.id
                 || approved.version !== row.version
                 || approved.status !== 'approved'
+                || approved.created_by !== row.created_by
                 || approved.approved_by !== principal.id
                 || approved.approved_at === null
               ) throw new Error('upload policy approval response binding mismatch')

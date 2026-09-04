@@ -1096,6 +1096,36 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance._paste_sequence.stage, PasteStage.STOPPED)
         self.assertEqual(instance.copy_card_button.values["state"], "normal")
 
+    def test_card_retry_button_error_gets_deferred_retry(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._card_allocation_id = "allocation-1"
+        instance._current_card_clipboard = details
+        original_configure = instance.copy_card_button.configure
+        attempts = 0
+
+        def fail_once(**values):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("copy button unavailable")
+            original_configure(**values)
+
+        instance.copy_card_button.configure = fail_once
+
+        instance._discard_card_after_clipboard_failure()
+        delay, retry, args = instance.root.scheduled.pop()
+
+        self.assertEqual(delay, 0)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertNotEqual(instance.copy_card_button.values.get("state"), "normal")
+
+        retry(*args)
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(instance.copy_card_button.values["state"], "normal")
+
     def test_unexpected_destroy_error_keeps_close_retryable(self) -> None:
         instance = self._event_app()
         original_destroy = instance.root.destroy

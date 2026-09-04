@@ -9791,7 +9791,17 @@ def admin_approve_upload_policy_version(
         principal,
         allowed_roles=(ROLE_PLATFORM_ADMIN,),
     )
-    db.refresh(policy, with_for_update=True)
+    policy = db.scalar(
+        select(UploadPolicyVersion)
+        .where(
+            UploadPolicyVersion.id == policy_id,
+            UploadPolicyVersion.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Policy version not found")
     return _upload_policy_version_response(policy)
 
 

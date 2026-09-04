@@ -4228,7 +4228,7 @@ test('platform admin governs upload policies without browser execution details',
       versions = versions.map((item) => item.id === approveMatch[1]
         ? { ...item, status: 'approved', approved_by: 'user-admin', approved_at: '2026-08-20T00:02:00Z' }
         : item)
-      return fulfill({ ...versions.find((item) => item.id === approveMatch[1]), id: 'wrong-approval-binding' })
+      return fulfill({ ...versions.find((item) => item.id === approveMatch[1]), created_by: 'wrong-upload-policy-creator' })
     }
     const deployMatch = path.match(/^\/api\/v1\/admin\/policies\/upload\/versions\/([^/]+)\/deploy$/)
     if (deployMatch && request.method() === 'POST') {
@@ -4390,7 +4390,7 @@ test('platform admin governs upload policies without browser execution details',
   await expect.poll(() => approveRequests).toEqual([visibleApproveId ?? ''])
   await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认策略操作结果' })).toBeVisible()
   await expect(page.getByText('策略已通过独立审批。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-approval-binding')
+  await expect(page.locator('body')).not.toContainText('wrong-upload-policy-creator')
   await expect(approveDraft).toHaveCount(0)
 
   await page.getByPlaceholder('例如 sub2-2026.08.1').fill('sub2-2026.09.1')

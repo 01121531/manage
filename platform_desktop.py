@@ -4896,6 +4896,8 @@ class PlatformDesktopApp:
         self._start_terminal_task_cleanup_attempt()
 
     def _discard_card_after_clipboard_failure(self) -> None:
+        generation = self._task_generation
+        allocation_id = self._card_allocation_id
         self._current_card_clipboard = None
         self._card_clear_generation += 1
         self._paste_sequence.stop()
@@ -4906,13 +4908,28 @@ class PlatformDesktopApp:
                 )
             except Exception:
                 pass
-        if (
-            not self._locked
-            and self._card_allocation_id is not None
-            and self._client is not None
-            and self._client.is_authenticated
-        ):
-            self.copy_card_button.configure(state="normal")
+        def restore_reveal_retry() -> bool:
+            try:
+                if (
+                    self._closed
+                    or self._locked
+                    or generation != self._task_generation
+                    or allocation_id is None
+                    or allocation_id != self._card_allocation_id
+                    or self._client is None
+                    or not self._client.is_authenticated
+                ):
+                    return True
+                self.copy_card_button.configure(state="normal")
+            except Exception:
+                return False
+            return True
+
+        if not restore_reveal_retry():
+            try:
+                self.root.after(0, restore_reveal_retry)
+            except Exception:
+                pass
 
     def _write_clipboard(self, text: str) -> bool:
         def clipboard_sequence_number() -> int | None:
