@@ -4345,9 +4345,38 @@ def release_card_allocation(
             card, status="available", allocation_status="released"
         ),
     )
+    card_id = card.id
     db.commit()
     _lock_task_creation_principal(db, principal)
-    db.refresh(allocation, with_for_update=True)
+    allocation = db.scalar(
+        select(CardAllocation)
+        .where(
+            CardAllocation.id == allocation_id,
+            CardAllocation.task_id == allocation_snapshot.task_id,
+            CardAllocation.tenant_id == principal.tenant_id,
+            CardAllocation.user_id == principal.user_id,
+            CardAllocation.device_id == principal.device_id,
+            CardAllocation.card_id == card_id,
+            CardAllocation.status == "released",
+            CardAllocation.released_at.is_not(None),
+            CardAllocation.release_reason_code == "user_released",
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if allocation is None:
+        raise HTTPException(status_code=404, detail="Card allocation not found")
+    card = db.scalar(
+        select(Card)
+        .where(
+            Card.id == card_id,
+            Card.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
     return _card_allocation_response(allocation, card)
 
 

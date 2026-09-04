@@ -3060,6 +3060,28 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertFalse(instance._locked)
         instance._client.reauthenticate_for_unlock.assert_called_once()
 
+    def test_unlock_error_ui_failure_cannot_skip_finished_cleanup(self) -> None:
+        instance = self._event_app()
+        action = object()
+        worker_thread = object()
+        instance._locked = True
+        instance._unlock_action = action
+        instance._unlock_thread = worker_thread
+        instance.lock_button.configure = mock.Mock(
+            side_effect=RuntimeError("lock button unavailable")
+        )
+        error = PlatformTransportError("unlock unavailable")
+        generation = instance._session_generation
+        instance._events.put((generation, "unlock_error", (action, error)))
+        instance._events.put((generation, "unlock_finished", action))
+
+        instance._drain_events()
+
+        self.assertTrue(instance._locked)
+        self.assertIsNone(instance._unlock_action)
+        self.assertIsNone(instance._unlock_thread)
+        self.assertIn("仍保持锁定", instance.status_label.values["text"])
+
     def test_unlock_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)

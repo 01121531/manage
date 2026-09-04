@@ -3843,10 +3843,17 @@ class PlatformDesktopApp:
                 action, error = value
                 if self._unlock_action is not action:
                     continue
-                self.lock_button.configure(state="normal")
-                self._set_status(
-                    f"{format_operation_error(error)} 客户端仍保持锁定。", ERROR
-                )
+                try:
+                    self.lock_button.configure(state="normal")
+                except Exception:
+                    pass
+                try:
+                    self._set_status(
+                        f"{format_operation_error(error)} 客户端仍保持锁定。",
+                        ERROR,
+                    )
+                except Exception:
+                    pass
         if not self._closed:
             self.root.after(100, self._drain_events)
 

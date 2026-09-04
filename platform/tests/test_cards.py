@@ -3530,6 +3530,58 @@ class CardAllocationTests(unittest.TestCase):
         self.assertIsNotNone(persisted.released_at)
         self.assertEqual(len(release_events), 1)
 
+    def test_card_release_rechecks_target_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-release-target-boundary")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        allocation_id = allocated.json()["id"]
+        original_commit = Session.commit
+        allocation_moved = False
+
+        def commit_then_move_allocation(session: Session) -> None:
+            nonlocal allocation_moved
+            committing_release = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "card.released"
+                and item.entity_id == allocation_id
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_release or allocation_moved:
+                return
+            allocation_moved = True
+            with self.app.state.session_factory() as other:
+                allocation = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(allocation)
+                allocation.tenant_id = "tenant-other"
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_move_allocation,
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/release",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(allocation_moved)
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn(allocated.json()["card_masked"], response.text)
+        self.assertNotIn(allocated.json()["trace_id"], response.text)
+        with self.app.state.session_factory() as db:
+            persisted = db.get(CardAllocation, allocation_id)
+        self.assertEqual(persisted.tenant_id, "tenant-other")
+        self.assertEqual(persisted.status, "released")
+        self.assertEqual(persisted.release_reason_code, "user_released")
+
     def test_reveal_rejects_missing_or_insufficient_step_up(self) -> None:
         token = self.login()
         headers = self.bearer(token)

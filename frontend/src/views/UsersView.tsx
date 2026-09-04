@@ -292,6 +292,7 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
             || approved.request_trace_id !== request.request_trace_id
             || approved.applied_at === null
             || approved.approval_trace_id === null
+            || approved.approval_trace_id.trim().length === 0
           ) throw new Error('role change approval response binding mismatch')
         },
         '角色变更已由独立管理员审批并应用。',
