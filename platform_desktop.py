@@ -628,7 +628,10 @@ class PlatformDesktopApp:
             configure_capability(self.copy_card_button, state="disabled")
             configure_capability(self.copy_button, state="disabled")
             configure_capability(self.upload_button, state="disabled")
-            self._set_workflow_stage("logged_out")
+            try:
+                self._set_workflow_stage("logged_out")
+            except Exception:
+                pass
         try:
             self.auth_label.configure(
                 text="已登录" if authenticated else "未登录",

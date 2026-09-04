@@ -387,6 +387,90 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(allocation.status, "active")
         self.assertEqual(allocation_events, 1)
 
+    def test_allocation_conflict_rechecks_owner_after_rollback(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-allocation-conflict-owner")
+        first = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        allocation_id = first.json()["id"]
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-card",
+                    provider_ref="provider-card-conflict-owner",
+                    brand="MASTERCARD",
+                    last4="2222",
+                    expiry_month=11,
+                    expiry_year=2031,
+                    secret_ref="vault://cards/card-conflict-owner",
+                )
+            )
+            db.commit()
+
+        original_scalar = Session.scalar
+        original_card_for = routes._card_for_allocation
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        allocation_lookups = 0
+        allocation_moved = False
+
+        def scalar(session, statement, *args, **kwargs):
+            nonlocal allocation_lookups
+            result = original_scalar(session, statement, *args, **kwargs)
+            entity = statement.column_descriptions[0].get("entity")
+            if entity is CardAllocation:
+                allocation_lookups += 1
+                if allocation_lookups == 1:
+                    return None
+            return result
+
+        def move_allocation_after_card_lookup(db, allocation, *, tenant_id):
+            nonlocal allocation_moved
+            card = original_card_for(db, allocation, tenant_id=tenant_id)
+            if not allocation_moved and allocation.id == allocation_id:
+                allocation_moved = True
+                original_rollback(db)
+                with self.app.state.session_factory() as other:
+                    persisted = other.get(CardAllocation, allocation_id)
+                    self.assertIsNotNone(persisted)
+                    persisted.tenant_id = "tenant-other"
+                    original_commit(other)
+            return card
+
+        with mock.patch.object(
+            Session,
+            "scalar",
+            new=scalar,
+        ), mock.patch.object(
+            routes,
+            "_card_for_allocation",
+            side_effect=move_allocation_after_card_lookup,
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations",
+                headers=self.bearer(token),
+            )
+
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn("VISA", replay.text)
+        self.assertNotIn("1111", replay.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.get(CardAllocation, allocation_id)
+            allocation_events = db.scalar(
+                select(func.count(AuditEvent.id)).where(
+                    AuditEvent.event_type == "card.allocated",
+                    AuditEvent.entity_id == allocation_id,
+                )
+            )
+        self.assertEqual(allocation.tenant_id, "tenant-other")
+        self.assertEqual(allocation.status, "active")
+        self.assertEqual(allocation_events, 1)
+
     def test_allocation_read_never_dereferences_card_after_tenant_relation_changes(
         self,
     ) -> None:

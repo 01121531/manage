@@ -3808,7 +3808,7 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
       uploads = uploads.map((upload) => upload.id === jobId ? { ...upload, status: 'failed' } : upload)
       const updated = uploads.find((upload) => upload.id === jobId)
       return fulfill(jobId === 'upload-retry'
-        ? { ...updated, trace_id: 'wrong-reconcile-trace' }
+        ? { ...updated, business_name: 'wrong-reconcile-business' }
         : updated)
     }
     const cancelMatch = path.match(/^\/api\/v1\/upload-jobs\/([^/]+)\/cancel$/)
@@ -3948,7 +3948,7 @@ test('ops admin safely reconciles unknown uploads with true-state recovery', asy
   await reconcileDialog.getByRole('button', { name: /确认写入复核终态/ }).click()
   await expect(page.getByText(/原因：平台未能确认 unknown 上传复核结果。影响：.*下一步：/).last()).toBeVisible()
   await expect(page.getByText('复核终态已提交，正在刷新上传与任务资源状态。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-reconcile-trace')
+  await expect(page.locator('body')).not.toContainText('wrong-reconcile-business')
   await expect(reconcileDialog).toBeHidden()
   await expect(retryRow.getByText('failed')).toBeVisible()
   expect(reconcileRequests.filter((item) => item.jobId === 'upload-retry')).toHaveLength(2)
