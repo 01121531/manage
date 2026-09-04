@@ -86,6 +86,10 @@ data:
   PLATFORM_SUB2_PROXY_REF: vault://secret/sub2/proxy
   PLATFORM_SUB2_CREDENTIAL_REF: vault://secret/sub2/credential
   PLATFORM_SUB2_UPLOAD_URL: https://sub2.example.invalid/api/upload
+  PLATFORM_SUB2_ADMIN_BASE_URL: https://sub2.example.invalid/api/v1/admin
+  PLATFORM_SUB2_ADMIN_API_KEY_REF: vault://secret/sub2/admin
+  PLATFORM_SUB2_ADMIN_PROXY_ID: "1"
+  PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE: /run/config/sub2/admin-model-mapping.json
   PLATFORM_SUB2_ALLOWED_ORIGINS_FILE: /run/config/sub2/allowed-origins
   PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
   PLATFORM_WORKER_METRICS_PORT: "9102"
@@ -102,3 +106,4 @@ metadata:
 data:
   mail-allowed-origins: https://mail.example.invalid
   sub2-allowed-origins: https://sub2.example.invalid
+  sub2-admin-model-mapping.json: '{"gpt-5.6":"gpt-5.6"}'

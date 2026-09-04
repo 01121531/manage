@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     sub2_proxy_ref: str | None = None
     sub2_credential_ref: SecretStr | None = None
     sub2_upload_url: str | None = None
+    sub2_admin_base_url: str | None = None
+    sub2_admin_api_key_ref: SecretStr | None = None
+    sub2_admin_proxy_id: int | None = Field(default=None, gt=0)
+    sub2_admin_model_mapping_file: str | None = None
     sub2_allowed_origins_file: str | None = None
     sub2_timeout_seconds: int = Field(default=30, gt=0, le=300)
 

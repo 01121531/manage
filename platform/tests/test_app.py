@@ -9,6 +9,7 @@ from unittest import mock
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from platform.app import create_app
@@ -934,6 +935,20 @@ class PlatformAppTests(unittest.TestCase):
                 db.get(Device, self.identity.device_id).last_seen_at,
                 revoked_baseline,
             )
+
+    def test_bearer_activity_write_failure_does_not_block_authenticated_request(
+        self,
+    ) -> None:
+        token = self.login()
+        with mock.patch.object(
+            self.app.state.session_factory,
+            "begin",
+            side_effect=SQLAlchemyError("last-seen write is contended"),
+        ) as begin:
+            response = self.request("GET", "/api/v1/me", headers=self.bearer(token))
+
+        self.assertEqual(response.status_code, 200, response.text)
+        begin.assert_called_once_with()
 
     def test_login_and_me_use_platform_account(self) -> None:
         token = self.login()

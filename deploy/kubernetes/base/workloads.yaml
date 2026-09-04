@@ -480,6 +480,10 @@ spec:
               mountPath: /run/config/sub2/allowed-origins
               subPath: sub2-allowed-origins
               readOnly: true
+            - name: provider-origins
+              mountPath: /run/config/sub2/admin-model-mapping.json
+              subPath: sub2-admin-model-mapping.json
+              readOnly: true
             - name: internal-ca
               mountPath: /run/secrets/internal-tls/ca.crt
               subPath: ca.crt

@@ -3842,7 +3842,16 @@ class PlatformDesktopApp:
                     self._finish_unlock(profile)
                 except Exception:
                     self._locked = False
-                    self.lock()
+                    try:
+                        self.lock()
+                    except Exception:
+                        pass
+                    if not self._locked:
+                        self._locked = True
+                        try:
+                            self._set_authenticated(False)
+                        except Exception:
+                            pass
                     try:
                         self._set_status(
                             "解锁后的本地状态未能安全恢复；客户端仍保持锁定，请重试。",
@@ -4013,24 +4022,63 @@ class PlatformDesktopApp:
         self._mail_session_id = None
         self._mail_session_token = None
         self._card_allocation_id = None
-        self._reset_task_verification()
+        try:
+            self._reset_task_verification()
+        except Exception:
+            pass
         self._upload_job_id = None
-        self._reset_upload_attempt()
+        try:
+            self._reset_upload_attempt()
+        except Exception:
+            pass
         self._profile_identity = None
-        self.task_label.configure(text="安全清理中…")
-        self.mail_label.configure(text="本地会话已清除")
-        self.session_label.configure(text="正在撤销")
-        self.card_label.configure(text="本地详情已清除")
-        self.upload_label.configure(text="等待安全清理")
-        self.profile_label.configure(text="本地登录会话已清除")
-        self._set_authenticated(False)
-        self.login_button.configure(state="disabled")
-        self.check_update_button.configure(state="disabled")
-        self._set_workflow_stage("stopped")
-        self._set_status(
-            "正在关闭平台任务并撤销登录会话；完成前不会退出或替换程序。",
-            ACCENT,
-        )
+        try:
+            self.task_label.configure(text="安全清理中…")
+        except Exception:
+            pass
+        try:
+            self.mail_label.configure(text="本地会话已清除")
+        except Exception:
+            pass
+        try:
+            self.session_label.configure(text="正在撤销")
+        except Exception:
+            pass
+        try:
+            self.card_label.configure(text="本地详情已清除")
+        except Exception:
+            pass
+        try:
+            self.upload_label.configure(text="等待安全清理")
+        except Exception:
+            pass
+        try:
+            self.profile_label.configure(text="本地登录会话已清除")
+        except Exception:
+            pass
+        try:
+            self._set_authenticated(False)
+        except Exception:
+            pass
+        try:
+            self.login_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self.check_update_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self._set_workflow_stage("stopped")
+        except Exception:
+            pass
+        try:
+            self._set_status(
+                "正在关闭平台任务并撤销登录会话；完成前不会退出或替换程序。",
+                ACCENT,
+            )
+        except Exception:
+            pass
         self._start_update_cleanup_attempt()
 
     def _capture_session_cleanup(self, task_id: str | None) -> Callable[[], None]:
@@ -5098,13 +5146,34 @@ class PlatformDesktopApp:
             return
 
         self._locked = False
-        self.stop_polling()
-        self._paste_sequence.stop()
-        self._close_task_history()
-        self._clear_sensitive_code()
-        self._clear_card_details()
-        self._clear_trace_id()
-        self._cancel_card_reveal()
+        try:
+            self.stop_polling()
+        except Exception:
+            pass
+        try:
+            self._paste_sequence.stop()
+        except Exception:
+            pass
+        try:
+            self._close_task_history()
+        except Exception:
+            pass
+        try:
+            self._clear_sensitive_code()
+        except Exception:
+            pass
+        try:
+            self._clear_card_details()
+        except Exception:
+            pass
+        try:
+            self._clear_trace_id()
+        except Exception:
+            pass
+        try:
+            self._cancel_card_reveal()
+        except Exception:
+            pass
         self._session_generation += 1
         self._session_refreshing = False
         self._update_generation += 1
@@ -5120,34 +5189,79 @@ class PlatformDesktopApp:
         self._mail_session_id = None
         self._mail_session_token = None
         self._card_allocation_id = None
-        self._reset_task_verification()
+        try:
+            self._reset_task_verification()
+        except Exception:
+            pass
         self._upload_job_id = None
         self._profile_identity = None
         self._session_refresh_thread = None
-        self._reset_upload_attempt()
+        try:
+            self._reset_upload_attempt()
+        except Exception:
+            pass
         self._task_generation += 1
         self._upload_generation += 1
-        self.task_label.configure(text="安全清理中…")
-        self.mail_label.configure(text="本地会话已清除")
-        self.session_label.configure(text="正在撤销")
-        self.card_label.configure(text="本地详情已清除")
-        self.copy_card_button.configure(state="disabled")
-        self.close_active_task_button.configure(state="disabled")
-        self.upload_label.configure(text="等待安全清理")
-        self.profile_label.configure(text="本地登录会话已清除")
-        self._set_authenticated(False)
-        self.login_button.configure(state="disabled")
-        self.check_update_button.configure(state="disabled")
-        self._set_workflow_stage("stopped")
+        try:
+            self.task_label.configure(text="安全清理中…")
+        except Exception:
+            pass
+        try:
+            self.mail_label.configure(text="本地会话已清除")
+        except Exception:
+            pass
+        try:
+            self.session_label.configure(text="正在撤销")
+        except Exception:
+            pass
+        try:
+            self.card_label.configure(text="本地详情已清除")
+        except Exception:
+            pass
+        try:
+            self.copy_card_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self.close_active_task_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self.upload_label.configure(text="等待安全清理")
+        except Exception:
+            pass
+        try:
+            self.profile_label.configure(text="本地登录会话已清除")
+        except Exception:
+            pass
+        try:
+            self._set_authenticated(False)
+        except Exception:
+            pass
+        try:
+            self.login_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self.check_update_button.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self._set_workflow_stage("stopped")
+        except Exception:
+            pass
         if intent == "close":
             try:
                 self._paste_observer.close()
             except Exception:
                 pass
-        self._set_status(
-            "正在关闭平台任务并撤销登录会话；确认成功前不会完成退出。",
-            ACCENT,
-        )
+        try:
+            self._set_status(
+                "正在关闭平台任务并撤销登录会话；确认成功前不会完成退出。",
+                ACCENT,
+            )
+        except Exception:
+            pass
         self._start_session_shutdown_attempt()
 
     def _start_session_shutdown_attempt(self) -> None:

@@ -23,7 +23,7 @@ short-lived token into the matching file sink:
 | --- | --- | --- |
 | `email-platform-api-cards` | `PLATFORM_VAULT_API_TOKEN_DIR/token` | `secret/data/cards/*` |
 | `email-platform-mail` | `PLATFORM_VAULT_MAIL_TOKEN_DIR/token` | `secret/data/mailboxes/*` |
-| `email-platform-sub2` | `PLATFORM_VAULT_SUB2_TOKEN_DIR/token` | `secret/data/sub2/credential`, `secret/data/sub2/proxy`, `secret/data/cards/*` |
+| `email-platform-sub2` | `PLATFORM_VAULT_SUB2_TOKEN_DIR/token` | `secret/data/sub2/admin`, `secret/data/sub2/credential`, `secret/data/sub2/proxy`, `secret/data/cards/*` |
 
 The second helper installs and reads back three issuer policies over HTTPS. It
 does not bind identities or touch RoleIDs, SecretIDs, tokens, or accessors. Bind

@@ -16,6 +16,7 @@ import os
 from threading import Event
 
 from platform.app import create_app
+from platform.sub2_admin import sub2_admin_from_settings
 from platform.uploads import (
     HttpSub2Adapter,
     RedisSub2ConcurrencyLimiter,
@@ -48,6 +49,10 @@ def main() -> None:
     managed_environment = environment.strip().lower() not in {"development", "test"}
     if managed_environment and not sub2_unknown_reconciliation_configured():
         raise RuntimeError("Sub2 unknown-result reconciliation is unavailable")
+    application.state.sub2_admin_configuration = sub2_admin_from_settings(
+        application.state.settings,
+        application.state.secret_resolver,
+    )
     stop_event = Event()
 
     def stop(*_: object) -> None:

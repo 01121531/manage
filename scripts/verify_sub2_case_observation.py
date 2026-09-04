@@ -36,8 +36,21 @@ _SOURCE_KEYS = {
     "page_url",
     "authentication_state",
     "scanned_same_origin_script_count",
+    "authenticated_settings_facts",
     "assets",
     "user_supplied_examples",
+}
+_SETTINGS_FACT_KEYS = {
+    "page_url",
+    "reported_version",
+    "admin_api_key_configuration",
+    "admin_api_key_lifecycle",
+    "admin_api_key_material_handling",
+    "admin_api_key_security_status",
+    "admin_api_key_status_path",
+    "unauthenticated_status_code",
+    "idempotency_configuration_visibility",
+    "evidence",
 }
 _ASSET_KEYS = {"name", "url", "sha256", "byte_length"}
 _EXAMPLE_KEYS = {"operation_id", "scope"}
@@ -51,7 +64,13 @@ _OPERATION_KEYS = {
     "limitations",
 }
 _REQUEST_KEYS = {"path_fields", "query_fields", "header_fields", "body_fields"}
-_RESPONSE_KEYS = {"header_fields", "body_fields", "derived_fields"}
+_RESPONSE_KEYS = {
+    "header_fields",
+    "body_fields",
+    "derived_fields",
+    "status_codes",
+    "nested_fields",
+}
 _REDACTION_KEYS = {
     "contains_live_credentials",
     "contains_personal_data",
@@ -62,7 +81,7 @@ _REDACTION_KEYS = {
     "contains_session_values",
 }
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
 
 _EXPECTED_ASSETS = (
     (
@@ -84,6 +103,16 @@ _EXPECTED_OPERATIONS = (
         "account_get_by_id",
         "GET",
         "/api/v1/admin/accounts/{account_id}",
+    ),
+    (
+        "account_usage",
+        "GET",
+        "/api/v1/admin/accounts/{account_id}/usage",
+    ),
+    (
+        "openai_account_quota",
+        "GET",
+        "/api/v1/admin/openai/accounts/{account_id}/quota",
     ),
     (
         "openai_generate_auth_url",
@@ -108,7 +137,8 @@ _REQUIRED_NEGATIVE_FINDINGS = {
     "legacy_check_concurrency_limit_not_observed",
     "account_create_idempotency_header_not_observed",
     "account_create_status_query_not_observed",
-    "authenticated_response_samples_not_captured",
+    "authenticated_account_creation_and_exchange_responses_not_captured",
+    "idempotency_configuration_not_exposed_in_admin_ui",
     "provider_idempotency_and_consistency_semantics_not_proven",
 }
 
@@ -151,7 +181,7 @@ def observation_errors(document: Any) -> list[str]:
         document.get("schema_version") != 1
         or document.get("record_type") != "sub2_public_interface_observation"
         or document.get("observation_scope")
-        != "request_shape_and_public_frontend_only"
+        != "sanitized_authenticated_shapes_and_public_frontend"
         or document.get("production_acceptance") is not False
         or document.get("review_status") != "unreviewed"
         or observed_at is None
@@ -166,8 +196,9 @@ def observation_errors(document: Any) -> list[str]:
         assets = source.get("assets")
         if (
             source.get("page_url")
-            != "https://ai1.aisb.shop/login?redirect=/admin/dashboard"
-            or source.get("authentication_state") != "logged_out_redirect"
+            != "https://ai1.aisb.shop/admin/accounts"
+            or source.get("authentication_state")
+            != "authenticated_admin_browser_session"
             or source.get("scanned_same_origin_script_count") != 64
             or not isinstance(assets, list)
             or len(assets) != len(_EXPECTED_ASSETS)
@@ -184,6 +215,28 @@ def observation_errors(document: Any) -> list[str]:
                     errors.append("Sub2 case observation asset inventory is invalid")
                     break
         examples = source.get("user_supplied_examples")
+        settings_facts = source.get("authenticated_settings_facts")
+        if (
+            not _exact_mapping(settings_facts, _SETTINGS_FACT_KEYS)
+            or settings_facts.get("page_url")
+            != "https://ai1.aisb.shop/admin/settings"
+            or settings_facts.get("reported_version") != "v0.1.169"
+            or settings_facts.get("admin_api_key_configuration") != "configured"
+            or settings_facts.get("admin_api_key_lifecycle")
+            != "rotated_after_chat_exposure_with_explicit_user_authorization"
+            or settings_facts.get("admin_api_key_material_handling")
+            != "replacement_browser_display_only_not_retained"
+            or settings_facts.get("admin_api_key_security_status")
+            != "operator_deferred_to_target_deployment_configuration"
+            or settings_facts.get("admin_api_key_status_path")
+            != "/api/v1/admin/settings/admin-api-key"
+            or settings_facts.get("unauthenticated_status_code") != 401
+            or settings_facts.get("idempotency_configuration_visibility")
+            != "not_exposed_in_admin_ui"
+            or settings_facts.get("evidence")
+            != "authenticated_admin_ui_and_browser_resource_timing"
+        ):
+            errors.append("Sub2 case authenticated settings facts are invalid")
         expected_example_ids = {
             "openai_generate_auth_url",
             "openai_exchange_code",
@@ -224,7 +277,24 @@ def observation_errors(document: Any) -> list[str]:
                 not _exact_mapping(request, _REQUEST_KEYS)
                 or any(not _field_list(request.get(key)) for key in _REQUEST_KEYS)
                 or not _exact_mapping(response, _RESPONSE_KEYS)
-                or any(not _field_list(response.get(key)) for key in _RESPONSE_KEYS)
+                or any(
+                    not _field_list(response.get(key))
+                    for key in ("header_fields", "body_fields", "derived_fields")
+                )
+                or not isinstance(response.get("status_codes"), list)
+                or any(
+                    not isinstance(status, int) or not 100 <= status <= 599
+                    for status in response.get("status_codes", [])
+                )
+                or len(response.get("status_codes", []))
+                != len(set(response.get("status_codes", [])))
+                or not isinstance(response.get("nested_fields"), dict)
+                or any(
+                    not isinstance(name, str)
+                    or not name
+                    or not _field_list(fields)
+                    for name, fields in response.get("nested_fields", {}).items()
+                )
             ):
                 errors.append(
                     f"Sub2 case observation {operation['operation_id']} field shape is invalid"
@@ -258,7 +328,7 @@ def main() -> int:
         print("; ".join(errors), file=sys.stderr)
         return 1
     print(
-        "sub2-case-observation-ok operations=7 source=public-frontend-and-request-shapes "
+        "sub2-case-observation-ok operations=9 target=v0.1.169 admin-api-key=configured "
         "production_acceptance=false"
     )
     return 0

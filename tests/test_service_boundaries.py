@@ -298,6 +298,60 @@ class ServiceBoundaryTests(unittest.TestCase):
             worker_errors,
         )
 
+    def test_sub2_admin_inputs_belong_only_to_sub2_worker(self) -> None:
+        admin_keys = {
+            "PLATFORM_SUB2_ADMIN_BASE_URL",
+            "PLATFORM_SUB2_ADMIN_API_KEY_REF",
+            "PLATFORM_SUB2_ADMIN_PROXY_ID",
+            "PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE",
+        }
+        api_env = self.compose["services"]["api"]["environment"]
+        worker_env = self.compose["services"]["worker-sub2"]["environment"]
+        self.assertFalse(admin_keys & set(api_env))
+        self.assertTrue(admin_keys.issubset(worker_env))
+
+        for key in admin_keys:
+            missing = copy.deepcopy(self.compose)
+            missing["services"]["worker-sub2"]["environment"].pop(key)
+            with self.subTest(missing=key):
+                errors = self.validate(missing)
+                self.assertTrue(
+                    any("Sub2 admin" in error for error in errors),
+                    errors,
+                )
+
+            leaked = copy.deepcopy(self.compose)
+            leaked["services"]["api"]["environment"][key] = worker_env[key]
+            with self.subTest(leaked=key):
+                errors = self.validate(leaked)
+                self.assertTrue(
+                    any("API service must not carry" in error for error in errors),
+                    errors,
+                )
+
+    def test_sub2_admin_model_mapping_is_external_read_only_input(self) -> None:
+        worker = self.compose["services"]["worker-sub2"]
+        expected_target = "/run/config/sub2/admin-model-mapping.json"
+        mappings = [
+            volume
+            for volume in worker["volumes"]
+            if volume.get("target") == expected_target
+        ]
+        self.assertEqual(len(mappings), 1)
+        self.assertTrue(mappings[0]["read_only"])
+        self.assertFalse(mappings[0]["bind"]["create_host_path"])
+
+        writable = copy.deepcopy(self.compose)
+        mapping = next(
+            volume
+            for volume in writable["services"]["worker-sub2"]["volumes"]
+            if volume.get("target") == expected_target
+        )
+        mapping["read_only"] = False
+        self.assertTrue(
+            any("model mapping volume" in error for error in self.validate(writable))
+        )
+
     def test_api_and_sub2_worker_share_only_the_server_owned_policy_inputs(self) -> None:
         policy_keys = {
             "PLATFORM_SUB2_POLICY_VERSION",

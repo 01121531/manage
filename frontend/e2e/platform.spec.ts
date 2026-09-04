@@ -4620,7 +4620,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       }
       users = users.map((user) => user.id === 'operator-3' ? { ...user, role: 'security_auditor' } : user)
       pendingRoleRequests = pendingRoleRequests.filter((item) => item.id !== 'role-approval-1')
-      return fulfill({ ...applied, requested_by: 'wrong-role-requester' })
+      return fulfill({ ...applied, applied_at: '   ' })
     }
     if (path === '/api/v1/admin/devices' && request.method() === 'GET') {
       deviceListRequests += 1
@@ -4673,13 +4673,15 @@ test('platform admin confirms user changes and safely revokes devices', async ({
       singleDisableIds.push('operator-1')
       await singleDisableGate
       users = users.map((user) => user.id === 'operator-1' ? { ...user, is_active: false } : user)
-      return fulfill({ ...users[1], tenant_id: 'wrong-user-tenant' })
+      return fulfill({ ...users[1], created_at: '1999-01-01T00:00:00Z' })
     }
     if (path === '/api/v1/admin/users/batch-disable' && request.method() === 'POST') {
       const body = request.postDataJSON() as { user_ids: string[] }
       batchBodies.push(body)
       users = users.map((user) => body.user_ids.includes(user.id) ? { ...user, is_active: false } : user)
-      return fulfill(users.filter((user) => body.user_ids.includes(user.id)))
+      return fulfill(users.filter((user) => body.user_ids.includes(user.id)).map((user, index) => (
+        index === 0 ? { ...user, role: 'wrong-batch-role' } : user
+      )))
     }
     return fulfill({ error: { code: 'not_found', message: 'not found' } }, 404)
   })
@@ -4750,7 +4752,6 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await approvalDialog.getByRole('button', { name: '审批并应用角色' }).click()
   await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()).toBeVisible()
   await expect(page.getByText('角色变更已由独立管理员审批并应用。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-role-requester')
   await expect(approvalRow).toHaveCount(0)
   await expect(thirdRow).toContainText('安全审计员')
   await secondCheckbox.check()
@@ -4867,7 +4868,7 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   await expect(userActionError).toContainText('相关会话与活动资源也可能已回收')
   await expect(userActionError).toContainText('仅当目标动作仍可用时')
   await expect(page.getByText('用户已停用。', { exact: true })).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText('wrong-user-tenant')
+  await expect(page.locator('body')).not.toContainText('1999')
   await expect(firstRow.getByText('disabled')).toBeVisible()
   await expect(firstDisableButton).toBeDisabled()
   await expect(secondRoleSelect).toBeDisabled()
@@ -4898,6 +4899,9 @@ test('platform admin confirms user changes and safely revokes devices', async ({
   const submittedVisibleIds = (await batchTargetItems.allTextContents()).map((value) => value.match(/（([^（）]+)）$/)?.[1])
   await batchDialog.getByRole('button', { name: '确认停用' }).click()
   await expect.poll(() => batchBodies).toEqual([{ user_ids: submittedVisibleIds }])
+  await expect(page.locator('.ant-message-notice').filter({ hasText: '平台未能确认用户治理操作结果' }).last()).toBeVisible()
+  await expect(page.getByText('已停用 2 个用户。', { exact: true })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('wrong-batch-role')
   await expect(secondRow.getByText('disabled')).toBeVisible()
   await expect(thirdRow.getByText('disabled')).toBeVisible()
   await expect(page.getByRole('button', { name: '批量停用' })).toBeDisabled()
@@ -5668,9 +5672,13 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   const mailboxImportContexts: string[] = []
   const mailboxImportReceipts: string[] = []
   const cardSubmissionKey = 'spi:11111111-1111-4111-8111-111111111111'
+  const lateCardSubmissionKey = 'spi:33333333-3333-4333-8333-333333333333'
   const mailboxSubmissionKey = 'spi:22222222-2222-4222-8222-222222222222'
   const cardReceiptFingerprint = 'bd7662a5eeb41614e720d477abfcb2272e19a8a70a93b7e3bc8560d44ad326e9'
   const mailboxReceiptFingerprint = 'b454f82c5857ebabf342b7258e5cf7def78b7cd975814119462973de9a38df10'
+  let lateCardImportRequests = 0
+  let releaseLateCardImport = () => undefined
+  const lateCardImportGate = new Promise<void>((resolve) => { releaseLateCardImport = resolve })
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -5705,6 +5713,13 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
       return fulfill(poolPage(cards))
     }
     if (path === '/api/v1/admin/cards/imports' && request.method() === 'POST') {
+      if (request.headers()['idempotency-key'] === lateCardSubmissionKey) {
+        lateCardImportRequests += 1
+        await lateCardImportGate
+        return fulfill({
+          error: { code: 'service_unavailable', message: 'must-never-render-late-card-import-error' },
+        }, 503)
+      }
       const body = request.postDataJSON() as Array<Record<string, unknown>>
       cardImportBodies.push(body)
       cardImportKeys.push(request.headers()['idempotency-key'] ?? '')
@@ -5875,6 +5890,35 @@ test('ops admin imports card and mailbox pools through secure bundles', async ({
   await expect(page.getByText('安全包第 1 条信用卡元数据无效；未发送任何数据。', { exact: true })).toBeVisible()
   expect(cardImportBodies).toEqual([])
   await expect(page.locator('body')).not.toContainText('4111111111111111')
+  const lateCardImportResponse = page.waitForResponse((response) => (
+    new URL(response.url()).pathname === '/api/v1/admin/cards/imports'
+      && response.request().headers()['idempotency-key'] === lateCardSubmissionKey
+  ))
+  await cardBundleInput.setInputFiles({
+    name: 'card-pool-late.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schema_version: 3, pool_type: 'card', submission_key: lateCardSubmissionKey,
+      context_token: cardContextToken,
+      receipt_token: 'epir1.card-late-receipt.signature', items: secureCardItems,
+    })),
+  })
+  await page.getByRole('dialog', { name: '确认导入信用卡池安全包？' })
+    .getByRole('button', { name: '确认导入 1 条' }).click()
+  try {
+    await expect.poll(() => lateCardImportRequests).toBe(1)
+    await page.getByRole('menuitem', { name: /工作台/ }).click()
+    await expect(page.getByRole('heading', { name: '工作台', exact: true })).toBeVisible()
+  } finally {
+    releaseLateCardImport()
+  }
+  await lateCardImportResponse
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))
+  }))
+  await expect(page.getByText('must-never-render-late-card-import-error')).toHaveCount(0)
+  await expect(page.getByText(/本批可能已原子导入/)).toHaveCount(0)
+  await page.getByRole('menuitem', { name: /卡池管理/ }).click()
+  await expect(page.getByRole('button', { name: '导入信用卡池安全包 JSON' })).toBeEnabled()
   await cardBundleInput.setInputFiles({
     name: 'card-pool-secure.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({

@@ -817,9 +817,32 @@ worker currently stays fail-closed until `PLATFORM_SUB2_UPLOAD_URL` and
 resolvable server-side secrets are configured. Before a production rollout,
 configure the reviewed Sub2 upload URL and secret-manager resolver on
 `worker-sub2`; the desktop client must never receive Sub2 credentials, proxy
-addresses, group IDs or concurrency settings. Both workers write heartbeat
+addresses, group IDs or concurrency settings. Optional official admin
+control-plane access uses the separate `PLATFORM_SUB2_ADMIN_BASE_URL`,
+`PLATFORM_SUB2_ADMIN_API_KEY_REF`, `PLATFORM_SUB2_ADMIN_PROXY_ID` and
+`PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE` inputs. They are mounted only into
+`worker-sub2`; the API process is structurally rejected if it receives any of
+them. The key setting is a Vault reference, never a raw key, and the model
+mapping is a reviewed read-only JSON file. The admin adapter exposes the
+management calls and an account-ID read-only probe, but no platform task or
+worker scheduler currently composes those calls into an OAuth lifecycle. It
+also does not replace the provider-neutral `Sub2Adapter` used by existing
+`UploadJob` execution. The design requires the existing `worker-sub2` to remain
+separate from the API and mail worker; it does not introduce a separate
+provisioning worker. Both workers write heartbeat
 files at `PLATFORM_WORKER_HEARTBEAT_PATH`; the container health check fails
 when that file is missing or older than `PLATFORM_WORKER_HEARTBEAT_MAX_AGE_SECONDS`.
+
+After rotating the admin key into Vault, verify the worker-side credential with
+the read-only probe below. It performs only
+`GET /api/v1/admin/accounts?page=1&page_size=1`, discards account data, and
+prints only `reachable` and `authenticated` booleans. Run it through the
+already-configured `worker-sub2` service so the API process never receives the
+admin settings or Vault policy.
+
+```powershell
+docker compose run --rm --no-deps worker-sub2 python scripts/probe_sub2_admin.py
+```
 
 Compose includes a non-root `edge` service as the only public HTTP/HTTPS entry.
 It maps host ports 80/443 to unprivileged container ports 8080/8443. The

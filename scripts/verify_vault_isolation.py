@@ -39,6 +39,7 @@ POLICY_RULES = {
     "email-platform-mail.hcl": {"secret/data/mailboxes/*": {"read"}},
     "email-platform-sub2.hcl": {
         "secret/data/cards/*": {"read"},
+        "secret/data/sub2/admin": {"read"},
         "secret/data/sub2/credential": {"read"},
         "secret/data/sub2/proxy": {"read"},
     },
@@ -524,7 +525,7 @@ def main() -> int:
     print(
         "vault-isolation-ok api=cards-read-and-import-receipt-verify "
         "mail=mailboxes-only "
-        "sub2=sub2-and-cards-only"
+        "sub2=sub2-admin-and-cards-only"
     )
     return 0
 

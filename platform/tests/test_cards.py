@@ -472,6 +472,91 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(allocation.status, "active")
         self.assertEqual(allocation_events, 1)
 
+    def test_allocation_conflict_rechecks_open_task_after_rollback(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-allocation-conflict-task")
+        first = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        with self.app.state.session_factory() as db:
+            db.add(
+                Card(
+                    tenant_id="tenant-card",
+                    provider_ref="provider-card-conflict-task",
+                    brand="MASTERCARD",
+                    last4="2222",
+                    expiry_month=11,
+                    expiry_year=2031,
+                    secret_ref="vault://cards/card-conflict-task",
+                )
+            )
+            db.commit()
+
+        original_scalar = Session.scalar
+        original_rollback = Session.rollback
+        original_commit = Session.commit
+        allocation_lookups = 0
+        task_closed = False
+
+        def hide_initial_allocation(session, statement, *args, **kwargs):
+            nonlocal allocation_lookups
+            result = original_scalar(session, statement, *args, **kwargs)
+            entity = statement.column_descriptions[0].get("entity")
+            if entity is CardAllocation:
+                allocation_lookups += 1
+                if allocation_lookups == 1:
+                    return None
+            return result
+
+        def close_task_after_conflict_rollback(session):
+            nonlocal task_closed
+            original_rollback(session)
+            if allocation_lookups == 0 or task_closed:
+                return
+            task_closed = True
+            with self.app.state.session_factory() as other:
+                task = other.get(Task, task_id)
+                self.assertIsNotNone(task)
+                task.status = "completed"
+                task.closed_at = utc_now()
+                original_commit(other)
+
+        with (
+            mock.patch.object(
+                Session,
+                "scalar",
+                new=hide_initial_allocation,
+            ),
+            mock.patch.object(
+                Session,
+                "rollback",
+                new=close_task_after_conflict_rollback,
+            ),
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(task_closed)
+        self.assertEqual(replay.status_code, 409, replay.text)
+        self.assertNotIn(first.json()["card_masked"], replay.text)
+        self.assertNotIn(first.json()["trace_id"], replay.text)
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            allocations = list(
+                db.scalars(
+                    select(CardAllocation).where(CardAllocation.task_id == task_id)
+                )
+            )
+        self.assertEqual(task.status, "completed")
+        self.assertEqual(len(allocations), 1)
+        self.assertEqual(allocations[0].id, first.json()["id"])
+
     def test_allocation_read_never_dereferences_card_after_tenant_relation_changes(
         self,
     ) -> None:
@@ -971,6 +1056,64 @@ class CardAllocationTests(unittest.TestCase):
         self.assertEqual(allocation.tenant_id, "tenant-other")
         self.assertEqual(allocation.status, "active")
         self.assertEqual(allocation_events, 1)
+
+    def test_card_allocation_rechecks_card_state_after_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-allocation-state-boundary")
+        original_commit = Session.commit
+        card_quarantined = False
+
+        def commit_then_quarantine_card(session: Session) -> None:
+            nonlocal card_quarantined
+            allocation_event = next(
+                (
+                    item
+                    for item in session.new
+                    if isinstance(item, AuditEvent)
+                    and item.event_type == "card.allocated"
+                ),
+                None,
+            )
+            allocation_id = (
+                allocation_event.entity_id
+                if allocation_event is not None
+                else None
+            )
+            original_commit(session)
+            if allocation_id is None or card_quarantined:
+                return
+            card_quarantined = True
+            with self.app.state.session_factory() as other:
+                allocation = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(allocation)
+                card = other.get(Card, allocation.card_id)
+                self.assertIsNotNone(card)
+                card.quarantined_at = utc_now()
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_quarantine_card,
+        ):
+            response = self.request(
+                "POST",
+                f"/api/v1/tasks/{task_id}/card-allocations",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(card_quarantined)
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("VISA", response.text)
+        self.assertNotIn("1111", response.text)
+        with self.app.state.session_factory() as db:
+            allocation = db.scalar(
+                select(CardAllocation).where(CardAllocation.task_id == task_id)
+            )
+            card = db.get(Card, allocation.card_id)
+        self.assertEqual(allocation.status, "active")
+        self.assertIsNone(allocation.released_at)
+        self.assertIsNotNone(card.quarantined_at)
 
     def test_replace_card_is_transactional_masked_and_idempotent(self) -> None:
         with self.app.state.session_factory() as db:
@@ -2185,6 +2328,212 @@ class CardAllocationTests(unittest.TestCase):
         self.assertIsNotNone(persisted.released_at)
         self.assertEqual(event_types.count("card.expired"), 1)
         self.assertEqual(event_types.count("card.released"), 0)
+
+    def test_card_release_replay_rechecks_task_after_lost_claim(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-release-replay-task-boundary")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        allocation_id = allocated.json()["id"]
+        original_owned_allocation = routes._owned_card_allocation
+        target_changed = False
+
+        def release_and_move_task_after_read(
+            db,
+            requested_allocation_id,
+            principal,
+            **kwargs,
+        ):
+            nonlocal target_changed
+            result = original_owned_allocation(
+                db,
+                requested_allocation_id,
+                principal,
+                **kwargs,
+            )
+            if result is None or target_changed:
+                return result
+            target_changed = True
+            db.rollback()
+            with self.app.state.session_factory() as other:
+                task = other.get(Task, task_id)
+                current = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(task)
+                self.assertIsNotNone(current)
+                now = utc_now()
+                task.tenant_id = "tenant-other"
+                current.status = "released"
+                current.released_at = now
+                current.release_reason_code = "user_released"
+                other.commit()
+            return result
+
+        with mock.patch.object(
+            routes,
+            "_owned_card_allocation",
+            side_effect=release_and_move_task_after_read,
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/release",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(target_changed)
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn(allocated.json()["card_masked"], replay.text)
+        self.assertNotIn(allocated.json()["trace_id"], replay.text)
+        with self.app.state.session_factory() as db:
+            task = db.get(Task, task_id)
+            current = db.get(CardAllocation, allocation_id)
+        self.assertEqual(task.tenant_id, "tenant-other")
+        self.assertEqual(current.status, "released")
+        self.assertEqual(current.release_reason_code, "user_released")
+
+    def test_card_release_replay_rejects_incomplete_terminal_state(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-release-incomplete-terminal")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        allocation_id = allocated.json()["id"]
+        original_owned_allocation = routes._owned_card_allocation
+        terminal_changed = False
+
+        def leave_incomplete_terminal_after_read(
+            db,
+            requested_allocation_id,
+            principal,
+            **kwargs,
+        ):
+            nonlocal terminal_changed
+            result = original_owned_allocation(
+                db,
+                requested_allocation_id,
+                principal,
+                **kwargs,
+            )
+            if result is None or terminal_changed:
+                return result
+            terminal_changed = True
+            db.rollback()
+            with self.app.state.session_factory() as other:
+                task = other.get(Task, task_id)
+                current = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(task)
+                self.assertIsNotNone(current)
+                task.status = "completed"
+                task.closed_at = utc_now()
+                current.status = "released"
+                current.released_at = None
+                current.release_reason_code = "user_released"
+                other.commit()
+            return result
+
+        with mock.patch.object(
+            routes,
+            "_owned_card_allocation",
+            side_effect=leave_incomplete_terminal_after_read,
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/release",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(terminal_changed)
+        self.assertEqual(replay.status_code, 409, replay.text)
+        self.assertEqual(
+            replay.json()["error"]["code"],
+            "card_release_unavailable",
+        )
+        self.assertNotIn(allocated.json()["card_masked"], replay.text)
+        self.assertNotIn(allocated.json()["trace_id"], replay.text)
+        with self.app.state.session_factory() as db:
+            current = db.get(CardAllocation, allocation_id)
+        self.assertEqual(current.status, "released")
+        self.assertIsNone(current.released_at)
+        self.assertEqual(current.release_reason_code, "user_released")
+
+    def test_card_release_replay_rechecks_original_card_identity(self) -> None:
+        with self.app.state.session_factory() as db:
+            alternate_card = Card(
+                tenant_id="tenant-card",
+                provider_ref="provider-card-release-identity-boundary",
+                brand="MASTERCARD",
+                last4="9999",
+                expiry_month=11,
+                expiry_year=2031,
+                secret_ref="vault://cards/release-identity-boundary",
+            )
+            db.add(alternate_card)
+            db.commit()
+            alternate_card_id = alternate_card.id
+
+        token = self.login()
+        task_id = self.create_task(token, "card-release-identity-boundary")
+        allocated = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocated.status_code, 201, allocated.text)
+        allocation_id = allocated.json()["id"]
+        original_execute = Session.execute
+        original_rollback = Session.rollback
+        target_changed = False
+
+        def change_card_before_task_barrier(session, statement, *args, **kwargs):
+            nonlocal target_changed
+            table = getattr(statement, "table", None)
+            if (
+                not target_changed
+                and getattr(statement, "is_update", False)
+                and getattr(table, "name", None) == "tasks"
+            ):
+                target_changed = True
+                original_rollback(session)
+                with self.app.state.session_factory() as other:
+                    task = other.get(Task, task_id)
+                    current = other.get(CardAllocation, allocation_id)
+                    self.assertIsNotNone(task)
+                    self.assertIsNotNone(current)
+                    now = utc_now()
+                    task.status = "completed"
+                    task.closed_at = now
+                    current.card_id = alternate_card_id
+                    current.status = "released"
+                    current.released_at = now
+                    current.release_reason_code = "user_released"
+                    other.commit()
+            return original_execute(session, statement, *args, **kwargs)
+
+        with mock.patch.object(
+            Session,
+            "execute",
+            new=change_card_before_task_barrier,
+        ):
+            replay = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/release",
+                headers=self.bearer(token),
+            )
+
+        self.assertTrue(target_changed)
+        self.assertEqual(replay.status_code, 404, replay.text)
+        self.assertNotIn("9999", replay.text)
+        self.assertNotIn(allocated.json()["trace_id"], replay.text)
+        with self.app.state.session_factory() as db:
+            current = db.get(CardAllocation, allocation_id)
+        self.assertEqual(current.card_id, alternate_card_id)
+        self.assertEqual(current.status, "released")
 
     def test_cross_user_allocation_is_hidden(self) -> None:
         token = self.login()
@@ -3443,6 +3792,142 @@ class CardAllocationTests(unittest.TestCase):
             utc_now().replace(tzinfo=None),
         )
         self.assertIsNotNone(challenge.consumed_at)
+
+    def test_reveal_rechecks_card_secret_after_consumption_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-reveal-secret-commit-boundary")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        allocation_id = allocation.json()["id"]
+        _challenge, grant = self.grant_with_step_up(token, allocation_id)
+        self.assertEqual(grant.status_code, 200, grant.text)
+        original_commit = Session.commit
+        rotated_secret_ref = "vault://cards/card-1-rotated"
+        secret_rotated = False
+
+        def commit_then_rotate_secret(session: Session) -> None:
+            nonlocal secret_rotated
+            committing_reveal = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "card.revealed"
+                and item.entity_id == allocation_id
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_reveal or secret_rotated:
+                return
+            secret_rotated = True
+            with self.app.state.session_factory() as other:
+                stored = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(stored)
+                card = other.get(Card, stored.card_id)
+                self.assertIsNotNone(card)
+                card.secret_ref = rotated_secret_ref
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_rotate_secret,
+        ):
+            revealed = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/reveal",
+                headers=self.bearer(token),
+                json={
+                    "reveal_grant": grant.json()["reveal_grant"],
+                    "fields": ["pan"],
+                },
+            )
+
+        self.assertTrue(secret_rotated)
+        self.assertEqual(revealed.status_code, 409, revealed.text)
+        self.assertEqual(
+            revealed.json()["error"]["code"],
+            "card_reveal_unavailable",
+        )
+        self.assertNotIn("4111111111111111", revealed.text)
+        self.assertNotIn('"pan"', revealed.text)
+        self.assertEqual(
+            self.card_secret_resolver.secret_refs,
+            ["vault://cards/card-1"],
+        )
+        with self.app.state.session_factory() as db:
+            stored = db.get(CardAllocation, allocation_id)
+            card = db.get(Card, stored.card_id)
+        self.assertEqual(card.secret_ref, rotated_secret_ref)
+
+    def test_reveal_rechecks_card_metadata_after_consumption_commit(self) -> None:
+        token = self.login()
+        task_id = self.create_task(token, "card-reveal-metadata-commit-boundary")
+        allocation = self.request(
+            "POST",
+            f"/api/v1/tasks/{task_id}/card-allocations",
+            headers=self.bearer(token),
+        )
+        self.assertEqual(allocation.status_code, 201, allocation.text)
+        allocation_id = allocation.json()["id"]
+        _challenge, grant = self.grant_with_step_up(token, allocation_id)
+        self.assertEqual(grant.status_code, 200, grant.text)
+        original_commit = Session.commit
+        metadata_changed = False
+
+        def commit_then_change_metadata(session: Session) -> None:
+            nonlocal metadata_changed
+            committing_reveal = any(
+                isinstance(item, AuditEvent)
+                and item.event_type == "card.revealed"
+                and item.entity_id == allocation_id
+                for item in session.new
+            )
+            original_commit(session)
+            if not committing_reveal or metadata_changed:
+                return
+            metadata_changed = True
+            with self.app.state.session_factory() as other:
+                stored = other.get(CardAllocation, allocation_id)
+                self.assertIsNotNone(stored)
+                card = other.get(Card, stored.card_id)
+                self.assertIsNotNone(card)
+                card.last4 = "9999"
+                original_commit(other)
+
+        with mock.patch.object(
+            Session,
+            "commit",
+            new=commit_then_change_metadata,
+        ):
+            revealed = self.request(
+                "POST",
+                f"/api/v1/card-allocations/{allocation_id}/reveal",
+                headers=self.bearer(token),
+                json={
+                    "reveal_grant": grant.json()["reveal_grant"],
+                    "fields": ["pan"],
+                },
+            )
+
+        self.assertTrue(metadata_changed)
+        self.assertEqual(revealed.status_code, 409, revealed.text)
+        self.assertEqual(
+            revealed.json()["error"]["code"],
+            "card_reveal_unavailable",
+        )
+        self.assertNotIn("4111111111111111", revealed.text)
+        self.assertNotIn('"pan"', revealed.text)
+        self.assertNotIn("9999", revealed.text)
+        self.assertEqual(
+            self.card_secret_resolver.secret_refs,
+            ["vault://cards/card-1"],
+        )
+        with self.app.state.session_factory() as db:
+            stored = db.get(CardAllocation, allocation_id)
+            card = db.get(Card, stored.card_id)
+        self.assertEqual(card.last4, "9999")
 
     def test_card_allocation_read_rechecks_device_after_authentication(self) -> None:
         token = self.login()

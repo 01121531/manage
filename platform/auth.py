@@ -19,6 +19,7 @@ from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from platform.database import get_db
@@ -486,21 +487,26 @@ def _touch_device_last_seen(
     """Persist throttled activity without committing a route's DB session."""
 
     cutoff = observed_at - _DEVICE_LAST_SEEN_INTERVAL
-    with request.app.state.session_factory.begin() as activity_db:
-        activity_db.execute(
-            update(Device)
-            .where(
-                Device.id == device_id,
-                Device.tenant_id == tenant_id,
-                Device.user_id == user_id,
-                Device.revoked_at.is_(None),
-                or_(
-                    Device.last_seen_at.is_(None),
-                    Device.last_seen_at <= cutoff,
-                ),
+    try:
+        with request.app.state.session_factory.begin() as activity_db:
+            activity_db.execute(
+                update(Device)
+                .where(
+                    Device.id == device_id,
+                    Device.tenant_id == tenant_id,
+                    Device.user_id == user_id,
+                    Device.revoked_at.is_(None),
+                    or_(
+                        Device.last_seen_at.is_(None),
+                        Device.last_seen_at <= cutoff,
+                    ),
+                )
+                .values(last_seen_at=observed_at)
             )
-            .values(last_seen_at=observed_at)
-        )
+    except SQLAlchemyError:
+        # Activity telemetry must not turn a valid authenticated request into
+        # a failure when the independent best-effort write is contended.
+        return
 
 
 def _resolve_principal(

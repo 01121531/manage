@@ -59,6 +59,17 @@ class RuntimeSecretTests(unittest.TestCase):
         self.assertTrue(self.errors(compose_text=inline_dsn))
         self.assertTrue(self.errors(compose_text=keycloak_password))
 
+    def test_rejects_raw_sub2_admin_api_key(self) -> None:
+        inline = self.compose.replace(
+            "      PLATFORM_SUB2_ADMIN_API_KEY_REF:",
+            "      PLATFORM_SUB2_ADMIN_API_KEY: live-secret\n"
+            "      PLATFORM_SUB2_ADMIN_API_KEY_REF:",
+            1,
+        )
+        env_inline = self.env + "\nPLATFORM_SUB2_ADMIN_API_KEY=live-secret\n"
+        self.assertTrue(self.errors(compose_text=inline))
+        self.assertTrue(self.errors(env_text=env_inline))
+
     def test_rejects_missing_or_writable_secret_mount(self) -> None:
         missing = self.compose.replace(
             "        target: /run/secrets/runtime/redis-url\n", "", 1

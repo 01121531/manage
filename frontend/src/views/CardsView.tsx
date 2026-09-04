@@ -6,6 +6,7 @@ import { ApiError } from '../api'
 import type { CardAllocationSummary, CardEventSummary, CardImportItem, CardSummary, CardTimeline, PoolImportReceipt } from '../types'
 import { PoolImportValidationError, assertPoolImportReceiptBound, readCardPoolImportJson, shouldRetainPoolImportForRetry } from '../pool-import'
 import { useScopedConfirm } from '../useScopedConfirm'
+import { useViewActionScope } from '../useViewActionScope'
 import { CardStatusTag, StatusTag, cardAllocationReasonNames, cardEventActionNames, cardQuarantineReasonNames, compareTableText, formatLocalDateTime, maskedStateLabel } from './shared'
 
 const { Title, Text } = Typography
@@ -30,6 +31,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
 }) {
   const { message } = AntApp.useApp()
   const confirm = useScopedConfirm()
+  const beginViewAction = useViewActionScope()
   const [rows, setRows] = useState<CardSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [cardListError, setCardListError] = useState<string>()
@@ -230,6 +232,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
 
   async function importCardFile(file: File | undefined) {
     if (!file || cardImportPendingRef.current || cardImportRetryRef.current !== null) return
+    const isCurrent = beginViewAction()
     cardImportPendingRef.current = true
     setSaving(true)
     try {
@@ -258,7 +261,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
           afterClose: () => settle(false),
         })
       })
-      if (!confirmed) return
+      if (!confirmed || !isCurrent()) return
       const batch = {
         payload: bundle.items,
         contextToken: bundle.context_token,
@@ -270,6 +273,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       const receipt = await importCards(
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
+      if (!isCurrent()) return
       await assertPoolImportReceiptBound(
         receipt, 'card', batch.payload, batch.idempotencyKey,
       )
@@ -279,6 +283,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.success(`已向信用卡池登记 ${receipt.imported_count} 条资源引用。`)
       refreshCardsFromServer(true)
     } catch (error) {
+      if (!isCurrent()) return
       const retainedForRetry = cardImportRetryRef.current !== null && shouldRetainPoolImportForRetry(error)
       if (!retainedForRetry) {
         cardImportRetryRef.current = null
@@ -288,6 +293,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
     } finally {
       if (cardImportInputRef.current) cardImportInputRef.current.value = ''
       cardImportPendingRef.current = false
+      if (!isCurrent()) return
       setSaving(false)
     }
   }
@@ -301,12 +307,14 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
   async function retryCardImport() {
     const batch = cardImportRetryRef.current
     if (!batch || cardImportPendingRef.current) return
+    const isCurrent = beginViewAction()
     cardImportPendingRef.current = true
     setSaving(true)
     try {
       const receipt = await importCards(
         batch.payload, batch.idempotencyKey, batch.contextToken, batch.receiptToken,
       )
+      if (!isCurrent()) return
       await assertPoolImportReceiptBound(
         receipt, 'card', batch.payload, batch.idempotencyKey,
       )
@@ -316,6 +324,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.success(`已确认信用卡池引用清单，共 ${receipt.imported_count} 条资源。`)
       refreshCardsFromServer(true)
     } catch (error) {
+      if (!isCurrent()) return
       const retainedForRetry = cardImportRetryRef.current !== null && shouldRetainPoolImportForRetry(error)
       if (!retainedForRetry) {
         cardImportRetryRef.current = null
@@ -324,6 +333,7 @@ export default function CardsPage({ canManage, canReleaseQuarantine }: {
       message.error(cardImportFailureMessage(error, retainedForRetry, '信用卡池引用清单重试失败'))
     } finally {
       cardImportPendingRef.current = false
+      if (!isCurrent()) return
       setSaving(false)
     }
   }

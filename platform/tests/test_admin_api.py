@@ -5890,6 +5890,67 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(context_count, 1)
         self.assertEqual(audit_count, 1)
 
+    def test_pool_import_context_rechecks_state_after_issue_commit(self) -> None:
+        original_commit = Session.commit
+        context_moved = False
+
+        def commit_then_move_context(session: Session) -> None:
+            nonlocal context_moved
+            issue_event = next(
+                (
+                    item
+                    for item in session.new
+                    if isinstance(item, AuditEvent)
+                    and item.event_type == "admin.pool_import_context_issued"
+                ),
+                None,
+            )
+            context_id = issue_event.entity_id if issue_event is not None else None
+            original_commit(session)
+            if context_id is None or context_moved:
+                return
+            context_moved = True
+            with self.app.state.session_factory() as other:
+                context = other.get(PoolImportContext, context_id)
+                self.assertIsNotNone(context)
+                context.expires_at = utc_now() - timedelta(seconds=1)
+                original_commit(other)
+
+        token = self.login(
+            "tenant-a",
+            "admin@example.test",
+            "admin-account-password",
+            self.admin.device_id,
+        )
+        with mock.patch.object(Session, "commit", new=commit_then_move_context):
+            response = self.request(
+                "POST",
+                "/api/v1/admin/pool-import-contexts",
+                headers=self.headers(token),
+                json={
+                    "pool_type": "mailbox",
+                    "ordered_manifest_digest": "b" * 64,
+                    "item_count": 1,
+                },
+            )
+
+        self.assertTrue(context_moved)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertNotIn("context_token", response.text)
+        self.assertNotIn("b" * 64, response.text)
+        with self.app.state.session_factory() as db:
+            context = db.scalar(
+                select(PoolImportContext).where(
+                    PoolImportContext.ordered_manifest_digest == "b" * 64
+                )
+            )
+        self.assertLess(
+            context.expires_at,
+            utc_now().replace(tzinfo=None),
+        )
+        self.assertIsNone(context.consumed_at)
+        self.assertIsNone(context.pool_import_receipt_id)
+
     def test_admin_mailbox_import_rechecks_actor_after_authentication(self) -> None:
         observed_at = datetime.now(timezone.utc)
         stale_principal = AuthPrincipal(

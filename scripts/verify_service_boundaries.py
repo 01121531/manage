@@ -74,6 +74,24 @@ SUB2_POLICY_INPUTS = (
     "PLATFORM_SUB2_CREDENTIAL_REF",
     "PLATFORM_SUB2_UPLOAD_URL",
 )
+SUB2_ADMIN_INPUTS = (
+    "PLATFORM_SUB2_ADMIN_BASE_URL",
+    "PLATFORM_SUB2_ADMIN_API_KEY_REF",
+    "PLATFORM_SUB2_ADMIN_PROXY_ID",
+    "PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE",
+)
+SUB2_ADMIN_MODEL_MAPPING_CONTAINER_PATH = "/run/config/sub2/admin-model-mapping.json"
+SUB2_ADMIN_MODEL_MAPPING_SOURCE = (
+    "${PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE:?set "
+    "PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE in .env}"
+)
+SUB2_ADMIN_MODEL_MAPPING_VOLUME = {
+    "type": "bind",
+    "source": SUB2_ADMIN_MODEL_MAPPING_SOURCE,
+    "target": SUB2_ADMIN_MODEL_MAPPING_CONTAINER_PATH,
+    "read_only": True,
+    "bind": {"create_host_path": False},
+}
 
 
 def _service_env(service: dict[str, object]) -> dict[str, object]:
@@ -237,6 +255,7 @@ def validate_service_boundaries(compose: object) -> list[str]:
         "PLATFORM_MAIL_TIMEOUT_SECONDS",
         "PLATFORM_MAIL_ALLOWED_ORIGINS_FILE",
         "PLATFORM_SUB2_ALLOWED_ORIGINS_FILE",
+        *SUB2_ADMIN_INPUTS,
     }
     unexpected_api = sorted(name for name in forbidden_api if name in api_env)
     if unexpected_api:
@@ -298,6 +317,31 @@ def validate_service_boundaries(compose: object) -> list[str]:
     for name in ("PLATFORM_SUB2_PROXY_REF", "PLATFORM_SUB2_CREDENTIAL_REF"):
         if name not in sub2_env:
             errors.append(f"worker-sub2 must carry {name}")
+    missing_admin_inputs = sorted(
+        name for name in SUB2_ADMIN_INPUTS if name not in sub2_env
+    )
+    if missing_admin_inputs:
+        errors.append(
+            "worker-sub2 must carry all Sub2 admin inputs: "
+            + ", ".join(missing_admin_inputs)
+        )
+    if (
+        sub2_env.get("PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE")
+        != SUB2_ADMIN_MODEL_MAPPING_CONTAINER_PATH
+    ):
+        errors.append("worker-sub2 Sub2 admin model mapping identity is invalid")
+    admin_mapping_volumes = (
+        [
+            volume
+            for volume in volumes
+            if isinstance(volume, dict)
+            and volume.get("target") == SUB2_ADMIN_MODEL_MAPPING_CONTAINER_PATH
+        ]
+        if isinstance(volumes, list)
+        else []
+    )
+    if admin_mapping_volumes != [SUB2_ADMIN_MODEL_MAPPING_VOLUME]:
+        errors.append("worker-sub2 Sub2 admin model mapping volume is invalid")
     if (sub2_worker.get("depends_on") or {}).get("redis") != {
         "condition": "service_healthy"
     }:

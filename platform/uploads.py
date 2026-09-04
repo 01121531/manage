@@ -377,6 +377,8 @@ AI1_OBSERVED_CONTROL_PLANE_PATHS = frozenset(
     {
         "/api/v1/admin/accounts",
         "/api/v1/admin/accounts/{account_id}",
+        "/api/v1/admin/accounts/{account_id}/usage",
+        "/api/v1/admin/openai/accounts/{account_id}/quota",
         "/api/v1/admin/openai/generate-auth-url",
         "/api/v1/admin/openai/exchange-code",
         "/api/v1/admin/accounts/today-stats/batch",

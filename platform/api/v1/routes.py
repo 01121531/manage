@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from platform import __version__
@@ -3403,6 +3403,7 @@ def allocate_card(
             raise HTTPException(status_code=503, detail="Assigned card is unavailable")
         allocation_id = existing.id
         card_id = card.id
+        response_now = _utc_now()
         existing = db.scalar(
             select(CardAllocation)
             .where(
@@ -3414,7 +3415,7 @@ def allocate_card(
                 CardAllocation.card_id == card_id,
                 CardAllocation.status == "active",
                 CardAllocation.released_at.is_(None),
-                CardAllocation.expires_at > now,
+                CardAllocation.expires_at > response_now,
             )
             .with_for_update()
             .execution_options(populate_existing=True)
@@ -3447,6 +3448,13 @@ def allocate_card(
     selection_rule = _card_selection_rule(card_policy, task.task_type)
     selection_filters = _card_selection_filters(selection_rule, now=now)
 
+    # SQLite has one database-wide writer. Release the principal/task no-op
+    # write before choosing a card so an administrator can win the card claim;
+    # after our card claim wins, revalidate both barriers in that write txn.
+    sqlite_card_claim = db.get_bind().dialect.name == "sqlite"
+    if sqlite_card_claim:
+        db.rollback()
+
     active_card = exists(
         select(CardAllocation.id).where(
             CardAllocation.card_id == Card.id,
@@ -3471,23 +3479,37 @@ def allocate_card(
     # PostgreSQL's row lock serializes allocation with an administrator's
     # disable barrier.  The conditional no-op update provides the same final
     # active-state recheck in SQLite, where SELECT FOR UPDATE is ignored.
-    card_claim = db.execute(
-        update(Card)
-        .where(
-            Card.id == card.id,
-            Card.tenant_id == principal.tenant_id,
-            Card.is_active.is_(True),
-            Card.quarantined_at.is_(None),
-            *selection_filters,
+    try:
+        card_claim = db.execute(
+            update(Card)
+            .where(
+                Card.id == card.id,
+                Card.tenant_id == principal.tenant_id,
+                Card.is_active.is_(True),
+                Card.quarantined_at.is_(None),
+                *selection_filters,
+            )
+            .values(is_active=True)
+            .execution_options(synchronize_session=False)
         )
-        .values(is_active=True)
-        .execution_options(synchronize_session=False)
-    )
+    except OperationalError:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Card allocation is busy; retry",
+        ) from None
     if card_claim.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=503, detail="No active card is available")
     db.expire(card)
     db.refresh(card)
+    if sqlite_card_claim:
+        task = _lock_owned_open_task(
+            db,
+            task_id,
+            request=request,
+            principal=principal,
+        )
 
     allocation = CardAllocation(
         tenant_id=principal.tenant_id,
@@ -3508,16 +3530,22 @@ def allocate_card(
         db.flush()
     except IntegrityError:
         db.rollback()
-        _lock_task_creation_principal(db, principal)
+        current_task = _lock_owned_open_task(
+            db,
+            task_id,
+            request=request,
+            principal=principal,
+        )
+        response_now = _utc_now()
         existing = db.scalar(
             select(CardAllocation).where(
-                CardAllocation.task_id == task_id,
+                CardAllocation.task_id == current_task.id,
                 CardAllocation.tenant_id == principal.tenant_id,
                 CardAllocation.user_id == principal.user_id,
                 CardAllocation.device_id == principal.device_id,
                 CardAllocation.status == "active",
                 CardAllocation.released_at.is_(None),
-                CardAllocation.expires_at > now,
+                CardAllocation.expires_at > response_now,
             )
         )
         if existing is not None:
@@ -3533,14 +3561,14 @@ def allocate_card(
                     select(CardAllocation)
                     .where(
                         CardAllocation.id == allocation_id,
-                        CardAllocation.task_id == task_id,
+                        CardAllocation.task_id == current_task.id,
                         CardAllocation.tenant_id == principal.tenant_id,
                         CardAllocation.user_id == principal.user_id,
                         CardAllocation.device_id == principal.device_id,
                         CardAllocation.card_id == card_id,
                         CardAllocation.status == "active",
                         CardAllocation.released_at.is_(None),
-                        CardAllocation.expires_at > now,
+                        CardAllocation.expires_at > response_now,
                     )
                     .with_for_update()
                     .execution_options(populate_existing=True)
@@ -4145,7 +4173,6 @@ def replace_card_allocation(
     if current_task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     _lock_task_creation_principal(db, principal)
-    response_now = _utc_now()
     replacement = db.scalar(
         select(CardAllocation)
         .join(
@@ -4163,9 +4190,6 @@ def replace_card_allocation(
             CardAllocation.user_id == principal.user_id,
             CardAllocation.device_id == principal.device_id,
             CardAllocation.card_id == replacement_card_id,
-            CardAllocation.status == "active",
-            CardAllocation.released_at.is_(None),
-            CardAllocation.expires_at > response_now,
         )
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -4177,8 +4201,6 @@ def replace_card_allocation(
         .where(
             Card.id == replacement_card_id,
             Card.tenant_id == principal.tenant_id,
-            Card.is_active.is_(True),
-            Card.quarantined_at.is_(None),
         )
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -4227,17 +4249,55 @@ def release_card_allocation(
     if result is None:
         raise HTTPException(status_code=404, detail="Card allocation not found")
     allocation_snapshot, card = result
+    allocation_task_id = allocation_snapshot.task_id
+    allocation_card_id = allocation_snapshot.card_id
 
     def refresh_after_lost_claim() -> CardAllocationResponse:
         db.rollback()
-        db.expire_all()
-        refreshed = _owned_card_allocation(db, allocation_id, principal)
-        if refreshed is None:
+        _lock_task_creation_principal(db, principal)
+        current_task = db.scalar(
+            select(Task)
+            .where(
+                Task.id == allocation_task_id,
+                Task.tenant_id == principal.tenant_id,
+                Task.user_id == principal.user_id,
+                Task.device_id == principal.device_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if current_task is None:
             raise HTTPException(status_code=404, detail="Card allocation not found")
-        current_allocation, current_card = refreshed
+        current_allocation = db.scalar(
+            select(CardAllocation)
+            .where(
+                CardAllocation.id == allocation_id,
+                CardAllocation.task_id == current_task.id,
+                CardAllocation.tenant_id == principal.tenant_id,
+                CardAllocation.user_id == principal.user_id,
+                CardAllocation.device_id == principal.device_id,
+                CardAllocation.card_id == allocation_card_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if current_allocation is None:
+            raise HTTPException(status_code=404, detail="Card allocation not found")
+        current_card = db.scalar(
+            select(Card)
+            .where(
+                Card.id == allocation_card_id,
+                Card.tenant_id == principal.tenant_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if current_card is None:
+            raise HTTPException(status_code=404, detail="Card not found")
         if (
-            current_allocation.status != "active"
-            or current_allocation.released_at is not None
+            current_allocation.status in {"released", "expired"}
+            and current_allocation.released_at is not None
+            and current_allocation.release_reason_code is not None
         ):
             return _card_allocation_response(current_allocation, current_card)
         raise BusinessHTTPException(
@@ -4250,7 +4310,7 @@ def release_card_allocation(
     task_barrier = db.execute(
         update(Task)
         .where(
-            Task.id == allocation_snapshot.task_id,
+            Task.id == allocation_task_id,
             Task.tenant_id == principal.tenant_id,
             Task.user_id == principal.user_id,
             Task.device_id == principal.device_id,
@@ -4264,7 +4324,7 @@ def release_card_allocation(
     task = db.scalar(
         select(Task)
         .where(
-            Task.id == allocation_snapshot.task_id,
+            Task.id == allocation_task_id,
             Task.tenant_id == principal.tenant_id,
             Task.user_id == principal.user_id,
             Task.device_id == principal.device_id,
@@ -4284,10 +4344,11 @@ def release_card_allocation(
         select(CardAllocation)
         .where(
             CardAllocation.id == allocation_id,
-            CardAllocation.task_id == allocation_snapshot.task_id,
+            CardAllocation.task_id == allocation_task_id,
             CardAllocation.tenant_id == principal.tenant_id,
             CardAllocation.user_id == principal.user_id,
             CardAllocation.device_id == principal.device_id,
+            CardAllocation.card_id == allocation_card_id,
         )
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -4299,10 +4360,11 @@ def release_card_allocation(
         update(CardAllocation)
         .where(
             CardAllocation.id == allocation.id,
-            CardAllocation.task_id == allocation_snapshot.task_id,
+            CardAllocation.task_id == allocation_task_id,
             CardAllocation.tenant_id == principal.tenant_id,
             CardAllocation.user_id == principal.user_id,
             CardAllocation.device_id == principal.device_id,
+            CardAllocation.card_id == allocation_card_id,
             CardAllocation.status == "active",
             CardAllocation.released_at.is_(None),
             CardAllocation.expires_at > now,
@@ -4352,7 +4414,7 @@ def release_card_allocation(
         select(CardAllocation)
         .where(
             CardAllocation.id == allocation_id,
-            CardAllocation.task_id == allocation_snapshot.task_id,
+            CardAllocation.task_id == allocation_task_id,
             CardAllocation.tenant_id == principal.tenant_id,
             CardAllocation.user_id == principal.user_id,
             CardAllocation.device_id == principal.device_id,
@@ -4617,10 +4679,15 @@ def reveal_card_allocation(
         )
         raise HTTPException(status_code=403, detail="Valid reveal grant required")
 
+    card_secret_ref = card.secret_ref
+    card_brand = card.brand
+    card_last4 = card.last4
+    card_expiry_month = card.expiry_month
+    card_expiry_year = card.expiry_year
     pan: str | None = None
     if "pan" in payload.fields:
         try:
-            secret = request.app.state.card_secret_resolver.resolve(card.secret_ref)
+            secret = request.app.state.card_secret_resolver.resolve(card_secret_ref)
         except CardSecretUnavailable:
             raise BusinessHTTPException(
                 status_code=503,
@@ -4770,7 +4837,14 @@ def reveal_card_allocation(
             Card.tenant_id == principal.tenant_id,
             Card.is_active.is_(True),
             Card.quarantined_at.is_(None),
+            Card.secret_ref == card_secret_ref,
+            Card.brand == card_brand,
+            Card.last4 == card_last4,
+            Card.expiry_month == card_expiry_month,
+            Card.expiry_year == card_expiry_year,
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if card is None:
         raise _card_reveal_unavailable()
@@ -7299,13 +7373,41 @@ def admin_create_pool_import_context(
             ).hexdigest(),
         },
     )
+    context_id = context.id
+    context_token_hash = context.context_token_hash
     db.commit()
     _lock_admin_write_principal(
         db,
         principal,
         allowed_roles=(ROLE_OPS_ADMIN, ROLE_PLATFORM_ADMIN),
     )
-    db.refresh(context)
+    response_now = _utc_now()
+    context = db.scalar(
+        select(PoolImportContext)
+        .where(
+            PoolImportContext.id == context_id,
+            PoolImportContext.context_token_hash == context_token_hash,
+            PoolImportContext.tenant_id == principal.tenant_id,
+            PoolImportContext.created_by == principal.user_id,
+            PoolImportContext.device_id == principal.device_id,
+            PoolImportContext.audience
+            == request.app.state.pool_import_context_audience,
+            PoolImportContext.pool_type == payload.pool_type,
+            PoolImportContext.ordered_manifest_digest
+            == payload.ordered_manifest_digest,
+            PoolImportContext.item_count == payload.item_count,
+            PoolImportContext.consumed_at.is_(None),
+            PoolImportContext.pool_import_receipt_id.is_(None),
+            PoolImportContext.expires_at > response_now,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if context is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Secure import context is no longer active",
+        )
     return PoolImportContextResponse(
         context_token=context_token,
         receipt_id=context.id,

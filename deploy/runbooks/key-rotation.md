@@ -25,6 +25,7 @@ process environment, logs, shell history, or evidence.
 | API Vault token | Short-lived service token from `email-platform-api-cards` | `PLATFORM_VAULT_API_TOKEN_DIR/token` | `api` |
 | Mail Vault token | Short-lived service token from `email-platform-mail` | `PLATFORM_VAULT_MAIL_TOKEN_DIR/token` | `worker-mail` |
 | Sub2 Vault token | Short-lived service token from `email-platform-sub2` | `PLATFORM_VAULT_SUB2_TOKEN_DIR/token` | `worker-sub2` |
+| Sub2 administrator API key | Dedicated key issued by the reviewed Sub2 deployment | Vault KV `secret/sub2/admin` referenced by `PLATFORM_SUB2_ADMIN_API_KEY_REF` | `worker-sub2` only |
 
 For a Vault row, keep object types separate: RoleID is a role selector, SecretID is a one-use login input, the resulting short-lived service token is the only
 runtime sink credential, and its accessor is a non-authenticating management
@@ -33,6 +34,15 @@ Only an independent approved rotator may use the protected old accessor with
 `auth/token/revoke-accessor`, after the new token's exact policy check, atomic
 sink replacement, and consumer canary have all succeeded. Never pass an
 accessor in argv or logs, and never record a Vault token-sink SHA-256 value.
+
+For the Sub2 administrator API key row, create a replacement key in the target
+Sub2 administration console, write it directly to the approved Vault KV field
+(`x_api_key`, `admin_api_key`, or `value`), restart only `worker-sub2`, and run
+an authenticated read-only account probe before revoking the old key. Never
+copy the key into `.env`, Kubernetes Secret/ConfigMap, evidence, logs, or the
+API service. If the target deployment cannot overlap two keys, stop
+`worker-sub2` for the rotation and retain the old Vault version until the
+canary succeeds.
 
 Existing PostgreSQL volumes must use a controlled `ALTER ROLE` through an
 approved administrative connection. PostgreSQL initialization scripts are not
@@ -162,6 +172,12 @@ python -m scripts.restore_readiness
 
 Then perform a class-specific positive and negative authentication check through
 an approved client that accepts credentials only from protected file/stdin:
+
+For the Sub2 admin API key, use the existing `worker-sub2` service boundary and
+run `docker compose run --rm --no-deps worker-sub2 python
+scripts/probe_sub2_admin.py`. The probe performs a single read-only account-list
+request, discards response records, and emits only reachability/authentication
+booleans; do not copy the key into the command line or environment.
 
 1. Prove the new credential succeeds through the selected real consumer.
 2. Revoke the old credential for Vault only through the independent approved rotator, using the old token's

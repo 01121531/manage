@@ -31,6 +31,7 @@ EXCLUDED_FILES = {".env.example", "package-lock.json"}
 MAX_SCANNED_FILE_BYTES = 16 * 1024 * 1024
 PATTERNS = {
     "openai-style-key": re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    "sub2-admin-key": re.compile(r"\badmin-[0-9a-f]{64}\b", re.IGNORECASE),
     "bearer-token": re.compile(r"Bearer\s+[A-Za-z0-9._-]{32,}", re.IGNORECASE),
     "jwt": re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
     "private-key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),

@@ -10,6 +10,68 @@ import { RemoteTable, StatusTag, compareTableDate, compareTableText, formatLocal
 
 const { Title, Text } = Typography
 
+function matchesDisabledUserReceipt(receipt: AdminUser, target: AdminUser) {
+  return receipt.id === target.id
+    && receipt.tenant_id === target.tenant_id
+    && receipt.email === target.email
+    && receipt.role === target.role
+    && receipt.created_at === target.created_at
+    && !receipt.is_active
+}
+
+function matchesPendingRoleRequestReceipt(
+  receipt: RoleChangeRequest,
+  target: AdminUser,
+  role: ManagedUserRole,
+  principal: Principal,
+) {
+  const createdAt = Date.parse(receipt.created_at)
+  const expiresAt = Date.parse(receipt.expires_at)
+  return receipt.id.trim().length > 0
+    && receipt.tenant_id === principal.tenant_id
+    && receipt.target_user_id === target.id
+    && receipt.expected_old_role === target.role
+    && receipt.new_role === role
+    && receipt.status === 'pending'
+    && receipt.requested_by === principal.id
+    && receipt.approved_by === null
+    && receipt.approval_trace_id === null
+    && receipt.applied_at === null
+    && receipt.request_trace_id.trim().length > 0
+    && Number.isFinite(createdAt)
+    && Number.isFinite(expiresAt)
+    && expiresAt > createdAt
+}
+
+function matchesAppliedRoleRequestReceipt(
+  receipt: RoleChangeRequest,
+  request: RoleChangeRequest,
+  principal: Principal,
+) {
+  if (receipt.applied_at === null || receipt.approval_trace_id === null) return false
+  const createdAt = Date.parse(receipt.created_at)
+  const expiresAt = Date.parse(receipt.expires_at)
+  const appliedAt = Date.parse(receipt.applied_at)
+  return receipt.id === request.id
+    && receipt.tenant_id === request.tenant_id
+    && receipt.tenant_id === principal.tenant_id
+    && receipt.target_user_id === request.target_user_id
+    && receipt.expected_old_role === request.expected_old_role
+    && receipt.new_role === request.new_role
+    && receipt.requested_by === request.requested_by
+    && receipt.created_at === request.created_at
+    && receipt.expires_at === request.expires_at
+    && receipt.request_trace_id === request.request_trace_id
+    && receipt.status === 'applied'
+    && receipt.approved_by === principal.id
+    && receipt.approval_trace_id.trim().length > 0
+    && Number.isFinite(createdAt)
+    && Number.isFinite(expiresAt)
+    && Number.isFinite(appliedAt)
+    && appliedAt >= createdAt
+    && appliedAt <= expiresAt
+}
+
 export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
   principal: Principal
   oidcManager: UserManager | null
@@ -170,26 +232,22 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         async () => {
           if (finalUserIds.length === 1) {
             const updated = await disableUser(finalUserIds[0])
-            if (
-              updated.id !== finalUserIds[0]
-              || updated.tenant_id !== principal.tenant_id
-              || updated.is_active
-            ) {
+            if (!matchesDisabledUserReceipt(updated, targetUsers[0])) {
               throw new Error('user disable response binding mismatch')
             }
             return
           }
           const updated = await batchDisableUsers(finalUserIds)
           const expectedIds = new Set(finalUserIds)
+          const targetsById = new Map(targetUsers.map((user) => [user.id, user]))
           const returnedIds = new Set(updated.map((user) => user.id))
           if (
             updated.length !== expectedIds.size
             || returnedIds.size !== expectedIds.size
-            || updated.some((user) => (
-              !expectedIds.has(user.id)
-              || user.tenant_id !== principal.tenant_id
-              || user.is_active
-            ))
+            || updated.some((user) => {
+              const target = targetsById.get(user.id)
+              return target === undefined || !matchesDisabledUserReceipt(user, target)
+            })
           ) throw new Error('batch user disable response binding mismatch')
         },
         finalUserIds.length === 1 ? '用户已停用。' : `已停用 ${finalUserIds.length} 个用户。`,
@@ -220,18 +278,9 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         action,
         async () => {
           const request = await createRoleChangeRequest(row.id, role)
-          if (
-            request.id.trim().length === 0
-            || request.tenant_id !== principal.tenant_id
-            || request.target_user_id !== row.id
-            || request.expected_old_role !== row.role
-            || request.new_role !== role
-            || request.status !== 'pending'
-            || request.requested_by !== principal.id
-            || request.approved_by !== null
-            || request.approval_trace_id !== null
-            || request.request_trace_id.trim().length === 0
-          ) throw new Error('role change request response binding mismatch')
+          if (!matchesPendingRoleRequestReceipt(request, row, role, principal)) {
+            throw new Error('role change request response binding mismatch')
+          }
         },
         '角色变更申请已创建，等待另一位平台管理员完成 fresh MFA 后审批。',
       ),
@@ -281,20 +330,9 @@ export default function UsersPage({ principal, oidcManager, roleChangeAcr }: {
         action,
         async () => {
           const approved = await approveRoleChangeRequest(request.id)
-          if (
-            approved.id !== request.id
-            || approved.tenant_id !== principal.tenant_id
-            || approved.target_user_id !== request.target_user_id
-            || approved.expected_old_role !== request.expected_old_role
-            || approved.new_role !== request.new_role
-            || approved.status !== 'applied'
-            || approved.requested_by !== request.requested_by
-            || approved.approved_by !== principal.id
-            || approved.request_trace_id !== request.request_trace_id
-            || approved.applied_at === null
-            || approved.approval_trace_id === null
-            || approved.approval_trace_id.trim().length === 0
-          ) throw new Error('role change approval response binding mismatch')
+          if (!matchesAppliedRoleRequestReceipt(approved, request, principal)) {
+            throw new Error('role change approval response binding mismatch')
+          }
         },
         '角色变更已由独立管理员审批并应用。',
       ),

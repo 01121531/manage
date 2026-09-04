@@ -161,6 +161,33 @@ class VaultIsolationTests(unittest.TestCase):
 
         self.assertTrue(any("email-platform-sub2.hcl paths" in error for error in errors), errors)
 
+    def test_sub2_policy_requires_exclusive_admin_key_path(self) -> None:
+        original_policies = dict(self.policies)
+        self.policies = dict(self.policies)
+        self.policies["email-platform-sub2.hcl"] = self.policies[
+            "email-platform-sub2.hcl"
+        ].replace(
+            'path "secret/data/sub2/admin" {\n  capabilities = ["read"]\n}\n',
+            "",
+        )
+        errors = self.validate()
+        self.assertTrue(
+            any("email-platform-sub2.hcl paths" in error for error in errors),
+            errors,
+        )
+
+        self.policies = original_policies
+        self.policies["email-platform-api-cards.hcl"] += (
+            '\npath "secret/data/sub2/admin" {\n'
+            '  capabilities = ["read"]\n'
+            '}\n'
+        )
+        errors = self.validate()
+        self.assertTrue(
+            any("email-platform-api-cards.hcl paths" in error for error in errors),
+            errors,
+        )
+
     def test_sub2_mailbox_permission_is_rejected(self) -> None:
         self.policies = dict(self.policies)
         self.policies["email-platform-sub2.hcl"] += (

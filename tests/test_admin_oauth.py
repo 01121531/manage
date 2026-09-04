@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import random
@@ -261,8 +262,50 @@ class ClientFlowTests(unittest.TestCase):
         self.assertTrue(requests[2][0].full_url.endswith("/accounts"))
         self.assertEqual(requests[2][2]["name"], "custom-name")
         self.assertEqual(requests[2][2]["proxy_id"], 3100)
+        self.assertEqual(
+            requests[2][0].get_header("Idempotency-key"),
+            "oauth-account-" + hashlib.sha256(b"session-123").hexdigest(),
+        )
         self.assertEqual(requests[0][0].get_header("Authorization"), "Bearer test-admin-token")
         self.assertTrue(all(timeout == 30 for _, timeout, _ in requests))
+
+    def test_redirect_uri_is_preserved_across_generate_and_exchange(self):
+        responses = iter(
+            (
+                {
+                    "auth_url": "https://auth.example/authorize?state=state-123",
+                    "session_id": "session-123",
+                },
+                {"access_token": "access-token"},
+            )
+        )
+        requests = []
+
+        def open_fn(request, timeout):
+            del timeout
+            requests.append(json.loads(request.data))
+            return FakeResponse(next(responses))
+
+        client = AdminApiClient("token", open_fn=open_fn)
+        session = client.generate_auth_url(1, "https://callback.example/oauth")
+        client.exchange_code(session, "ac_example")
+
+        self.assertEqual(
+            requests,
+            [
+                {
+                    "proxy_id": 1,
+                    "redirect_uri": "https://callback.example/oauth",
+                },
+                {
+                    "session_id": "session-123",
+                    "code": "ac_example",
+                    "state": "state-123",
+                    "proxy_id": 1,
+                    "redirect_uri": "https://callback.example/oauth",
+                },
+            ],
+        )
 
     def test_begin_skips_unobserved_concurrency_endpoint(self):
         requests = []

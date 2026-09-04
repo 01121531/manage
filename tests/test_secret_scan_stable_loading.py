@@ -153,6 +153,20 @@ class SecretScanStableLoadingTests(unittest.TestCase):
         (self.root / "binary.bin").write_bytes(b"\xff\x00\xfe")
         self.assertEqual(self.run_main(), (0, "secret-scan-ok\n", ""))
 
+    def test_sub2_admin_key_pattern_is_rejected_without_echoing_value(self) -> None:
+        candidate = "admin-" + ("a" * 64)
+        (self.root / "candidate.txt").write_text(candidate, encoding="utf-8")
+
+        code, stdout, stderr = self.run_main()
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(
+            stderr,
+            "Potential secrets found:\ncandidate.txt: matched sub2-admin-key\n",
+        )
+        self.assertNotIn(candidate, stderr)
+
     @unittest.skipUnless(os.name == "nt", "Windows synthesizes executable mode bits")
     def test_windows_executable_mode_projection_keeps_binary_skip(self) -> None:
         (self.root / "application.exe").write_bytes(b"\xff\x00\xfe")

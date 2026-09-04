@@ -398,6 +398,10 @@ services:
       PLATFORM_SUB2_PROXY_REF: ${PLATFORM_SUB2_PROXY_REF:?set PLATFORM_SUB2_PROXY_REF in .env}
       PLATFORM_SUB2_CREDENTIAL_REF: ${PLATFORM_SUB2_CREDENTIAL_REF:?set PLATFORM_SUB2_CREDENTIAL_REF in .env}
       PLATFORM_SUB2_UPLOAD_URL: ${PLATFORM_SUB2_UPLOAD_URL:-}
+      PLATFORM_SUB2_ADMIN_BASE_URL: ${PLATFORM_SUB2_ADMIN_BASE_URL:?set PLATFORM_SUB2_ADMIN_BASE_URL in .env}
+      PLATFORM_SUB2_ADMIN_API_KEY_REF: ${PLATFORM_SUB2_ADMIN_API_KEY_REF:?set PLATFORM_SUB2_ADMIN_API_KEY_REF in .env}
+      PLATFORM_SUB2_ADMIN_PROXY_ID: ${PLATFORM_SUB2_ADMIN_PROXY_ID:?set PLATFORM_SUB2_ADMIN_PROXY_ID in .env}
+      PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE: /run/config/sub2/admin-model-mapping.json
       PLATFORM_SUB2_ALLOWED_ORIGINS_FILE: /run/config/sub2/allowed-origins
       PLATFORM_WORKER_METRICS_HOST: 0.0.0.0
       PLATFORM_WORKER_METRICS_PORT: 9102
@@ -409,6 +413,12 @@ services:
       - type: bind
         source: ${PLATFORM_SUB2_ALLOWED_ORIGINS_FILE:?set PLATFORM_SUB2_ALLOWED_ORIGINS_FILE in .env}
         target: /run/config/sub2/allowed-origins
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE:?set PLATFORM_SUB2_ADMIN_MODEL_MAPPING_FILE in .env}
+        target: /run/config/sub2/admin-model-mapping.json
         read_only: true
         bind:
           create_host_path: false

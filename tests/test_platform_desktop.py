@@ -1777,6 +1777,188 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         revoked.assert_called_once_with()
         self.assertEqual(instance.login_button.values["state"], "normal")
 
+    def test_history_close_error_cannot_skip_logout_sensitive_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance._close_task_history = mock.Mock(
+            side_effect=RuntimeError("history window unavailable")
+        )
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        instance._close_task_history.assert_called_once_with()
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
+    def test_stop_errors_cannot_skip_logout_sensitive_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        instance._current_card_clipboard = details
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        instance.stop_polling = mock.Mock(
+            side_effect=RuntimeError("poll cancellation unavailable")
+        )
+        instance._paste_sequence.stop = mock.Mock(
+            side_effect=RuntimeError("paste cancellation unavailable")
+        )
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        instance.stop_polling.assert_called_with()
+        instance._paste_sequence.stop.assert_called_with()
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
+    def test_code_clear_error_cannot_skip_remaining_logout_cleanup(self) -> None:
+        instance = self._event_app()
+        details = "4111111111111111\t12/30"
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        instance._current_code = "246810"
+        instance._current_card_clipboard = details
+        instance._current_trace_clipboard = "trace-owned"
+        instance._clipboard_owner = (details, None)
+        instance.root.clipboard = details
+        clear_sensitive_code = instance._clear_sensitive_code
+        clear_attempts = 0
+
+        def fail_code_clear_once() -> None:
+            nonlocal clear_attempts
+            clear_attempts += 1
+            if clear_attempts == 1:
+                raise RuntimeError("code cleanup unavailable")
+            clear_sensitive_code()
+
+        instance._clear_sensitive_code = mock.Mock(
+            side_effect=fail_code_clear_once
+        )
+        instance._cancel_card_reveal = mock.Mock()
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertGreaterEqual(instance._clear_sensitive_code.call_count, 2)
+        instance._cancel_card_reveal.assert_called_with()
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._current_code)
+        self.assertIsNone(instance._current_card_clipboard)
+        self.assertIsNone(instance._current_trace_clipboard)
+        self.assertIsNone(instance._clipboard_owner)
+        self.assertEqual(instance.root.clipboard, "")
+        self.assertEqual(instance._clipboard_cleanup_pending, 0)
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
+    def test_verification_reset_error_cannot_strand_logout_cleanup(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        instance._verified_task_id = instance._task_id
+        reset_task_verification = instance._reset_task_verification
+        reset_attempts = 0
+
+        def fail_verification_reset_once() -> None:
+            nonlocal reset_attempts
+            reset_attempts += 1
+            if reset_attempts == 1:
+                raise RuntimeError("upload control unavailable")
+            reset_task_verification()
+
+        instance._reset_task_verification = mock.Mock(
+            side_effect=fail_verification_reset_once
+        )
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        self.assertGreaterEqual(instance._reset_task_verification.call_count, 2)
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._verified_task_id)
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
+    def test_task_status_ui_error_cannot_strand_logout_cleanup(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        configure_task_label = instance.task_label.configure
+        configure_attempts = 0
+
+        def fail_task_status_once(**values) -> None:
+            nonlocal configure_attempts
+            configure_attempts += 1
+            if configure_attempts == 1:
+                raise RuntimeError("task status unavailable")
+            configure_task_label(**values)
+
+        instance.task_label.configure = mock.Mock(side_effect=fail_task_status_once)
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        instance.task_label.configure.assert_any_call(text="安全清理中…")
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertFalse(instance._shutdown_cleanup_in_progress)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
+    def test_late_workflow_ui_error_cannot_strand_logout_cleanup(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        set_workflow_stage = instance._set_workflow_stage
+        workflow_attempts = 0
+
+        def fail_stopped_stage_once(stage: str) -> None:
+            nonlocal workflow_attempts
+            workflow_attempts += 1
+            if workflow_attempts == 1:
+                raise RuntimeError("workflow status unavailable")
+            set_workflow_stage(stage)
+
+        instance._set_workflow_stage = mock.Mock(side_effect=fail_stopped_stage_once)
+
+        instance.logout(message="已完成安全退出。")
+        instance._shutdown_cleanup_thread.join(timeout=1)
+        instance._drain_events()
+
+        instance._set_workflow_stage.assert_any_call("stopped")
+        cleanup.assert_called_once_with()
+        self.assertIsNone(instance._shutdown_cleanup_action)
+        self.assertFalse(instance._shutdown_cleanup_in_progress)
+        self.assertEqual(instance.login_button.values["state"], "normal")
+
     def test_lock_stops_work_and_invalidates_every_async_generation(self) -> None:
         instance = self._event_app()
         instance._client = mock.Mock(is_authenticated=True)
@@ -3116,6 +3298,38 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
         self.assertEqual(instance.copy_card_button.values["state"], "disabled")
         self.assertEqual(instance.upload_button.values["state"], "disabled")
         self.assertIn("仍保持锁定", instance.status_label.values["text"])
+
+    def test_unlock_rollback_stays_locked_if_primary_session_expires(self) -> None:
+        instance = self._event_app()
+        profile = {
+            "id": "user-1",
+            "tenant_id": "tenant-1",
+            "email": "operator@example.test",
+            "device_id": "device-1",
+            "role": "operator",
+        }
+        instance._client = mock.Mock(is_authenticated=True)
+        instance.lock()
+        instance._client.is_authenticated = False
+        action = object()
+        instance._unlock_action = action
+        instance._unlock_thread = object()
+        instance._start_polling = mock.Mock(
+            side_effect=RuntimeError("mail polling unavailable")
+        )
+        generation = instance._session_generation
+        instance._events.put((generation, "unlock_success", (action, profile)))
+        instance._events.put((generation, "unlock_finished", action))
+
+        instance._drain_events()
+
+        self.assertTrue(instance._locked)
+        self.assertIsNone(instance._unlock_action)
+        self.assertIsNone(instance._unlock_thread)
+        self.assertEqual(instance.auth_label.values["text"], "未登录")
+        self.assertEqual(instance.new_task_button.values["state"], "disabled")
+        self.assertEqual(instance.copy_card_button.values["state"], "disabled")
+        self.assertEqual(instance.upload_button.values["state"], "disabled")
 
     def test_unlock_thread_start_failure_restores_retry(self) -> None:
         instance = self._event_app()
@@ -7410,6 +7624,38 @@ class PlatformDesktopBoundaryTests(unittest.TestCase):
 
         instance._client.prepare_logout_cleanup.assert_called_once_with(None)
         self.assertEqual(order, ["session-cleanup", "helper"])
+
+    def test_late_update_ui_error_cannot_strand_captured_cleanup(self) -> None:
+        instance = self._event_app()
+        cleanup = mock.Mock()
+        instance._client = mock.Mock(is_authenticated=True)
+        instance._client.prepare_logout_cleanup.return_value = cleanup
+        manifest = mock.Mock(sha256="c" * 64)
+        package = Path("verified-update.exe")
+        set_workflow_stage = instance._set_workflow_stage
+        stopped_failed = False
+
+        def fail_stopped_stage_once(stage: str) -> None:
+            nonlocal stopped_failed
+            if stage == "stopped" and not stopped_failed:
+                stopped_failed = True
+                raise RuntimeError("workflow status unavailable")
+            set_workflow_stage(stage)
+
+        instance._set_workflow_stage = mock.Mock(side_effect=fail_stopped_stage_once)
+
+        with mock.patch("platform_desktop.launch_update_helper") as launch_helper:
+            instance._begin_update_cleanup(manifest, package)
+            instance._update_cleanup_thread.join(timeout=1)
+            instance._drain_events()
+
+        instance._set_workflow_stage.assert_any_call("stopped")
+        cleanup.assert_called_once_with()
+        launch_helper.assert_called_once_with(package, manifest.sha256)
+        self.assertIsNone(instance._update_cleanup_action)
+        self.assertIsNone(instance._pending_update_install)
+        self.assertFalse(instance._update_cleanup_in_progress)
+        self.assertTrue(instance._update_cleanup_completed)
 
     def test_logout_invalidates_late_update_events(self) -> None:
         instance = self._event_app()

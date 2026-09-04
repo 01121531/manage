@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -380,6 +381,7 @@ class AuthSession:
     session_id: str
     state: str
     proxy_id: int = PROXY_ID
+    redirect_uri: str | None = None
 
 
 def build_account_payload(
@@ -463,21 +465,25 @@ class AdminApiClient:
         payload: dict[str, Any],
         *,
         ambiguous_on_network: bool = False,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh",
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "Origin": ADMIN_ORIGIN,
+            "Referer": f"{ADMIN_ORIGIN}/admin/accounts",
+            "User-Agent": "MailCodeHelper/2.0 (Windows)",
+            "X-Admin-UI-Request": "1",
+        }
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
         request = urllib.request.Request(
             f"{self.base_url}/{path.lstrip('/')}",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             method="POST",
-            headers={
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "zh",
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-                "Origin": ADMIN_ORIGIN,
-                "Referer": f"{ADMIN_ORIGIN}/admin/accounts",
-                "User-Agent": "MailCodeHelper/2.0 (Windows)",
-                "X-Admin-UI-Request": "1",
-            },
+            headers=headers,
         )
         try:
             with self._open(request, REQUEST_TIMEOUT_SECONDS) as response:
@@ -522,12 +528,16 @@ class AdminApiClient:
             raise AdminApiError(_response_error_message(data, "管理端业务请求失败"))
         return data
 
-    def generate_auth_url(self, proxy_id: Any = PROXY_ID) -> AuthSession:
+    def generate_auth_url(
+        self,
+        proxy_id: Any = PROXY_ID,
+        redirect_uri: str | None = None,
+    ) -> AuthSession:
         selected_proxy_id = normalize_proxy_id(proxy_id)
-        data = self._post(
-            "openai/generate-auth-url",
-            {"proxy_id": selected_proxy_id},
-        )
+        payload: dict[str, Any] = {"proxy_id": selected_proxy_id}
+        if redirect_uri:
+            payload["redirect_uri"] = redirect_uri
+        data = self._post("openai/generate-auth-url", payload)
         auth_url = data.get("auth_url")
         session_id = data.get("session_id")
         if not isinstance(auth_url, str) or not auth_url:
@@ -543,29 +553,44 @@ class AdminApiClient:
             session_id=session_id,
             state=state,
             proxy_id=selected_proxy_id,
+            redirect_uri=redirect_uri,
         )
 
     def exchange_code(self, session: AuthSession, code: str) -> dict[str, Any]:
-        return self._post(
-            "openai/exchange-code",
-            {
-                "session_id": session.session_id,
-                "code": code,
-                "state": session.state,
-                "proxy_id": session.proxy_id,
-            },
-        )
+        payload: dict[str, Any] = {
+            "session_id": session.session_id,
+            "code": code,
+            "state": session.state,
+            "proxy_id": session.proxy_id,
+        }
+        if session.redirect_uri:
+            payload["redirect_uri"] = session.redirect_uri
+        return self._post("openai/exchange-code", payload)
 
-    def create_account(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._post("accounts", payload, ambiguous_on_network=True)
+    def create_account(
+        self,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        return self._post(
+            "accounts",
+            payload,
+            ambiguous_on_network=True,
+            idempotency_key=idempotency_key,
+        )
 
 
 class AuthorizationService:
     def __init__(self, client: AdminApiClient) -> None:
         self.client = client
 
-    def begin(self, proxy_id: Any = PROXY_ID) -> AuthSession:
-        return self.client.generate_auth_url(proxy_id)
+    def begin(
+        self,
+        proxy_id: Any = PROXY_ID,
+        redirect_uri: str | None = None,
+    ) -> AuthSession:
+        return self.client.generate_auth_url(proxy_id, redirect_uri)
 
     def complete(
         self,
@@ -576,4 +601,10 @@ class AuthorizationService:
         code = parse_authorization_input(authorization_input, session.state)
         exchanged = self.client.exchange_code(session, code)
         payload = build_account_payload(account_name, exchanged, session.proxy_id)
-        return self.client.create_account(payload)
+        idempotency_key = "oauth-account-" + hashlib.sha256(
+            session.session_id.encode("utf-8")
+        ).hexdigest()
+        return self.client.create_account(
+            payload,
+            idempotency_key=idempotency_key,
+        )
